@@ -8,8 +8,8 @@
 ### Installation
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/apohub-gdgdavao.git
-cd apohub-gdgdavao
+git clone https://github.com/gdgdavao/apohub.git
+cd apohub
 
 # Install dependencies
 bun install
