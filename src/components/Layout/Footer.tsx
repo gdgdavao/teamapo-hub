@@ -98,18 +98,8 @@ const Footer: React.FC = () => {
 
         <div className="border-t border-gray-200 mt-8 pt-8 flex flex-col sm:flex-row justify-between items-center">
           <p className="text-gray-500 text-sm">
-            © {new Date().getFullYear()} APOHUB. Built for GDG Davao with ❤️
+            © {new Date().getFullYear()} APOHUB. Built by GDG Davao with ❤️
           </p>
-          <div className="flex items-center space-x-4 mt-4 sm:mt-0">
-            <span className="text-xs text-gray-400">Powered by</span>
-            <div className="flex items-center space-x-2">
-              <span className="text-sm font-medium text-gray-600">Firebase</span>
-              <span className="text-gray-300">•</span>
-              <span className="text-sm font-medium text-gray-600">React</span>
-              <span className="text-gray-300">•</span>
-              <span className="text-sm font-medium text-gray-600">Paymongo</span>
-            </div>
-          </div>
         </div>
       </div>
     </footer>
