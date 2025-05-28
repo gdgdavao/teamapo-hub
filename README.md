@@ -1,4 +1,4 @@
-# APOHUB - Event Management System for GDG Davao
+# APOHUB - Event Management System
 
 ## 1. Introduction
 
