@@ -1,9 +1,10 @@
 ---
 name: Feature Request
 about: Suggest a new feature for APOHUB
-title: '[FEATURE] '
-labels: 'enhancement'
+title: "[FEATURE] "
+labels: enhancement
 assignees: ''
+
 ---
 
 ## 🚀 Feature Description
@@ -51,4 +52,4 @@ Who would benefit from this feature?
 - **Priority**: [High/Medium/Low]
 
 ## 🔗 Related Issues
-Link any related issues or discussions here. 
+Link any related issues or discussions here.

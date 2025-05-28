@@ -1,9 +1,10 @@
 ---
 name: Bug Report
 about: Create a report to help us improve APOHUB
-title: '[BUG] '
-labels: 'bug'
+title: "[BUG] "
+labels: bug
 assignees: ''
+
 ---
 
 ## 🐛 Bug Description
@@ -38,4 +39,4 @@ If you have any ideas on how to solve this bug, please describe them here.
 - [ ] Low - Nice to have fix
 - [ ] Medium - Affects some users
 - [ ] High - Affects many users
-- [ ] Critical - Breaks core functionality 
+- [ ] Critical - Breaks core functionality
