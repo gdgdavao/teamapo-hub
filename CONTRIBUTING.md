@@ -386,7 +386,7 @@ All contributors are recognized in our:
 ### Communication Channels
 - **GitHub Issues**: For bug reports and feature requests
 - **GitHub Discussions**: For questions and community discussions
-- **Discord/Slack**: Real-time chat with the community
+- **Discord**: Real-time chat with the community
 - **Email**: davao.gdg@gmail.com for sensitive matters
 
 ### Community Guidelines
