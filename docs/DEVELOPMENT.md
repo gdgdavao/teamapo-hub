@@ -496,7 +496,7 @@ Use React DevTools and Firebase Performance Monitoring for debugging performance
 ## 🤝 Getting Help
 
 - **GitHub Issues**: Report bugs and request features
-- **GDG Davao Community**: Join our Discord/Slack for discussions
+- **GDG Davao Community**: Join our Discord for discussions
 - **Email**: davao.gdg@gmail.com for critical issues
 
 ---
