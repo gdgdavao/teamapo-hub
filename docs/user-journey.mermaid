@@ -1,0 +1,48 @@
+graph TD
+    %% Styling for better readability
+    classDef screen fill:#e6f2ff,stroke:#b3d9ff,stroke-width:2px;
+    classDef action fill:#cce6ff,stroke:#99ccff;
+    classDef system fill:#f0f0f0,stroke:#ccc;
+    classDef decision fill:#fff0b3,stroke:#ffd966;
+
+    subgraph Attendee Journey
+        A[<b>Home Screen</b><br/><i>Views upcoming events, posts</i>]:::screen
+        A -- Clicks an Event --> B[<b>Event Details Screen</b><br/><i>Reads description, date, price</i>]:::screen
+        B -- Clicks 'Register' --> C[<b>Registration Form</b><br/><i>Fills in details</i>]:::screen
+        C -- Clicks 'Submit' --> D((System: Sends 'Pending' Email)):::system
+        
+        D --> E{Receives 'Confirmation' Email?}:::decision
+        E -- Yes, Approved --> F[<b>Email Inbox</b><br/><i>Opens confirmation email</i>]:::screen
+        F -- Is event paid? --> G{Event Requires Payment?}:::decision
+        G -- Yes --> H[Clicks 'Pay Now' Link];
+        H --> I[<b>PayMongo Page</b><br/><i>Scans QRPH to pay</i>]:::screen;
+        I -- Payment Successful --> J((System: Sends 'Ticket' Email)):::system;
+        G -- No / Free --> J;
+
+        J -- After Event --> K((System: Sends 'Feedback' Email)):::system
+        K --> L[<b>Feedback Form</b><br/><i>Fills out feedback questions</i>]:::screen
+        L -- Clicks 'Submit' --> M((System: Generates & Sends Certificate Email)):::system
+        M --> N[<b>Certificate Email</b><br/><i>Receives email with link</i>]:::screen
+        N -- Clicks 'Verify Certificate' --> O[<b>Certificate Verification Page</b><br/><i>Confirms certificate validity</i>]:::screen
+    end
+
+    subgraph Admin Journey
+        Admin_Login[<b>Login Screen</b>]:::screen
+        Admin_Login -- Logs In --> Admin_Dashboard[<b>Main Dashboard</b><br/><i>Overview of events, revenue, insights</i>]:::screen
+        
+        Admin_Dashboard -- Manages Events --> Event_Mgmt[<b>Events Management Screen</b><br/><i>List of all events</i>]:::screen
+        Event_Mgmt -- Clicks 'Create/Edit Event' --> Event_Form[<b>Event Editor Form</b><br/><i>Sets details, date, active status</i>]:::screen
+        
+        Admin_Dashboard -- Manages Attendees --> Attendee_List[<b>Attendee Review Screen</b><br/><i>Views list of registrants for an event</i>]:::screen
+        Attendee_List -- Clicks 'Approve' --> Approve_Action((System: Triggers Confirmation Email to User)):::system
+        
+        Admin_Dashboard -- Manages Content --> Social_Composer[<b>Social Post Composer</b><br/><i>Writes post, uploads media</i>]:::screen
+        Social_Composer -- Clicks 'Generate AI Caption' --> AI_Action((System: Calls Google AI for caption)):::system
+        AI_Action -- Returns Text --> Social_Composer
+        Social_Composer -- Clicks 'Publish' --> Social_API((System: Posts to FB, LI, IG via APIs)):::system
+        
+        Admin_Dashboard -- Manages Forms/Certs --> Builder_Interfaces[<b>Form & Certificate Builders</b><br/><i>Creates custom registration/feedback forms and cert templates</i>]:::screen
+    end
+    
+    %% Connect System Actions to User Experience
+    Approve_Action --> E; 
