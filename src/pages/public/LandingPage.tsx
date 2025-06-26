@@ -1,5 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
+import { getAdminUrl } from '../../utils/subdomain';
 import { 
   CalendarDaysIcon, 
   UserGroupIcon, 
@@ -65,11 +66,8 @@ const LandingPage: React.FC = () => {
               Streamline your tech events from registration to certification.
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center animate-bounce-in">
-              <Link to="/events" className="btn-secondary bg-white text-primary-600 hover:bg-gray-50">
+              <Link to="/events" className="btn-primary bg-accent-500 hover:bg-accent-600">
                 Browse Events
-              </Link>
-              <Link to="/signup" className="btn-primary bg-accent-500 hover:bg-accent-600">
-                Get Started
               </Link>
             </div>
           </div>
@@ -137,9 +135,6 @@ const LandingPage: React.FC = () => {
             memorable tech experiences with APOHUB.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Link to="/signup" className="btn-primary bg-primary-600 hover:bg-primary-700">
-              Create Account
-            </Link>
             <Link to="/events" className="btn-secondary text-white border-white hover:bg-white hover:text-gray-900">
               View Events
             </Link>

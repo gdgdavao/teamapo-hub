@@ -2,7 +2,9 @@ import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import Layout from './components/Layout/Layout';
+import AdminLayout from './components/AdminLayout';
 import LoadingSpinner from './components/UI/LoadingSpinner';
+import { isAdminSubdomain } from './utils/subdomain';
 
 // Public Pages
 import LandingPage from './pages/public/LandingPage';
@@ -26,6 +28,15 @@ import ManageEventsPage from './pages/organizer/ManageEventsPage';
 import EventAnalyticsPage from './pages/organizer/EventAnalyticsPage';
 import AttendeesPage from './pages/organizer/AttendeesPage';
 
+// Admin Pages
+import AdminDashboardPage from './pages/admin/AdminDashboardPage';
+import AdminEventsPage from './pages/admin/AdminEventsPage';
+import AdminAttendeesPage from './pages/admin/AdminAttendeesPage';
+import AdminAnalyticsPage from './pages/admin/AdminAnalyticsPage';
+import AdminCertificatesPage from './pages/admin/AdminCertificatesPage';
+import AdminFormsPage from './pages/admin/AdminFormsPage';
+import AdminSocialPage from './pages/admin/AdminSocialPage';
+
 // Utility Pages
 import PaymentPage from './pages/payment/PaymentPage';
 import PaymentSuccessPage from './pages/payment/PaymentSuccessPage';
@@ -45,7 +56,7 @@ const ProtectedRoute: React.FC<{
   }
 
   if (!currentUser) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/auth/login" replace />;
   }
 
   if (requiredRole && userProfile?.role !== requiredRole && userProfile?.role !== 'admin') {
@@ -77,6 +88,93 @@ const AppContent: React.FC = () => {
     return <LoadingSpinner />;
   }
 
+  // Check if we're on admin subdomain
+  const isAdmin = isAdminSubdomain();
+
+  if (isAdmin) {
+    // Admin subdomain routes
+    return (
+      <Routes>
+        {/* Admin Authentication Routes */}
+        <Route path="/login" element={
+          <PublicRoute>
+            <LoginPage />
+          </PublicRoute>
+        } />
+        <Route path="/auth/login" element={
+          <PublicRoute>
+            <LoginPage />
+          </PublicRoute>
+        } />
+
+        {/* Admin Protected Routes */}
+        <Route path="/" element={
+          <ProtectedRoute requiredRole="admin">
+            <AdminDashboardPage />
+          </ProtectedRoute>
+        } />
+        
+        <Route path="/dashboard" element={
+          <ProtectedRoute requiredRole="admin">
+            <AdminDashboardPage />
+          </ProtectedRoute>
+        } />
+
+        <Route path="/events" element={
+          <ProtectedRoute requiredRole="admin">
+            <AdminLayout>
+              <AdminEventsPage />
+            </AdminLayout>
+          </ProtectedRoute>
+        } />
+
+        <Route path="/attendees" element={
+          <ProtectedRoute requiredRole="admin">
+            <AdminLayout>
+              <AdminAttendeesPage />
+            </AdminLayout>
+          </ProtectedRoute>
+        } />
+
+        <Route path="/analytics" element={
+          <ProtectedRoute requiredRole="admin">
+            <AdminLayout>
+              <AdminAnalyticsPage />
+            </AdminLayout>
+          </ProtectedRoute>
+        } />
+
+        <Route path="/certificates" element={
+          <ProtectedRoute requiredRole="admin">
+            <AdminLayout>
+              <AdminCertificatesPage />
+            </AdminLayout>
+          </ProtectedRoute>
+        } />
+
+        <Route path="/forms" element={
+          <ProtectedRoute requiredRole="admin">
+            <AdminLayout>
+              <AdminFormsPage />
+            </AdminLayout>
+          </ProtectedRoute>
+        } />
+
+        <Route path="/social" element={
+          <ProtectedRoute requiredRole="admin">
+            <AdminLayout>
+              <AdminSocialPage />
+            </AdminLayout>
+          </ProtectedRoute>
+        } />
+
+        {/* 404 Route for admin */}
+        <Route path="*" element={<NotFoundPage />} />
+      </Routes>
+    );
+  }
+
+  // Main domain routes
   return (
     <Routes>
       {/* Public Routes */}
@@ -89,17 +187,17 @@ const AppContent: React.FC = () => {
       </Route>
 
       {/* Authentication Routes */}
-      <Route path="/login" element={
+      <Route path="/auth/login" element={
         <PublicRoute>
           <LoginPage />
         </PublicRoute>
       } />
-      <Route path="/signup" element={
+      <Route path="/auth/signup" element={
         <PublicRoute>
           <SignUpPage />
         </PublicRoute>
       } />
-      <Route path="/forgot-password" element={
+      <Route path="/auth/forgot-password" element={
         <PublicRoute>
           <ForgotPasswordPage />
         </PublicRoute>
@@ -132,7 +230,7 @@ const AppContent: React.FC = () => {
         </ProtectedRoute>
       }>
         <Route index element={<OrganizerDashboardPage />} />
-        <Route path="events/create" element={<CreateEventPage />} />
+        <Route path="create" element={<CreateEventPage />} />
         <Route path="events" element={<ManageEventsPage />} />
         <Route path="events/:eventId/analytics" element={<EventAnalyticsPage />} />
         <Route path="events/:eventId/attendees" element={<AttendeesPage />} />
@@ -157,6 +255,10 @@ const AppContent: React.FC = () => {
         </ProtectedRoute>
       } />
 
+      {/* Backward compatibility for old login routes */}
+      <Route path="/login" element={<Navigate to="/auth/login" replace />} />
+      <Route path="/signup" element={<Navigate to="/auth/signup" replace />} />
+
       {/* 404 Route */}
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
@@ -173,4 +275,4 @@ const App: React.FC = () => {
   );
 };
 
-export default App; 
+export default App;

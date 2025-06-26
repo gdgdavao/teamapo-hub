@@ -5,8 +5,8 @@ import { Toaster } from 'react-hot-toast';
 import App from './App.tsx';
 import './index.css';
 
-// Initialize Firebase
-import './config/firebase';
+// Initialize Firebase - commented out for now
+// import './config/firebase';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

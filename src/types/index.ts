@@ -1,4 +1,22 @@
-import { Timestamp } from 'firebase/firestore';
+// TODO: Uncomment when Firebase is ready
+// import { Timestamp } from 'firebase/firestore';
+
+// Mock Timestamp for development without Firebase
+interface MockTimestamp {
+  seconds: number;
+  nanoseconds: number;
+  toDate(): Date;
+}
+
+// Create a mock timestamp that behaves like Firebase Timestamp
+const createMockTimestamp = (date: Date = new Date()): MockTimestamp => ({
+  seconds: Math.floor(date.getTime() / 1000),
+  nanoseconds: (date.getTime() % 1000) * 1000000,
+  toDate: () => date,
+});
+
+// Use MockTimestamp instead of Firebase Timestamp for now
+type Timestamp = MockTimestamp;
 
 // User Types
 export interface User {
