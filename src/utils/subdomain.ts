@@ -2,6 +2,9 @@
  * Utility functions for handling subdomain-based routing
  */
 
+// Configuration flag to enable/disable admin subdomain functionality
+const ADMIN_SUBDOMAIN_ENABLED = false; // Set to true to enable admin subdomain
+
 export const getSubdomain = (): string | null => {
   const host = window.location.hostname;
   const parts = host.split('.');
@@ -38,6 +41,9 @@ export const getSubdomain = (): string | null => {
 };
 
 export const isAdminSubdomain = (): boolean => {
+  if (!ADMIN_SUBDOMAIN_ENABLED) {
+    return false;
+  }
   const subdomain = getSubdomain();
   return subdomain === 'admin';
 };
@@ -48,6 +54,11 @@ export const isMainDomain = (): boolean => {
 };
 
 export const getAdminUrl = (path: string = ''): string => {
+  if (!ADMIN_SUBDOMAIN_ENABLED) {
+    // When admin subdomain is disabled, return main domain URL
+    return getMainUrl(path);
+  }
+  
   const protocol = window.location.protocol;
   const host = window.location.hostname;
   const port = window.location.port;
