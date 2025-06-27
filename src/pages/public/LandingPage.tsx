@@ -1,28 +1,45 @@
 import React from 'react';
 import { FaFacebook, FaInstagram, FaLinkedin, FaGithub } from 'react-icons/fa';
+import SEOComponent from '../../components/SEO';
 
 const LandingPage: React.FC = () => {
   return (
-    <div className="min-h-screen bg-white flex items-center justify-center">
-      <div className="text-center px-4 sm:px-6 lg:px-8">
-        {/* GDG Davao Logo */}
-        <div className="mb-12">
-          <div className="inline-flex items-center justify-center">
-            <img 
-              src="/src/assets/gdgdvo.svg" 
-              alt="GDG Davao" 
-              className="h-32 w-auto"
-            />
+    <>
+      <SEOComponent
+        title="GDG Davao | Google Developer Groups - Davao"
+        description="Join GDG Davao, the premier Google Developer Groups community in Davao City. Connect with fellow developers, attend tech events, and grow your skills in Google technologies."
+        keywords="GDG Davao, Google Developer Groups, Davao developers, tech events, programming, software development, Google technologies, developer community, tech meetups, coming soon"
+        canonical="https://gdgdavao.org/"
+      />
+      
+      <div className="min-h-screen bg-white flex items-center justify-center">
+        <div className="text-center px-4 sm:px-6 lg:px-8">
+          {/* GDG Davao Logo */}
+          <div className="mb-12">
+            <div className="inline-flex items-center justify-center">
+              <img 
+                src="/gdgdvo.svg" 
+                alt="GDG Davao Logo - Google Developer Groups Davao" 
+                className="h-32 w-auto"
+                loading="eager"
+                fetchPriority="high"
+              />
+            </div>
           </div>
-        </div>
 
-        {/* Coming Soon Text */}
-        <h1 className="text-5xl md:text-7xl font-bold text-gray-900 mb-8">
-          Coming Soon
-        </h1>
+          {/* Coming Soon Text */}
+          <h1 className="text-5xl md:text-7xl font-bold text-gray-900 mb-8">
+            Coming Soon
+          </h1>
+          
+          {/* Subtitle */}
+          <p className="text-xl md:text-2xl text-gray-600 mb-12 max-w-2xl mx-auto">
+            We're building something amazing.
+            Stay connected with us for updates!
+          </p>
 
-        {/* Social Media Links */}
-        <div className="flex justify-center space-x-6">
+          {/* Social Media Links */}
+          <div className="flex justify-center space-x-6">
           <a 
             href="https://www.facebook.com/gdgdavao" 
             target="_blank" 
@@ -65,6 +82,7 @@ const LandingPage: React.FC = () => {
         </div>
       </div>
     </div>
+    </>
   );
 };
 
