@@ -1,6 +1,7 @@
 import React, { ReactNode } from 'react';
 import { ChevronRightIcon, HomeIcon } from '@heroicons/react/24/outline';
 import { Link, useLocation } from 'react-router-dom';
+import AdminNavbar from './AdminNavbar';
 
 interface BreadcrumbItem {
   name: string;
@@ -30,11 +31,11 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({
     
     const pathSegments = location.pathname.split('/').filter(Boolean);
     const crumbs: BreadcrumbItem[] = [
-      { name: 'Dashboard', href: '/admin' }
+      { name: 'Dashboard', href: '/dashboard' }
     ];
 
-    if (pathSegments.length > 1) {
-      const pageName = pathSegments[1];
+    if (pathSegments.length > 0 && pathSegments[0] !== 'dashboard') {
+      const pageName = pathSegments[0];
       const pageNameFormatted = pageName.charAt(0).toUpperCase() + pageName.slice(1);
       crumbs.push({ name: pageNameFormatted });
     }
@@ -49,8 +50,8 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({
     if (title) return title;
     
     const pathSegments = location.pathname.split('/').filter(Boolean);
-    if (pathSegments.length > 1) {
-      const pageName = pathSegments[1];
+    if (pathSegments.length > 0 && pathSegments[0] !== 'dashboard') {
+      const pageName = pathSegments[0];
       return pageName.charAt(0).toUpperCase() + pageName.slice(1);
     }
     
@@ -61,31 +62,34 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* Admin Navigation */}
+      <AdminNavbar />
+      
       {/* Main Content Area */}
       <div className="">
         {/* Page Header - Streamlined */}
-        <div className="bg-white border-b border-gray-200 px-4 sm:px-6 lg:px-8 py-6">
+        <div className="bg-white border-b border-gray-200 px-3 sm:px-4 lg:px-6 xl:px-8 py-4 sm:py-6">
           {/* Breadcrumbs - Simplified */}
           {currentBreadcrumbs.length > 1 && (
-            <nav className="flex mb-4" aria-label="Breadcrumb">
-              <ol className="flex items-center space-x-2">
+            <nav className="flex mb-3 sm:mb-4" aria-label="Breadcrumb">
+              <ol className="flex items-center space-x-1 sm:space-x-2">
                 {currentBreadcrumbs.map((crumb, index) => (
                   <li key={index} className="flex items-center">
                     {index > 0 && (
-                      <ChevronRightIcon className="flex-shrink-0 h-4 w-4 text-gray-400 mx-2" />
+                      <ChevronRightIcon className="flex-shrink-0 h-3 w-3 sm:h-4 sm:w-4 text-gray-400 mx-1 sm:mx-2" />
                     )}
                     {index === 0 && (
-                      <HomeIcon className="flex-shrink-0 h-4 w-4 text-gray-400 mr-2" />
+                      <HomeIcon className="flex-shrink-0 h-3 w-3 sm:h-4 sm:w-4 text-gray-400 mr-1 sm:mr-2" />
                     )}
                     {crumb.href ? (
                       <Link
                         to={crumb.href}
-                        className="text-sm font-medium text-gray-500 hover:text-gray-700 transition-colors"
+                        className="text-xs sm:text-sm font-medium text-gray-500 hover:text-gray-700 transition-colors"
                       >
                         {crumb.name}
                       </Link>
                     ) : (
-                      <span className="text-sm font-medium text-gray-900">
+                      <span className="text-xs sm:text-sm font-medium text-gray-900">
                         {crumb.name}
                       </span>
                     )}
@@ -96,19 +100,19 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({
           )}
 
           {/* Page Title and Actions - Improved */}
-          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
             <div className="min-w-0 flex-1">
-              <h1 className="text-2xl font-bold text-gray-900 sm:text-3xl">
+              <h1 className="text-xl font-bold text-gray-900 sm:text-2xl lg:text-3xl">
                 {currentTitle}
               </h1>
               {subtitle && (
-                <p className="mt-2 text-sm text-gray-600 max-w-2xl">
+                <p className="mt-1 sm:mt-2 text-sm text-gray-600 max-w-2xl">
                   {subtitle}
                 </p>
               )}
             </div>
             {actions && (
-              <div className="mt-4 sm:mt-0 sm:ml-6 flex-shrink-0">
+              <div className="flex-shrink-0">
                 {actions}
               </div>
             )}
@@ -116,14 +120,9 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({
         </div>
 
         {/* Page Content */}
-        <main className="p-4 sm:p-6 lg:p-8">
+        <main className="p-3 sm:p-4 lg:p-6 xl:p-8">
           {children}
         </main>
-      </div>
-
-      {/* Mobile Navigation Overlay (for future mobile menu) */}
-      <div className="lg:hidden">
-        {/* Mobile menu button and overlay would go here */}
       </div>
     </div>
   );

@@ -17,10 +17,11 @@ import {
   ArrowTrendingUpIcon,
   ArrowTrendingDownIcon,
   SparklesIcon,
-  ExclamationTriangleIcon
+  ExclamationTriangleIcon,
+  CurrencyDollarIcon
 } from '@heroicons/react/24/outline';
 import { Link } from 'react-router-dom';
-import AdminNavbar from '../../components/AdminNavbar';
+import AdminLayout from '../../components/AdminLayout';
 
 const AdminDashboardPage: React.FC = () => {
   const [stats, setStats] = useState({
@@ -120,7 +121,7 @@ const AdminDashboardPage: React.FC = () => {
       title: 'Create Event',
       description: 'Set up a new event with speakers and agenda',
       icon: CalendarDaysIcon,
-      href: '/admin/events/create',
+      href: '/events/create',
       color: 'from-blue-500 to-blue-600',
       iconBg: 'bg-blue-500'
     },
@@ -128,7 +129,7 @@ const AdminDashboardPage: React.FC = () => {
       title: 'Review Attendees',
       description: 'Approve or reject pending registrations',
       icon: UserGroupIcon,
-      href: '/admin/attendees',
+      href: '/attendees',
       color: 'from-orange-500 to-orange-600',
       iconBg: 'bg-orange-500',
       badge: stats.pendingApprovals,
@@ -138,7 +139,7 @@ const AdminDashboardPage: React.FC = () => {
       title: 'Social Media',
       description: 'Create posts with AI-generated captions',
       icon: ShareIcon,
-      href: '/admin/social',
+      href: '/social',
       color: 'from-pink-500 to-pink-600',
       iconBg: 'bg-pink-500'
     },
@@ -146,7 +147,7 @@ const AdminDashboardPage: React.FC = () => {
       title: 'Form Builder',
       description: 'Create custom registration and feedback forms',
       icon: DocumentTextIcon,
-      href: '/admin/forms',
+      href: '/forms',
       color: 'from-green-500 to-green-600',
       iconBg: 'bg-green-500'
     },
@@ -154,7 +155,7 @@ const AdminDashboardPage: React.FC = () => {
       title: 'Certificate Templates',
       description: 'Design and manage certificate templates',
       icon: AcademicCapIcon,
-      href: '/admin/certificates',
+      href: '/certificates',
       color: 'from-purple-500 to-purple-600',
       iconBg: 'bg-purple-500'
     },
@@ -162,7 +163,7 @@ const AdminDashboardPage: React.FC = () => {
       title: 'Analytics & Insights',
       description: 'View detailed analytics with AI insights',
       icon: ChartBarIcon,
-      href: '/admin/analytics',
+      href: '/analytics',
       color: 'from-indigo-500 to-indigo-600',
       iconBg: 'bg-indigo-500'
     }
@@ -201,45 +202,35 @@ const AdminDashboardPage: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50">
-        <AdminNavbar />
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <div className="animate-pulse">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-              {[...Array(4)].map((_, i) => (
-                <div key={i} className="h-32 bg-gray-200 rounded-lg"></div>
-              ))}
-            </div>
+      <AdminLayout title="Dashboard" subtitle="Loading your dashboard...">
+        <div className="animate-pulse">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            {[...Array(4)].map((_, i) => (
+              <div key={i} className="h-32 bg-gray-200 rounded-lg"></div>
+            ))}
           </div>
         </div>
-      </div>
+      </AdminLayout>
     );
   }
 
-  return (
-    <div className="min-h-screen bg-gray-50">
-      <AdminNavbar />
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Page Header */}
-        <div className="mb-8">
-          <div className="flex justify-between items-start">
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900">Welcome back! 👋</h1>
-              <p className="mt-2 text-gray-600">Here's your event management overview.</p>
-            </div>
-            <div className="flex space-x-3">
-              <Link
-                to="/admin/events/create"
-                className="inline-flex items-center px-4 py-2.5 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-xl hover:from-blue-600 hover:to-blue-700 transition-all duration-200 shadow-lg hover:shadow-xl font-medium"
-              >
-                <PlusIcon className="w-5 h-5 mr-2" />
-                Create Event
-              </Link>
-            </div>
-          </div>
-        </div>
+  const headerActions = (
+    <Link
+      to="/events/create"
+      className="inline-flex items-center px-4 py-2.5 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-xl hover:from-blue-600 hover:to-blue-700 transition-all duration-200 shadow-lg hover:shadow-xl font-medium"
+    >
+      <PlusIcon className="w-5 h-5 mr-2" />
+      Create Event
+    </Link>
+  );
 
-        <div className="space-y-6">
+  return (
+    <AdminLayout 
+      title="Welcome back! 👋" 
+      subtitle="Here's your event management overview."
+      actions={headerActions}
+    >
+      <div className="space-y-6">
         {/* Priority Actions Section */}
         {stats.pendingApprovals > 0 && (
           <div className="bg-gradient-to-r from-orange-50 to-red-50 border border-orange-200 rounded-xl p-6">
@@ -256,7 +247,7 @@ const AdminDashboardPage: React.FC = () => {
                 </p>
                 <div className="flex space-x-3">
                   <Link
-                    to="/admin/attendees"
+                    to="/attendees"
                     className="inline-flex items-center px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors font-medium"
                   >
                     Review Now
@@ -329,7 +320,7 @@ const AdminDashboardPage: React.FC = () => {
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-xl font-semibold text-gray-900">Quick Actions</h2>
             <Link 
-              to="/admin/analytics" 
+              to="/analytics" 
               className="inline-flex items-center text-sm text-blue-600 hover:text-blue-700 font-medium"
             >
               <ChartBarIcon className="w-4 h-4 mr-1" />
@@ -338,7 +329,7 @@ const AdminDashboardPage: React.FC = () => {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <Link
-              to="/admin/events/create"
+              to="/events/create"
               className="group bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-xl p-6 hover:from-blue-600 hover:to-blue-700 transition-all duration-200 shadow-lg hover:shadow-xl"
             >
               <div className="flex items-center space-x-3">
@@ -353,7 +344,7 @@ const AdminDashboardPage: React.FC = () => {
             </Link>
 
             <Link
-              to="/admin/attendees"
+              to="/attendees"
               className="group bg-gradient-to-br from-orange-500 to-orange-600 text-white rounded-xl p-6 hover:from-orange-600 hover:to-orange-700 transition-all duration-200 shadow-lg hover:shadow-xl relative"
             >
               <div className="flex items-center space-x-3">
@@ -371,7 +362,23 @@ const AdminDashboardPage: React.FC = () => {
             </Link>
 
             <Link
-              to="/admin/social"
+              to="/admin/payment-verification"
+              className="group bg-gradient-to-br from-green-500 to-green-600 text-white rounded-xl p-6 hover:from-green-600 hover:to-green-700 transition-all duration-200 shadow-lg hover:shadow-xl relative"
+            >
+              <div className="flex items-center space-x-3">
+                <div className="p-2 bg-white/20 rounded-lg">
+                  <CurrencyDollarIcon className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="font-semibold">Payment Verification</h3>
+                  <p className="text-green-100 text-sm">5 pending payments</p>
+                </div>
+              </div>
+              <div className="absolute top-2 right-2 w-3 h-3 bg-yellow-400 rounded-full animate-pulse"></div>
+            </Link>
+
+            <Link
+              to="/social"
               className="group bg-gradient-to-br from-pink-500 to-pink-600 text-white rounded-xl p-6 hover:from-pink-600 hover:to-pink-700 transition-all duration-200 shadow-lg hover:shadow-xl"
             >
               <div className="flex items-center space-x-3">
@@ -387,7 +394,7 @@ const AdminDashboardPage: React.FC = () => {
             </Link>
 
             <Link
-              to="/admin/certificates"
+              to="/certificates"
               className="group bg-gradient-to-br from-purple-500 to-purple-600 text-white rounded-xl p-6 hover:from-purple-600 hover:to-purple-700 transition-all duration-200 shadow-lg hover:shadow-xl"
             >
               <div className="flex items-center space-x-3">
@@ -411,7 +418,7 @@ const AdminDashboardPage: React.FC = () => {
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-semibold text-gray-900">Recent Events</h3>
                 <Link
-                  to="/admin/events"
+                  to="/events"
                   className="text-sm text-blue-600 hover:text-blue-700 font-medium"
                 >
                   View all →
@@ -443,7 +450,7 @@ const AdminDashboardPage: React.FC = () => {
                       {event.status}
                     </span>
                     <Link 
-                      to={`/admin/events/${event.id}`}
+                      to={`/events/${event.id}`}
                       className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-white transition-colors"
                     >
                       <EyeIcon className="w-4 h-4" />
@@ -467,7 +474,7 @@ const AdminDashboardPage: React.FC = () => {
                   )}
                 </div>
                 <Link
-                  to="/admin/attendees"
+                  to="/attendees"
                   className="text-sm text-blue-600 hover:text-blue-700 font-medium"
                 >
                   Review all →
@@ -512,7 +519,7 @@ const AdminDashboardPage: React.FC = () => {
               {pendingApprovals.length > 3 && (
                 <div className="text-center pt-2">
                   <Link
-                    to="/admin/attendees"
+                    to="/attendees"
                     className="text-sm text-gray-500 hover:text-gray-700"
                   >
                     +{pendingApprovals.length - 3} more pending
@@ -522,9 +529,8 @@ const AdminDashboardPage: React.FC = () => {
             </div>
           </div>
         </div>
-        </div>
       </div>
-    </div>
+    </AdminLayout>
   );
 };
 

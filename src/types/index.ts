@@ -226,14 +226,69 @@ export interface Certificate {
   eventDate: string;
   completionDate: Timestamp;
   certificateUrl: string; // Cloud Storage URL
+  verificationUrl: string; // URL for QR code verification
   isVerified: boolean;
-  template: 'standard' | 'premium' | 'workshop' | 'speaker';
+  templateId: string;
   metadata: {
     eventDuration?: string;
     skills?: string[];
     topics?: string[];
   };
   issuedAt: Timestamp;
+  downloadCount: number;
+  verificationCount: number;
+}
+
+export interface CertificateTemplate {
+  id: string;
+  name: string;
+  description: string;
+  eventId?: string; // If linked to specific event
+  templateImageUrl: string; // PNG template file URL
+  textPositions: {
+    recipientName: {
+      x: number; // Percentage from left
+      y: number; // Percentage from top
+      fontSize: number;
+      fontFamily: string;
+      color: string;
+      align: 'left' | 'center' | 'right';
+    };
+    verificationCode: {
+      x: number;
+      y: number;
+      fontSize: number;
+      fontFamily: string;
+      color: string;
+      align: 'left' | 'center' | 'right';
+    };
+    qrCode: {
+      x: number;
+      y: number;
+      size: number; // Size in pixels
+    };
+    eventTitle?: {
+      x: number;
+      y: number;
+      fontSize: number;
+      fontFamily: string;
+      color: string;
+      align: 'left' | 'center' | 'right';
+    };
+    eventDate?: {
+      x: number;
+      y: number;
+      fontSize: number;
+      fontFamily: string;
+      color: string;
+      align: 'left' | 'center' | 'right';
+    };
+  };
+  isActive: boolean;
+  createdBy: string;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+  usageCount: number;
 }
 
 // Notification Types
@@ -377,4 +432,105 @@ export interface RegistrationFormData {
   quantity: number;
   agreeToTerms: boolean;
   subscribeToUpdates: boolean;
-} 
+}
+
+// Form Builder Types
+export interface FormField {
+  id: string;
+  type: 'text' | 'email' | 'phone' | 'select' | 'multiselect' | 'textarea' | 'checkbox' | 'radio' | 'rating' | 'file' | 'date' | 'number';
+  label: string;
+  placeholder?: string;
+  required: boolean;
+  options?: string[];
+  validation?: {
+    minLength?: number;
+    maxLength?: number;
+    pattern?: string;
+    min?: number;
+    max?: number;
+  };
+  description?: string;
+  gridSize?: 'full' | 'half';
+}
+
+export interface CustomForm {
+  id: string;
+  name: string;
+  type: 'registration' | 'feedback';
+  description: string;
+  fields: FormField[];
+  isActive: boolean;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+  usageCount: number;
+  eventId?: string;
+  eventTitle?: string;
+}
+
+export interface PaymentConfig {
+  qrCodeImage?: File;
+  qrCodeUrl?: string;
+  bankDetails: {
+    bankName: string;
+    accountName: string;
+    accountNumber: string;
+    swiftCode?: string;
+  };
+  instructions: string;
+  requiresProof: boolean;
+  requiresTransactionId: boolean;
+}
+
+// Enhanced Event Form Data interface
+export interface EventFormData {
+  // Basic Info
+  title: string;
+  description: string;
+  shortDescription: string;
+  imageUrl?: string;
+  
+  // Date & Time
+  startDateString: string;
+  startTime: string;
+  endDateString: string;
+  endTime: string;
+  timezone: string;
+  
+  // Venue
+  venueType: 'online' | 'offline' | 'hybrid';
+  venueName?: string;
+  venueAddress?: string;
+  city: string;
+  
+  // Pricing
+  isPaid: boolean;
+  ticketPrice: number;
+  currency: string;
+  maxAttendees?: number;
+  
+  // Forms
+  registrationForm: FormField[];
+  feedbackForm: FormField[];
+  
+  // Payment (for paid events)
+  paymentConfig?: PaymentConfig;
+  
+  // Settings
+  categoryString: EventCategory;
+  tags: string[];
+  eventRequirements: string[];
+  registrationDeadlineString?: string;
+}
+
+// Payment Proof interface for registration
+export interface PaymentProof {
+  id: string;
+  registrationId: string;
+  proofImageUrl?: string;
+  transactionId?: string;
+  submittedAt: Timestamp;
+  verificationStatus: 'pending' | 'approved' | 'rejected';
+  verifiedAt?: Timestamp;
+  verifiedBy?: string;
+  notes?: string;
+}

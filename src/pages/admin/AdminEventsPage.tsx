@@ -182,50 +182,46 @@ const AdminEventsPage: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <AdminLayout title="Events Management" subtitle="Create, edit, and manage all events for GDG Davao">
         <div className="flex items-center justify-center h-64">
           <div className="loading-spinner h-8 w-8"></div>
         </div>
-      </div>
+      </AdminLayout>
     );
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Events Management</h1>
-          <p className="text-gray-600 mt-2">
-            Create, edit, and manage all events for GDG Davao
-          </p>
-        </div>
+    <AdminLayout 
+      title="Events Management" 
+      subtitle="Create, edit, and manage all events for GDG Davao"
+      actions={
         <Link
-          to="/admin/events/create"
-          className="btn-primary flex items-center space-x-2"
+          to="/events/create"
+          className="btn-primary flex items-center justify-center space-x-2 text-sm px-4 py-2 sm:px-6 sm:py-3"
         >
-          <PlusIcon className="h-5 w-5" />
-          <span>Create Event</span>
+          <PlusIcon className="h-4 w-4 sm:h-5 sm:w-5" />
+          <span className="hidden sm:inline">Create Event</span>
+          <span className="sm:hidden">Create</span>
         </Link>
-      </div>
-
+      }
+    >
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
         <div className="dashboard-card">
           <div className="flex items-center">
-            <CalendarDaysIcon className="h-8 w-8 text-primary-600" />
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Total Events</p>
-              <p className="text-2xl font-bold text-gray-900">{events.length}</p>
+            <CalendarDaysIcon className="h-6 w-6 sm:h-8 sm:w-8 text-primary-600" />
+            <div className="ml-3 sm:ml-4">
+              <p className="text-xs sm:text-sm font-medium text-gray-600">Total Events</p>
+              <p className="text-xl sm:text-2xl font-bold text-gray-900">{events.length}</p>
             </div>
           </div>
         </div>
         <div className="dashboard-card">
           <div className="flex items-center">
-            <UsersIcon className="h-8 w-8 text-success-600" />
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Total Attendees</p>
-              <p className="text-2xl font-bold text-gray-900">
+            <UsersIcon className="h-6 w-6 sm:h-8 sm:w-8 text-success-600" />
+            <div className="ml-3 sm:ml-4">
+              <p className="text-xs sm:text-sm font-medium text-gray-600">Total Attendees</p>
+              <p className="text-xl sm:text-2xl font-bold text-gray-900">
                 {events.reduce((sum, e) => sum + e.currentAttendees, 0)}
               </p>
             </div>
@@ -233,10 +229,10 @@ const AdminEventsPage: React.FC = () => {
         </div>
         <div className="dashboard-card">
           <div className="flex items-center">
-            <ChartBarIcon className="h-8 w-8 text-secondary-600" />
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Avg. Attendance</p>
-              <p className="text-2xl font-bold text-gray-900">
+            <ChartBarIcon className="h-6 w-6 sm:h-8 sm:w-8 text-secondary-600" />
+            <div className="ml-3 sm:ml-4">
+              <p className="text-xs sm:text-sm font-medium text-gray-600">Avg. Attendance</p>
+              <p className="text-xl sm:text-2xl font-bold text-gray-900">
                 {Math.round(events.reduce((sum, e) => sum + e.currentAttendees, 0) / events.length)}
               </p>
             </div>
@@ -245,23 +241,23 @@ const AdminEventsPage: React.FC = () => {
       </div>
 
       {/* Filters and Search */}
-      <div className="dashboard-card mb-8">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between space-y-4 md:space-y-0">
-          <div className="flex items-center space-x-4">
-            <div className="relative">
+      <div className="dashboard-card mb-6 sm:mb-8">
+        <div className="flex flex-col space-y-4 sm:space-y-0 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center space-y-3 sm:space-y-0 sm:space-x-4">
+            <div className="relative flex-1 sm:flex-none">
               <MagnifyingGlassIcon className="h-5 w-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
               <input
                 type="text"
                 placeholder="Search events..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                className="w-full sm:w-64 pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent text-sm"
               />
             </div>
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+              className="w-full sm:w-auto px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent text-sm"
             >
               <option value="all">All Status</option>
               <option value="draft">Draft</option>
@@ -274,7 +270,7 @@ const AdminEventsPage: React.FC = () => {
           <select
             value={sortBy}
             onChange={(e) => setSortBy(e.target.value)}
-            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+            className="w-full sm:w-auto px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent text-sm"
           >
             <option value="startDate">Sort by Date</option>
             <option value="title">Sort by Title</option>
@@ -284,133 +280,237 @@ const AdminEventsPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Events Table */}
-      <div className="dashboard-card">
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Event
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Date & Venue
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Attendees
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Status
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {sortedEvents.map((event) => (
-                <tr key={event.id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div>
-                      <div className="text-sm font-medium text-gray-900">{event.title}</div>
-                      <div className="text-sm text-gray-500 truncate max-w-xs">
-                        {event.description}
+      {/* Events Display */}
+      <div className="dashboard-card overflow-hidden">
+        {/* Desktop Table View */}
+        <div className="hidden lg:block">
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Event
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Date & Venue
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Attendees
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Status
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {sortedEvents.map((event) => (
+                  <tr key={event.id} className="hover:bg-gray-50">
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div>
+                        <div className="text-sm font-medium text-gray-900">{event.title}</div>
+                        <div className="text-sm text-gray-500 truncate max-w-xs">
+                          {event.description}
+                        </div>
                       </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">{formatDate(event.startDate)}</div>
-                    <div className="text-sm text-gray-500">
-                      {event.venue.type === 'online' ? 'Online' : event.venue.name}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm text-gray-900">{formatDate(event.startDate)}</div>
+                      <div className="text-sm text-gray-500">
+                        {event.venue.type === 'online' ? 'Online' : event.venue.name}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm text-gray-900">
+                        {event.currentAttendees}
+                        {event.maxAttendees && ` / ${event.maxAttendees}`}
+                      </div>
+                      <div className="w-full bg-gray-200 rounded-full h-2 mt-1">
+                        <div 
+                          className="bg-primary-600 h-2 rounded-full" 
+                          style={{ 
+                            width: event.maxAttendees 
+                              ? `${(event.currentAttendees / event.maxAttendees) * 100}%` 
+                              : '0%' 
+                          }}
+                        ></div>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="flex items-center space-x-2">
+                        {getStatusIcon(event.status)}
+                        <select
+                          value={event.status}
+                          onChange={(e) => handleStatusChange(event.id, e.target.value)}
+                          className={`text-xs font-medium rounded-full px-2 py-1 border-0 ${getStatusColor(event.status)}`}
+                        >
+                          <option value="draft">Draft</option>
+                          <option value="published">Published</option>
+                          <option value="ongoing">Ongoing</option>
+                          <option value="completed">Completed</option>
+                          <option value="cancelled">Cancelled</option>
+                        </select>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                      <div className="flex items-center space-x-2">
+                        <Link
+                          to={`/events/${event.id}`}
+                          className="text-primary-600 hover:text-primary-900"
+                          title="View Details"
+                        >
+                          <EyeIcon className="h-4 w-4" />
+                        </Link>
+                        <Link
+                          to={`/events/${event.id}/edit`}
+                          className="text-accent-600 hover:text-accent-900"
+                          title="Edit Event"
+                        >
+                          <PencilIcon className="h-4 w-4" />
+                        </Link>
+                        <button
+                          onClick={() => handleDeleteEvent(event.id)}
+                          className="text-secondary-600 hover:text-secondary-900"
+                          title="Delete Event"
+                        >
+                          <TrashIcon className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Mobile Card View */}
+        <div className="lg:hidden space-y-3 p-1">
+          {sortedEvents.map((event) => (
+            <div key={event.id} className="bg-gray-50 rounded-lg p-4 border border-gray-200 shadow-sm">
+              {/* Event Header */}
+              <div className="flex items-start justify-between mb-3">
+                <div className="flex-1 min-w-0 pr-3">
+                  <h3 className="text-sm font-semibold text-gray-900 truncate">
+                    {event.title}
+                  </h3>
+                  <p className="text-xs text-gray-600 mt-1 line-clamp-2">
+                    {event.description}
+                  </p>
+                </div>
+                <div className="flex items-center space-x-1 flex-shrink-0">
+                  {getStatusIcon(event.status)}
+                </div>
+              </div>
+
+              {/* Event Details */}
+              <div className="space-y-2">
+                {/* Date and Venue */}
+                <div className="flex items-center text-xs text-gray-600">
+                  <CalendarDaysIcon className="h-4 w-4 mr-2 flex-shrink-0" />
+                  <span>{formatDate(event.startDate)}</span>
+                </div>
+                <div className="flex items-center text-xs text-gray-600">
+                  <span className="w-4 h-4 mr-2 flex-shrink-0"></span>
+                  <span>{event.venue.type === 'online' ? 'Online' : event.venue.name}</span>
+                </div>
+
+                {/* Attendees */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center text-xs text-gray-600">
+                    <UsersIcon className="h-4 w-4 mr-2 flex-shrink-0" />
+                    <span>
                       {event.currentAttendees}
-                      {event.maxAttendees && ` / ${event.maxAttendees}`}
-                    </div>
-                    <div className="w-full bg-gray-200 rounded-full h-2 mt-1">
+                      {event.maxAttendees && ` / ${event.maxAttendees}`} attendees
+                    </span>
+                  </div>
+                  <div className="flex-1 max-w-24 ml-3">
+                    <div className="w-full bg-gray-200 rounded-full h-1.5">
                       <div 
-                        className="bg-primary-600 h-2 rounded-full" 
+                        className="bg-primary-600 h-1.5 rounded-full" 
                         style={{ 
                           width: event.maxAttendees 
-                            ? `${(event.currentAttendees / event.maxAttendees) * 100}%` 
+                            ? `${Math.min((event.currentAttendees / event.maxAttendees) * 100, 100)}%` 
                             : '0%' 
                         }}
                       ></div>
                     </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center space-x-2">
-                      {getStatusIcon(event.status)}
-                      <select
-                        value={event.status}
-                        onChange={(e) => handleStatusChange(event.id, e.target.value)}
-                        className={`text-xs font-medium rounded-full px-2 py-1 border-0 ${getStatusColor(event.status)}`}
-                      >
-                        <option value="draft">Draft</option>
-                        <option value="published">Published</option>
-                        <option value="ongoing">Ongoing</option>
-                        <option value="completed">Completed</option>
-                        <option value="cancelled">Cancelled</option>
-                      </select>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                    <div className="flex items-center space-x-2">
-                      <Link
-                        to={`/admin/events/${event.id}`}
-                        className="text-primary-600 hover:text-primary-900"
-                        title="View Details"
-                      >
-                        <EyeIcon className="h-4 w-4" />
-                      </Link>
-                      <Link
-                        to={`/admin/events/${event.id}/edit`}
-                        className="text-accent-600 hover:text-accent-900"
-                        title="Edit Event"
-                      >
-                        <PencilIcon className="h-4 w-4" />
-                      </Link>
-                      <button
-                        onClick={() => handleDeleteEvent(event.id)}
-                        className="text-secondary-600 hover:text-secondary-900"
-                        title="Delete Event"
-                      >
-                        <TrashIcon className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  </div>
+                </div>
+
+                {/* Status and Actions Row */}
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-3 sm:space-y-0 pt-3 border-t border-gray-200">
+                  <div className="flex items-center space-x-2">
+                    {getStatusIcon(event.status)}
+                    <select
+                      value={event.status}
+                      onChange={(e) => handleStatusChange(event.id, e.target.value)}
+                      className={`text-xs font-medium rounded-lg px-3 py-2 border focus:ring-2 focus:ring-primary-500 ${getStatusColor(event.status)}`}
+                    >
+                      <option value="draft">Draft</option>
+                      <option value="published">Published</option>
+                      <option value="ongoing">Ongoing</option>
+                      <option value="completed">Completed</option>
+                      <option value="cancelled">Cancelled</option>
+                    </select>
+                  </div>
+                  
+                  <div className="flex items-center space-x-1">
+                    <Link
+                      to={`/events/${event.id}`}
+                      className="flex items-center justify-center space-x-1 px-2 sm:px-3 py-2 text-primary-600 hover:text-primary-900 hover:bg-primary-50 rounded-lg transition-colors text-xs font-medium min-w-0"
+                    >
+                      <EyeIcon className="h-4 w-4 flex-shrink-0" />
+                      <span className="hidden sm:inline">View</span>
+                    </Link>
+                    <Link
+                      to={`/events/${event.id}/edit`}
+                      className="flex items-center justify-center space-x-1 px-2 sm:px-3 py-2 text-accent-600 hover:text-accent-900 hover:bg-accent-50 rounded-lg transition-colors text-xs font-medium min-w-0"
+                    >
+                      <PencilIcon className="h-4 w-4 flex-shrink-0" />
+                      <span className="hidden sm:inline">Edit</span>
+                    </Link>
+                    <button
+                      onClick={() => handleDeleteEvent(event.id)}
+                      className="flex items-center justify-center space-x-1 px-2 sm:px-3 py-2 text-red-600 hover:text-red-900 hover:bg-red-50 rounded-lg transition-colors text-xs font-medium min-w-0"
+                    >
+                      <TrashIcon className="h-4 w-4 flex-shrink-0" />
+                      <span className="hidden sm:inline">Delete</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
         
         {sortedEvents.length === 0 && (
-          <div className="text-center py-12">
-            <CalendarDaysIcon className="mx-auto h-12 w-12 text-gray-400" />
+          <div className="text-center py-8 sm:py-12 px-4">
+            <CalendarDaysIcon className="mx-auto h-10 w-10 sm:h-12 sm:w-12 text-gray-400" />
             <h3 className="mt-2 text-sm font-medium text-gray-900">No events found</h3>
-            <p className="mt-1 text-sm text-gray-500">
+            <p className="mt-1 text-xs sm:text-sm text-gray-500 max-w-sm mx-auto">
               {searchTerm || statusFilter !== 'all' 
                 ? 'Try adjusting your search or filter criteria.'
                 : 'Get started by creating your first event.'
               }
             </p>
             {!searchTerm && statusFilter === 'all' && (
-              <div className="mt-6">
+              <div className="mt-4 sm:mt-6">
                 <Link
-                  to="/admin/events/create"
-                  className="btn-primary"
+                  to="/events/create"
+                  className="btn-primary text-sm px-4 py-2 sm:px-6 sm:py-3 inline-flex items-center space-x-2"
                 >
-                  Create Event
+                  <PlusIcon className="h-4 w-4" />
+                  <span>Create Event</span>
                 </Link>
               </div>
             )}
           </div>
         )}
       </div>
-    </div>
+    </AdminLayout>
   );
 };
 

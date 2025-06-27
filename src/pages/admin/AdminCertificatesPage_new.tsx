@@ -17,7 +17,6 @@ import {
 } from '@heroicons/react/24/outline';
 import AdminLayout from '../../components/AdminLayout';
 import { CertificateTemplate, Certificate } from '../../types';
-import { CertificateGenerationService } from '../../utils/certificateGeneration';
 
 interface IssuedCertificate {
   id: string;
@@ -247,50 +246,8 @@ const AdminCertificatesPage: React.FC = () => {
     }
   };
 
-  const generateCertificate = async (templateId: string, recipientName: string, eventTitle: string) => {
-    const template = templates.find(t => t.id === templateId);
-    if (!template) {
-      alert('Template not found');
-      return;
-    }
-
-    try {
-      setLoading(true);
-      const result = await CertificateGenerationService.generateCertificate(template, {
-        templateId: template.id,
-        recipientName,
-        recipientEmail: 'preview@example.com',
-        eventTitle,
-        eventDate: new Date().toISOString()
-      });
-
-      // Open certificate in new window for preview
-      const newWindow = window.open('', '_blank');
-      if (newWindow) {
-        newWindow.document.write(`
-          <html>
-            <head><title>Certificate Preview - ${recipientName}</title></head>
-            <body style="margin: 0; padding: 20px; background: #f5f5f5; display: flex; justify-content: center; align-items: center; min-height: 100vh;">
-              <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-                <img src="${result.certificateUrl}" alt="Certificate" style="max-width: 100%; height: auto; border-radius: 4px;" />
-                <div style="margin-top: 16px; text-center;">
-                  <button onclick="window.print()" style="background: #3b82f6; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; margin-right: 8px;">Print</button>
-                  <button onclick="window.close()" style="background: #6b7280; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer;">Close</button>
-                </div>
-                <p style="text-align: center; margin-top: 8px; color: #6b7280; font-size: 14px;">
-                  Verification Code: <strong>${result.verificationCode}</strong>
-                </p>
-              </div>
-            </body>
-          </html>
-        `);
-      }
-    } catch (error) {
-      console.error('Error generating certificate:', error);
-      alert('Error generating certificate. Please try again.');
-    } finally {
-      setLoading(false);
-    }
+  const generateCertificate = (templateId: string, recipientName: string, eventTitle: string) => {
+    console.log('Generating certificate', { templateId, recipientName, eventTitle });
   };
 
   const filteredTemplates = templates.filter(template =>

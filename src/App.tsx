@@ -36,6 +36,7 @@ import AdminAnalyticsPage from './pages/admin/AdminAnalyticsPage';
 import AdminCertificatesPage from './pages/admin/AdminCertificatesPage';
 import AdminFormsPage from './pages/admin/AdminFormsPage';
 import AdminSocialPage from './pages/admin/AdminSocialPage';
+import AdminPaymentVerificationPage from './pages/admin/AdminPaymentVerificationPage';
 
 // Utility Pages
 import PaymentPage from './pages/payment/PaymentPage';
@@ -122,17 +123,13 @@ const AppContent: React.FC = () => {
 
         <Route path="/events" element={
           <ProtectedRoute requiredRole="admin">
-            <AdminLayout>
-              <AdminEventsPage />
-            </AdminLayout>
+            <AdminEventsPage />
           </ProtectedRoute>
         } />
 
         <Route path="/attendees" element={
           <ProtectedRoute requiredRole="admin">
-            <AdminLayout>
-              <AdminAttendeesPage />
-            </AdminLayout>
+            <AdminAttendeesPage />
           </ProtectedRoute>
         } />
 
@@ -146,9 +143,7 @@ const AppContent: React.FC = () => {
 
         <Route path="/certificates" element={
           <ProtectedRoute requiredRole="admin">
-            <AdminLayout>
-              <AdminCertificatesPage />
-            </AdminLayout>
+            <AdminCertificatesPage />
           </ProtectedRoute>
         } />
 
@@ -162,9 +157,13 @@ const AppContent: React.FC = () => {
 
         <Route path="/social" element={
           <ProtectedRoute requiredRole="admin">
-            <AdminLayout>
-              <AdminSocialPage />
-            </AdminLayout>
+            <AdminSocialPage />
+          </ProtectedRoute>
+        } />
+
+        <Route path="/payment-verification" element={
+          <ProtectedRoute requiredRole="admin">
+            <AdminPaymentVerificationPage />
           </ProtectedRoute>
         } />
 
@@ -177,13 +176,16 @@ const AppContent: React.FC = () => {
   // Main domain routes
   return (
     <Routes>
-      {/* Public Routes */}
+      {/* Landing Page - without header/footer */}
+      <Route path="/" element={<LandingPage />} />
+      
+      {/* Public Routes - with header/footer */}
       <Route path="/" element={<Layout />}>
-        <Route index element={<LandingPage />} />
         <Route path="events" element={<EventsPage />} />
         <Route path="events/:eventId" element={<EventDetailPage />} />
         <Route path="events/:eventId/register" element={<RegisterPage />} />
-        <Route path="verify/:certificateId" element={<CertificateVerificationPage />} />
+        <Route path="verify/:code" element={<CertificateVerificationPage />} />
+        <Route path="verify" element={<CertificateVerificationPage />} />
       </Route>
 
       {/* Authentication Routes */}
@@ -231,6 +233,18 @@ const AppContent: React.FC = () => {
       }>
         <Route index element={<OrganizerDashboardPage />} />
         <Route path="create" element={<CreateEventPage />} />
+        <Route path="events" element={<ManageEventsPage />} />
+        <Route path="events/:eventId/analytics" element={<EventAnalyticsPage />} />
+        <Route path="events/:eventId/attendees" element={<AttendeesPage />} />
+      </Route>
+
+      {/* Admin Routes - Event Management (alternative access) */}
+      <Route path="/admin" element={
+        <ProtectedRoute requiredRole="admin">
+          <Layout />
+        </ProtectedRoute>
+      }>
+        <Route path="create-event" element={<CreateEventPage />} />
         <Route path="events" element={<ManageEventsPage />} />
         <Route path="events/:eventId/analytics" element={<EventAnalyticsPage />} />
         <Route path="events/:eventId/attendees" element={<AttendeesPage />} />
