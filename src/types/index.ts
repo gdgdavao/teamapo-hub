@@ -58,6 +58,7 @@ export interface Event {
   timezone: string;
   venue: Venue;
   ticketTypes: TicketType[];
+  promoCodes?: PromoCode[];
   tags: string[];
   category: EventCategory;
   status: EventStatus;
@@ -124,6 +125,43 @@ export interface TicketType {
   earlyBirdPrice?: number;
   earlyBirdDeadline?: Timestamp;
   benefits?: string[];
+  sortOrder: number;
+  isEarlyBird: boolean;
+  discountPercentage?: number;
+  validFrom?: Timestamp;
+  validUntil?: Timestamp;
+}
+
+export interface PromoCode {
+  id: string;
+  code: string;
+  name: string;
+  description?: string;
+  discountType: 'percentage' | 'fixed';
+  discountValue: number;
+  currency?: string;
+  maxUses?: number;
+  currentUses: number;
+  isActive: boolean;
+  validFrom: Timestamp;
+  validUntil: Timestamp;
+  applicableTicketTypes?: string[]; // If empty, applies to all
+  minOrderAmount?: number;
+  maxDiscountAmount?: number;
+  createdBy: string;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+export interface TicketPricing {
+  ticketTypeId: string;
+  originalPrice: number;
+  currentPrice: number;
+  discountAmount: number;
+  discountType?: 'early_bird' | 'promo_code' | 'bulk';
+  promoCode?: string;
+  isEarlyBird: boolean;
+  timeRemaining?: number; // in milliseconds for early bird
 }
 
 export interface AgendaItem {
@@ -164,8 +202,13 @@ export interface Registration {
   };
   ticketTypeId: string;
   quantity: number;
+  originalAmount: number;
+  discountAmount: number;
   totalAmount: number;
   currency: string;
+  promoCode?: string;
+  promoCodeId?: string;
+  pricing: TicketPricing;
   paymentStatus: PaymentStatus;
   paymentDetails?: PaymentDetails;
   attendanceStatus: AttendanceStatus;

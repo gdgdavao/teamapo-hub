@@ -13,6 +13,9 @@ import {
 } from '@heroicons/react/24/outline';
 import FormRenderer from '../../components/FormRenderer/FormRenderer';
 import { FormField } from '../../components/FormBuilder/FormBuilder';
+import TicketSelector from '../../components/TicketSelector/TicketSelector';
+import { Event, TicketType, PromoCode } from '../../types';
+import { TicketSelection } from '../../components/TicketSelector/TicketSelector';
 
 interface PaymentConfig {
   qrCodeUrl?: string;
@@ -28,31 +31,6 @@ interface PaymentConfig {
   paymentFields?: FormField[];
 }
 
-interface Event {
-  id: string;
-  title: string;
-  description: string;
-  shortDescription: string;
-  startDate: string;
-  endDate: string;
-  venue: {
-    type: 'online' | 'offline' | 'hybrid';
-    name?: string;
-    address?: string;
-    city: string;
-  };
-  isPaid: boolean;
-  ticketPrice: number;
-  currency: string;
-  maxAttendees?: number;
-  currentAttendees: number;
-  registrationForm: FormField[];
-  paymentConfig?: PaymentConfig;
-  category: string;
-  organizer: string;
-  imageUrl?: string;
-}
-
 const RegisterPage: React.FC = () => {
   const { eventId } = useParams<{ eventId: string }>();
   const navigate = useNavigate();
@@ -61,89 +39,168 @@ const RegisterPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [currentStep, setCurrentStep] = useState(0);
   const [registrationData, setRegistrationData] = useState<Record<string, any>>({});
+  const [ticketSelection, setTicketSelection] = useState<TicketSelection[]>([]);
+  const [appliedPromoCode, setAppliedPromoCode] = useState<PromoCode | null>(null);
   const [paymentData, setPaymentData] = useState<Record<string, any>>({});
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
 
+  // Simple total calculation helper
+  const calculateTotal = (selections: TicketSelection[]): number => {
+    return selections.reduce((total, selection) => total + selection.totalAmount, 0);
+  };
+
+  // Helper function to create MockTimestamp
+  const createMockTimestamp = (date: Date) => ({
+    seconds: Math.floor(date.getTime() / 1000),
+    nanoseconds: 0,
+    toDate: () => date
+  });
+
   // Mock event data - replace with API call
   useEffect(() => {
     setTimeout(() => {
-      setEvent({
+      const mockEvent: Event = {
         id: eventId || '1',
         title: 'Web Development Workshop',
         description: 'Learn modern web development with React, TypeScript, and best practices. This comprehensive workshop covers everything from basic concepts to advanced techniques.',
         shortDescription: 'Learn modern web development with React and TypeScript',
-        startDate: '2025-02-15T09:00:00Z',
-        endDate: '2025-02-15T17:00:00Z',
+        startDate: createMockTimestamp(new Date('2025-02-15T09:00:00Z')),
+        endDate: createMockTimestamp(new Date('2025-02-15T17:00:00Z')),
         venue: {
           type: 'offline',
           name: 'GDG Davao Hub',
           address: '123 Tech Street, IT Park',
-          city: 'Davao City'
+          city: 'Davao City',
+          onlineDetails: {
+            platform: 'Google Meet',
+            meetingUrl: '',
+            meetingId: '',
+            instructions: ''
+          }
         },
-        isPaid: true,
-        ticketPrice: 750,
-        currency: 'PHP',
-        maxAttendees: 50,
-        currentAttendees: 23,
-        category: 'workshop',
-        organizer: 'GDG Davao',
-        imageUrl: 'https://via.placeholder.com/600x300',
-        registrationForm: [
-          { id: '1', type: 'text', label: 'Full Name', required: true, gridSize: 'full' },
-          { id: '2', type: 'email', label: 'Email Address', required: true, gridSize: 'half' },
-          { id: '3', type: 'phone', label: 'Phone Number', required: true, gridSize: 'half' },
-          { id: '4', type: 'text', label: 'Organization/Company', required: false, gridSize: 'full' },
-          { id: '5', type: 'select', label: 'Experience Level', required: true, options: ['Beginner', 'Intermediate', 'Advanced'], gridSize: 'half' },
-          { id: '6', type: 'multiselect', label: 'Interests', required: false, options: ['Frontend', 'Backend', 'DevOps', 'Mobile'], gridSize: 'half' },
-          { id: '7', type: 'select', label: 'T-Shirt Size', required: true, options: ['XS', 'S', 'M', 'L', 'XL', 'XXL'], gridSize: 'half' },
-          { id: '8', type: 'textarea', label: 'Dietary Restrictions', required: false, gridSize: 'full', placeholder: 'Please mention any dietary restrictions or allergies' },
-          { id: '9', type: 'textarea', label: 'Why do you want to attend this workshop?', required: false, gridSize: 'full' },
-          { id: '10', type: 'checkbox', label: 'I agree to receive updates about future GDG Davao events', required: false, gridSize: 'full' }
-        ],
-        paymentConfig: {
-          qrCodeUrl: 'https://via.placeholder.com/300x300',
-          bankDetails: {
-            bankName: 'GCash',
-            accountName: 'GDG Davao',
-            accountNumber: '09171234567'
+        ticketTypes: [
+          {
+            id: 'early-bird',
+            name: 'Early Bird',
+            description: 'Limited time early bird pricing',
+            price: 500,
+            currency: 'PHP',
+            maxQuantity: 25,
+            currentSold: 15,
+            isActive: true,
+            earlyBirdPrice: 500,
+            earlyBirdDeadline: createMockTimestamp(new Date('2025-02-01T23:59:59Z')),
+            benefits: ['Workshop materials', 'Certificate', 'Lunch', 'T-shirt'],
+            sortOrder: 1,
+            isEarlyBird: true,
+            discountPercentage: 33, // 33% off from 750
+            validFrom: createMockTimestamp(new Date('2025-01-01T00:00:00Z')),
+            validUntil: createMockTimestamp(new Date('2025-02-01T23:59:59Z'))
           },
-          instructions: 'Please scan the QR code or send payment to the GCash number above. After payment, upload a screenshot of your payment confirmation and enter the transaction reference number.',
-          requiresProof: true,
-          requiresTransactionId: true,
-          paymentFields: [
-            {
-              id: 'payment_proof',
-              type: 'file',
-              label: 'Payment Proof Screenshot',
-              required: true,
-              gridSize: 'full',
-              description: 'Upload a screenshot of your payment transaction'
-            },
-            {
-              id: 'transaction_id',
-              type: 'text',
-              label: 'Transaction ID / Reference Number',
-              required: true,
-              gridSize: 'full',
-              placeholder: 'Enter transaction reference number',
-              description: 'Provide the transaction ID for faster verification'
-            }
-          ]
-        }
-      });
+          {
+            id: 'regular',
+            name: 'Regular',
+            description: 'Standard workshop registration',
+            price: 750,
+            currency: 'PHP',
+            maxQuantity: 50,
+            currentSold: 8,
+            isActive: true,
+            benefits: ['Workshop materials', 'Certificate', 'Lunch', 'T-shirt'],
+            sortOrder: 2,
+            isEarlyBird: false
+          },
+          {
+            id: 'student',
+            name: 'Student',
+            description: 'Special pricing for students (ID required)',
+            price: 400,
+            currency: 'PHP',
+            maxQuantity: 15,
+            currentSold: 3,
+            isActive: true,
+            benefits: ['Workshop materials', 'Certificate', 'Lunch'],
+            sortOrder: 3,
+            isEarlyBird: false,
+            discountPercentage: 47 // 47% off from 750
+          }
+        ],
+        promoCodes: [
+          {
+            id: 'WELCOME20',
+            name: 'Welcome Discount',
+            code: 'WELCOME20',
+            discountType: 'percentage',
+            discountValue: 20,
+            maxUses: 10,
+            currentUses: 3,
+            validFrom: createMockTimestamp(new Date('2025-01-01T00:00:00Z')),
+            validUntil: createMockTimestamp(new Date('2025-02-10T23:59:59Z')),
+            applicableTicketTypes: ['regular', 'student'],
+            isActive: true,
+            createdBy: 'gdg-davao',
+            createdAt: createMockTimestamp(new Date()),
+            updatedAt: createMockTimestamp(new Date())
+          },
+          {
+            id: 'STUDENT50',
+            name: 'Student Special',
+            code: 'STUDENT50',
+            discountType: 'fixed',
+            discountValue: 50,
+            maxUses: 5,
+            currentUses: 1,
+            validFrom: createMockTimestamp(new Date('2025-01-01T00:00:00Z')),
+            validUntil: createMockTimestamp(new Date('2025-02-15T23:59:59Z')),
+            applicableTicketTypes: ['student'],
+            isActive: true,
+            createdBy: 'gdg-davao',
+            createdAt: createMockTimestamp(new Date()),
+            updatedAt: createMockTimestamp(new Date())
+          }
+        ],
+        maxAttendees: 90,
+        currentAttendees: 26,
+        isPublished: true,
+        timezone: 'Asia/Manila',
+        speakers: [],
+        tags: ['web-development', 'react', 'typescript'],
+        category: 'workshop',
+        organizer: {
+          uid: 'gdg-davao',
+          name: 'GDG Davao',
+          email: 'gdgdavao@example.com'
+        },
+        imageUrl: 'https://via.placeholder.com/600x300',
+        status: 'published',
+        createdAt: createMockTimestamp(new Date()),
+        updatedAt: createMockTimestamp(new Date())
+      };
+      
+      setEvent(mockEvent);
       setLoading(false);
     }, 1000);
   }, [eventId]);
 
-  const steps = event?.isPaid 
-    ? ['Registration', 'Payment', 'Confirmation']
+  const steps = event && event.ticketTypes.length > 0 && event.ticketTypes.some(t => t.price > 0)
+    ? ['Ticket Selection', 'Registration', 'Payment', 'Confirmation']
     : ['Registration', 'Confirmation'];
+
+  const handleTicketSelection = (selection: TicketSelection) => {
+    setTicketSelection([selection]); // Convert single selection to array for consistency
+    setCurrentStep(1); // Go to registration step
+  };
 
   const handleRegistrationSubmit = (data: Record<string, any>) => {
     setRegistrationData(data);
-    if (event?.isPaid) {
-      setCurrentStep(1); // Go to payment step
+    const hasPaidTickets = ticketSelection.some(ts => {
+      const ticket = event?.ticketTypes.find(t => t.id === ts.ticketTypeId);
+      return ticket && ticket.price > 0;
+    });
+    
+    if (hasPaidTickets) {
+      setCurrentStep(2); // Go to payment step
     } else {
       handleFinalSubmit(data);
     }
@@ -162,7 +219,11 @@ const RegisterPage: React.FC = () => {
       await new Promise(resolve => setTimeout(resolve, 2000));
       
       setSubmitted(true);
-      setCurrentStep(event?.isPaid ? 2 : 1); // Go to confirmation step
+      const hasPaidTickets = ticketSelection.some(ts => {
+        const ticket = event?.ticketTypes.find(t => t.id === ts.ticketTypeId);
+        return ticket && ticket.price > 0;
+      });
+      setCurrentStep(hasPaidTickets ? 3 : 1); // Go to confirmation step
     } catch (error) {
       console.error('Registration failed:', error);
     } finally {
@@ -177,191 +238,329 @@ const RegisterPage: React.FC = () => {
   const renderStepContent = () => {
     if (!event) return null;
 
+    const hasPayment = event.ticketTypes.some(t => t.price > 0);
+
     switch (currentStep) {
-      case 0: // Registration Form
-        return (
-          <div className="space-y-6">
-            <div className="text-center">
-              <h2 className="text-2xl font-bold text-gray-900">Register for Event</h2>
-              <p className="text-gray-600 mt-2">
-                Please fill out the registration form below
-              </p>
-            </div>
-            
-            <FormRenderer
-              fields={event.registrationForm}
-              onSubmit={handleRegistrationSubmit}
-              submitButtonText={event.isPaid ? "Proceed to Payment" : "Complete Registration"}
-              className="bg-white"
-            />
-          </div>
-        );
-      
-      case 1: // Payment Step (only for paid events)
-        if (!event.isPaid || !event.paymentConfig) return null;
+      case 0: // Ticket Selection
+        if (!hasPayment) {
+          // Skip ticket selection for free events, go straight to registration
+          return renderRegistrationStep();
+        }
         
         return (
           <div className="space-y-6">
             <div className="text-center">
-              <h2 className="text-2xl font-bold text-gray-900">Payment</h2>
+              <h2 className="text-2xl font-bold text-gray-900">Select Your Tickets</h2>
               <p className="text-gray-600 mt-2">
-                Please complete your payment to secure your spot
+                Choose your ticket type and quantity
               </p>
-            </div>
-
-            {/* Payment Information */}
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-blue-900">Payment Details</h3>
-                <div className="text-right">
-                  <div className="text-2xl font-bold text-blue-900">
-                    {event.currency} {event.ticketPrice}
-                  </div>
-                  <div className="text-sm text-blue-700">Event Registration Fee</div>
-                </div>
-              </div>
-            </div>
-
-            {/* Payment Instructions */}
-            <div className="bg-white border border-gray-200 rounded-lg p-6">
-              <h4 className="font-semibold text-gray-900 mb-4">Payment Instructions</h4>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* QR Code */}
-                {event.paymentConfig.qrCodeUrl && (
-                  <div className="text-center">
-                    <h5 className="font-medium text-gray-700 mb-3">Scan QR Code</h5>
-                    <div className="inline-block p-4 bg-white border-2 border-gray-300 rounded-lg">
-                      <img
-                        src={event.paymentConfig.qrCodeUrl}
-                        alt="Payment QR Code"
-                        className="w-48 h-48 object-contain mx-auto"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {/* Bank Details */}
-                <div>
-                  <h5 className="font-medium text-gray-700 mb-3">Bank Details</h5>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Bank:</span>
-                      <span className="font-medium">{event.paymentConfig.bankDetails.bankName}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Account Name:</span>
-                      <span className="font-medium">{event.paymentConfig.bankDetails.accountName}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Account Number:</span>
-                      <span className="font-medium font-mono">{event.paymentConfig.bankDetails.accountNumber}</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Instructions */}
-              <div className="mt-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-                <p className="text-sm text-yellow-800">
-                  {event.paymentConfig.instructions}
-                </p>
-              </div>
-            </div>
-
-            {/* Payment Verification Form */}
-            {event.paymentConfig.paymentFields && event.paymentConfig.paymentFields.length > 0 && (
-              <div className="bg-white border border-gray-200 rounded-lg p-6">
-                <h4 className="font-semibold text-gray-900 mb-4">Payment Verification</h4>
-                <FormRenderer
-                  fields={event.paymentConfig.paymentFields}
-                  onSubmit={handlePaymentSubmit}
-                  submitButtonText="Submit Payment Verification"
-                  className="bg-white"
-                />
-                
-                <div className="mt-4 flex justify-start">
-                  <button
-                    type="button"
-                    onClick={handleBack}
-                    className="px-4 py-2 text-gray-600 hover:text-gray-800"
-                  >
-                    ← Back to Registration
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        );
-
-      case 2: // Confirmation Step (step 1 for free events, step 2 for paid events)
-        return (
-          <div className="text-center space-y-6">
-            <div className="mx-auto w-16 h-16 bg-green-100 rounded-full flex items-center justify-center">
-              <CheckCircleIcon className="w-10 h-10 text-green-600" />
             </div>
             
-            <div>
-              <h2 className="text-2xl font-bold text-gray-900">
-                {event.isPaid ? 'Payment Submitted!' : 'Registration Complete!'}
-              </h2>
-              <p className="text-gray-600 mt-2">
-                {event.isPaid 
-                  ? 'Your payment verification has been submitted. You will receive a confirmation email once your payment is verified.'
-                  : 'Thank you for registering! You will receive a confirmation email shortly.'
-                }
-              </p>
-            </div>
-
-            {/* Registration Summary */}
-            <div className="bg-gray-50 rounded-lg p-6 text-left max-w-md mx-auto">
-              <h3 className="font-semibold text-gray-900 mb-4">Registration Summary</h3>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Event:</span>
-                  <span className="font-medium">{event.title}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Date:</span>
-                  <span className="font-medium">
-                    {new Date(event.startDate).toLocaleDateString()}
-                  </span>
-                </div>
-                {event.isPaid && (
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Amount:</span>
-                    <span className="font-medium">{event.currency} {event.ticketPrice}</span>
-                  </div>
-                )}
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Status:</span>
-                  <span className={`font-medium ${event.isPaid ? 'text-yellow-600' : 'text-green-600'}`}>
-                    {event.isPaid ? 'Pending Verification' : 'Confirmed'}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              <button
-                onClick={() => navigate(`/events/${event.id}`)}
-                className="w-full max-w-md px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-              >
-                View Event Details
-              </button>
-              <button
-                onClick={() => navigate('/events')}
-                className="w-full max-w-md px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
-              >
-                Browse More Events
-              </button>
-            </div>
+            <TicketSelector
+              ticketTypes={event.ticketTypes}
+              promoCodes={event.promoCodes || []}
+              onSelectionChange={handleTicketSelection}
+            />
           </div>
         );
+      
+      case 1: // Registration Form
+        return renderRegistrationStep();
+      
+      case 2: // Payment Step (only for paid tickets)
+        return renderPaymentStep();
+
+      case 3: // Confirmation Step
+        return renderConfirmationStep();
 
       default:
         return null;
     }
+  };
+
+  const renderRegistrationStep = () => {
+    if (!event) return null;
+    
+    const defaultFields: FormField[] = [
+      { id: '1', type: 'text' as const, label: 'Full Name', required: true, gridSize: 'full' },
+      { id: '2', type: 'email' as const, label: 'Email Address', required: true, gridSize: 'half' },
+      { id: '3', type: 'phone' as const, label: 'Phone Number', required: true, gridSize: 'half' },
+      { id: '4', type: 'text' as const, label: 'Organization/Company', required: false, gridSize: 'full' },
+      { id: '5', type: 'select' as const, label: 'Experience Level', required: true, options: ['Beginner', 'Intermediate', 'Advanced'], gridSize: 'half' },
+      { id: '6', type: 'multiselect' as const, label: 'Interests', required: false, options: ['Frontend', 'Backend', 'DevOps', 'Mobile'], gridSize: 'half' },
+      { id: '7', type: 'select' as const, label: 'T-Shirt Size', required: true, options: ['XS', 'S', 'M', 'L', 'XL', 'XXL'], gridSize: 'half' },
+      { id: '8', type: 'textarea' as const, label: 'Dietary Restrictions', required: false, gridSize: 'full', placeholder: 'Please mention any dietary restrictions or allergies' },
+      { id: '9', type: 'textarea' as const, label: 'Why do you want to attend this workshop?', required: false, gridSize: 'full' },
+      { id: '10', type: 'checkbox' as const, label: 'I agree to receive updates about future GDG Davao events', required: false, gridSize: 'full' }
+    ];
+
+    const hasPayment = event.ticketTypes.some(t => t.price > 0);
+    const hasPaidTickets = ticketSelection.some(ts => {
+      const ticket = event.ticketTypes.find(t => t.id === ts.ticketTypeId);
+      return ticket && ticket.price > 0;
+    });
+    
+    return (
+      <div className="space-y-6">
+        <div className="text-center">
+          <h2 className="text-2xl font-bold text-gray-900">Registration Information</h2>
+          <p className="text-gray-600 mt-2">
+            Please fill out the registration form below
+          </p>
+        </div>
+
+        {/* Show ticket selection summary if tickets were selected */}
+        {ticketSelection.length > 0 && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <h3 className="font-semibold text-blue-900 mb-2">Selected Tickets</h3>
+            {ticketSelection.map((selection) => {
+              const ticket = event.ticketTypes.find(t => t.id === selection.ticketTypeId);
+              if (!ticket) return null;
+              return (
+                <div key={selection.ticketTypeId} className="flex justify-between items-center">
+                  <span className="text-blue-800">
+                    {ticket.name} × {selection.quantity}
+                  </span>
+                  <span className="font-medium text-blue-900">
+                    {ticket.currency} {(ticket.price * selection.quantity).toLocaleString()}
+                  </span>
+                </div>
+              );
+            })}
+            {appliedPromoCode && (
+              <div className="mt-2 pt-2 border-t border-blue-200">
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-blue-700">Promo Code: {appliedPromoCode.code}</span>
+                  <span className="text-green-600 font-medium">
+                    {appliedPromoCode.discountType === 'percentage' 
+                      ? `-${appliedPromoCode.discountValue}%`
+                      : `-${appliedPromoCode.currency || 'PHP'} ${appliedPromoCode.discountValue}`
+                    }
+                  </span>
+                </div>
+              </div>
+            )}
+            <div className="mt-2 pt-2 border-t border-blue-200">
+              <div className="flex justify-between items-center font-semibold">
+                <span className="text-blue-900">Total:</span>
+                <span className="text-blue-900">
+                  {event.ticketTypes[0]?.currency || 'PHP'} {calculateTotal(ticketSelection).toLocaleString()}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        <FormRenderer
+          fields={defaultFields}
+          onSubmit={handleRegistrationSubmit}
+          submitButtonText={hasPayment && hasPaidTickets ? "Proceed to Payment" : "Complete Registration"}
+          className="bg-white"
+        />
+
+        {hasPayment && (
+          <div className="flex justify-start">
+            <button
+              type="button"
+              onClick={() => setCurrentStep(0)}
+              className="px-4 py-2 text-gray-600 hover:text-gray-800"
+            >
+              ← Back to Ticket Selection
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderPaymentStep = () => {
+    if (!event) return null;
+    
+    const totalAmount = calculateTotal(ticketSelection);
+    const currency = event.ticketTypes[0]?.currency || 'PHP';
+
+    return (
+      <div className="space-y-6">
+        <div className="text-center">
+          <h2 className="text-2xl font-bold text-gray-900">Payment</h2>
+          <p className="text-gray-600 mt-2">
+            Please complete your payment to secure your spot
+          </p>
+        </div>
+
+        {/* Payment Information */}
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-blue-900">Payment Details</h3>
+            <div className="text-right">
+              <div className="text-2xl font-bold text-blue-900">
+                {currency} {totalAmount.toLocaleString()}
+              </div>
+              <div className="text-sm text-blue-700">Total Amount</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Payment Instructions */}
+        <div className="bg-white border border-gray-200 rounded-lg p-6">
+          <h4 className="font-semibold text-gray-900 mb-4">Payment Instructions</h4>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* QR Code */}
+            <div className="text-center">
+              <h5 className="font-medium text-gray-700 mb-3">Scan QR Code</h5>
+              <div className="inline-block p-4 bg-white border-2 border-gray-300 rounded-lg">
+                <img
+                  src="https://via.placeholder.com/300x300"
+                  alt="Payment QR Code"
+                  className="w-48 h-48 object-contain mx-auto"
+                />
+              </div>
+            </div>
+
+            {/* Bank Details */}
+            <div>
+              <h5 className="font-medium text-gray-700 mb-3">Bank Details</h5>
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Bank:</span>
+                  <span className="font-medium">GCash</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Account Name:</span>
+                  <span className="font-medium">GDG Davao</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Account Number:</span>
+                  <span className="font-medium font-mono">09171234567</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Instructions */}
+          <div className="mt-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+            <p className="text-sm text-yellow-800">
+              Please scan the QR code or send payment to the GCash number above. After payment, upload a screenshot of your payment confirmation and enter the transaction reference number.
+            </p>
+          </div>
+        </div>
+
+        {/* Payment Verification Form */}
+        <div className="bg-white border border-gray-200 rounded-lg p-6">
+          <h4 className="font-semibold text-gray-900 mb-4">Payment Verification</h4>
+          <FormRenderer
+            fields={[
+              {
+                id: 'payment_proof',
+                type: 'file' as const,
+                label: 'Payment Proof Screenshot',
+                required: true,
+                gridSize: 'full',
+                description: 'Upload a screenshot of your payment transaction'
+              },
+              {
+                id: 'transaction_id',
+                type: 'text' as const,
+                label: 'Transaction ID / Reference Number',
+                required: true,
+                gridSize: 'full',
+                placeholder: 'Enter transaction reference number',
+                description: 'Provide the transaction ID for faster verification'
+              }
+            ]}
+            onSubmit={handlePaymentSubmit}
+            submitButtonText="Submit Payment Verification"
+            className="bg-white"
+          />
+          
+          <div className="mt-4 flex justify-start">
+            <button
+              type="button"
+              onClick={handleBack}
+              className="px-4 py-2 text-gray-600 hover:text-gray-800"
+            >
+              ← Back to Registration
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderConfirmationStep = () => {
+    if (!event) return null;
+    
+    const hasPayment = ticketSelection.some(ts => {
+      const ticket = event.ticketTypes.find(t => t.id === ts.ticketTypeId);
+      return ticket && ticket.price > 0;
+    });
+
+    return (
+      <div className="text-center space-y-6">
+        <div className="mx-auto w-16 h-16 bg-green-100 rounded-full flex items-center justify-center">
+          <CheckCircleIcon className="w-10 h-10 text-green-600" />
+        </div>
+        
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900">
+            {hasPayment ? 'Payment Submitted!' : 'Registration Complete!'}
+          </h2>
+          <p className="text-gray-600 mt-2">
+            {hasPayment
+              ? 'Your payment verification has been submitted. You will receive a confirmation email once your payment is verified.'
+              : 'Thank you for registering! You will receive a confirmation email shortly.'
+            }
+          </p>
+        </div>
+
+        {/* Registration Summary */}
+        <div className="bg-gray-50 rounded-lg p-6 text-left max-w-md mx-auto">
+          <h3 className="font-semibold text-gray-900 mb-4">Registration Summary</h3>
+          <div className="space-y-2 text-sm">
+            <div className="flex justify-between">
+              <span className="text-gray-600">Event:</span>
+              <span className="font-medium">{event.title}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-600">Date:</span>
+              <span className="font-medium">
+                {event.startDate.toDate().toLocaleDateString()}
+              </span>
+            </div>
+            {hasPayment && ticketSelection.length > 0 && (
+              <div className="flex justify-between">
+                <span className="text-gray-600">Amount:</span>
+                <span className="font-medium">
+                  {event.ticketTypes[0]?.currency || 'PHP'} {calculateTotal(ticketSelection).toLocaleString()}
+                </span>
+              </div>
+            )}
+            <div className="flex justify-between">
+              <span className="text-gray-600">Status:</span>
+              <span className={`font-medium ${hasPayment ? 'text-yellow-600' : 'text-green-600'}`}>
+                {hasPayment ? 'Pending Verification' : 'Confirmed'}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <button
+            onClick={() => navigate(`/events/${event.id}`)}
+            className="w-full max-w-md px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+          >
+            View Event Details
+          </button>
+          <button
+            onClick={() => navigate('/events')}
+            className="w-full max-w-md px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+          >
+            Browse More Events
+          </button>
+        </div>
+      </div>
+    );
   };
 
   if (loading) {
@@ -401,9 +600,12 @@ const RegisterPage: React.FC = () => {
           <h2 className="text-2xl font-bold text-gray-900 mb-4">Registration Submitted!</h2>
           <div className="space-y-4 text-gray-600 max-w-md mx-auto">
             <p>
-              Thank you for registering for <strong>{event.title}</strong>.
+              Thank you for registering for <strong>{event?.title}</strong>.
             </p>
-            {event.isPaid ? (
+            {ticketSelection.some(ts => {
+              const ticket = event?.ticketTypes.find(t => t.id === ts.ticketTypeId);
+              return ticket && ticket.price > 0;
+            }) ? (
               <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
                 <p className="text-yellow-800">
                   <strong>Payment Pending:</strong> Your registration is pending payment verification. 
@@ -456,7 +658,7 @@ const RegisterPage: React.FC = () => {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
                   <div className="flex items-center text-gray-600">
                     <CalendarDaysIcon className="w-4 h-4 mr-2" />
-                    {new Date(event.startDate).toLocaleDateString()}
+                    {event.startDate.toDate().toLocaleDateString()}
                   </div>
                   <div className="flex items-center text-gray-600">
                     <MapPinIcon className="w-4 h-4 mr-2" />
@@ -471,7 +673,10 @@ const RegisterPage: React.FC = () => {
               
               <div className="ml-6 text-right">
                 <div className="text-2xl font-bold text-green-600">
-                  {event.isPaid ? `₱${event.ticketPrice}` : 'FREE'}
+                  {event.ticketTypes.length > 0 && event.ticketTypes.some(t => t.price > 0) ? 
+                    `${event.ticketTypes[0].currency} ${Math.min(...event.ticketTypes.map(t => t.price)).toLocaleString()}+` : 
+                    'FREE'
+                  }
                 </div>
                 <div className="text-sm text-gray-500 capitalize">{event.category}</div>
               </div>

@@ -3,7 +3,7 @@
  */
 
 // Configuration flag to enable/disable admin subdomain functionality
-const ADMIN_SUBDOMAIN_ENABLED = false; // Set to true to enable admin subdomain
+const ADMIN_SUBDOMAIN_ENABLED = true; // Set to true to enable admin subdomain
 
 export const getSubdomain = (): string | null => {
   const host = window.location.hostname;

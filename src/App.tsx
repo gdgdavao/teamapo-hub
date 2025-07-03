@@ -127,6 +127,18 @@ const AppContent: React.FC = () => {
           </ProtectedRoute>
         } />
 
+        <Route path="/events/create" element={
+          <ProtectedRoute requiredRole="admin">
+            <CreateEventPage />
+          </ProtectedRoute>
+        } />
+
+        <Route path="/events/edit/:eventId" element={
+          <ProtectedRoute requiredRole="admin">
+            <CreateEventPage />
+          </ProtectedRoute>
+        } />
+
         <Route path="/attendees" element={
           <ProtectedRoute requiredRole="admin">
             <AdminAttendeesPage />

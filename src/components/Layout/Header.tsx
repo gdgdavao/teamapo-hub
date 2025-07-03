@@ -78,13 +78,13 @@ const Header: React.FC = () => {
   const adminNavLinks = [
     { 
       name: 'Create Event', 
-      href: '/admin/create-event',
+      href: '/events/create',
       icon: SparklesIcon,
       description: 'Create new events (Admin)'
     },
     { 
       name: 'Manage Events', 
-      href: '/admin/events',
+      href: '/events',
       icon: UserGroupIcon,
       description: 'Manage all events'
     },
