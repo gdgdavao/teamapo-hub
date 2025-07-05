@@ -1,87 +1,150 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { getAdminUrl } from '../utils/subdomain';
+import { ExclamationTriangleIcon, UserPlusIcon, EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline';
+import { useAuth } from '../contexts/AuthContext';
+import { doc, updateDoc } from 'firebase/firestore';
+import { db } from '../config/firebase';
+import toast from 'react-hot-toast';
 
 const AdminAccessInfo: React.FC = () => {
-  const handleRedirectToAdmin = () => {
-    window.location.href = getAdminUrl('/login');
+  const { currentUser, userProfile, refreshUserProfile } = useAuth();
+  const [showDetails, setShowDetails] = useState(false);
+  const [updating, setUpdating] = useState(false);
+
+  const makeCurrentUserAdmin = async () => {
+    if (!currentUser || !userProfile) {
+      toast.error('No user logged in');
+      return;
+    }
+
+    try {
+      setUpdating(true);
+      const userRef = doc(db, 'users', currentUser.uid);
+      await updateDoc(userRef, { role: 'admin' });
+      await refreshUserProfile();
+      toast.success('User role updated to admin!');
+    } catch (error) {
+      console.error('Error updating user role:', error);
+      toast.error('Failed to update user role');
+    } finally {
+      setUpdating(false);
+    }
   };
 
-  return (
-    <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
-      <div className="sm:mx-auto sm:w-full sm:max-w-md">
-        <div className="flex justify-center">
-          <div className="flex items-center space-x-1">
-            <div className="w-10 h-10 bg-gradient-google rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold text-lg">A</span>
-            </div>
-            <span className="text-2xl font-bold text-gray-900">APOHUB</span>
+  if (!currentUser) {
+    return (
+      <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+        <div className="flex items-start space-x-3">
+          <ExclamationTriangleIcon className="w-6 h-6 text-red-500 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <h3 className="text-sm font-medium text-red-800 mb-1">Not Signed In</h3>
+            <p className="text-sm text-red-700">
+              You need to sign in to access the admin dashboard.
+            </p>
           </div>
         </div>
-        <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-          Admin Access Required
-        </h2>
-        <p className="mt-2 text-center text-sm text-gray-600">
-          Administrative features are only available via the admin portal
-        </p>
       </div>
+    );
+  }
 
-      <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
-        <div className="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10">
-          <div className="text-center">
-            <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-blue-100 mb-4">
-              <svg className="h-6 w-6 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-              </svg>
-            </div>
-            
-            <h3 className="text-lg font-medium text-gray-900 mb-4">
-              Access Admin Portal
-            </h3>
-            
-            <p className="text-sm text-gray-600 mb-6">
-              To access admin features, you need to visit the admin subdomain. 
-              This helps keep administrative functions separate from public features.
+  if (!userProfile) {
+    return (
+      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
+        <div className="flex items-start space-x-3">
+          <ExclamationTriangleIcon className="w-6 h-6 text-yellow-500 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <h3 className="text-sm font-medium text-yellow-800 mb-1">Profile Loading</h3>
+            <p className="text-sm text-yellow-700">
+              User profile is still loading...
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (userProfile.role !== 'admin') {
+    return (
+      <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 mb-6">
+        <div className="flex items-start space-x-3">
+          <ExclamationTriangleIcon className="w-6 h-6 text-orange-500 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <h3 className="text-sm font-medium text-orange-800 mb-2">Admin Access Required</h3>
+            <p className="text-sm text-orange-700 mb-3">
+              Your current role is <span className="font-medium">'{userProfile.role}'</span>. 
+              Admin access is required to view the dashboard.
             </p>
             
-            <button
-              onClick={handleRedirectToAdmin}
-              className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 mb-4"
-            >
-              Go to Admin Portal
-            </button>
-            
-            <Link
-              to="/"
-              className="text-sm text-primary-600 hover:text-primary-500"
-            >
-              ← Back to main site
-            </Link>
-          </div>
-        </div>
-        
-        <div className="mt-6">
-          <div className="bg-blue-50 border border-blue-200 rounded-md p-4">
-            <div className="flex">
-              <div className="flex-shrink-0">
-                <svg className="h-5 w-5 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
-                </svg>
-              </div>
-              <div className="ml-3">
-                <h3 className="text-sm font-medium text-blue-800">
-                  How Admin Access Works
-                </h3>
-                <div className="mt-2 text-sm text-blue-700">
-                  <ul className="list-disc list-inside space-y-1">
-                    <li>Admin features are only available at admin.yourdomain.com</li>
-                    <li>This keeps admin functions secure and separate</li>
-                    <li>Regular users access events and features from the main domain</li>
-                  </ul>
+            <div className="flex items-center space-x-3">
+              <button
+                onClick={() => setShowDetails(!showDetails)}
+                className="inline-flex items-center text-sm text-orange-600 hover:text-orange-700 font-medium"
+              >
+                {showDetails ? (
+                  <>
+                    <EyeSlashIcon className="w-4 h-4 mr-1" />
+                    Hide Details
+                  </>
+                ) : (
+                  <>
+                    <EyeIcon className="w-4 h-4 mr-1" />
+                    Show Details
+                  </>
+                )}
+              </button>
+              
+              <button
+                onClick={makeCurrentUserAdmin}
+                disabled={updating}
+                className="inline-flex items-center px-3 py-1.5 bg-orange-600 text-white text-sm rounded-md hover:bg-orange-700 disabled:opacity-50 font-medium"
+              >
+                <UserPlusIcon className="w-4 h-4 mr-1" />
+                {updating ? 'Updating...' : 'Make Me Admin'}
+              </button>
+            </div>
+
+            {showDetails && (
+              <div className="mt-4 p-3 bg-white rounded-md border border-orange-200">
+                <h4 className="text-sm font-medium text-gray-900 mb-2">Debug Information:</h4>
+                <div className="text-xs text-gray-600 space-y-1">
+                  <div><strong>User ID:</strong> {currentUser.uid}</div>
+                  <div><strong>Email:</strong> {currentUser.email}</div>
+                  <div><strong>Display Name:</strong> {userProfile.displayName}</div>
+                  <div><strong>Current Role:</strong> {userProfile.role}</div>
+                  <div><strong>Profile Created:</strong> {userProfile.createdAt ? 'Yes' : 'No'}</div>
+                </div>
+                
+                <div className="mt-3 p-2 bg-gray-50 rounded text-xs">
+                  <strong>To manually fix this:</strong>
+                  <ol className="list-decimal list-inside mt-1 space-y-1">
+                    <li>Go to Firebase Console → Firestore Database</li>
+                    <li>Navigate to users/{currentUser.uid}</li>
+                    <li>Change the 'role' field from '{userProfile.role}' to 'admin'</li>
+                    <li>Refresh this page</li>
+                  </ol>
                 </div>
               </div>
-            </div>
+            )}
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
+      <div className="flex items-start space-x-3">
+        <div className="w-6 h-6 rounded-full bg-green-500 flex-shrink-0 flex items-center justify-center mt-0.5">
+          <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+          </svg>
+        </div>
+        <div className="flex-1">
+          <h3 className="text-sm font-medium text-green-800 mb-1">Admin Access Verified</h3>
+          <p className="text-sm text-green-700">
+            Welcome, {userProfile.displayName}! You have admin access to the dashboard.
+          </p>
         </div>
       </div>
     </div>

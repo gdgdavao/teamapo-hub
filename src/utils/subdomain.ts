@@ -2,8 +2,8 @@
  * Utility functions for handling subdomain-based routing
  */
 
-// Configuration flag to enable/disable admin subdomain functionality
-const ADMIN_SUBDOMAIN_ENABLED = true; // Set to true to enable admin subdomain
+// Configuration flag to enable/disable apohub subdomain functionality for admin and organizer roles
+const APOHUB_SUBDOMAIN_ENABLED = true; // Set to true to enable apohub subdomain
 
 export const getSubdomain = (): string | null => {
   const host = window.location.hostname;
@@ -11,7 +11,7 @@ export const getSubdomain = (): string | null => {
   
   // Special handling for localhost development
   if (host.includes('localhost')) {
-    // For patterns like admin.localhost or admin.admin.localhost
+    // For patterns like apohub.localhost or apohub.apohub.localhost
     if (parts.length >= 2 && parts[parts.length - 1] === 'localhost') {
       // Find the part before 'localhost'
       const beforeLocalhost = parts[parts.length - 2];
@@ -31,7 +31,7 @@ export const getSubdomain = (): string | null => {
     return null;
   }
   
-  // For production domains like admin.example.com
+  // For production domains like apohub.example.com
   if (parts.length >= 3) {
     return parts[0];
   }
@@ -40,12 +40,17 @@ export const getSubdomain = (): string | null => {
   return null;
 };
 
-export const isAdminSubdomain = (): boolean => {
-  if (!ADMIN_SUBDOMAIN_ENABLED) {
+export const isApohubSubdomain = (): boolean => {
+  if (!APOHUB_SUBDOMAIN_ENABLED) {
     return false;
   }
   const subdomain = getSubdomain();
-  return subdomain === 'admin';
+  return subdomain === 'apohub';
+};
+
+// Legacy function name for backward compatibility
+export const isAdminSubdomain = (): boolean => {
+  return isApohubSubdomain();
 };
 
 export const isMainDomain = (): boolean => {
@@ -53,9 +58,9 @@ export const isMainDomain = (): boolean => {
   return subdomain === null || subdomain === 'www';
 };
 
-export const getAdminUrl = (path: string = ''): string => {
-  if (!ADMIN_SUBDOMAIN_ENABLED) {
-    // When admin subdomain is disabled, return main domain URL
+export const getApohubUrl = (path: string = ''): string => {
+  if (!APOHUB_SUBDOMAIN_ENABLED) {
+    // When apohub subdomain is disabled, return main domain URL
     return getMainUrl(path);
   }
   
@@ -66,17 +71,17 @@ export const getAdminUrl = (path: string = ''): string => {
   // For localhost development
   if (host.includes('localhost')) {
     const portPart = port ? `:${port}` : '';
-    // If we're already on admin.localhost, don't add another admin
-    if (host.startsWith('admin.')) {
+    // If we're already on apohub.localhost, don't add another apohub
+    if (host.startsWith('apohub.')) {
       return `${protocol}//${host}${portPart}${path}`;
     }
-    return `${protocol}//admin.localhost${portPart}${path}`;
+    return `${protocol}//apohub.localhost${portPart}${path}`;
   }
   
   // For IP addresses
   if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) {
     const portPart = port ? `:${port}` : '';
-    return `${protocol}//admin.${host}${portPart}${path}`;
+    return `${protocol}//apohub.${host}${portPart}${path}`;
   }
   
   // For production domains
@@ -84,12 +89,17 @@ export const getAdminUrl = (path: string = ''): string => {
   const baseDomain = parts.slice(-2).join('.');
   const portPart = port ? `:${port}` : '';
   
-  // If already on admin subdomain, don't add another admin
-  if (parts[0] === 'admin') {
+  // If already on apohub subdomain, don't add another apohub
+  if (parts[0] === 'apohub') {
     return `${protocol}//${host}${portPart}${path}`;
   }
   
-  return `${protocol}//admin.${baseDomain}${portPart}${path}`;
+  return `${protocol}//apohub.${baseDomain}${portPart}${path}`;
+};
+
+// Legacy function name for backward compatibility
+export const getAdminUrl = (path: string = ''): string => {
+  return getApohubUrl(path);
 };
 
 export const getMainUrl = (path: string = ''): string => {
@@ -127,9 +137,9 @@ export const debugSubdomain = () => {
     host,
     parts,
     subdomain,
-    isAdmin: isAdminSubdomain(),
+    isApohub: isApohubSubdomain(),
     isMain: isMainDomain(),
-    adminUrl: getAdminUrl(),
+    apohubUrl: getApohubUrl(),
     mainUrl: getMainUrl()
   });
 };

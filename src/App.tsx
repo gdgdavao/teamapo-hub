@@ -4,7 +4,8 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import Layout from './components/Layout/Layout';
 import AdminLayout from './components/AdminLayout';
 import LoadingSpinner from './components/UI/LoadingSpinner';
-import { isAdminSubdomain } from './utils/subdomain';
+import { FirebaseConnectionStatus } from './components/FirebaseConnectionStatus';
+import { isAdminSubdomain, getAdminUrl } from './utils/subdomain';
 
 // Public Pages
 import LandingPage from './pages/public/LandingPage';
@@ -14,12 +15,6 @@ import RegisterPage from './pages/public/RegisterPage';
 import LoginPage from './pages/auth/LoginPage';
 import SignUpPage from './pages/auth/SignUpPage';
 import ForgotPasswordPage from './pages/auth/ForgotPasswordPage';
-
-// Protected Pages - Attendee
-import DashboardPage from './pages/attendee/DashboardPage';
-import MyEventsPage from './pages/attendee/MyEventsPage';
-import MyCertificatesPage from './pages/attendee/MyCertificatesPage';
-import ProfilePage from './pages/attendee/ProfilePage';
 
 // Protected Pages - Organizer
 import OrganizerDashboardPage from './pages/organizer/OrganizerDashboardPage';
@@ -32,6 +27,7 @@ import AttendeesPage from './pages/organizer/AttendeesPage';
 import AdminDashboardPage from './pages/admin/AdminDashboardPage';
 import AdminEventsPage from './pages/admin/AdminEventsPage';
 import AdminAttendeesPage from './pages/admin/AdminAttendeesPage';
+import AdminUsersPage from './pages/admin/AdminUsersPage';
 import AdminAnalyticsPage from './pages/admin/AdminAnalyticsPage';
 import AdminCertificatesPage from './pages/admin/AdminCertificatesPage';
 import AdminFormsPage from './pages/admin/AdminFormsPage';
@@ -48,7 +44,7 @@ import NotFoundPage from './pages/error/NotFoundPage';
 // Protected Route Component
 const ProtectedRoute: React.FC<{ 
   children: React.ReactNode; 
-  requiredRole?: 'attendee' | 'organizer' | 'admin';
+  requiredRole?: 'organizer' | 'admin';
 }> = ({ children, requiredRole }) => {
   const { currentUser, userProfile, loading } = useAuth();
 
@@ -57,7 +53,14 @@ const ProtectedRoute: React.FC<{
   }
 
   if (!currentUser) {
-    return <Navigate to="/auth/login" replace />;
+    // Check if we're on apohub subdomain
+    if (isAdminSubdomain()) {
+      return <Navigate to="/auth/login" replace />;
+    } else {
+      // Redirect to apohub subdomain for authentication (admin and organizer roles)
+      window.location.href = getAdminUrl('/auth/login');
+      return <LoadingSpinner />;
+    }
   }
 
   if (requiredRole && userProfile?.role !== requiredRole && userProfile?.role !== 'admin') {
@@ -82,6 +85,15 @@ const PublicRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   return <>{children}</>;
 };
 
+// Redirect to Apohub Component
+const RedirectToApohub: React.FC<{ path: string }> = ({ path }) => {
+  React.useEffect(() => {
+    window.location.href = getAdminUrl(path);
+  }, [path]);
+
+  return <LoadingSpinner />;
+};
+
 const AppContent: React.FC = () => {
   const { loading } = useAuth();
 
@@ -89,14 +101,14 @@ const AppContent: React.FC = () => {
     return <LoadingSpinner />;
   }
 
-  // Check if we're on admin subdomain
-  const isAdmin = isAdminSubdomain();
+  // Check if we're on apohub subdomain (for admin and organizer roles)
+  const isApohub = isAdminSubdomain();
 
-  if (isAdmin) {
-    // Admin subdomain routes
+  if (isApohub) {
+    // Apohub subdomain routes - for admin and organizer authentication and management
     return (
       <Routes>
-        {/* Admin Authentication Routes */}
+        {/* Authentication Routes - Available on apohub subdomain */}
         <Route path="/login" element={
           <PublicRoute>
             <LoginPage />
@@ -107,35 +119,34 @@ const AppContent: React.FC = () => {
             <LoginPage />
           </PublicRoute>
         } />
+        <Route path="/auth/signup" element={
+          <PublicRoute>
+            <SignUpPage />
+          </PublicRoute>
+        } />
+        <Route path="/auth/forgot-password" element={
+          <PublicRoute>
+            <ForgotPasswordPage />
+          </PublicRoute>
+        } />
 
-        {/* Admin Protected Routes */}
+        {/* Dashboard Routes - Role-based routing */}
         <Route path="/" element={
-          <ProtectedRoute requiredRole="admin">
+          <ProtectedRoute>
             <AdminDashboardPage />
           </ProtectedRoute>
         } />
         
         <Route path="/dashboard" element={
-          <ProtectedRoute requiredRole="admin">
+          <ProtectedRoute>
             <AdminDashboardPage />
           </ProtectedRoute>
         } />
 
+        {/* Admin-only Routes */}
         <Route path="/events" element={
           <ProtectedRoute requiredRole="admin">
             <AdminEventsPage />
-          </ProtectedRoute>
-        } />
-
-        <Route path="/events/create" element={
-          <ProtectedRoute requiredRole="admin">
-            <CreateEventPage />
-          </ProtectedRoute>
-        } />
-
-        <Route path="/events/edit/:eventId" element={
-          <ProtectedRoute requiredRole="admin">
-            <CreateEventPage />
           </ProtectedRoute>
         } />
 
@@ -145,11 +156,15 @@ const AppContent: React.FC = () => {
           </ProtectedRoute>
         } />
 
+        <Route path="/users" element={
+          <ProtectedRoute requiredRole="admin">
+            <AdminUsersPage />
+          </ProtectedRoute>
+        } />
+
         <Route path="/analytics" element={
           <ProtectedRoute requiredRole="admin">
-            <AdminLayout>
-              <AdminAnalyticsPage />
-            </AdminLayout>
+            <AdminAnalyticsPage />
           </ProtectedRoute>
         } />
 
@@ -161,9 +176,7 @@ const AppContent: React.FC = () => {
 
         <Route path="/forms" element={
           <ProtectedRoute requiredRole="admin">
-            <AdminLayout>
-              <AdminFormsPage />
-            </AdminLayout>
+            <AdminFormsPage />
           </ProtectedRoute>
         } />
 
@@ -179,13 +192,75 @@ const AppContent: React.FC = () => {
           </ProtectedRoute>
         } />
 
-        {/* 404 Route for admin */}
+        {/* Event Management Routes - Available to both admin and organizer */}
+        <Route path="/events/create" element={
+          <ProtectedRoute requiredRole="organizer">
+            <CreateEventPage />
+          </ProtectedRoute>
+        } />
+
+        <Route path="/events/edit/:eventId" element={
+          <ProtectedRoute requiredRole="organizer">
+            <CreateEventPage />
+          </ProtectedRoute>
+        } />
+
+        <Route path="/manage-events" element={
+          <ProtectedRoute requiredRole="organizer">
+            <ManageEventsPage />
+          </ProtectedRoute>
+        } />
+
+        <Route path="/events/:eventId/analytics" element={
+          <ProtectedRoute requiredRole="organizer">
+            <EventAnalyticsPage />
+          </ProtectedRoute>
+        } />
+
+        <Route path="/events/:eventId/attendees" element={
+          <ProtectedRoute requiredRole="organizer">
+            <AttendeesPage />
+          </ProtectedRoute>
+        } />
+
+        {/* Organizer Routes - Alternative paths */}
+        <Route path="/organizer" element={
+          <ProtectedRoute requiredRole="organizer">
+            <OrganizerDashboardPage />
+          </ProtectedRoute>
+        } />
+
+        <Route path="/organizer/create" element={
+          <ProtectedRoute requiredRole="organizer">
+            <CreateEventPage />
+          </ProtectedRoute>
+        } />
+
+        <Route path="/organizer/events" element={
+          <ProtectedRoute requiredRole="organizer">
+            <ManageEventsPage />
+          </ProtectedRoute>
+        } />
+
+        <Route path="/organizer/events/:eventId/analytics" element={
+          <ProtectedRoute requiredRole="organizer">
+            <EventAnalyticsPage />
+          </ProtectedRoute>
+        } />
+
+        <Route path="/organizer/events/:eventId/attendees" element={
+          <ProtectedRoute requiredRole="organizer">
+            <AttendeesPage />
+          </ProtectedRoute>
+        } />
+
+        {/* 404 Route for apohub subdomain */}
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
     );
   }
 
-  // Main domain routes
+  // Main domain routes - Public access only
   return (
     <Routes>
       {/* Landing Page - without header/footer */}
@@ -200,90 +275,24 @@ const AppContent: React.FC = () => {
         <Route path="verify" element={<CertificateVerificationPage />} />
       </Route>
 
-      {/* Authentication Routes */}
-      <Route path="/auth/login" element={
-        <PublicRoute>
-          <LoginPage />
-        </PublicRoute>
-      } />
-      <Route path="/auth/signup" element={
-        <PublicRoute>
-          <SignUpPage />
-        </PublicRoute>
-      } />
-      <Route path="/auth/forgot-password" element={
-        <PublicRoute>
-          <ForgotPasswordPage />
-        </PublicRoute>
-      } />
+      {/* Authentication Routes - Redirect to apohub subdomain */}
+      <Route path="/auth/login" element={<RedirectToApohub path="/auth/login" />} />
+      <Route path="/auth/signup" element={<RedirectToApohub path="/auth/signup" />} />
+      <Route path="/auth/forgot-password" element={<RedirectToApohub path="/auth/forgot-password" />} />
+      <Route path="/login" element={<RedirectToApohub path="/login" />} />
+      <Route path="/signup" element={<RedirectToApohub path="/auth/signup" />} />
 
-      {/* Protected Routes - General */}
-      <Route path="/dashboard" element={
-        <ProtectedRoute>
-          <Layout />
-        </ProtectedRoute>
-      }>
-        <Route index element={<DashboardPage />} />
-        <Route path="profile" element={<ProfilePage />} />
-      </Route>
+      {/* Management Routes - Redirect to apohub subdomain */}
+      <Route path="/dashboard" element={<RedirectToApohub path="/dashboard" />} />
+      <Route path="/organizer/*" element={<RedirectToApohub path="/organizer" />} />
+      <Route path="/admin/*" element={<RedirectToApohub path="/admin" />} />
 
-      {/* Protected Routes - Attendee */}
-      <Route path="/my" element={
-        <ProtectedRoute>
-          <Layout />
-        </ProtectedRoute>
-      }>
-        <Route path="events" element={<MyEventsPage />} />
-        <Route path="certificates" element={<MyCertificatesPage />} />
-      </Route>
+      {/* Payment Routes - Keep on main domain for public access */}
+      <Route path="/payment/:registrationId" element={<PaymentPage />} />
+      <Route path="/payment/success" element={<PaymentSuccessPage />} />
 
-      {/* Protected Routes - Organizer */}
-      <Route path="/organizer" element={
-        <ProtectedRoute requiredRole="organizer">
-          <Layout />
-        </ProtectedRoute>
-      }>
-        <Route index element={<OrganizerDashboardPage />} />
-        <Route path="create" element={<CreateEventPage />} />
-        <Route path="events" element={<ManageEventsPage />} />
-        <Route path="events/:eventId/analytics" element={<EventAnalyticsPage />} />
-        <Route path="events/:eventId/attendees" element={<AttendeesPage />} />
-      </Route>
-
-      {/* Admin Routes - Event Management (alternative access) */}
-      <Route path="/admin" element={
-        <ProtectedRoute requiredRole="admin">
-          <Layout />
-        </ProtectedRoute>
-      }>
-        <Route path="create-event" element={<CreateEventPage />} />
-        <Route path="events" element={<ManageEventsPage />} />
-        <Route path="events/:eventId/analytics" element={<EventAnalyticsPage />} />
-        <Route path="events/:eventId/attendees" element={<AttendeesPage />} />
-      </Route>
-
-      {/* Payment Routes */}
-      <Route path="/payment/:registrationId" element={
-        <ProtectedRoute>
-          <PaymentPage />
-        </ProtectedRoute>
-      } />
-      <Route path="/payment/success" element={
-        <ProtectedRoute>
-          <PaymentSuccessPage />
-        </ProtectedRoute>
-      } />
-
-      {/* Feedback Route */}
-      <Route path="/feedback/:eventId" element={
-        <ProtectedRoute>
-          <FeedbackPage />
-        </ProtectedRoute>
-      } />
-
-      {/* Backward compatibility for old login routes */}
-      <Route path="/login" element={<Navigate to="/auth/login" replace />} />
-      <Route path="/signup" element={<Navigate to="/auth/signup" replace />} />
+      {/* Feedback Route - Keep on main domain for public access */}
+      <Route path="/feedback/:eventId" element={<FeedbackPage />} />
 
       {/* 404 Route */}
       <Route path="*" element={<NotFoundPage />} />
@@ -296,6 +305,7 @@ const App: React.FC = () => {
     <AuthProvider>
       <div className="min-h-screen bg-gray-50">
         <AppContent />
+        <FirebaseConnectionStatus />
       </div>
     </AuthProvider>
   );

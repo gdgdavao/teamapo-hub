@@ -61,101 +61,48 @@ const AdminCertificatesPage: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // Load mock data
+  // Load events from API
   useEffect(() => {
-    setEvents([
-      { id: '1', title: 'Web Development Workshop', date: '2025-02-15' },
-      { id: '2', title: 'AI/ML Fundamentals', date: '2025-02-20' },
-      { id: '3', title: 'Mobile App Development', date: '2025-02-25' }
-    ]);
-
-    const mockTimestamp = { 
-      seconds: Date.now() / 1000, 
-      nanoseconds: 0,
-      toDate: () => new Date()
+    const fetchEvents = async () => {
+      try {
+        // TODO: Implement actual API call
+        // const eventsData = await EventService.getAllEvents();
+        // setEvents(eventsData);
+        setEvents([]);
+      } catch (error) {
+        console.error('Error fetching events:', error);
+        setEvents([]);
+      }
     };
 
-    setTemplates([
-      {
-        id: '1',
-        name: 'GDG Davao Standard Certificate',
-        description: 'Standard certificate template for all GDG Davao events',
-        eventId: undefined,
-        templateImageUrl: '/images/cert-template-1.png',
-        textPositions: {
-          recipientName: {
-            x: 50, y: 45, fontSize: 28, fontFamily: 'Georgia', color: '#1a202c', align: 'center'
-          },
-          verificationCode: {
-            x: 85, y: 85, fontSize: 10, fontFamily: 'Arial', color: '#666666', align: 'right'
-          },
-          qrCode: {
-            x: 90, y: 75, size: 60
-          }
-        },
-        isActive: true,
-        createdBy: 'admin',
-        createdAt: mockTimestamp,
-        updatedAt: mockTimestamp,
-        usageCount: 45
-      },
-      {
-        id: '2',
-        name: 'Workshop Completion Certificate',
-        description: 'Specialized template for hands-on workshops',
-        eventId: '1',
-        templateImageUrl: '/images/cert-template-2.png',
-        textPositions: {
-          recipientName: {
-            x: 50, y: 50, fontSize: 24, fontFamily: 'Arial', color: '#2d3748', align: 'center'
-          },
-          verificationCode: {
-            x: 80, y: 90, fontSize: 8, fontFamily: 'Courier', color: '#718096', align: 'right'
-          },
-          qrCode: {
-            x: 85, y: 80, size: 50
-          },
-          eventTitle: {
-            x: 50, y: 65, fontSize: 16, fontFamily: 'Arial', color: '#4a5568', align: 'center'
-          },
-          eventDate: {
-            x: 50, y: 75, fontSize: 12, fontFamily: 'Arial', color: '#718096', align: 'center'
-          }
-        },
-        isActive: true,
-        createdBy: 'admin',
-        createdAt: mockTimestamp,
-        updatedAt: mockTimestamp,
-        usageCount: 23
-      }
-    ]);
+    fetchEvents();
 
-    setIssuedCertificates([
-      {
-        id: '1',
-        templateId: '1',
-        templateName: 'GDG Davao Standard Certificate',
-        recipientName: 'John Doe',
-        recipientEmail: 'john@example.com',
-        eventTitle: 'Web Development Workshop',
-        issuedDate: '2025-01-15T16:00:00Z',
-        verificationCode: 'CERT-2025-001',
-        status: 'verified',
-        downloadCount: 3
-      },
-      {
-        id: '2',
-        templateId: '1',
-        templateName: 'GDG Davao Standard Certificate',
-        recipientName: 'Jane Smith',
-        recipientEmail: 'jane@example.com',
-        eventTitle: 'Web Development Workshop',
-        issuedDate: '2025-01-15T16:05:00Z',
-        verificationCode: 'CERT-2025-002',
-        status: 'issued',
-        downloadCount: 1
+    const fetchTemplates = async () => {
+      try {
+        // TODO: Implement actual API call
+        // const templatesData = await CertificateService.getAllTemplates();
+        // setTemplates(templatesData);
+        setTemplates([]);
+      } catch (error) {
+        console.error('Error fetching templates:', error);
+        setTemplates([]);
       }
-    ]);
+    };
+
+    const fetchIssuedCertificates = async () => {
+      try {
+        // TODO: Implement actual API call
+        // const certificatesData = await CertificateService.getAllIssuedCertificates();
+        // setIssuedCertificates(certificatesData);
+        setIssuedCertificates([]);
+      } catch (error) {
+        console.error('Error fetching issued certificates:', error);
+        setIssuedCertificates([]);
+      }
+    };
+
+    fetchTemplates();
+    fetchIssuedCertificates();
   }, []);
 
   const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {

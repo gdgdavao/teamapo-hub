@@ -18,10 +18,10 @@ const AdminAccessNotification: React.FC = () => {
             </span>
             <p className="ml-3 font-medium text-blue-900 text-sm">
               <span className="md:hidden">
-                Admin portal now available at admin subdomain
+                Management portal now available at apohub subdomain
               </span>
               <span className="hidden md:inline">
-                Event organizers and administrators: Access your dashboard via our dedicated admin portal
+                Event organizers and administrators: Access your dashboard via our dedicated management portal
               </span>
             </p>
           </div>
@@ -32,7 +32,7 @@ const AdminAccessNotification: React.FC = () => {
               target="_blank"
               rel="noopener noreferrer"
             >
-              Admin Portal
+              Management Portal
             </a>
           </div>
           <div className="order-2 flex-shrink-0 sm:order-3 sm:ml-3">

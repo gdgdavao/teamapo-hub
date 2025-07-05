@@ -24,7 +24,7 @@ export interface User {
   email: string;
   displayName: string;
   photoURL?: string;
-  role: 'attendee' | 'organizer' | 'admin';
+  role: 'organizer' | 'admin'; // Removed 'attendee' since attendees are anonymous
   phoneNumber?: string;
   organization?: string;
   bio?: string;

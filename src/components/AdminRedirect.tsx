@@ -3,7 +3,7 @@ import { getAdminUrl } from '../utils/subdomain';
 
 const AdminRedirect: React.FC = () => {
   useEffect(() => {
-    // Redirect to admin subdomain after a short delay
+    // Redirect to apohub subdomain after a short delay
     const timer = setTimeout(() => {
       window.location.href = getAdminUrl(window.location.pathname);
     }, 3000);
@@ -23,10 +23,10 @@ const AdminRedirect: React.FC = () => {
           </div>
         </div>
         <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-          Redirecting to Admin Portal
+          Redirecting to Management Portal
         </h2>
         <p className="mt-2 text-center text-sm text-gray-600">
-          Admin features have moved to a dedicated subdomain
+          Admin and organizer features have moved to a dedicated subdomain
         </p>
       </div>
 
@@ -41,11 +41,11 @@ const AdminRedirect: React.FC = () => {
             </div>
             
             <h3 className="text-lg font-medium text-gray-900 mb-4">
-              Taking you to the admin portal...
+              Taking you to the management portal...
             </h3>
             
             <p className="text-sm text-gray-600 mb-6">
-              You'll be redirected to the admin subdomain in a few seconds.
+              You'll be redirected to the apohub subdomain in a few seconds.
             </p>
             
             <button

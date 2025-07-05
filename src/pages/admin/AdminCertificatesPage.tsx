@@ -18,19 +18,9 @@ import {
 import AdminLayout from '../../components/AdminLayout';
 import { CertificateTemplate, Certificate } from '../../types';
 import { CertificateGenerationService } from '../../utils/certificateGeneration';
-
-interface IssuedCertificate {
-  id: string;
-  templateId: string;
-  templateName: string;
-  recipientName: string;
-  recipientEmail: string;
-  eventTitle: string;
-  issuedDate: string;
-  verificationCode: string;
-  status: 'issued' | 'verified' | 'revoked';
-  downloadCount: number;
-}
+import { CertificateService, IssuedCertificate } from '../../services/certificateService';
+import { EventService } from '../../services/eventService';
+import toast from 'react-hot-toast';
 
 const AdminCertificatesPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'templates' | 'issued' | 'upload'>('templates');
@@ -62,101 +52,34 @@ const AdminCertificatesPage: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // Load mock data
+  // Load events from API
   useEffect(() => {
-    setEvents([
-      { id: '1', title: 'Web Development Workshop', date: '2025-02-15' },
-      { id: '2', title: 'AI/ML Fundamentals', date: '2025-02-20' },
-      { id: '3', title: 'Mobile App Development', date: '2025-02-25' }
-    ]);
-
-    const mockTimestamp = { 
-      seconds: Date.now() / 1000, 
-      nanoseconds: 0,
-      toDate: () => new Date()
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        
+        // Fetch all data in parallel
+        const [eventsData, templatesData, certificatesData] = await Promise.all([
+          EventService.getAllEvents(),
+          CertificateService.getAllTemplates(),
+          CertificateService.getAllIssuedCertificates()
+        ]);
+        
+        setEvents(eventsData);
+        setTemplates(templatesData);
+        setIssuedCertificates(certificatesData);
+      } catch (error) {
+        console.error('Error fetching data:', error);
+        toast.error('Failed to load certificate data');
+        setEvents([]);
+        setTemplates([]);
+        setIssuedCertificates([]);
+      } finally {
+        setLoading(false);
+      }
     };
 
-    setTemplates([
-      {
-        id: '1',
-        name: 'GDG Davao Standard Certificate',
-        description: 'Standard certificate template for all GDG Davao events',
-        eventId: undefined,
-        templateImageUrl: '/images/cert-template-1.png',
-        textPositions: {
-          recipientName: {
-            x: 50, y: 45, fontSize: 28, fontFamily: 'Georgia', color: '#1a202c', align: 'center'
-          },
-          verificationCode: {
-            x: 85, y: 85, fontSize: 10, fontFamily: 'Arial', color: '#666666', align: 'right'
-          },
-          qrCode: {
-            x: 90, y: 75, size: 60
-          }
-        },
-        isActive: true,
-        createdBy: 'admin',
-        createdAt: mockTimestamp,
-        updatedAt: mockTimestamp,
-        usageCount: 45
-      },
-      {
-        id: '2',
-        name: 'Workshop Completion Certificate',
-        description: 'Specialized template for hands-on workshops',
-        eventId: '1',
-        templateImageUrl: '/images/cert-template-2.png',
-        textPositions: {
-          recipientName: {
-            x: 50, y: 50, fontSize: 24, fontFamily: 'Arial', color: '#2d3748', align: 'center'
-          },
-          verificationCode: {
-            x: 80, y: 90, fontSize: 8, fontFamily: 'Courier', color: '#718096', align: 'right'
-          },
-          qrCode: {
-            x: 85, y: 80, size: 50
-          },
-          eventTitle: {
-            x: 50, y: 65, fontSize: 16, fontFamily: 'Arial', color: '#4a5568', align: 'center'
-          },
-          eventDate: {
-            x: 50, y: 75, fontSize: 12, fontFamily: 'Arial', color: '#718096', align: 'center'
-          }
-        },
-        isActive: true,
-        createdBy: 'admin',
-        createdAt: mockTimestamp,
-        updatedAt: mockTimestamp,
-        usageCount: 23
-      }
-    ]);
-
-    setIssuedCertificates([
-      {
-        id: '1',
-        templateId: '1',
-        templateName: 'GDG Davao Standard Certificate',
-        recipientName: 'John Doe',
-        recipientEmail: 'john@example.com',
-        eventTitle: 'Web Development Workshop',
-        issuedDate: '2025-01-15T16:00:00Z',
-        verificationCode: 'CERT-2025-001',
-        status: 'verified',
-        downloadCount: 3
-      },
-      {
-        id: '2',
-        templateId: '1',
-        templateName: 'GDG Davao Standard Certificate',
-        recipientName: 'Jane Smith',
-        recipientEmail: 'jane@example.com',
-        eventTitle: 'Web Development Workshop',
-        issuedDate: '2025-01-15T16:05:00Z',
-        verificationCode: 'CERT-2025-002',
-        status: 'issued',
-        downloadCount: 1
-      }
-    ]);
+    fetchData();
   }, []);
 
   const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -191,20 +114,13 @@ const AdminCertificatesPage: React.FC = () => {
 
   const saveTemplate = async () => {
     if (!uploadedImage || !templateName.trim()) {
-      alert('Please provide a template name and upload an image');
+      toast.error('Please provide a template name and upload an image');
       return;
     }
 
     setLoading(true);
     try {
-      const mockTimestamp = { 
-        seconds: Date.now() / 1000, 
-        nanoseconds: 0,
-        toDate: () => new Date()
-      };
-
-      const newTemplate: CertificateTemplate = {
-        id: Date.now().toString(),
+      const templateData = {
         name: templateName,
         description: templateDescription,
         eventId: templateEventId || undefined,
@@ -215,13 +131,14 @@ const AdminCertificatesPage: React.FC = () => {
           qrCode: qrPosition
         },
         isActive: true,
-        createdBy: 'admin',
-        createdAt: mockTimestamp,
-        updatedAt: mockTimestamp,
-        usageCount: 0
+        createdBy: 'admin'
       };
 
-      setTemplates(prev => [...prev, newTemplate]);
+      const templateId = await CertificateService.createTemplate(templateData);
+      
+      // Refresh templates list
+      const updatedTemplates = await CertificateService.getAllTemplates();
+      setTemplates(updatedTemplates);
       
       // Reset form
       setUploadedImage(null);
@@ -232,18 +149,29 @@ const AdminCertificatesPage: React.FC = () => {
       setCurrentPositioning(null);
       setActiveTab('templates');
       
-      alert('Certificate template saved successfully!');
+      toast.success('Certificate template saved successfully!');
     } catch (error) {
       console.error('Error saving template:', error);
-      alert('Error saving template. Please try again.');
+      toast.error('Error saving template. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
-  const deleteTemplate = (templateId: string) => {
+  const deleteTemplate = async (templateId: string) => {
     if (confirm('Are you sure you want to delete this template?')) {
-      setTemplates(prev => prev.filter(t => t.id !== templateId));
+      try {
+        await CertificateService.deleteTemplate(templateId);
+        
+        // Refresh templates list
+        const updatedTemplates = await CertificateService.getAllTemplates();
+        setTemplates(updatedTemplates);
+        
+        toast.success('Template deleted successfully');
+      } catch (error) {
+        console.error('Error deleting template:', error);
+        toast.error('Failed to delete template');
+      }
     }
   };
 

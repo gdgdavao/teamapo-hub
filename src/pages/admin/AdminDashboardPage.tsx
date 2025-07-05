@@ -18,13 +18,19 @@ import {
   ArrowTrendingDownIcon,
   SparklesIcon,
   ExclamationTriangleIcon,
-  CurrencyDollarIcon
+  CurrencyDollarIcon,
+  UserCircleIcon
 } from '@heroicons/react/24/outline';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../../components/AdminLayout';
+import AdminAccessInfo from '../../components/AdminAccessInfo';
+import { AnalyticsService, DashboardStats } from '../../services/analyticsService';
+import { EventService } from '../../services/eventService';
+import { useAuth } from '../../contexts/AuthContext';
+import toast from 'react-hot-toast';
 
 const AdminDashboardPage: React.FC = () => {
-  const [stats, setStats] = useState({
+  const [stats, setStats] = useState<DashboardStats>({
     totalEvents: 0,
     totalAttendees: 0,
     pendingApprovals: 0,
@@ -34,87 +40,78 @@ const AdminDashboardPage: React.FC = () => {
       events: 0,
       attendees: 0,
       certificates: 0
-    }
+    },
+    totalRevenue: 0,
+    pendingPayments: 0
   });
 
   const [loading, setLoading] = useState(true);
+  const [recentEvents, setRecentEvents] = useState<any[]>([]);
+  const [pendingApprovals, setPendingApprovals] = useState<any[]>([]);
+  const [dataFetched, setDataFetched] = useState(false);
 
-  // Mock data for demonstration
+  const { currentUser, userProfile } = useAuth();
+
+  // Reset data fetched state when user changes
   useEffect(() => {
-    // Simulate API call
-    setTimeout(() => {
-      setStats({
-        totalEvents: 24,
-        totalAttendees: 1847,
-        pendingApprovals: 12,
-        certificatesIssued: 943,
-        upcomingEvents: 6,
-        monthlyGrowth: {
-          events: 15.3,
-          attendees: 23.1,
-          certificates: 18.7
-        }
+    setDataFetched(false);
+  }, [currentUser?.uid]);
+
+  // Load dashboard data from API
+  useEffect(() => {
+    const fetchDashboardData = async () => {
+      console.log('📊 Fetching dashboard data...', { 
+        currentUser: !!currentUser, 
+        userProfile: !!userProfile, 
+        role: userProfile?.role,
+        dataFetched 
       });
-      setLoading(false);
-    }, 1000);
-  }, []);
+      
+      try {
+        setLoading(true);
+        
+        if (!currentUser) {
+          throw new Error('User not authenticated');
+        }
+        
+        if (!userProfile) {
+          throw new Error('User profile not loaded');
+        }
+        
+        if (userProfile.role !== 'admin') {
+          throw new Error(`User role is '${userProfile.role}', but 'admin' is required`);
+        }
+        
+        // Fetch dashboard stats and recent events in parallel
+        const [dashboardStats, events] = await Promise.all([
+          AnalyticsService.getDashboardStats(),
+          EventService.getPublishedEvents()
+        ]);
+        
+        setStats(dashboardStats);
+        
+        // Get recent events (last 5)
+        const sortedEvents = events
+          .sort((a, b) => b.createdAt.toDate().getTime() - a.createdAt.toDate().getTime())
+          .slice(0, 5);
+        setRecentEvents(sortedEvents);
+        
+        // TODO: Implement pending approvals from registrations service
+        setPendingApprovals([]);
+        setDataFetched(true);
+      } catch (error) {
+        console.error('Error fetching dashboard data:', error);
+        toast.error('Failed to load dashboard data');
+      } finally {
+        setLoading(false);
+      }
+    };
 
-  const recentEvents = [
-    {
-      id: 1,
-      title: 'Web Development Workshop',
-      date: '2025-01-15',
-      attendees: 45,
-      maxAttendees: 50,
-      status: 'completed',
-      revenue: 22500
-    },
-    {
-      id: 2,
-      title: 'AI/ML Fundamentals',
-      date: '2025-01-20',
-      attendees: 78,
-      maxAttendees: 100,
-      status: 'upcoming',
-      revenue: 0
-    },
-    {
-      id: 3,
-      title: 'Mobile App Development',
-      date: '2025-01-25',
-      attendees: 32,
-      maxAttendees: 40,
-      status: 'ongoing',
-      revenue: 24000
+    // Only fetch data if user profile is loaded and user is admin and data hasn't been fetched yet
+    if (userProfile && userProfile.role === 'admin' && currentUser && !dataFetched) {
+      fetchDashboardData();
     }
-  ];
-
-  const pendingApprovals = [
-    {
-      id: 1,
-      attendeeName: 'John Doe',
-      eventTitle: 'React Advanced Workshop',
-      registrationDate: '2025-01-10',
-      email: 'john@example.com',
-      avatar: 'https://ui-avatars.com/api/?name=John+Doe&background=4F46E5&color=fff'
-    },
-    {
-      id: 2,
-      attendeeName: 'Jane Smith',
-      eventTitle: 'Flutter Development',
-      registrationDate: '2025-01-11',
-      email: 'jane@example.com',
-      avatar: 'https://ui-avatars.com/api/?name=Jane+Smith&background=059669&color=fff'
-    },
-    {
-      id: 3,
-      attendeeName: 'Mike Johnson',
-      eventTitle: 'DevOps Essentials',
-      registrationDate: '2025-01-12',
-      email: 'mike@example.com',
-      avatar: 'https://ui-avatars.com/api/?name=Mike+Johnson&background=DC2626&color=fff'
-    }
-  ];
+  }, [userProfile?.role, currentUser?.uid, dataFetched]); // More specific dependencies
 
   const quickActions = [
     {
@@ -134,6 +131,14 @@ const AdminDashboardPage: React.FC = () => {
       iconBg: 'bg-orange-500',
       badge: stats.pendingApprovals,
       urgent: stats.pendingApprovals > 10
+    },
+    {
+      title: 'User Management',
+      description: 'Manage organizers and admin accounts',
+      icon: UserCircleIcon,
+      href: '/users',
+      color: 'from-teal-500 to-teal-600',
+      iconBg: 'bg-teal-500'
     },
     {
       title: 'Social Media',
@@ -231,8 +236,13 @@ const AdminDashboardPage: React.FC = () => {
       actions={headerActions}
     >
       <div className="space-y-6">
-        {/* Priority Actions Section */}
-        {stats.pendingApprovals > 0 && (
+        <AdminAccessInfo />
+        
+        {/* Only show dashboard content if user has admin access */}
+        {userProfile?.role === 'admin' && (
+          <>
+            {/* Priority Actions Section */}
+            {stats.pendingApprovals > 0 && (
           <div className="bg-gradient-to-r from-orange-50 to-red-50 border border-orange-200 rounded-xl p-6">
             <div className="flex items-start space-x-4">
               <div className="flex-shrink-0">
@@ -362,7 +372,7 @@ const AdminDashboardPage: React.FC = () => {
             </Link>
 
             <Link
-              to="/admin/payment-verification"
+              to="/payment-verification"
               className="group bg-gradient-to-br from-green-500 to-green-600 text-white rounded-xl p-6 hover:from-green-600 hover:to-green-700 transition-all duration-200 shadow-lg hover:shadow-xl relative"
             >
               <div className="flex items-center space-x-3">
@@ -529,6 +539,8 @@ const AdminDashboardPage: React.FC = () => {
             </div>
           </div>
         </div>
+          </>
+        )}
       </div>
     </AdminLayout>
   );

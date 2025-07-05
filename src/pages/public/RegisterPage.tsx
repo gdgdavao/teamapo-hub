@@ -57,130 +57,25 @@ const RegisterPage: React.FC = () => {
     toDate: () => date
   });
 
-  // Mock event data - replace with API call
+  // TODO: Replace with actual API call to fetch event data
   useEffect(() => {
-    setTimeout(() => {
-      const mockEvent: Event = {
-        id: eventId || '1',
-        title: 'Web Development Workshop',
-        description: 'Learn modern web development with React, TypeScript, and best practices. This comprehensive workshop covers everything from basic concepts to advanced techniques.',
-        shortDescription: 'Learn modern web development with React and TypeScript',
-        startDate: createMockTimestamp(new Date('2025-02-15T09:00:00Z')),
-        endDate: createMockTimestamp(new Date('2025-02-15T17:00:00Z')),
-        venue: {
-          type: 'offline',
-          name: 'GDG Davao Hub',
-          address: '123 Tech Street, IT Park',
-          city: 'Davao City',
-          onlineDetails: {
-            platform: 'Google Meet',
-            meetingUrl: '',
-            meetingId: '',
-            instructions: ''
-          }
-        },
-        ticketTypes: [
-          {
-            id: 'early-bird',
-            name: 'Early Bird',
-            description: 'Limited time early bird pricing',
-            price: 500,
-            currency: 'PHP',
-            maxQuantity: 25,
-            currentSold: 15,
-            isActive: true,
-            earlyBirdPrice: 500,
-            earlyBirdDeadline: createMockTimestamp(new Date('2025-02-01T23:59:59Z')),
-            benefits: ['Workshop materials', 'Certificate', 'Lunch', 'T-shirt'],
-            sortOrder: 1,
-            isEarlyBird: true,
-            discountPercentage: 33, // 33% off from 750
-            validFrom: createMockTimestamp(new Date('2025-01-01T00:00:00Z')),
-            validUntil: createMockTimestamp(new Date('2025-02-01T23:59:59Z'))
-          },
-          {
-            id: 'regular',
-            name: 'Regular',
-            description: 'Standard workshop registration',
-            price: 750,
-            currency: 'PHP',
-            maxQuantity: 50,
-            currentSold: 8,
-            isActive: true,
-            benefits: ['Workshop materials', 'Certificate', 'Lunch', 'T-shirt'],
-            sortOrder: 2,
-            isEarlyBird: false
-          },
-          {
-            id: 'student',
-            name: 'Student',
-            description: 'Special pricing for students (ID required)',
-            price: 400,
-            currency: 'PHP',
-            maxQuantity: 15,
-            currentSold: 3,
-            isActive: true,
-            benefits: ['Workshop materials', 'Certificate', 'Lunch'],
-            sortOrder: 3,
-            isEarlyBird: false,
-            discountPercentage: 47 // 47% off from 750
-          }
-        ],
-        promoCodes: [
-          {
-            id: 'WELCOME20',
-            name: 'Welcome Discount',
-            code: 'WELCOME20',
-            discountType: 'percentage',
-            discountValue: 20,
-            maxUses: 10,
-            currentUses: 3,
-            validFrom: createMockTimestamp(new Date('2025-01-01T00:00:00Z')),
-            validUntil: createMockTimestamp(new Date('2025-02-10T23:59:59Z')),
-            applicableTicketTypes: ['regular', 'student'],
-            isActive: true,
-            createdBy: 'gdg-davao',
-            createdAt: createMockTimestamp(new Date()),
-            updatedAt: createMockTimestamp(new Date())
-          },
-          {
-            id: 'STUDENT50',
-            name: 'Student Special',
-            code: 'STUDENT50',
-            discountType: 'fixed',
-            discountValue: 50,
-            maxUses: 5,
-            currentUses: 1,
-            validFrom: createMockTimestamp(new Date('2025-01-01T00:00:00Z')),
-            validUntil: createMockTimestamp(new Date('2025-02-15T23:59:59Z')),
-            applicableTicketTypes: ['student'],
-            isActive: true,
-            createdBy: 'gdg-davao',
-            createdAt: createMockTimestamp(new Date()),
-            updatedAt: createMockTimestamp(new Date())
-          }
-        ],
-        maxAttendees: 90,
-        currentAttendees: 26,
-        isPublished: true,
-        timezone: 'Asia/Manila',
-        speakers: [],
-        tags: ['web-development', 'react', 'typescript'],
-        category: 'workshop',
-        organizer: {
-          uid: 'gdg-davao',
-          name: 'GDG Davao',
-          email: 'gdgdavao@example.com'
-        },
-        imageUrl: 'https://via.placeholder.com/600x300',
-        status: 'published',
-        createdAt: createMockTimestamp(new Date()),
-        updatedAt: createMockTimestamp(new Date())
-      };
-      
-      setEvent(mockEvent);
+    const fetchEvent = async () => {
+      try {
+        // TODO: Implement actual API call
+        // const eventData = await EventService.getEventById(eventId);
+        // setEvent(eventData);
+        setLoading(false);
+      } catch (error) {
+        console.error('Error fetching event:', error);
+        setLoading(false);
+      }
+    };
+
+    if (eventId) {
+      fetchEvent();
+    } else {
       setLoading(false);
-    }, 1000);
+    }
   }, [eventId]);
 
   const steps = event && event.ticketTypes.length > 0 && event.ticketTypes.some(t => t.price > 0)

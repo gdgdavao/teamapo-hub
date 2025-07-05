@@ -69,167 +69,23 @@ const AdminAttendeesPage: React.FC = () => {
   const [selectedRegistrations, setSelectedRegistrations] = useState<string[]>([]);
   const [viewingRegistration, setViewingRegistration] = useState<Registration | null>(null);
 
-  // Mock data
+  // Load registrations from API
   useEffect(() => {
-    setTimeout(() => {
-      setRegistrations([
-        {
-          id: '1',
-          attendee: {
-            id: 'user1',
-            name: 'John Doe',
-            email: 'john.doe@email.com',
-            phone: '+63 912 345 6789',
-            organization: 'Tech Solutions Inc.',
-            experience: 'Intermediate',
-            interests: ['Frontend Development', 'React', 'TypeScript'],
-            bio: 'Full-stack developer with 3 years of experience in web development.'
-          },
-          event: {
-            id: 'event1',
-            title: 'Web Development Workshop',
-            date: '2025-01-25T09:00:00Z',
-            venue: 'GDG Davao Hub',
-            ticketPrice: 500
-          },
-          status: 'pending',
-          registrationDate: '2025-01-15T14:30:00Z',
-          priority: 'high',
-          formSubmission: {
-            'Why do you want to attend?': 'To improve my React skills and learn TypeScript',
-            'Current skill level': 'Intermediate',
-            'What do you hope to learn?': 'Advanced React patterns and TypeScript best practices'
-          }
-        },
-        {
-          id: '2',
-          attendee: {
-            id: 'user2',
-            name: 'Jane Smith',
-            email: 'jane.smith@company.com',
-            phone: '+63 918 765 4321',
-            organization: 'Digital Innovations',
-            experience: 'Advanced',
-            interests: ['Backend Development', 'Node.js', 'Databases'],
-            bio: 'Senior backend developer with expertise in Node.js and cloud architecture.'
-          },
-          event: {
-            id: 'event2',
-            title: 'AI/ML Fundamentals',
-            date: '2025-02-10T14:00:00Z',
-            venue: 'Online',
-            ticketPrice: 0
-          },
-          status: 'pending',
-          registrationDate: '2025-01-16T09:15:00Z',
-          priority: 'medium',
-          formSubmission: {
-            'Previous AI/ML experience': 'None, but interested in learning',
-            'Programming languages': 'JavaScript, Python',
-            'Expected outcomes': 'Understanding ML concepts and practical applications'
-          }
-        },
-        {
-          id: '3',
-          attendee: {
-            id: 'user3',
-            name: 'Mike Johnson',
-            email: 'mike.j@startup.ph',
-            phone: '+63 920 123 4567',
-            organization: 'StartupPH',
-            experience: 'Beginner',
-            interests: ['Mobile Development', 'Flutter', 'UI/UX'],
-            bio: 'Aspiring mobile developer transitioning from design to development.'
-          },
-          event: {
-            id: 'event3',
-            title: 'Mobile App Development',
-            date: '2025-02-15T10:00:00Z',
-            venue: 'Innovation Hub',
-            ticketPrice: 750
-          },
-          status: 'approved',
-          registrationDate: '2025-01-17T11:45:00Z',
-          paymentStatus: 'pending',
-          priority: 'medium'
-        },
-        {
-          id: '4',
-          attendee: {
-            id: 'user4',
-            name: 'Sarah Wilson',
-            email: 'sarah.wilson@freelance.com',
-            organization: 'Freelancer',
-            experience: 'Advanced',
-            interests: ['DevOps', 'Cloud Computing', 'Docker'],
-            bio: 'DevOps engineer specializing in cloud infrastructure and automation.'
-          },
-          event: {
-            id: 'event1',
-            title: 'Web Development Workshop',
-            date: '2025-01-25T09:00:00Z',
-            venue: 'GDG Davao Hub',
-            ticketPrice: 500
-          },
-          status: 'rejected',
-          registrationDate: '2025-01-18T16:45:00Z',
-          notes: 'Workshop focus doesn\'t match attendee background',
-          priority: 'low'
-        },
-        {
-          id: '5',
-          attendee: {
-            id: 'user5',
-            name: 'David Lee',
-            email: 'david.lee@student.edu',
-            organization: 'University of Davao',
-            experience: 'Beginner',
-            interests: ['Full Stack', 'Python', 'Web Development'],
-            bio: 'Computer Science student eager to learn industry practices.'
-          },
-          event: {
-            id: 'event4',
-            title: 'DevOps Essentials',
-            date: '2025-02-20T08:00:00Z',
-            venue: 'Innovation Center',
-            ticketPrice: 1000
-          },
-          status: 'paid',
-          registrationDate: '2025-01-19T11:30:00Z',
-          paymentStatus: 'paid',
-          priority: 'high'
-        },
-        {
-          id: '6',
-          attendee: {
-            id: 'user6',
-            name: 'Lisa Chen',
-            email: 'lisa.chen@techcorp.com',
-            phone: '+63 917 888 9999',
-            organization: 'TechCorp Solutions',
-            experience: 'Intermediate',
-            interests: ['Frontend', 'Vue.js', 'Progressive Web Apps'],
-            bio: 'Frontend developer specializing in Vue.js and modern web technologies.'
-          },
-          event: {
-            id: 'event1',
-            title: 'Web Development Workshop',
-            date: '2025-01-25T09:00:00Z',
-            venue: 'GDG Davao Hub',
-            ticketPrice: 500
-          },
-          status: 'pending',
-          registrationDate: '2025-01-20T08:20:00Z',
-          priority: 'high',
-          formSubmission: {
-            'Current role': 'Frontend Developer',
-            'Years of experience': '2 years',
-            'Specific topics of interest': 'React hooks, state management, testing'
-          }
-        }
-      ]);
-      setLoading(false);
-    }, 1000);
+    const fetchRegistrations = async () => {
+      try {
+        // TODO: Implement actual API call
+        // const registrationsData = await RegistrationService.getAllRegistrations();
+        // setRegistrations(registrationsData);
+        setRegistrations([]);
+        setLoading(false);
+      } catch (error) {
+        console.error('Error fetching registrations:', error);
+        setRegistrations([]);
+        setLoading(false);
+      }
+    };
+
+    fetchRegistrations();
   }, []);
 
   const handleStatusChange = (registrationId: string, newStatus: Registration['status'], notes?: string) => {

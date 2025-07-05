@@ -46,18 +46,6 @@ const Header: React.FC = () => {
       icon: ChartBarIcon,
       description: 'Your personal dashboard'
     },
-    { 
-      name: 'My Events', 
-      href: '/my/events',
-      icon: CalendarDaysIcon,
-      description: 'Events you\'ve joined'
-    },
-    { 
-      name: 'Certificates', 
-      href: '/my/certificates',
-      icon: AcademicCapIcon,
-      description: 'Your earned certificates'
-    },
   ];
 
   const organizerNavLinks = [
@@ -225,7 +213,7 @@ const Header: React.FC = () => {
                       {userProfile?.displayName || 'User'}
                     </p>
                     <p className="text-xs text-gray-500 capitalize">
-                      {userProfile?.role || 'Attendee'}
+                      {userProfile?.role || 'Organizer'}
                     </p>
                   </div>
                 </Menu.Button>
@@ -285,39 +273,7 @@ const Header: React.FC = () => {
                         )}
                       </Menu.Item>
                       
-                      <Menu.Item>
-                        {({ active }) => (
-                          <Link
-                            to="/my/events"
-                            className={`${
-                              active ? 'bg-gray-50' : ''
-                            } flex items-center px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 transition-colors duration-150`}
-                          >
-                            <CalendarDaysIcon className="w-5 h-5 mr-3 text-gray-400" />
-                            <div>
-                              <p className="font-medium">My Events</p>
-                              <p className="text-xs text-gray-500">Events you've joined</p>
-                            </div>
-                          </Link>
-                        )}
-                      </Menu.Item>
-                      
-                      <Menu.Item>
-                        {({ active }) => (
-                          <Link
-                            to="/my/certificates"
-                            className={`${
-                              active ? 'bg-gray-50' : ''
-                            } flex items-center px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 transition-colors duration-150`}
-                          >
-                            <AcademicCapIcon className="w-5 h-5 mr-3 text-gray-400" />
-                            <div>
-                              <p className="font-medium">Certificates</p>
-                              <p className="text-xs text-gray-500">Your earned certificates</p>
-                            </div>
-                          </Link>
-                        )}
-                      </Menu.Item>
+
                     </div>
                     
                     <div className="py-2 border-t border-gray-100">

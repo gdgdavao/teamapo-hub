@@ -58,66 +58,25 @@ const AdminSocialPage: React.FC = () => {
   const [scheduleDate, setScheduleDate] = useState('');
   const [scheduleTime, setScheduleTime] = useState('');
 
-  // Load mock data
+  // Load events and posts from API
   useEffect(() => {
-    setEvents([
-      {
-        id: '1',
-        title: 'Web Development Workshop',
-        description: 'Learn modern web development with React and TypeScript',
-        startDate: '2025-02-15T09:00:00Z',
-        venue: 'GDG Davao Hub',
-        imageUrl: '/images/events/web-dev.jpg',
-        ticketPrice: 500
-      },
-      {
-        id: '2',
-        title: 'AI/ML Fundamentals',
-        description: 'Introduction to Artificial Intelligence and Machine Learning',
-        startDate: '2025-02-20T14:00:00Z',
-        venue: 'Online',
-        imageUrl: '/images/events/ai-ml.jpg',
-        ticketPrice: 0
-      },
-      {
-        id: '3',
-        title: 'Mobile App Development',
-        description: 'Build cross-platform mobile apps with Flutter',
-        startDate: '2025-02-25T10:00:00Z',
-        venue: 'Innovation Hub',
-        imageUrl: '/images/events/flutter.jpg',
-        ticketPrice: 750
+    const fetchData = async () => {
+      try {
+        // TODO: Implement actual API calls
+        // const eventsData = await EventService.getAllEvents();
+        // const postsData = await SocialMediaService.getAllPosts();
+        // setEvents(eventsData);
+        // setPosts(postsData);
+        setEvents([]);
+        setPosts([]);
+      } catch (error) {
+        console.error('Error fetching social media data:', error);
+        setEvents([]);
+        setPosts([]);
       }
-    ]);
+    };
 
-    setPosts([
-      {
-        id: '1',
-        eventId: '1',
-        eventTitle: 'Web Development Workshop',
-        platform: 'facebook',
-        content: '🚀 Ready to level up your web development skills? Join us for an intensive React & TypeScript workshop! \n\n📅 February 15, 2025\n📍 GDG Davao Hub\n💰 Only ₱500\n\n#WebDevelopment #React #TypeScript #GDGDavao #TechWorkshop',
-        imageUrl: '/images/events/web-dev.jpg',
-        status: 'published',
-        createdAt: '2025-01-10T10:00:00Z',
-        publishedAt: '2025-01-10T10:30:00Z',
-        engagement: {
-          likes: 145,
-          shares: 32,
-          comments: 18
-        }
-      },
-      {
-        id: '2',
-        eventId: '2',
-        eventTitle: 'AI/ML Fundamentals',
-        platform: 'multiple',
-        content: '🤖 Curious about AI and Machine Learning? Our free online workshop is perfect for beginners!\n\n✨ What you\'ll learn:\n• AI/ML fundamentals\n• Hands-on projects\n• Industry insights\n\n📅 Feb 20, 2:00 PM\n🆓 Free registration\n\n#AI #MachineLearning #GDGDavao #FreeWorkshop',
-        scheduledFor: '2025-01-15T08:00:00Z',
-        status: 'scheduled',
-        createdAt: '2025-01-12T14:00:00Z'
-      }
-    ]);
+    fetchData();
   }, []);
 
   const generateAICaption = async () => {

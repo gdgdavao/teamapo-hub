@@ -11,7 +11,8 @@ A comprehensive event management system built with React, TypeScript, and Fireba
 - 📱 **QR Code Attendance** - Seamless check-in system with QR codes
 - 🏆 **Certificate Generation** - Automated certificate creation for attendees
 - 📊 **Analytics Dashboard** - Comprehensive event analytics and reporting
-- 🔐 **Google Authentication** - Secure sign-in with Google accounts
+- 🔐 **Admin & Organizer Access** - Role-based authentication for administrators and organizers
+- 👥 **Anonymous Attendee Registration** - No account required for event participants
 - 📱 **Mobile Responsive** - Optimized for all devices
 
 ## 🚀 Quick Start

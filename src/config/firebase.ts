@@ -1,5 +1,3 @@
-// TODO: Uncomment when ready to use Firebase
-/*
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
@@ -26,12 +24,4 @@ export const db = getFirestore(app);
 export const functions = getFunctions(app);
 export const storage = getStorage(app);
 
-export default app;
-*/
-
-// Mock exports for development without Firebase
-export const auth = null;
-export const db = null;
-export const functions = null;
-export const storage = null;
-export default null; 
+export default app; 

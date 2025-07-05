@@ -22,11 +22,6 @@ const LoginHelper: React.FC = () => {
       email: 'organizer@gdgdavao.org',
       role: 'Organizer',
       description: 'Can create and manage events'
-    },
-    {
-      email: 'attendee@example.com',
-      role: 'Attendee',
-      description: 'Regular user access'
     }
   ];
 
@@ -53,6 +48,12 @@ const LoginHelper: React.FC = () => {
             </button>
           </div>
         ))}
+      </div>
+      
+      <div className="mt-3 p-2 bg-green-50 border border-green-200 rounded">
+        <div className="text-xs text-green-700">
+          <strong>Note:</strong> Attendees don't need accounts - they can register for events anonymously using just their email address.
+        </div>
       </div>
     </div>
   );

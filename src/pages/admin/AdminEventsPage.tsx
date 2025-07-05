@@ -43,69 +43,23 @@ const AdminEventsPage: React.FC = () => {
   const [sortBy, setSortBy] = useState<string>('startDate');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
 
-  // Mock data
+  // Load events from API
   useEffect(() => {
-    setTimeout(() => {
-      setEvents([
-        {
-          id: '1',
-          title: 'Web Development Workshop',
-          description: 'Learn modern web development with React and TypeScript',
-          startDate: '2025-01-15T09:00:00Z',
-          endDate: '2025-01-15T17:00:00Z',
-          venue: { type: 'offline', name: 'GDG Davao Hub' },
-          status: 'completed',
-          maxAttendees: 50,
-          currentAttendees: 45,
-          ticketPrice: 500,
-          organizer: 'Admin User',
-          createdAt: '2025-01-01T10:00:00Z'
-        },
-        {
-          id: '2',
-          title: 'AI/ML Fundamentals',
-          description: 'Introduction to Artificial Intelligence and Machine Learning',
-          startDate: '2025-01-25T14:00:00Z',
-          endDate: '2025-01-25T18:00:00Z',
-          venue: { type: 'online' },
-          status: 'published',
-          maxAttendees: 100,
-          currentAttendees: 78,
-          ticketPrice: 0,
-          organizer: 'Admin User',
-          createdAt: '2025-01-05T14:00:00Z'
-        },
-        {
-          id: '3',
-          title: 'Mobile App Development',
-          description: 'Build cross-platform apps with Flutter',
-          startDate: '2025-02-10T10:00:00Z',
-          endDate: '2025-02-10T16:00:00Z',
-          venue: { type: 'hybrid', name: 'Tech Hub Davao' },
-          status: 'draft',
-          maxAttendees: 40,
-          currentAttendees: 0,
-          ticketPrice: 750,
-          organizer: 'Admin User',
-          createdAt: '2025-01-10T09:00:00Z'
-        },
-        {
-          id: '4',
-          title: 'DevOps Essentials',
-          description: 'Master the fundamentals of DevOps and CI/CD',
-          startDate: '2025-02-20T08:00:00Z',
-          endDate: '2025-02-20T17:00:00Z',
-          venue: { type: 'offline', name: 'Innovation Center' },
-          status: 'published',
-          maxAttendees: 30,
-          currentAttendees: 25,
-          ticketPrice: 1000,
-          organizer: 'Admin User',
-          createdAt: '2025-01-12T11:00:00Z'
-        }
-      ]);
-      setLoading(false);
-    }, 1000);
+    const fetchEvents = async () => {
+      try {
+        // TODO: Implement actual API call
+        // const eventsData = await EventService.getAllEvents();
+        // setEvents(eventsData);
+        setEvents([]);
+        setLoading(false);
+      } catch (error) {
+        console.error('Error fetching events:', error);
+        setEvents([]);
+        setLoading(false);
+      }
+    };
+
+    fetchEvents();
   }, []);
 
   const getStatusIcon = (status: string) => {

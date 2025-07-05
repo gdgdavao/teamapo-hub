@@ -11,6 +11,7 @@ import {
   DocumentChartBarIcon,
   AdjustmentsHorizontalIcon
 } from '@heroicons/react/24/outline';
+import AdminLayout from '../../components/AdminLayout';
 
 interface AnalyticsData {
   overview: {
@@ -54,107 +55,26 @@ const AdminAnalyticsPage: React.FC = () => {
   const [selectedTimeRange, setSelectedTimeRange] = useState('3m');
   const [selectedMetric, setSelectedMetric] = useState('all');
 
-  // Load mock analytics data
+  // Load analytics data from API
   useEffect(() => {
-    setTimeout(() => {
-      setAnalytics({
-        overview: {
-          totalEvents: 24,
-          totalAttendees: 1847,
-          averageRating: 4.6,
-          conversionRate: 78.5,
-          growthRate: 23.4
-        },
-        eventPerformance: [
-          {
-            eventId: '1',
-            eventTitle: 'Web Development Workshop',
-            date: '2025-01-15',
-            registrations: 65,
-            attendees: 58,
-            rating: 4.8,
-            conversionRate: 89.2
-          },
-          {
-            eventId: '2',
-            eventTitle: 'AI/ML Fundamentals',
-            date: '2025-01-20',
-            registrations: 120,
-            attendees: 95,
-            rating: 4.5,
-            conversionRate: 79.2
-          },
-          {
-            eventId: '3',
-            eventTitle: 'Mobile App Development',
-            date: '2025-01-25',
-            registrations: 45,
-            attendees: 38,
-            rating: 4.7,
-            conversionRate: 84.4
-          },
-          {
-            eventId: '4',
-            eventTitle: 'DevOps Essentials',
-            date: '2025-01-30',
-            registrations: 80,
-            attendees: 72,
-            rating: 4.4,
-            conversionRate: 90.0
-          }
-        ],
-        attendeeGrowth: [
-          { month: 'Oct', attendees: 420, newRegistrations: 380 },
-          { month: 'Nov', attendees: 580, newRegistrations: 520 },
-          { month: 'Dec', attendees: 760, newRegistrations: 680 },
-          { month: 'Jan', attendees: 950, newRegistrations: 850 }
-        ],
-        demographicsData: {
-          experienceLevel: [
-            { label: 'Beginner', value: 650, percentage: 45 },
-            { label: 'Intermediate', value: 550, percentage: 38 },
-            { label: 'Advanced', value: 250, percentage: 17 }
-          ],
-          interests: [
-            { label: 'Frontend Development', value: 580, percentage: 32 },
-            { label: 'Backend Development', value: 480, percentage: 26 },
-            { label: 'Mobile Development', value: 320, percentage: 18 },
-            { label: 'DevOps', value: 280, percentage: 15 },
-            { label: 'Data Science', value: 190, percentage: 9 }
-          ],
-          organizations: [
-            { label: 'Students', value: 720, percentage: 39 },
-            { label: 'Startups', value: 450, percentage: 24 },
-            { label: 'Tech Companies', value: 380, percentage: 21 },
-            { label: 'Freelancers', value: 180, percentage: 10 },
-            { label: 'Government', value: 120, percentage: 6 }
-          ]
-        },
-        aiInsights: {
-          summary: "Event performance has shown strong growth with a 23.4% increase in attendees over the past quarter. Revenue has grown by 35% month-over-month, driven primarily by paid workshops.",
-          recommendations: [
-            "Consider increasing capacity for web development workshops as they show 89% conversion rates",
-            "Introduce intermediate-level AI/ML workshops to capture the 38% intermediate audience",
-            "Partner with local universities to tap into the 39% student demographic",
-            "Create a mobile development track as it shows growing interest (18% of participants)",
-            "Implement early bird pricing to boost revenue from high-performing events"
-          ],
-          trends: [
-            "Web development workshops consistently outperform other topics in both attendance and satisfaction",
-            "Free events have 15% lower conversion rates but attract 40% more registrations",
-            "Weekend events show 25% higher attendance rates compared to weekday events",
-            "Hybrid events (online + offline) have become 60% more popular since introduction"
-          ],
-          predictions: [
-            "Expected 30% growth in mobile development workshop demand in Q2 2025",
-            "AI/ML topics projected to generate 25% more revenue in the next quarter",
-            "Student participation likely to increase by 20% during summer months",
-            "Premium workshop pricing can be increased by 15% without affecting demand"
-          ]
-        }
-      });
-      setLoading(false);
-    }, 1500);
+    const fetchAnalytics = async () => {
+      try {
+        // TODO: Implement actual API call
+        // const analyticsData = await AnalyticsService.getAnalytics({
+        //   timeRange: selectedTimeRange,
+        //   metric: selectedMetric
+        // });
+        // setAnalytics(analyticsData);
+        setAnalytics(null);
+        setLoading(false);
+      } catch (error) {
+        console.error('Error fetching analytics:', error);
+        setAnalytics(null);
+        setLoading(false);
+      }
+    };
+
+    fetchAnalytics();
   }, [selectedTimeRange, selectedMetric]);
 
   const generateAIInsights = async () => {
@@ -197,7 +117,7 @@ const AdminAnalyticsPage: React.FC = () => {
 
   if (loading || !analytics) {
     return (
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <AdminLayout title="Analytics & Insights" subtitle="Loading comprehensive analytics...">
         <div className="animate-pulse">
           <div className="h-8 bg-gray-200 rounded w-1/4 mb-4"></div>
           <div className="h-4 bg-gray-200 rounded w-1/2 mb-8"></div>
@@ -207,19 +127,25 @@ const AdminAnalyticsPage: React.FC = () => {
             ))}
           </div>
         </div>
-      </div>
+      </AdminLayout>
     );
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900">Analytics & Insights</h1>
-        <p className="text-gray-600 mt-2">
-          Comprehensive event analytics with AI-powered insights and recommendations
-        </p>
-      </div>
+    <AdminLayout 
+      title="Analytics & Insights" 
+      subtitle="Comprehensive event analytics with AI-powered insights and recommendations"
+      actions={
+        <button
+          onClick={generateAIInsights}
+          disabled={generatingInsights}
+          className="btn-primary flex items-center space-x-2"
+        >
+          <SparklesIcon className="h-4 w-4" />
+          <span>{generatingInsights ? 'Generating Insights...' : 'Refresh AI Insights'}</span>
+        </button>
+      }
+    >
 
       {/* Filters */}
       <div className="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -246,15 +172,6 @@ const AdminAnalyticsPage: React.FC = () => {
             <option value="satisfaction">Satisfaction</option>
           </select>
         </div>
-
-        <button
-          onClick={generateAIInsights}
-          disabled={generatingInsights}
-          className="btn-primary flex items-center space-x-2"
-        >
-          <SparklesIcon className="h-4 w-4" />
-          <span>{generatingInsights ? 'Generating Insights...' : 'Refresh AI Insights'}</span>
-        </button>
       </div>
 
       {/* Overview Cards */}
@@ -578,7 +495,7 @@ const AdminAnalyticsPage: React.FC = () => {
           </div>
         </div>
       </div>
-    </div>
+    </AdminLayout>
   );
 };
 

@@ -45,7 +45,7 @@ const DevCredentialsInfo: React.FC = () => {
                 target="_blank"
                 rel="noopener noreferrer"
               >
-                Go to Admin Portal →
+                Go to Management Portal →
               </a>
             </div>
             
@@ -53,12 +53,20 @@ const DevCredentialsInfo: React.FC = () => {
               <div className="font-medium text-blue-800">Organizer</div>
               <div className="text-blue-700">organizer@gdgdavao.org</div>
               <div className="text-blue-600">password123</div>
+              <a 
+                href={getAdminUrl('/login')}
+                className="text-blue-600 hover:text-blue-800 underline text-xs"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Go to Management Portal →
+              </a>
             </div>
             
             <div className="bg-green-50 border border-green-200 rounded p-2">
-              <div className="font-medium text-green-800">Attendee</div>
-              <div className="text-green-700">attendee@example.com</div>
-              <div className="text-green-600">password123</div>
+              <div className="font-medium text-green-800">Anonymous Attendees</div>
+              <div className="text-green-700">No login required</div>
+              <div className="text-green-600">Register for events with just email</div>
             </div>
           </div>
           

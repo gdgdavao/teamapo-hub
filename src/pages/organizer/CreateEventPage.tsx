@@ -1,5 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { httpsCallable } from 'firebase/functions';
+import toast from 'react-hot-toast';
+import { useAuth } from '../../contexts/AuthContext';
+import { functions } from '../../config/firebase';
+import EventService from '../../services/eventService';
 import {
   CalendarDaysIcon,
   MapPinIcon,
@@ -88,12 +93,15 @@ interface EventFormData {
 const CreateEventPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { currentUser } = useAuth();
 
   // Check if we're in admin or organizer context
   const isAdminContext = location.pathname.includes('/admin') || location.pathname.includes('/events/create');
   const isEditMode = location.pathname.includes('/edit/');
 
   const [currentStep, setCurrentStep] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [eventId, setEventId] = useState<string | null>(null);
 
   const [formData, setFormData] = useState<EventFormData>({
     title: '',
@@ -131,6 +139,216 @@ const CreateEventPage: React.FC = () => {
   });
 
   const [activeFormType, setActiveFormType] = useState<'registration' | 'feedback'>('registration');
+
+  // Load event data if editing
+  useEffect(() => {
+    if (isEditMode) {
+      const eventIdFromUrl = location.pathname.split('/').pop();
+      if (eventIdFromUrl) {
+        loadEventData(eventIdFromUrl);
+      }
+    }
+  }, [isEditMode, location.pathname]);
+
+  const loadEventData = async (eventId: string) => {
+    try {
+      setLoading(true);
+      const event = await EventService.getEvent(eventId);
+      if (event) {
+        setEventId(eventId);
+        // Convert Event to EventFormData
+        const eventFormData: EventFormData = {
+          title: event.title,
+          description: event.description,
+          shortDescription: event.shortDescription,
+          imageUrl: event.imageUrl,
+          startDate: event.startDate.toDate().toISOString().split('T')[0],
+          startTime: event.startDate.toDate().toTimeString().slice(0, 5),
+          endDate: event.endDate.toDate().toISOString().split('T')[0],
+          endTime: event.endDate.toDate().toTimeString().slice(0, 5),
+          timezone: event.timezone,
+          venueType: event.venue.type,
+          venueName: event.venue.name,
+          venueAddress: event.venue.address,
+          city: event.venue.city,
+          ticketTypes: event.ticketTypes,
+          promoCodes: event.promoCodes || [],
+          isPaid: event.ticketTypes.some(ticket => ticket.price > 0),
+          ticketPrice: event.ticketTypes[0]?.price || 0,
+          currency: event.ticketTypes[0]?.currency || 'PHP',
+          maxAttendees: event.maxAttendees,
+          registrationForm: [], // Will be loaded separately
+          feedbackForm: [], // Will be loaded separately
+          category: event.category,
+          tags: event.tags,
+          requirements: event.requirements || [],
+          registrationDeadline: event.registrationDeadline?.toDate().toISOString().split('T')[0]
+        };
+        setFormData(eventFormData);
+      }
+    } catch (error) {
+      console.error('Error loading event data:', error);
+      toast.error('Failed to load event data');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSaveEvent = async (publish: boolean = false) => {
+    if (!currentUser) {
+      toast.error('You must be logged in to create an event');
+      return;
+    }
+
+    try {
+      setLoading(true);
+
+      // Client-side validation first
+      if (!formData.title || !formData.description || !formData.startDate || !formData.startTime) {
+        toast.error('Please fill in all required fields');
+        return;
+      }
+
+      // Validate using Firebase function for comprehensive validation
+      const validateEventData = httpsCallable(functions, 'validateEventData');
+      const validationResult = await validateEventData({ eventData: formData });
+      
+      const validation = validationResult.data as any;
+      if (!validation.isValid) {
+        toast.error(`Validation failed: ${validation.errors.join(', ')}`);
+        return;
+      }
+
+      let savedEventId: string;
+
+      if (isEditMode && eventId) {
+        // Update existing event
+        await EventService.updateEvent(eventId, formData);
+        savedEventId = eventId;
+        toast.success('Event updated successfully!');
+      } else {
+        // Create new event
+        savedEventId = await EventService.createEvent(formData, currentUser.uid);
+        setEventId(savedEventId);
+        toast.success('Event created successfully!');
+      }
+
+      // Upload event image if provided
+      if (formData.imageUrl && formData.imageUrl.startsWith('data:')) {
+        try {
+          // Convert data URL to blob and then to file
+          const response = await fetch(formData.imageUrl);
+          const blob = await response.blob();
+          const file = new File([blob], 'event-image.jpg', { type: 'image/jpeg' });
+          await EventService.uploadEventImage(savedEventId, file);
+          toast.success('Event image uploaded successfully!');
+        } catch (error) {
+          console.error('Error uploading event image:', error);
+          toast.error('Failed to upload event image, but event was saved');
+        }
+      }
+
+      // Upload payment QR code if provided
+      if (formData.paymentConfig?.qrCodeImage) {
+        try {
+          const qrCodeUrl = await EventService.uploadPaymentQR(savedEventId, formData.paymentConfig.qrCodeImage);
+          // Update payment config with QR code URL
+          await EventService.updateEvent(savedEventId, {
+            paymentConfig: {
+              ...formData.paymentConfig,
+              qrCodeUrl
+            }
+          });
+          toast.success('Payment QR code uploaded successfully!');
+        } catch (error) {
+          console.error('Error uploading payment QR code:', error);
+          toast.error('Failed to upload payment QR code, but event was saved');
+        }
+      }
+
+      // Publish event if requested
+      if (publish) {
+        try {
+          await EventService.publishEvent(savedEventId);
+          toast.success('Event published successfully!');
+        } catch (error) {
+          console.error('Error publishing event:', error);
+          toast.error('Failed to publish event, but event was saved');
+        }
+      }
+
+      // Get event statistics if in edit mode
+      if (isEditMode) {
+        try {
+          const getEventStatistics = httpsCallable(functions, 'getEventStatistics');
+          const statsResult = await getEventStatistics({ eventId: savedEventId });
+          const statistics = statsResult.data as any;
+          console.log('Event statistics:', statistics.statistics);
+        } catch (error) {
+          console.error('Error getting event statistics:', error);
+        }
+      }
+
+      // Navigate to the appropriate page
+      if (isAdminContext) {
+        navigate('/admin/events');
+      } else {
+        navigate('/organizer/events');
+      }
+
+    } catch (error) {
+      console.error('Error saving event:', error);
+      if (error instanceof Error) {
+        toast.error(`Failed to save event: ${error.message}`);
+      } else {
+        toast.error('Failed to save event. Please try again.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDuplicateEvent = async () => {
+    if (!currentUser || !eventId) {
+      toast.error('Unable to duplicate event');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      
+      const duplicateEvent = httpsCallable(functions, 'duplicateEvent');
+      const result = await duplicateEvent({ 
+        eventId, 
+        newTitle: `${formData.title} (Copy)` 
+      });
+      
+      const duplicateResult = result.data as any;
+      if (duplicateResult.success) {
+        toast.success('Event duplicated successfully!');
+        navigate(`/organizer/events/edit/${duplicateResult.newEventId}`);
+      }
+    } catch (error) {
+      console.error('Error duplicating event:', error);
+      toast.error('Failed to duplicate event');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        setFormData(prev => ({
+          ...prev,
+          imageUrl: e.target?.result as string
+        }));
+      };
+      reader.readAsDataURL(file);
+    }
+  };
 
   // Helper function to create default payment verification fields
   const createDefaultPaymentFields = (): FormField[] => [
@@ -1682,15 +1900,19 @@ const CreateEventPage: React.FC = () => {
           <div className="flex space-x-3">
             <button
               type="button"
-              className="px-6 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+              onClick={() => handleSaveEvent(false)}
+              disabled={loading}
+              className="px-6 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50"
             >
-              Save as Draft
+              {loading ? 'Saving...' : 'Save as Draft'}
             </button>
             <button
               type="button"
-              className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              onClick={() => handleSaveEvent(true)}
+              disabled={loading}
+              className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
             >
-              Publish Event
+              {loading ? 'Publishing...' : 'Publish Event'}
             </button>
           </div>
         </div>
@@ -1719,411 +1941,168 @@ const CreateEventPage: React.FC = () => {
     </div>
   );
 
-  // Function to provide step-specific guidance
-  const getCurrentStepGuidance = () => {
-    const hasPaidTickets = formData.ticketTypes.some(t => t.price > 0);
-    const hasQRCode = formData.paymentConfig?.qrCodeUrl;
-    const completedFields = [formData.title, formData.description, formData.category].filter(Boolean).length;
-
-    const guidance = {
-      0: {
-        title: "Start with Event Basics",
-        description: "Create a compelling event profile that attracts the right attendees.",
-        tips: [
-          "Write clear, benefit-focused title",
-          "Include compelling description",
-          "Choose relevant category",
-          completedFields < 3 ? "Fill all required fields" : "✓ Looking good!"
-        ]
-      },
-      1: {
-        title: "Schedule & Location Setup",
-        description: "Set the perfect time and place for maximum attendance.",
-        tips: [
-          "Consider your audience's timezone",
-          formData.venueType === 'online' ? "Add meeting link later" : "Include full address",
-          "Avoid major holidays/conflicts",
-          "Set realistic duration"
-        ]
-      },
-      2: {
-        title: "Ticketing & Payment Configuration",
-        description: hasPaidTickets ? "Configure payment processing for your paid event." : "Set up your ticketing system.",
-        tips: [
-          hasPaidTickets ? "Upload GCash/payment QR code" : "Free events boost attendance",
-          hasPaidTickets && !hasQRCode ? "⚠️ Missing payment QR code" : hasPaidTickets ? "✓ Payment ready" : "Consider early-bird strategy",
-          "Set appropriate capacity",
-          "Multiple ticket types = more options"
-        ]
-      },
-      3: {
-        title: "Promotional Codes (Optional)",
-        description: "Boost registrations with strategic discounts and promotional offers.",
-        tips: [
-          formData.promoCodes.length === 0 ? "Optional - click Continue to skip" : `${formData.promoCodes.length} codes created`,
-          "Early bird = 10-20% discount",
-          "Student discounts increase reach",
-          "Limited quantity creates urgency"
-        ]
-      },
-      4: {
-        title: "Registration Form Design",
-        description: "Customize the information you collect from attendees.",
-        tips: [
-          `${formData.registrationForm.length} fields currently`,
-          formData.registrationForm.some(field => !['Full Name', 'Email Address', 'Phone Number'].includes(field.label)) || formData.registrationForm.length !== 3 ? "✓ Customized" : "Using defaults",
-          "Add event-specific fields if needed",
-          "Keep under 8 fields total"
-        ]
-      },
-      5: {
-        title: "Post-Event Feedback Setup",
-        description: "Customize feedback collection for valuable insights.",
-        tips: [
-          `${formData.feedbackForm.length} feedback fields`,
-          formData.feedbackForm.some(field => !['Overall Event Rating', 'What did you like most?', 'Areas for improvement'].includes(field.label)) || formData.feedbackForm.length !== 3 ? "✓ Customized" : "Using defaults",
-          "Customize for your event type",
-          "Short forms get more responses"
-        ]
-      },
-      6: {
-        title: "Final Review & Launch",
-        description: "Everything looks good! Time to publish and start welcoming attendees.",
-        tips: [
-          hasPaidTickets && hasQRCode ? "✓ Payment configured" : hasPaidTickets ? "⚠️ Check payment setup" : "✓ Free event ready",
-          "✓ Forms configured",
-          "Double-check all details",
-          "Ready to go live!"
-        ]
-      }
-    };
-
-    return guidance[currentStep as keyof typeof guidance] || guidance[0];
-  };
-
-  // Function to check if a step is completed
-  const isStepCompleted = (stepIndex: number): boolean => {
-    switch (stepIndex) {
-      case 0: // Basic Info
-        return !!(formData.title && formData.description && formData.category);
-      case 1: // Date & Venue
-        return !!(formData.startDate && formData.startTime && formData.endDate && formData.endTime);
-      case 2: // Tickets & Pricing
-        const hasPaidTickets = formData.ticketTypes.some(t => t.price > 0);
-        return formData.ticketTypes.length > 0 && (!hasPaidTickets || !!formData.paymentConfig?.qrCodeUrl);
-      case 3: // Promo Codes (optional)
-        // Optional step - considered complete if user has either added codes or explicitly moved past it
-        return currentStep > 3 || formData.promoCodes.length > 0;
-      case 4: // Registration Form
-        // Check if form has been customized beyond defaults or user has moved past this step
-        const defaultRegFields = ['Full Name', 'Email Address', 'Phone Number'];
-        const hasCustomRegFields = formData.registrationForm.some(field =>
-          !defaultRegFields.includes(field.label)
-        ) || formData.registrationForm.length !== 3;
-        return currentStep > 4 || hasCustomRegFields;
-      case 5: // Feedback Form
-        // Check if form has been customized beyond defaults or user has moved past this step
-        const defaultFeedbackFields = ['Overall Event Rating', 'What did you like most?', 'Areas for improvement'];
-        const hasCustomFeedbackFields = formData.feedbackForm.some(field =>
-          !defaultFeedbackFields.includes(field.label)
-        ) || formData.feedbackForm.length !== 3;
-        return currentStep > 5 || hasCustomFeedbackFields;
-      case 6: // Review
-        return isStepCompleted(0) && isStepCompleted(1) && isStepCompleted(2) && isStepCompleted(4) && isStepCompleted(5);
-      default:
-        return false;
-    }
-  };
-
+  // Main component render
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      {/* Navigation Header */}
-      <div className="mb-6">
-        {/* Back to Dashboard */}
-        <button
-          onClick={() => navigate(isAdminContext ? '/dashboard' : '/organizer')}
-          className="inline-flex items-center space-x-2 text-gray-600 hover:text-gray-900 transition-colors group font-medium"
-        >
-          <ArrowLeftIcon className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
-          <span>Back to Dashboard</span>
-        </button>
-      </div>
-
+    <div className="min-h-screen bg-gray-50">
       {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900">{isEditMode ? 'Edit Event' : 'Create New Event'}</h1>
-        <p className="text-gray-600 mt-2">
-          Set up your event step by step with customizable forms and payment options
-        </p>
-
-        {/* Dynamic User Guide */}
-        <div className="mt-4 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg">
-          <div className="flex items-start space-x-3">
-            <div className="flex-shrink-0">
-              <div className="w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center text-sm font-bold">
-                {currentStep + 1}
-              </div>
-            </div>
-            <div className="flex-1">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-sm font-semibold text-blue-900">
-                  {getCurrentStepGuidance().title}
-                </h3>
-                <span className="text-xs text-blue-600 bg-blue-100 px-2 py-1 rounded-full">
-                  Step {currentStep + 1} of {steps.length}
+      <div className="bg-white border-b border-gray-200">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-16">
+            <div className="flex items-center space-x-4">
+              <button
+                onClick={() => navigate(isAdminContext ? '/admin/events' : '/organizer/events')}
+                className="flex items-center text-gray-600 hover:text-gray-900"
+              >
+                <ArrowLeftIcon className="w-5 h-5 mr-2" />
+                Back to Events
+              </button>
+              <div className="h-6 border-l border-gray-300" />
+              <div className="flex items-center space-x-2 text-sm text-gray-500">
+                <HomeIcon className="w-4 h-4" />
+                <span>{isAdminContext ? 'Admin' : 'Organizer'}</span>
+                <ChevronRightIcon className="w-4 h-4" />
+                <span>Events</span>
+                <ChevronRightIcon className="w-4 h-4" />
+                <span className="text-gray-900 font-medium">
+                  {isEditMode ? 'Edit Event' : 'Create Event'}
                 </span>
               </div>
-              <p className="text-sm text-blue-800 mb-3">
-                {getCurrentStepGuidance().description}
-              </p>
-
-              {/* Action Tips */}
-              <div className="space-y-2">
-                <div className="text-xs font-medium text-blue-900 mb-1">💡 Quick Tips:</div>
-                <div className="flex flex-wrap gap-2">
-                  {getCurrentStepGuidance().tips.map((tip, index) => (
-                    <span key={index} className="inline-flex items-center px-2 py-1 bg-white/80 text-blue-700 text-xs rounded-md border border-blue-200 shadow-sm">
-                      {tip}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              {/* Step-specific alerts/warnings */}
-              {currentStep === 2 && formData.ticketTypes.some(t => t.price > 0) && !formData.paymentConfig?.qrCodeUrl && (
-                <div className="mt-3 p-2 bg-amber-50 border border-amber-200 rounded-md">
-                  <div className="flex items-center space-x-2">
-                    <div className="w-4 h-4 bg-amber-500 rounded-full flex items-center justify-center">
-                      <span className="text-white text-xs">!</span>
-                    </div>
-                    <span className="text-xs text-amber-800 font-medium">
-                      Don't forget to upload your payment QR code for paid tickets!
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {currentStep === 6 && (
-                <div className="mt-3 p-2 bg-green-50 border border-green-200 rounded-md">
-                  <div className="flex items-center space-x-2">
-                    <CheckCircleIcon className="w-4 h-4 text-green-600" />
-                    <span className="text-xs text-green-800 font-medium">
-                      All set! Your event is ready to publish and start accepting registrations.
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {/* Step Navigation */}
-              <div className="mt-4 flex items-center justify-end space-x-2">
-                {currentStep > 0 && (
-                  <button
-                    onClick={() => setCurrentStep(Math.max(0, currentStep - 1))}
-                    className="inline-flex items-center space-x-1 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm font-medium"
-                  >
-                    <ArrowLeftIcon className="w-4 h-4" />
-                    <span>Previous</span>
-                  </button>
-                )}
-              </div>
             </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Step Progress */}
-      <div className="mb-8">
-        {/* Desktop Step Progress */}
-        <div className="hidden md:flex items-center justify-between relative">
-          {/* Background line */}
-          <div className="absolute top-5 left-0 w-full h-0.5 bg-gray-200 z-0"></div>
-
-          {steps.map((step, index) => {
-            const stepCompleted = isStepCompleted(step.id);
-            const stepActive = currentStep === step.id;
-            const stepVisited = currentStep > step.id;
-
-            return (
-              <React.Fragment key={step.id}>
-                <div className="flex flex-col items-center relative z-10">
-                  <button
-                    onClick={() => setCurrentStep(step.id)}
-                    className={`flex items-center justify-center w-10 h-10 rounded-full border-2 transition-all duration-300 hover:scale-105 cursor-pointer ${stepVisited || stepCompleted
-                      ? 'bg-blue-600 border-blue-600 text-white shadow-lg hover:bg-blue-700'
-                      : stepActive
-                        ? 'bg-white border-blue-600 text-blue-600 ring-4 ring-blue-100 shadow-md'
-                        : 'bg-white border-gray-300 text-gray-400 hover:border-gray-400 hover:text-gray-600'
-                      }`}
-                    title={`Go to ${step.title}`}
-                  >
-                    {stepVisited || stepCompleted ? (
-                      <CheckCircleIcon className="w-6 h-6" />
-                    ) : (
-                      React.createElement(step.icon, { className: "w-5 h-5" })
-                    )}
-                  </button>
-                  <div className="mt-3 text-center min-w-max">
-                    <div
-                      className={`text-sm font-medium transition-all duration-300 ${stepActive || stepVisited || stepCompleted
-                        ? 'text-blue-600'
-                        : 'text-gray-500'
-                        }`}
-                    >
-                      {step.title}
-                    </div>
-                    <div className="text-xs mt-1">
-                      {stepCompleted && !stepVisited ? (
-                        <span className="text-green-600 font-medium">✓ Complete</span>
-                      ) : (
-                        <span className="text-gray-400">Step {step.id + 1}</span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </React.Fragment>
-            );
-          })}
-        </div>
-
-        {/* Mobile Step Progress */}
-        <div className="md:hidden">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-gray-900">
-              {steps[currentStep].title}
-            </h2>
-            <span className="text-sm text-gray-500 font-medium">
-              {currentStep + 1} of {steps.length}
-            </span>
-          </div>
-
-          {/* Progress Bar */}
-          <div className="w-full bg-gray-200 rounded-full h-2 mb-4">
-            <div
-              className="bg-gradient-to-r from-blue-500 to-blue-600 h-2 rounded-full transition-all duration-500 ease-out"
-              style={{ width: `${((currentStep + 1) / steps.length) * 100}%` }}
-            />
-          </div>
-
-          {/* Current Step Info */}
-          <div className="flex items-center">
-            <div
-              className={`flex items-center justify-center w-10 h-10 rounded-full border-2 ${'bg-blue-600 border-blue-600 text-white shadow-md'
-                }`}
-            >
-              {React.createElement(steps[currentStep].icon, {
-                className: "w-5 h-5"
-              })}
-            </div>
-            <div className="ml-4">
-              <div className="text-sm font-medium text-gray-900">
-                {steps[currentStep].title}
-              </div>
-              <div className="text-xs text-gray-500 mt-1">
-                Step {currentStep + 1} of {steps.length}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Step Content */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-        <div className="p-8">
-          {renderStepContent()}
-        </div>
-
-        {/* Navigation */}
-        <div className="px-8 py-4 bg-gray-50 border-t border-gray-200">
-          <div className="flex items-center justify-between">
-            <button
-              type="button"
-              onClick={() => setCurrentStep(Math.max(0, currentStep - 1))}
-              disabled={currentStep === 0}
-              className="flex items-center px-4 py-2 text-gray-600 hover:text-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              ← Previous
-            </button>
-
-            {/* Step indicator with progress */}
             <div className="flex items-center space-x-4">
-              <div className="text-sm text-gray-500">
-                Step {currentStep + 1} of {steps.length}
-              </div>
-              <div className="w-32 bg-gray-200 rounded-full h-2">
-                <div
-                  className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                  style={{ width: `${((currentStep + 1) / steps.length) * 100}%` }}
-                ></div>
-              </div>
+              {isEditMode && (
+                <button
+                  onClick={handleDuplicateEvent}
+                  disabled={loading}
+                  className="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Duplicate Event
+                </button>
+              )}
             </div>
-
-            {currentStep < steps.length - 1 ? (
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-                <div className="text-right hidden sm:block">
-                  <div className="text-xs text-gray-500">Next step:</div>
-                  <div className="text-sm font-medium text-gray-700">
-                    {steps[currentStep + 1].title}
-                  </div>
-                </div>
-                <div className="flex items-center space-x-3">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      // Save as draft logic here
-                      alert('Draft saved! You can continue editing later.');
-                    }}
-                    className="px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium"
-                  >
-                    Save Draft
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setCurrentStep(Math.min(steps.length - 1, currentStep + 1))}
-                    className="flex items-center space-x-2 px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
-                  >
-                    <span>Continue</span>
-                    <ChevronRightIcon className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="flex flex-col items-center gap-4">
-                <div className="flex flex-col sm:flex-row items-center gap-3">
-                  <button
-                    type="button"
-                    className="flex items-center space-x-2 px-8 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium text-lg shadow-lg"
-                  >
-                    <span>🚀 Publish Event</span>
-                  </button>
-                </div>
-                <div className="flex items-center space-x-4 text-sm">
-                  <span className="text-gray-500">or</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      // Save as draft logic here
-                      navigate(isAdminContext ? '/dashboard' : '/organizer');
-                    }}
-                    className="px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-                  >
-                    Save as Draft
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => navigate(isAdminContext ? '/dashboard' : '/organizer')}
-                    className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
-                  >
-                    Cancel & Exit
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
         </div>
       </div>
 
+      {/* Content */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="lg:grid lg:grid-cols-12 lg:gap-8">
+          {/* Sidebar - Step Navigation */}
+          <div className="lg:col-span-3">
+            <div className="bg-white rounded-lg shadow p-6 sticky top-8">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                {isEditMode ? 'Edit Event' : 'Create Event'}
+              </h3>
+              <nav className="space-y-2">
+                {steps.map((step, index) => {
+                  const Icon = step.icon;
+                  const isCompleted = index < currentStep;
+                  const isCurrent = index === currentStep;
+                  
+                  return (
+                    <button
+                      key={step.id}
+                      onClick={() => setCurrentStep(index)}
+                      className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-left transition-colors ${
+                        isCurrent
+                          ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                          : isCompleted
+                          ? 'text-green-700 hover:bg-green-50'
+                          : 'text-gray-600 hover:bg-gray-50'
+                      }`}
+                    >
+                      <div className={`flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium ${
+                        isCurrent
+                          ? 'bg-blue-600 text-white'
+                          : isCompleted
+                          ? 'bg-green-600 text-white'
+                          : 'bg-gray-300 text-gray-600'
+                      }`}>
+                        {isCompleted ? (
+                          <CheckCircleIcon className="w-4 h-4" />
+                        ) : (
+                          index + 1
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className={`text-sm font-medium ${
+                          isCurrent ? 'text-blue-900' : isCompleted ? 'text-green-900' : 'text-gray-900'
+                        }`}>
+                          {step.title}
+                        </div>
+                      </div>
+                      <Icon className={`w-4 h-4 ${
+                        isCurrent ? 'text-blue-600' : isCompleted ? 'text-green-600' : 'text-gray-400'
+                      }`} />
+                    </button>
+                  );
+                })}
+              </nav>
+
+              {/* Progress */}
+              <div className="mt-6">
+                <div className="flex items-center justify-between text-sm text-gray-600 mb-2">
+                  <span>Progress</span>
+                  <span>{currentStep + 1} of {steps.length}</span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div
+                    className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${((currentStep + 1) / steps.length) * 100}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Main Content */}
+          <div className="lg:col-span-9 mt-8 lg:mt-0">
+            <div className="bg-white rounded-lg shadow">
+              <div className="px-6 py-4 border-b border-gray-200">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-xl font-semibold text-gray-900">
+                      {steps[currentStep].title}
+                    </h2>
+                    <p className="text-gray-600 mt-1">
+                      Step {currentStep + 1} of {steps.length}
+                    </p>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <button
+                      onClick={() => setCurrentStep(Math.max(0, currentStep - 1))}
+                      disabled={currentStep === 0}
+                      className="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Previous
+                    </button>
+                    <button
+                      onClick={() => setCurrentStep(Math.min(steps.length - 1, currentStep + 1))}
+                      disabled={currentStep === steps.length - 1}
+                      className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="px-6 py-6">
+                {loading && (
+                  <div className="flex items-center justify-center py-12">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                    <span className="ml-2 text-gray-600">Loading event data...</span>
+                  </div>
+                )}
+                
+                {!loading && renderStepContent()}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };
 
-export default CreateEventPage; 
+export default CreateEventPage;
+

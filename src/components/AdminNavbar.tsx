@@ -13,14 +13,45 @@ import {
   Bars3Icon,
   XMarkIcon
 } from '@heroicons/react/24/outline';
+import { useAuth } from '../contexts/AuthContext';
 
 const AdminNavbar: React.FC = () => {
   const location = useLocation();
+  const { currentUser, userProfile, logout, refreshUserProfile } = useAuth();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const isActive = (path: string) => {
     return location.pathname === path || location.pathname.startsWith(path + '/');
   };
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+    } catch (error) {
+      console.error('Logout error:', error);
+    }
+  };
+
+  // Get user display information with fallbacks
+  const getUserDisplayName = () => {
+    return userProfile?.displayName || 
+           currentUser?.displayName || 
+           currentUser?.email?.split('@')[0] || 
+           'Admin User';
+  };
+
+  const getUserEmail = () => {
+    return userProfile?.email || 
+           currentUser?.email || 
+           'admin@apohub.com';
+  };
+
+  // Refresh user profile when component mounts to ensure latest data
+  useEffect(() => {
+    if (currentUser) {
+      refreshUserProfile();
+    }
+  }, [currentUser, refreshUserProfile]);
 
   // Close mobile menu when route changes
   useEffect(() => {
@@ -45,6 +76,7 @@ const AdminNavbar: React.FC = () => {
     { name: 'Dashboard', href: '/dashboard', icon: ChartBarIcon },
     { name: 'Events', href: '/events', icon: CalendarDaysIcon },
     { name: 'Attendees', href: '/attendees', icon: UserGroupIcon },
+    { name: 'Users', href: '/users', icon: UserCircleIcon },
     { name: 'Analytics', href: '/analytics', icon: ChartBarIcon },
     { name: 'Forms', href: '/forms', icon: DocumentTextIcon },
     { name: 'Certificates', href: '/certificates', icon: AcademicCapIcon },
@@ -115,13 +147,25 @@ const AdminNavbar: React.FC = () => {
             {/* User Menu */}
             <div className="flex items-center space-x-1 sm:space-x-2">
               <div className="flex items-center space-x-2">
-                <UserCircleIcon className="w-6 h-6 sm:w-8 sm:h-8 text-gray-400" />
+                {(userProfile?.photoURL || currentUser?.photoURL) ? (
+                  <img 
+                    src={userProfile?.photoURL || currentUser?.photoURL || ''} 
+                    alt={getUserDisplayName()}
+                    className="w-6 h-6 sm:w-8 sm:h-8 rounded-full object-cover"
+                  />
+                ) : (
+                  <UserCircleIcon className="w-6 h-6 sm:w-8 sm:h-8 text-gray-400" />
+                )}
                 <div className="hidden md:block">
-                  <p className="text-sm font-medium text-gray-900">Admin User</p>
-                  <p className="text-xs text-gray-500">admin@apohub.com</p>
+                  <p className="text-sm font-medium text-gray-900">{getUserDisplayName()}</p>
+                  <p className="text-xs text-gray-500">{getUserEmail()}</p>
                 </div>
               </div>
-              <button className="hidden sm:block p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors">
+              <button 
+                onClick={handleLogout}
+                className="hidden sm:block p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
+                title="Logout"
+              >
                 <ArrowRightOnRectangleIcon className="w-5 h-5" />
               </button>
             </div>
@@ -200,6 +244,7 @@ const AdminNavbar: React.FC = () => {
               <span className="text-sm font-medium">Notifications</span>
             </button>
             <button 
+              onClick={handleLogout}
               className="flex items-center space-x-3 w-full px-3 py-2 text-gray-600 hover:text-gray-900 hover:bg-gray-50 rounded-lg transition-all duration-200 transform hover:scale-105"
               style={{ 
                 animationDelay: isMobileMenuOpen ? `${(navItems.length + 1) * 50}ms` : '0ms',
