@@ -51,13 +51,13 @@ const Header: React.FC = () => {
   const organizerNavLinks = [
     { 
       name: 'Create Event', 
-      href: '/organizer/create',
+      href: '/events/create',
       icon: SparklesIcon,
       description: 'Create new events'
     },
     { 
       name: 'Manage Events', 
-      href: '/organizer/events',
+      href: '/events',
       icon: UserGroupIcon,
       description: 'Manage your events'
     },

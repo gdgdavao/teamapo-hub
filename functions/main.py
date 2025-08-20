@@ -1503,6 +1503,11 @@ def on_event_created(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]) -
     Triggered when a new event is created
     """
     try:
+        # Handle potential timestamp parsing issues
+        if not event.data or not event.data.exists:
+            logger.warning("Event data is empty or doesn't exist")
+            return
+            
         event_id = event.params['eventId']
         event_data = event.data.to_dict()
         
@@ -1531,6 +1536,9 @@ def on_event_created(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]) -
             'eventTitle': event_data.get('title', 'Unknown')
         })
         
+    except ValueError as e:
+        # Handle timestamp parsing errors specifically
+        logger.error(f"Timestamp parsing error in event created trigger: {str(e)}")
     except Exception as e:
         logger.error(f"Error in event created trigger: {str(e)}")
 
@@ -1541,6 +1549,11 @@ def on_event_updated(event: firestore_fn.Event[firestore_fn.Change[firestore_fn.
     Triggered when an event is updated
     """
     try:
+        # Handle potential timestamp parsing issues
+        if not event.data or not event.data.after or not event.data.after.exists:
+            logger.warning("Event update data is empty or doesn't exist")
+            return
+            
         event_id = event.params['eventId']
         before_data = event.data.before.to_dict() if event.data.before else {}
         after_data = event.data.after.to_dict() if event.data.after else {}
@@ -1572,6 +1585,9 @@ def on_event_updated(event: firestore_fn.Event[firestore_fn.Change[firestore_fn.
                 'lastUpdated': firestore.SERVER_TIMESTAMP
             })
         
+    except ValueError as e:
+        # Handle timestamp parsing errors specifically
+        logger.error(f"Timestamp parsing error in event updated trigger: {str(e)}")
     except Exception as e:
         logger.error(f"Error in event updated trigger: {str(e)}")
 

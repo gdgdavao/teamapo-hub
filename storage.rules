@@ -53,6 +53,28 @@ service firebase.storage {
                         firestore.get(/databases/(default)/documents/events/$(eventId)).data.organizer.uid == request.auth.uid);
     }
     
+    // Legacy event-images path (for backward compatibility)
+    match /event-images/{eventId}/{imageId} {
+      allow read: if true; // Event images are public
+      allow write: if isOrganizer() && 
+                      isValidImageSize() && 
+                      isValidImageType();
+      allow delete: if isAdmin() || 
+                       (isAuthenticated() && 
+                        firestore.get(/databases/(default)/documents/events/$(eventId)).data.organizer.uid == request.auth.uid);
+    }
+    
+    // Payment QR codes (legacy path)
+    match /payment-qr/{eventId}/{qrId} {
+      allow read: if true; // Payment QR codes are public
+      allow write: if isOrganizer() && 
+                      isValidImageSize() && 
+                      isValidImageType();
+      allow delete: if isAdmin() || 
+                       (isAuthenticated() && 
+                        firestore.get(/databases/(default)/documents/events/$(eventId)).data.organizer.uid == request.auth.uid);
+    }
+    
     // Certificates - Generated certificates
     match /certificates/{certificateId} {
       allow read: if true; // Certificates are publicly accessible for verification
@@ -72,6 +94,37 @@ service firebase.storage {
       allow write: if resource.size < 5 * 1024 * 1024 && // 5MB limit
                       isValidDocumentType();
       allow delete: if isAdmin();
+    }
+    
+    // Payment proof uploads
+    match /payment-proofs/{registrationId}/{proofId} {
+      allow read: if isAdmin() || 
+                     (isAuthenticated() && 
+                      firestore.get(/databases/(default)/documents/registrations/$(registrationId)).data.eventId != null &&
+                      firestore.get(/databases/(default)/documents/events/$(firestore.get(/databases/(default)/documents/registrations/$(registrationId)).data.eventId)).data.organizer.uid == request.auth.uid);
+      allow write: if resource.size < 5 * 1024 * 1024 && // 5MB limit
+                      isValidImageType();
+      allow delete: if isAdmin();
+    }
+    
+    // Certificate templates
+    match /certificate-templates/{templateId}/{fileId} {
+      allow read: if true; // Templates are public
+      allow write: if isAdmin() && 
+                      isValidImageSize() && 
+                      isValidImageType();
+      allow delete: if isAdmin();
+    }
+    
+    // Profile pictures
+    match /profile-pictures/{userId}/{imageId} {
+      allow read: if true; // Profile pictures are public
+      allow write: if isAuthenticated() && 
+                      (request.auth.uid == userId || isAdmin()) &&
+                      isValidImageSize() && 
+                      isValidImageType();
+      allow delete: if isAuthenticated() && 
+                       (request.auth.uid == userId || isAdmin());
     }
     
     // System files - App assets, templates, etc.

@@ -89,6 +89,34 @@ export class EventService {
   private static readonly PAYMENT_QR_PATH = 'payment-qr';
 
   /**
+   * Recursively remove undefined values from an object to prevent Firestore errors
+   */
+  private static removeUndefinedValues(obj: any): any {
+    if (obj === null || obj === undefined) {
+      return null;
+    }
+    
+    if (Array.isArray(obj)) {
+      return obj.map(item => this.removeUndefinedValues(item)).filter(item => item !== undefined);
+    }
+    
+    if (typeof obj === 'object') {
+      const cleaned: any = {};
+      for (const [key, value] of Object.entries(obj)) {
+        if (value !== undefined) {
+          const cleanedValue = this.removeUndefinedValues(value);
+          if (cleanedValue !== undefined) {
+            cleaned[key] = cleanedValue;
+          }
+        }
+      }
+      return cleaned;
+    }
+    
+    return obj;
+  }
+
+  /**
    * Create a new event with proper validation and error handling
    */
   static async createEvent(eventData: EventFormData, organizerUid: string): Promise<string> {
@@ -96,11 +124,11 @@ export class EventService {
       // Validate required fields client-side first
       this.validateEventData(eventData);
 
-      // Call Firebase Function for comprehensive validation
-      const validateEventData = httpsCallable(functions, 'validateEventData');
-      const validationResult = await validateEventData({ eventData });
+      // TODO: Re-enable Firebase Function validation once function issues are resolved
+      console.log('Skipping Firebase function validation temporarily');
       
-      const validation = validationResult.data as { isValid: boolean; errors: string[] };
+      // Use local validation for now
+      const validation = this.validateEventDataLocal(eventData);
       if (!validation.isValid) {
         throw new Error(`Validation failed: ${validation.errors.join(', ')}`);
       }
@@ -112,12 +140,35 @@ export class EventService {
       // Get organizer information
       const organizerInfo = await this.getOrganizerInfo(organizerUid);
 
-      // Convert form data to Event object
-      const event: Omit<Event, 'id'> = {
-        title: eventData.title,
-        description: eventData.description,
-        shortDescription: eventData.shortDescription,
-        imageUrl: eventData.imageUrl,
+      // Build the venue object carefully
+      const venue: any = {
+        type: eventData.venueType,
+        city: eventData.city
+      };
+      
+      // Add venue name only if provided and not empty
+      if (eventData.venueName && eventData.venueName.trim()) {
+        venue.name = eventData.venueName.trim();
+      }
+      
+      // Add venue address only if provided and not empty
+      if (eventData.venueAddress && eventData.venueAddress.trim()) {
+        venue.address = eventData.venueAddress.trim();
+      }
+      
+      // Add online details for online events
+      if (eventData.venueType === 'online') {
+        venue.onlineDetails = {
+          platform: 'Google Meet',
+          instructions: 'Meeting link will be sent via email'
+        };
+      }
+
+      // Convert form data to Event object (only include defined fields to avoid Firestore errors)
+      const event: any = {
+        title: eventData.title.trim(),
+        description: eventData.description.trim(),
+        shortDescription: eventData.shortDescription.trim(),
         organizer: {
           uid: organizerUid,
           name: organizerInfo.name,
@@ -127,33 +178,42 @@ export class EventService {
         startDate: this.combineDateAndTime(eventData.startDate, eventData.startTime),
         endDate: this.combineDateAndTime(eventData.endDate, eventData.endTime),
         timezone: eventData.timezone,
-        venue: {
-          type: eventData.venueType,
-          name: eventData.venueName,
-          address: eventData.venueAddress,
-          city: eventData.city,
-          onlineDetails: eventData.venueType === 'online' ? {
-            platform: 'Google Meet',
-            instructions: 'Meeting link will be sent via email'
-          } : undefined
-        },
-        ticketTypes: eventData.ticketTypes,
+        venue: venue,
+        ticketTypes: eventData.ticketTypes || [],
         promoCodes: eventData.promoCodes || [],
-        tags: eventData.tags,
-        category: eventData.category as any,
-        status: 'draft' as any,
-        maxAttendees: eventData.maxAttendees,
+        tags: eventData.tags || [],
+        category: eventData.category,
+        status: 'draft',
         currentAttendees: 0,
         isPublished: false,
-        registrationDeadline: eventData.registrationDeadline ? 
-          Timestamp.fromDate(new Date(eventData.registrationDeadline)) : undefined,
         requirements: eventData.requirements || [],
-        createdAt: serverTimestamp() as any,
-        updatedAt: serverTimestamp() as any
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
       };
 
+      // Add optional fields only if they have actual values
+      if (eventData.imageUrl && eventData.imageUrl.trim()) {
+        event.imageUrl = eventData.imageUrl.trim();
+      }
+      
+      if (eventData.maxAttendees && eventData.maxAttendees > 0) {
+        event.maxAttendees = eventData.maxAttendees;
+      }
+      
+      if (eventData.registrationDeadline && eventData.registrationDeadline.trim()) {
+        event.registrationDeadline = Timestamp.fromDate(new Date(eventData.registrationDeadline));
+      }
+
+      // Clean the event object to remove any undefined values
+      const cleanedEvent = this.removeUndefinedValues(event);
+      
+      // Debug logging
+      console.log('Original event object keys:', Object.keys(event));
+      console.log('Cleaned event object keys:', Object.keys(cleanedEvent));
+      console.log('Event data being sent to Firestore:', JSON.stringify(cleanedEvent, null, 2));
+      
       // Create the event document
-      await setDoc(eventRef, event);
+      await setDoc(eventRef, cleanedEvent);
 
       // Upload event image if provided
       if (eventData.imageUrl && eventData.imageUrl.startsWith('data:')) {
@@ -168,14 +228,13 @@ export class EventService {
         await this.createPaymentConfiguration(eventId, eventData.paymentConfig);
       }
 
-      // Call cloud function to initialize event data
-      const initializeEvent = httpsCallable(functions, 'initialize_event');
-      const initResult = await initializeEvent({ eventId });
+      // TODO: Re-enable Firebase Function initialization once function issues are resolved
+      console.log('Skipping Firebase function initialization temporarily');
       
-      const initResponse = initResult.data as { success: boolean; message?: string };
-      if (!initResponse.success) {
-        console.warn('Event initialization failed, but event was created:', initResponse.message);
-      }
+      // Event created successfully without function initialization
+      console.log(`Event ${eventId} created successfully (without function initialization)`);
+      
+      // TODO: Move this initialization logic to client-side or fix function calls later
 
       return eventId;
     } catch (error) {
@@ -191,10 +250,18 @@ export class EventService {
     try {
       const eventRef = doc(db, this.EVENTS_COLLECTION, eventId);
       
+      // Create update data object, filtering out undefined values
       const updateData: any = {
-        ...eventData,
         updatedAt: serverTimestamp()
       };
+
+      // Only add fields that have actual values (avoid undefined)
+      Object.keys(eventData).forEach(key => {
+        const value = (eventData as any)[key];
+        if (value !== undefined && key !== 'startDate' && key !== 'startTime' && key !== 'endDate' && key !== 'endTime') {
+          updateData[key] = value;
+        }
+      });
 
       // Handle date/time updates
       if (eventData.startDate && eventData.startTime) {
@@ -204,7 +271,10 @@ export class EventService {
         updateData.endDate = this.combineDateAndTime(eventData.endDate, eventData.endTime);
       }
 
-      await updateDoc(eventRef, updateData);
+      // Clean the update data to remove any undefined values
+      const cleanedUpdateData = this.removeUndefinedValues(updateData);
+      
+      await updateDoc(eventRef, cleanedUpdateData);
 
       // Update forms if provided
       if (eventData.registrationForm || eventData.feedbackForm) {
@@ -285,14 +355,19 @@ export class EventService {
    */
   static async publishEvent(eventId: string): Promise<void> {
     try {
-      // Use the Firebase Function to publish the event
-      const publishEvent = httpsCallable(functions, 'publish_event');
-      const result = await publishEvent({ eventId });
+      // TODO: Re-enable Firebase Function publishing once function issues are resolved
+      console.log('Publishing event locally instead of using Firebase function');
       
-      const response = result.data as { success: boolean; message?: string };
-      if (!response.success) {
-        throw new Error(response.message || 'Failed to publish event via Firebase Function');
-      }
+      // Update event status directly in Firestore for now
+      const eventRef = doc(db, this.EVENTS_COLLECTION, eventId);
+      await updateDoc(eventRef, {
+        status: 'published',
+        isPublished: true,
+        publishedAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+      
+      console.log(`Event ${eventId} published successfully (without function)`);
     } catch (error) {
       console.error('Error publishing event:', error);
       throw new Error('Failed to publish event');
@@ -302,13 +377,13 @@ export class EventService {
   /**
    * Delete an event
    */
-  static async deleteEvent(eventId: string): Promise<void> {
+  static async deleteEvent(eventId: string, forceDelete: boolean = false): Promise<void> {
     try {
       const eventRef = doc(db, this.EVENTS_COLLECTION, eventId);
       await deleteDoc(eventRef);
 
       // Delete associated subcollections and files
-      await this.deleteEventData(eventId);
+      await this.deleteEventData(eventId, forceDelete);
     } catch (error) {
       console.error('Error deleting event:', error);
       throw new Error('Failed to delete event');
@@ -428,7 +503,7 @@ export class EventService {
   /**
    * Delete event data (subcollections and files)
    */
-  private static async deleteEventData(eventId: string): Promise<void> {
+  private static async deleteEventData(eventId: string, forceDelete: boolean = false): Promise<void> {
     try {
       // Delete event images from storage
       const imagesRef = ref(storage, `${this.EVENT_IMAGES_PATH}/${eventId}`);
@@ -440,7 +515,7 @@ export class EventService {
 
       // Call cloud function to delete subcollections
       const deleteEventData = httpsCallable(functions, 'deleteEventData');
-      await deleteEventData({ eventId });
+      await deleteEventData({ eventId, forceDelete });
     } catch (error) {
       console.error('Error deleting event data:', error);
       // Don't throw error here as main event is already deleted
@@ -489,10 +564,18 @@ export class EventService {
       
       if (userSnap.exists()) {
         const userData = userSnap.data();
+        console.log('User data from Firestore:', userData);
+        console.log('User role:', userData.role);
+        console.log('User UID:', organizerUid);
+        
         return {
           name: userData.displayName || 'Unknown Organizer',
           email: userData.email || ''
         };
+      } else {
+        console.error('❌ User document not found in Firestore users collection');
+        console.log('Searched for UID:', organizerUid);
+        console.log('This user needs to be created in the users collection with proper role');
       }
       
       return { name: 'Unknown Organizer', email: '' };
@@ -511,7 +594,7 @@ export class EventService {
       const response = await fetch(dataUrl);
       const blob = await response.blob();
       
-      // Create file reference
+      // Create file reference - using the original path structure
       const timestamp = Date.now();
       const imageRef = ref(storage, `${this.EVENT_IMAGES_PATH}/${eventId}/event-image-${timestamp}.jpg`);
       
@@ -828,6 +911,41 @@ export class EventService {
         isValid: false,
         errors: ['Failed to validate event data remotely']
       };
+    }
+  }
+
+  /**
+   * Get all events (admin only)
+   */
+  static async getAllEvents(): Promise<Event[]> {
+    try {
+      const eventsRef = collection(db, this.EVENTS_COLLECTION);
+      const q = query(
+        eventsRef,
+        orderBy('createdAt', 'desc')
+      );
+
+      const querySnapshot = await getDocs(q);
+      return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Event));
+    } catch (error) {
+      console.error('Error getting all events:', error);
+      throw new Error('Failed to get events');
+    }
+  }
+
+  /**
+   * Update event status
+   */
+  static async updateEventStatus(eventId: string, status: string): Promise<void> {
+    try {
+      const eventRef = doc(db, this.EVENTS_COLLECTION, eventId);
+      await updateDoc(eventRef, {
+        status: status,
+        updatedAt: serverTimestamp()
+      });
+    } catch (error) {
+      console.error('Error updating event status:', error);
+      throw new Error('Failed to update event status');
     }
   }
 }

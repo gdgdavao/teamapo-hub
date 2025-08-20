@@ -20,13 +20,13 @@ import { EventAnalytics } from '../types';
 
 export interface DashboardStats {
   totalEvents: number;
-  totalAttendees: number;
+  totalRegistrations: number;
   pendingApprovals: number;
   certificatesIssued: number;
   upcomingEvents: number;
   monthlyGrowth: {
     events: number;
-    attendees: number;
+    registrations: number;
     certificates: number;
   };
   totalRevenue: number;
@@ -66,8 +66,6 @@ export class AnalyticsService {
       const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
       const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
       const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0);
-
-
 
       // Run all queries in parallel for better performance
       const [
@@ -126,6 +124,30 @@ export class AnalyticsService {
         ))
       ]);
 
+      // Helper function to filter out placeholder documents
+      const filterPlaceholderDocs = (docs: any[]) => {
+        return docs.filter(doc => {
+          const data = doc.data();
+          const docId = doc.id;
+          // Exclude documents with _placeholder: true or IDs starting with underscore
+          return !data._placeholder && !docId.startsWith('_');
+        });
+      };
+
+      // Filter out placeholder documents from all snapshots
+      const realEventsData = filterPlaceholderDocs(eventsSnapshot.docs);
+      const realRegistrationsData = filterPlaceholderDocs(registrationsSnapshot.docs);
+      const realCertificatesData = filterPlaceholderDocs(certificatesSnapshot.docs);
+      const realUpcomingEventsData = filterPlaceholderDocs(upcomingEventsSnapshot.docs);
+
+      // Filter monthly growth data
+      const realMonthlyEventsData = filterPlaceholderDocs(monthlyEventsSnapshot.docs);
+      const realLastMonthEventsData = filterPlaceholderDocs(lastMonthEventsSnapshot.docs);
+      const realMonthlyRegistrationsData = filterPlaceholderDocs(monthlyRegistrationsSnapshot.docs);
+      const realLastMonthRegistrationsData = filterPlaceholderDocs(lastMonthRegistrationsSnapshot.docs);
+      const realMonthlyCertificatesData = filterPlaceholderDocs(monthlyCertificatesSnapshot.docs);
+      const realLastMonthCertificatesData = filterPlaceholderDocs(lastMonthCertificatesSnapshot.docs);
+
       // Calculate revenue from approved payment proofs
       const approvedProofsSnapshot = await getDocs(query(
         collection(db, this.PAYMENT_PROOFS_COLLECTION),
@@ -133,23 +155,23 @@ export class AnalyticsService {
       ));
 
       let totalRevenue = 0;
-      approvedProofsSnapshot.docs.forEach(doc => {
+      filterPlaceholderDocs(approvedProofsSnapshot.docs).forEach(doc => {
         const data = doc.data();
         totalRevenue += data.ticketPrice || 0;
       });
 
       // Calculate monthly growth percentages
-      const currentMonthEvents = monthlyEventsSnapshot.size;
-      const lastMonthEvents = lastMonthEventsSnapshot.size;
-      const currentMonthRegistrations = monthlyRegistrationsSnapshot.size;
-      const lastMonthRegistrations = lastMonthRegistrationsSnapshot.size;
-      const currentMonthCertificates = monthlyCertificatesSnapshot.size;
-      const lastMonthCertificates = lastMonthCertificatesSnapshot.size;
+      const currentMonthEvents = realMonthlyEventsData.length;
+      const lastMonthEvents = realLastMonthEventsData.length;
+      const currentMonthRegistrations = realMonthlyRegistrationsData.length;
+      const lastMonthRegistrations = realLastMonthRegistrationsData.length;
+      const currentMonthCertificates = realMonthlyCertificatesData.length;
+      const lastMonthCertificates = realLastMonthCertificatesData.length;
 
       const eventsGrowth = lastMonthEvents > 0 
         ? ((currentMonthEvents - lastMonthEvents) / lastMonthEvents) * 100 
         : 0;
-      const attendeesGrowth = lastMonthRegistrations > 0 
+      const registrationsGrowth = lastMonthRegistrations > 0 
         ? ((currentMonthRegistrations - lastMonthRegistrations) / lastMonthRegistrations) * 100 
         : 0;
       const certificatesGrowth = lastMonthCertificates > 0 
@@ -157,14 +179,14 @@ export class AnalyticsService {
         : 0;
 
       return {
-        totalEvents: eventsSnapshot.size,
-        totalAttendees: registrationsSnapshot.size,
-        pendingApprovals: paymentProofsSnapshot.size,
-        certificatesIssued: certificatesSnapshot.size,
-        upcomingEvents: upcomingEventsSnapshot.size,
+        totalEvents: realEventsData.length,
+        totalRegistrations: realRegistrationsData.length,
+        pendingApprovals: paymentProofsSnapshot.size, // Payment proofs don't have placeholder docs
+        certificatesIssued: realCertificatesData.length,
+        upcomingEvents: realUpcomingEventsData.length,
         monthlyGrowth: {
           events: Math.round(eventsGrowth),
-          attendees: Math.round(attendeesGrowth),
+          registrations: Math.round(registrationsGrowth),
           certificates: Math.round(certificatesGrowth)
         },
         totalRevenue,
@@ -206,9 +228,25 @@ export class AnalyticsService {
         ))
       ]);
 
+      // Helper function to filter out placeholder documents
+      const filterPlaceholderDocs = (docs: any[]) => {
+        return docs.filter(doc => {
+          const data = doc.data();
+          const docId = doc.id;
+          // Exclude documents with _placeholder: true or IDs starting with underscore
+          return !data._placeholder && !docId.startsWith('_');
+        });
+      };
+
+      // Filter out placeholder documents
+      const realRegistrations = filterPlaceholderDocs(registrationsSnapshot.docs);
+      const realCheckedIn = filterPlaceholderDocs(checkedInSnapshot.docs);
+      const realFeedback = filterPlaceholderDocs(feedbackSnapshot.docs);
+      const realCertificates = filterPlaceholderDocs(certificatesSnapshot.docs);
+
       // Calculate revenue for this event
       let revenue = 0;
-      registrationsSnapshot.docs.forEach(doc => {
+      realRegistrations.forEach(doc => {
         const data = doc.data();
         if (data.paymentStatus === 'paid') {
           revenue += data.totalAmount || 0;
@@ -218,7 +256,7 @@ export class AnalyticsService {
       // Calculate average rating
       let totalRating = 0;
       let ratingCount = 0;
-      feedbackSnapshot.docs.forEach(doc => {
+      realFeedback.forEach(doc => {
         const data = doc.data();
         if (data.overallRating) {
           totalRating += data.overallRating;
@@ -229,13 +267,13 @@ export class AnalyticsService {
       const averageRating = ratingCount > 0 ? totalRating / ratingCount : 0;
 
       return {
-        registrations: registrationsSnapshot.size,
-        checkedIn: checkedInSnapshot.size,
-        noShows: registrationsSnapshot.size - checkedInSnapshot.size,
+        registrations: realRegistrations.length,
+        checkedIn: realCheckedIn.length,
+        noShows: realRegistrations.length - realCheckedIn.length,
         revenue,
-        feedbackResponses: feedbackSnapshot.size,
+        feedbackResponses: realFeedback.length,
         averageRating: Math.round(averageRating * 10) / 10,
-        certificatesIssued: certificatesSnapshot.size
+        certificatesIssued: realCertificates.length
       };
     } catch (error) {
       console.error('Error fetching event stats:', error);

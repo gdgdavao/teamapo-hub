@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   ChartBarIcon, 
   CalendarDaysIcon, 
@@ -32,13 +32,13 @@ import toast from 'react-hot-toast';
 const AdminDashboardPage: React.FC = () => {
   const [stats, setStats] = useState<DashboardStats>({
     totalEvents: 0,
-    totalAttendees: 0,
+    totalRegistrations: 0,
     pendingApprovals: 0,
     certificatesIssued: 0,
     upcomingEvents: 0,
     monthlyGrowth: {
       events: 0,
-      attendees: 0,
+      registrations: 0,
       certificates: 0
     },
     totalRevenue: 0,
@@ -48,23 +48,56 @@ const AdminDashboardPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [recentEvents, setRecentEvents] = useState<any[]>([]);
   const [pendingApprovals, setPendingApprovals] = useState<any[]>([]);
-  const [dataFetched, setDataFetched] = useState(false);
+  const fetchingRef = useRef(false);
+  const dataFetchedRef = useRef(false);
 
   const { currentUser, userProfile } = useAuth();
 
+  // Helper function to handle different timestamp formats
+  const getDateFromTimestamp = (timestamp: any): Date => {
+    if (timestamp && typeof timestamp.toDate === 'function') {
+      return timestamp.toDate();
+    } else if (timestamp && timestamp.seconds) {
+      // Handle Firestore timestamp format
+      return new Date(timestamp.seconds * 1000);
+    } else if (timestamp instanceof Date) {
+      return timestamp;
+    } else if (typeof timestamp === 'number') {
+      return new Date(timestamp);
+    } else if (timestamp && timestamp._methodName === 'serverTimestamp') {
+      // Handle unresolved serverTimestamp
+      console.warn('Unresolved serverTimestamp found, using current date');
+      return new Date();
+    } else {
+      // Fallback to current date if timestamp is invalid
+      console.warn('Invalid timestamp format:', timestamp);
+      return new Date();
+    }
+  };
+
   // Reset data fetched state when user changes
   useEffect(() => {
-    setDataFetched(false);
+    dataFetchedRef.current = false;
+    fetchingRef.current = false;
   }, [currentUser?.uid]);
 
   // Load dashboard data from API
   useEffect(() => {
     const fetchDashboardData = async () => {
+      // Prevent multiple simultaneous calls
+      if (fetchingRef.current || dataFetchedRef.current) {
+        return;
+      }
+      
+      // Set the flag immediately to prevent race conditions
+      fetchingRef.current = true;
+      
       console.log('📊 Fetching dashboard data...', { 
         currentUser: !!currentUser, 
         userProfile: !!userProfile, 
         role: userProfile?.role,
-        dataFetched 
+        dataFetched: dataFetchedRef.current,
+        fetching: fetchingRef.current
       });
       
       try {
@@ -92,26 +125,27 @@ const AdminDashboardPage: React.FC = () => {
         
         // Get recent events (last 5)
         const sortedEvents = events
-          .sort((a, b) => b.createdAt.toDate().getTime() - a.createdAt.toDate().getTime())
+          .sort((a, b) => getDateFromTimestamp(b.createdAt).getTime() - getDateFromTimestamp(a.createdAt).getTime())
           .slice(0, 5);
         setRecentEvents(sortedEvents);
         
         // TODO: Implement pending approvals from registrations service
         setPendingApprovals([]);
-        setDataFetched(true);
+        dataFetchedRef.current = true;
       } catch (error) {
         console.error('Error fetching dashboard data:', error);
         toast.error('Failed to load dashboard data');
       } finally {
         setLoading(false);
+        fetchingRef.current = false;
       }
     };
 
     // Only fetch data if user profile is loaded and user is admin and data hasn't been fetched yet
-    if (userProfile && userProfile.role === 'admin' && currentUser && !dataFetched) {
+    if (userProfile && userProfile.role === 'admin' && currentUser && !dataFetchedRef.current) {
       fetchDashboardData();
     }
-  }, [userProfile?.role, currentUser?.uid, dataFetched]); // More specific dependencies
+  }, [userProfile?.role, currentUser?.uid]); // More specific dependencies
 
   const quickActions = [
     {
@@ -229,15 +263,34 @@ const AdminDashboardPage: React.FC = () => {
     </Link>
   );
 
+  // Create dynamic welcome message
+  const getWelcomeMessage = () => {
+    const firstName = userProfile?.displayName?.split(' ')[0] || 'Admin';
+    return `Welcome back, ${firstName}! 👋`;
+  };
+
+  const getWelcomeSubtitle = () => {
+    const hour = new Date().getHours();
+    let timeGreeting = '';
+    
+    if (hour < 12) {
+      timeGreeting = 'Good morning! ☀️';
+    } else if (hour < 17) {
+      timeGreeting = 'Good afternoon! 🌤️';
+    } else {
+      timeGreeting = 'Good evening! 🌙';
+    }
+    
+    return `${timeGreeting} Ready to manage some amazing events?`;
+  };
+
   return (
     <AdminLayout 
-      title="Welcome back! 👋" 
-      subtitle="Here's your event management overview."
+      title={getWelcomeMessage()} 
+      subtitle={getWelcomeSubtitle()}
       actions={headerActions}
     >
       <div className="space-y-6">
-        <AdminAccessInfo />
-        
         {/* Only show dashboard content if user has admin access */}
         {userProfile?.role === 'admin' && (
           <>
@@ -296,13 +349,13 @@ const AdminDashboardPage: React.FC = () => {
                 <UserGroupIcon className="w-6 h-6 text-green-600" />
               </div>
               <div className="text-right">
-                <p className="text-2xl font-bold text-gray-900">{stats.totalAttendees.toLocaleString()}</p>
-                <p className="text-sm text-gray-600">Total Attendees</p>
+                <p className="text-2xl font-bold text-gray-900">{stats.totalRegistrations.toLocaleString()}</p>
+                <p className="text-sm text-gray-600">Total Registrations</p>
               </div>
             </div>
             <div className="flex items-center text-sm">
               <ArrowTrendingUpIcon className="w-4 h-4 text-green-500 mr-1" />
-              <span className="text-green-600 font-medium">+{stats.monthlyGrowth.attendees}%</span>
+              <span className="text-green-600 font-medium">+{stats.monthlyGrowth.registrations}%</span>
               <span className="text-gray-500 ml-1">this month</span>
             </div>
           </div>
@@ -446,11 +499,9 @@ const AdminDashboardPage: React.FC = () => {
                       <div className="min-w-0 flex-1">
                         <h4 className="font-medium text-gray-900 truncate">{event.title}</h4>
                         <div className="flex items-center mt-1 text-sm text-gray-600 space-x-3">
-                          <span>{new Date(event.date).toLocaleDateString()}</span>
-                          <span>{event.attendees}/{event.maxAttendees} attendees</span>
-                          {event.revenue > 0 && (
-                            <span className="text-green-600 font-medium">₱{event.revenue.toLocaleString()}</span>
-                          )}
+                          <span>{getDateFromTimestamp(event.startDate).toLocaleDateString()}</span>
+                          <span>{event.currentAttendees}/{event.maxAttendees || '∞'} attendees</span>
+                          {/* TODO: Add revenue calculation when payment system is implemented */}
                         </div>
                       </div>
                     </div>

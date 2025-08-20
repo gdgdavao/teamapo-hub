@@ -72,7 +72,10 @@ const AdminNavbar: React.FC = () => {
     };
   }, [isMobileMenuOpen]);
 
-  const navItems = [
+  // Determine if user is admin or organizer
+  const isAdmin = userProfile?.role === 'admin';
+
+  const navItems = isAdmin ? [
     { name: 'Dashboard', href: '/dashboard', icon: ChartBarIcon },
     { name: 'Events', href: '/events', icon: CalendarDaysIcon },
     { name: 'Attendees', href: '/attendees', icon: UserGroupIcon },
@@ -81,6 +84,9 @@ const AdminNavbar: React.FC = () => {
     { name: 'Forms', href: '/forms', icon: DocumentTextIcon },
     { name: 'Certificates', href: '/certificates', icon: AcademicCapIcon },
     { name: 'Social', href: '/social', icon: ShareIcon },
+  ] : [
+    { name: 'Dashboard', href: '/dashboard', icon: ChartBarIcon },
+    { name: 'Events', href: '/events', icon: CalendarDaysIcon },
   ];
 
   return (
@@ -92,7 +98,7 @@ const AdminNavbar: React.FC = () => {
             <Link to="/dashboard" className="flex-shrink-0 flex items-center">
               <span className="text-lg sm:text-xl lg:text-2xl font-bold text-blue-600">ApoHub</span>
               <span className="ml-1 sm:ml-2 px-1.5 sm:px-2 py-0.5 sm:py-1 text-xs font-medium bg-blue-100 text-blue-600 rounded-full">
-                Admin
+                {isAdmin ? 'Admin' : 'Organizer'}
               </span>
             </Link>
           </div>
@@ -194,7 +200,7 @@ const AdminNavbar: React.FC = () => {
             }`}>
               <span className="text-lg font-bold text-blue-600">ApoHub</span>
               <span className="ml-2 px-2 py-1 text-xs font-medium bg-blue-100 text-blue-600 rounded-full">
-                Admin
+                {isAdmin ? 'Admin' : 'Organizer'}
               </span>
             </div>
             <button

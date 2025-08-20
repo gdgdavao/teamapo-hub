@@ -199,6 +199,27 @@ export class RegistrationService {
   }
 
   /**
+   * Get all registrations across all events (for admin dashboard)
+   */
+  static async getAllRegistrations(): Promise<Registration[]> {
+    try {
+      const registrationsQuery = query(
+        collection(db, this.REGISTRATIONS_COLLECTION),
+        orderBy('registrationDate', 'desc')
+      );
+      const snapshot = await getDocs(registrationsQuery);
+      
+      return snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      } as Registration));
+    } catch (error) {
+      console.error('Error fetching all registrations:', error);
+      throw new Error('Failed to fetch all registrations');
+    }
+  }
+
+  /**
    * Get registrations by user email
    */
   static async getUserRegistrations(userEmail: string): Promise<Registration[]> {
@@ -223,7 +244,11 @@ export class RegistrationService {
   /**
    * Check in attendee
    */
-  static async checkInAttendee(registrationId: string, checkInMethod: 'qr' | 'manual' = 'manual'): Promise<void> {
+  static async checkInAttendee(
+    registrationId: string, 
+    checkInMethod: 'qr' | 'manual' = 'manual',
+    bypassPaymentCheck: boolean = false
+  ): Promise<void> {
     try {
       const registrationRef = doc(db, this.REGISTRATIONS_COLLECTION, registrationId);
       const registration = await getDoc(registrationRef);
@@ -237,8 +262,18 @@ export class RegistrationService {
         throw new Error('Attendee already checked in');
       }
 
-      if (data.paymentStatus !== 'paid') {
-        throw new Error('Payment required before check-in');
+      // More flexible payment check for organizers
+      if (!bypassPaymentCheck && data.paymentStatus !== 'paid') {
+        // For free events (totalAmount = 0), automatically mark as paid
+        if (data.totalAmount === 0) {
+          await updateDoc(registrationRef, {
+            paymentStatus: 'paid',
+            updatedAt: serverTimestamp()
+          });
+        } else {
+          // For paid events, throw more descriptive error
+          throw new Error(`Payment status is '${data.paymentStatus}'. Please ensure payment is completed before check-in.`);
+        }
       }
 
       await updateDoc(registrationRef, {
@@ -262,36 +297,93 @@ export class RegistrationService {
       }
     } catch (error) {
       console.error('Error checking in attendee:', error);
-      throw new Error('Failed to check in attendee');
+      throw error; // Re-throw the original error with its message
     }
   }
 
   /**
-   * Update registration status
+   * Check in attendee (organizer version with more flexibility)
+   */
+  static async organizerCheckInAttendee(registrationId: string): Promise<void> {
+    try {
+      const registrationRef = doc(db, this.REGISTRATIONS_COLLECTION, registrationId);
+      const registration = await getDoc(registrationRef);
+      
+      if (!registration.exists()) {
+        throw new Error('Registration not found');
+      }
+
+      const data = registration.data();
+      if (data.attendanceStatus === 'checked-in') {
+        throw new Error('Attendee already checked in');
+      }
+
+      // Organizers can check in attendees regardless of payment status
+      // But we'll automatically update payment status for free events
+      const updateData: any = {
+        attendanceStatus: 'checked-in',
+        checkInTime: serverTimestamp(),
+        checkInMethod: 'manual',
+        updatedAt: serverTimestamp()
+      };
+
+      // For free events, automatically mark as paid
+      if (data.totalAmount === 0 && data.paymentStatus !== 'paid') {
+        updateData.paymentStatus = 'paid';
+      }
+
+      await updateDoc(registrationRef, updateData);
+
+      // Send check-in notification
+      try {
+        const sendCheckInNotification = httpsCallable(functions, 'sendCheckInNotification');
+        await sendCheckInNotification({
+          registrationId,
+          eventId: data.eventId,
+          userEmail: data.userDetails.email,
+          userName: data.userDetails.name
+        });
+      } catch (error) {
+        console.warn('Failed to send check-in notification:', error);
+      }
+    } catch (error) {
+      console.error('Error checking in attendee:', error);
+      throw error; // Re-throw the original error with its message
+    }
+  }
+
+  /**
+   * Update registration status (for admin use)
    */
   static async updateRegistrationStatus(
     registrationId: string, 
-    status: 'confirmed' | 'cancelled' | 'no-show'
+    status: 'pending' | 'approved' | 'rejected',
+    notes?: string
   ): Promise<void> {
     try {
       const registrationRef = doc(db, this.REGISTRATIONS_COLLECTION, registrationId);
-      await updateDoc(registrationRef, {
-        attendanceStatus: status,
+      const updateData: any = {
+        registrationStatus: status,
         updatedAt: serverTimestamp()
-      });
+      };
 
-      // If cancelling, update event attendee count
-      if (status === 'cancelled') {
+      if (notes) {
+        updateData.adminNotes = notes;
+      }
+
+      // If approving, also update payment status if needed
+      if (status === 'approved') {
         const registration = await getDoc(registrationRef);
         if (registration.exists()) {
           const data = registration.data();
-          const eventRef = doc(db, this.EVENTS_COLLECTION, data.eventId);
-          await updateDoc(eventRef, {
-            currentAttendees: increment(-data.quantity),
-            updatedAt: serverTimestamp()
-          });
+          // If it's a free event, mark as paid
+          if (data.totalAmount === 0) {
+            updateData.paymentStatus = 'paid';
+          }
         }
       }
+
+      await updateDoc(registrationRef, updateData);
     } catch (error) {
       console.error('Error updating registration status:', error);
       throw new Error('Failed to update registration status');

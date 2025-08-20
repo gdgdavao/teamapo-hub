@@ -2,9 +2,6 @@
   "projects": {
     "default": "apohub-gdgdvo"
   },
-  "rules": {
-    "rules": "firestore.rules"
-  },
   "firestore": {
     "database": "(default)",
     "location": "asia-southeast1",
@@ -12,7 +9,7 @@
     "indexes": "firestore.indexes.json"
   },
   "storage": {
-    "rules": "storage.rules"
+    "rules": "storage.rules.dev"
   },
   "hosting": {
     "public": "dist",
@@ -28,11 +25,6 @@
       }
     ]
   },
-  "database": {
-    "rules": {
-      "rules": "firestore.rules"
-    }
-  },
   "functions": [
     {
       "source": "functions",
@@ -45,10 +37,27 @@
         "firebase-debug.*.log",
         "*.local"
       ],
-      "predeploy": [
-        
-      ],
+      "predeploy": [],
       "runtime": "python313"
     }
-  ]
+  ],
+  "emulators": {
+    "auth": {
+      "port": 9099
+    },
+    "firestore": {
+      "port": 8080
+    },
+    "functions": {
+      "port": 5001
+    },
+    "storage": {
+      "port": 9199
+    },
+    "ui": {
+      "enabled": true,
+      "port": 4000
+    },
+    "singleProjectMode": true
+  }
 }

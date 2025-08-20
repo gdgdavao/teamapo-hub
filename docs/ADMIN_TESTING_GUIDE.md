@@ -44,8 +44,8 @@ Navigate to: `http://apohub.localhost:5173`
 
 ### Organizer Features Available:
 ✅ Organizer Dashboard (`/organizer` or `/dashboard`)
-✅ Create Events (`/events/create` or `/organizer/create`)
-✅ Manage Events (`/manage-events` or `/organizer/events`)
+✅ Create Events (`/events/create`)
+✅ Manage Events (`/events`)
 ✅ Event Analytics (`/events/:id/analytics`)
 ✅ Attendee Management (`/events/:id/attendees`)
 

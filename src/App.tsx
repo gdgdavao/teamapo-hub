@@ -6,6 +6,7 @@ import AdminLayout from './components/AdminLayout';
 import LoadingSpinner from './components/UI/LoadingSpinner';
 import { FirebaseConnectionStatus } from './components/FirebaseConnectionStatus';
 import { isAdminSubdomain, getAdminUrl } from './utils/subdomain';
+import RoleBasedDashboard from './components/RoleBasedDashboard';
 
 // Public Pages
 import LandingPage from './pages/public/LandingPage';
@@ -25,7 +26,6 @@ import AttendeesPage from './pages/organizer/AttendeesPage';
 
 // Admin Pages
 import AdminDashboardPage from './pages/admin/AdminDashboardPage';
-import AdminEventsPage from './pages/admin/AdminEventsPage';
 import AdminAttendeesPage from './pages/admin/AdminAttendeesPage';
 import AdminUsersPage from './pages/admin/AdminUsersPage';
 import AdminAnalyticsPage from './pages/admin/AdminAnalyticsPage';
@@ -133,23 +133,24 @@ const AppContent: React.FC = () => {
         {/* Dashboard Routes - Role-based routing */}
         <Route path="/" element={
           <ProtectedRoute>
-            <AdminDashboardPage />
+            <RoleBasedDashboard />
           </ProtectedRoute>
         } />
         
         <Route path="/dashboard" element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredRole="admin">
             <AdminDashboardPage />
           </ProtectedRoute>
         } />
 
-        {/* Admin-only Routes */}
-        <Route path="/events" element={
-          <ProtectedRoute requiredRole="admin">
-            <AdminEventsPage />
+        {/* Organizer-specific Dashboard */}
+        <Route path="/organizer" element={
+          <ProtectedRoute requiredRole="organizer">
+            <OrganizerDashboardPage />
           </ProtectedRoute>
         } />
 
+        {/* Admin-only Routes */}
         <Route path="/attendees" element={
           <ProtectedRoute requiredRole="admin">
             <AdminAttendeesPage />
@@ -192,65 +193,40 @@ const AppContent: React.FC = () => {
           </ProtectedRoute>
         } />
 
-        {/* Event Management Routes - Available to both admin and organizer */}
+        {/* Unified Event Management Routes - Available to both admin and organizer */}
         <Route path="/events/create" element={
-          <ProtectedRoute requiredRole="organizer">
+          <ProtectedRoute>
             <CreateEventPage />
           </ProtectedRoute>
         } />
 
         <Route path="/events/edit/:eventId" element={
-          <ProtectedRoute requiredRole="organizer">
+          <ProtectedRoute>
             <CreateEventPage />
           </ProtectedRoute>
         } />
 
-        <Route path="/manage-events" element={
-          <ProtectedRoute requiredRole="organizer">
-            <ManageEventsPage />
-          </ProtectedRoute>
-        } />
-
         <Route path="/events/:eventId/analytics" element={
-          <ProtectedRoute requiredRole="organizer">
+          <ProtectedRoute>
             <EventAnalyticsPage />
           </ProtectedRoute>
         } />
 
         <Route path="/events/:eventId/attendees" element={
-          <ProtectedRoute requiredRole="organizer">
+          <ProtectedRoute>
             <AttendeesPage />
           </ProtectedRoute>
         } />
 
-        {/* Organizer Routes - Alternative paths */}
-        <Route path="/organizer" element={
-          <ProtectedRoute requiredRole="organizer">
-            <OrganizerDashboardPage />
+        <Route path="/events/:eventId" element={
+          <ProtectedRoute>
+            <EventDetailPage />
           </ProtectedRoute>
         } />
 
-        <Route path="/organizer/create" element={
-          <ProtectedRoute requiredRole="organizer">
-            <CreateEventPage />
-          </ProtectedRoute>
-        } />
-
-        <Route path="/organizer/events" element={
-          <ProtectedRoute requiredRole="organizer">
+        <Route path="/events" element={
+          <ProtectedRoute>
             <ManageEventsPage />
-          </ProtectedRoute>
-        } />
-
-        <Route path="/organizer/events/:eventId/analytics" element={
-          <ProtectedRoute requiredRole="organizer">
-            <EventAnalyticsPage />
-          </ProtectedRoute>
-        } />
-
-        <Route path="/organizer/events/:eventId/attendees" element={
-          <ProtectedRoute requiredRole="organizer">
-            <AttendeesPage />
           </ProtectedRoute>
         } />
 

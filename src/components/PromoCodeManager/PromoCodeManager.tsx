@@ -90,6 +90,31 @@ const PromoCodeManager: React.FC<PromoCodeManagerProps> = ({
     setIsModalOpen(true);
   };
 
+  // Helper function to safely convert Firestore timestamps to Date objects
+  const convertTimestampToDate = (timestamp: any): Date => {
+    if (!timestamp) return new Date();
+    
+    if (timestamp?.toDate && typeof timestamp.toDate === 'function') {
+      // Firestore Timestamp object
+      return timestamp.toDate();
+    } else if (timestamp?.seconds && typeof timestamp.seconds === 'number') {
+      // Firestore timestamp as plain object (from Firestore emulator or client)
+      return new Date(timestamp.seconds * 1000);
+    } else if (timestamp instanceof Date) {
+      // Regular Date object
+      return timestamp;
+    } else if (typeof timestamp === 'string') {
+      // Date string
+      return new Date(timestamp);
+    } else if (typeof timestamp === 'number') {
+      // Unix timestamp
+      return new Date(timestamp);
+    } else {
+      // Try to create a Date object
+      return new Date(timestamp);
+    }
+  };
+
   const openEditModal = (promoCode: PromoCode) => {
     setEditingPromoCode(promoCode);
     setFormData({
@@ -101,8 +126,8 @@ const PromoCodeManager: React.FC<PromoCodeManagerProps> = ({
       currency: promoCode.currency || 'PHP',
       maxUses: promoCode.maxUses,
       isActive: promoCode.isActive,
-      validFrom: promoCode.validFrom.toDate().toISOString().slice(0, 16),
-      validUntil: promoCode.validUntil.toDate().toISOString().slice(0, 16),
+      validFrom: convertTimestampToDate(promoCode.validFrom).toISOString().slice(0, 16),
+      validUntil: convertTimestampToDate(promoCode.validUntil).toISOString().slice(0, 16),
       applicableTicketTypes: promoCode.applicableTicketTypes || [],
       minOrderAmount: promoCode.minOrderAmount,
       maxDiscountAmount: promoCode.maxDiscountAmount
@@ -151,11 +176,11 @@ const PromoCodeManager: React.FC<PromoCodeManagerProps> = ({
   };
 
   const isExpired = (promoCode: PromoCode): boolean => {
-    return new Date() > promoCode.validUntil.toDate();
+    return new Date() > convertTimestampToDate(promoCode.validUntil);
   };
 
   const isNotYetActive = (promoCode: PromoCode): boolean => {
-    return new Date() < promoCode.validFrom.toDate();
+    return new Date() < convertTimestampToDate(promoCode.validFrom);
   };
 
   return (
@@ -270,14 +295,14 @@ const PromoCodeManager: React.FC<PromoCodeManagerProps> = ({
                     <div>
                       <span className="text-gray-500">Valid From:</span>
                       <div className="font-medium">
-                        {promoCode.validFrom.toDate().toLocaleDateString()}
+                        {convertTimestampToDate(promoCode.validFrom).toLocaleDateString()}
                       </div>
                     </div>
                     
                     <div>
                       <span className="text-gray-500">Valid Until:</span>
                       <div className="font-medium">
-                        {promoCode.validUntil.toDate().toLocaleDateString()}
+                        {convertTimestampToDate(promoCode.validUntil).toLocaleDateString()}
                       </div>
                     </div>
                   </div>

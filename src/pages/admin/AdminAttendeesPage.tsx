@@ -17,6 +17,9 @@ import {
 } from '@heroicons/react/24/outline';
 import { CheckCircleIcon, XCircleIcon, ClockIcon, CurrencyDollarIcon } from '@heroicons/react/20/solid';
 import AdminLayout from '../../components/AdminLayout';
+import { RegistrationService } from '../../services/registrationService';
+import { EventService } from '../../services/eventService';
+import { Registration as FirestoreRegistration, Event } from '../../types';
 
 // Utility function to format dates
 const formatDate = (dateString: string): string => {
@@ -68,19 +71,108 @@ const AdminAttendeesPage: React.FC = () => {
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
   const [selectedRegistrations, setSelectedRegistrations] = useState<string[]>([]);
   const [viewingRegistration, setViewingRegistration] = useState<Registration | null>(null);
+  const [events, setEvents] = useState<Event[]>([]);
 
   // Load registrations from API
   useEffect(() => {
     const fetchRegistrations = async () => {
       try {
-        // TODO: Implement actual API call
-        // const registrationsData = await RegistrationService.getAllRegistrations();
-        // setRegistrations(registrationsData);
-        setRegistrations([]);
+        setLoading(true);
+        
+        // Fetch all registrations
+        const firestoreRegistrations = await RegistrationService.getAllRegistrations();
+        
+        // Transform data to match expected interface
+        const transformedRegistrations: Registration[] = [];
+        
+        // Create a map to cache events and avoid duplicate fetches
+        const eventsCache = new Map<string, Event>();
+        
+        for (const reg of firestoreRegistrations) {
+          // Fetch event data if not cached
+          let event = eventsCache.get(reg.eventId);
+          if (!event) {
+            try {
+              const fetchedEvent = await EventService.getEvent(reg.eventId);
+              if (fetchedEvent) {
+                event = fetchedEvent;
+                eventsCache.set(reg.eventId, event);
+              }
+            } catch (error) {
+              console.warn(`Failed to fetch event ${reg.eventId}:`, error);
+              continue; // Skip this registration if event can't be fetched
+            }
+          }
+          
+          if (!event) continue;
+          
+          // Map status from Firestore to expected format
+          const getDisplayStatus = (fsReg: FirestoreRegistration): Registration['status'] => {
+            // First check registrationStatus if it exists
+            if ((fsReg as any).registrationStatus) {
+              const regStatus = (fsReg as any).registrationStatus;
+              if (regStatus === 'approved') return 'approved';
+              if (regStatus === 'rejected') return 'rejected';
+              if (regStatus === 'pending') return 'pending';
+            }
+            
+            // Fall back to other status fields
+            if (fsReg.attendanceStatus === 'checked-in') return 'attended';
+            if (fsReg.attendanceStatus === 'cancelled') return 'cancelled';
+            if (fsReg.paymentStatus === 'paid') return 'paid';
+            if (fsReg.paymentStatus === 'pending') return 'pending';
+            
+            return 'pending'; // Default status
+          };
+
+          // Map PaymentStatus to expected format
+          const mapPaymentStatus = (status: any): Registration['paymentStatus'] => {
+            if (status === 'paid') return 'paid';
+            if (status === 'pending' || status === 'processing') return 'pending';
+            if (status === 'failed') return 'failed';
+            if (status === 'refunded') return 'refunded';
+            return 'pending'; // Default for any other status including 'cancelled'
+          };
+
+          const transformedReg: Registration = {
+            id: reg.id,
+            attendee: {
+              id: reg.userId || reg.id,
+              name: reg.userDetails.name,
+              email: reg.userDetails.email,
+              phone: reg.userDetails.phoneNumber,
+              organization: reg.userDetails.organization,
+              profilePicture: undefined, // Not available in current structure
+              experience: undefined,
+              interests: [],
+              bio: undefined
+            },
+            event: {
+              id: event.id,
+              title: event.title,
+              date: event.startDate.toDate().toISOString(),
+              venue: event.venue?.name || event.venue?.address || 'TBA',
+              ticketPrice: reg.totalAmount || 0
+            },
+            status: getDisplayStatus(reg),
+            registrationDate: reg.registrationDate.toDate().toISOString(),
+            paymentStatus: mapPaymentStatus(reg.paymentStatus),
+            notes: (reg as any).adminNotes || undefined,
+            requirements: undefined,
+            formSubmission: (reg as any).customResponses || undefined,
+            priority: 'medium' // Default priority
+          };
+          
+          transformedRegistrations.push(transformedReg);
+        }
+        
+        setRegistrations(transformedRegistrations);
+        setEvents(Array.from(eventsCache.values()));
         setLoading(false);
       } catch (error) {
         console.error('Error fetching registrations:', error);
         setRegistrations([]);
+        setEvents([]);
         setLoading(false);
       }
     };
@@ -89,18 +181,53 @@ const AdminAttendeesPage: React.FC = () => {
   }, []);
 
   const handleStatusChange = (registrationId: string, newStatus: Registration['status'], notes?: string) => {
-    setRegistrations(prev => 
-      prev.map(reg => 
-        reg.id === registrationId 
-          ? { ...reg, status: newStatus, notes: notes || reg.notes }
-          : reg
-      )
-    );
+    // Only handle admin status changes (approved/rejected)
+    if (newStatus === 'approved' || newStatus === 'rejected') {
+      const updateStatus = async () => {
+        try {
+          await RegistrationService.updateRegistrationStatus(
+            registrationId, 
+            newStatus as 'approved' | 'rejected',
+            notes
+          );
+          
+          // Update local state after successful update
+          setRegistrations(prev => 
+            prev.map(reg => 
+              reg.id === registrationId 
+                ? { ...reg, status: newStatus, notes: notes || reg.notes }
+                : reg
+            )
+          );
 
-    // Simulate email notification
-    const registration = registrations.find(r => r.id === registrationId);
-    if (registration) {
-      console.log(`Email notification sent to ${registration.attendee.email} - Status: ${newStatus}`);
+          // Simulate email notification
+          const registration = registrations.find(r => r.id === registrationId);
+          if (registration) {
+            console.log(`Email notification sent to ${registration.attendee.email} - Status: ${newStatus}`);
+          }
+        } catch (error) {
+          console.error('Failed to update registration status:', error);
+          // You might want to show a toast notification here
+          alert('Failed to update registration status. Please try again.');
+        }
+      };
+      
+      updateStatus();
+    } else {
+      // For other status changes, just update locally for now
+      setRegistrations(prev => 
+        prev.map(reg => 
+          reg.id === registrationId 
+            ? { ...reg, status: newStatus, notes: notes || reg.notes }
+            : reg
+        )
+      );
+
+      // Simulate email notification
+      const registration = registrations.find(r => r.id === registrationId);
+      if (registration) {
+        console.log(`Email notification sent to ${registration.attendee.email} - Status: ${newStatus}`);
+      }
     }
   };
 
@@ -109,15 +236,37 @@ const AdminAttendeesPage: React.FC = () => {
 
     const newStatus = action === 'approve' ? 'approved' : 'rejected';
 
-    setRegistrations(prev => 
-      prev.map(reg => 
-        selectedRegistrations.includes(reg.id)
-          ? { ...reg, status: newStatus as Registration['status'] }
-          : reg
-      )
-    );
+    const updateBulkStatus = async () => {
+      try {
+        // Update all selected registrations in parallel
+        const updatePromises = selectedRegistrations.map(registrationId =>
+          RegistrationService.updateRegistrationStatus(
+            registrationId,
+            newStatus as 'approved' | 'rejected'
+          )
+        );
 
-    setSelectedRegistrations([]);
+        await Promise.all(updatePromises);
+
+        // Update local state after successful updates
+        setRegistrations(prev => 
+          prev.map(reg => 
+            selectedRegistrations.includes(reg.id)
+              ? { ...reg, status: newStatus as Registration['status'] }
+              : reg
+          )
+        );
+
+        setSelectedRegistrations([]);
+        
+        console.log(`Bulk ${action} completed for ${selectedRegistrations.length} registrations`);
+      } catch (error) {
+        console.error(`Failed to bulk ${action} registrations:`, error);
+        alert(`Failed to bulk ${action} registrations. Please try again.`);
+      }
+    };
+
+    updateBulkStatus();
   };
 
   const toggleRegistrationSelection = (registrationId: string) => {
@@ -322,10 +471,11 @@ const AdminAttendeesPage: React.FC = () => {
                 className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               >
                 <option value="all">All Events</option>
-                <option value="event1">Web Development Workshop</option>
-                <option value="event2">AI/ML Fundamentals</option>
-                <option value="event3">Flutter Development</option>
-                <option value="event4">DevOps Essentials</option>
+                {events.map(event => (
+                  <option key={event.id} value={event.id}>
+                    {event.title}
+                  </option>
+                ))}
               </select>
             </div>
 
