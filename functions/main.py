@@ -28,10 +28,18 @@ def get_db():
     """Lazy initialization of Firestore client"""
     global _app, _db
     if _db is None:
-        if _app is None:
-            _app = initialize_app()
-        _db = firestore.client()
-        logger.info("Firebase Admin initialized successfully")
+        try:
+            # Check if app is already initialized
+            from firebase_admin import _apps
+            if not _apps:
+                _app = initialize_app()
+            else:
+                _app = None  # App already exists
+            _db = firestore.client()
+            logger.info("Firebase Admin client retrieved")
+        except Exception as e:
+            logger.error(f"Error during Firebase initialization: {str(e)}")
+            raise
     return _db
 
 # Alias for backward compatibility - use get_db() function instead
@@ -1538,7 +1546,10 @@ def on_event_created(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]) -
         
     except ValueError as e:
         # Handle timestamp parsing errors specifically
-        logger.error(f"Timestamp parsing error in event created trigger: {str(e)}")
+        if "already exists" in str(e):
+            logger.error(f"Firebase initialization error in event created trigger: {str(e)}")
+        else:
+            logger.error(f"Timestamp parsing error in event created trigger: {str(e)}")
     except Exception as e:
         logger.error(f"Error in event created trigger: {str(e)}")
 
@@ -1587,7 +1598,10 @@ def on_event_updated(event: firestore_fn.Event[firestore_fn.Change[firestore_fn.
         
     except ValueError as e:
         # Handle timestamp parsing errors specifically
-        logger.error(f"Timestamp parsing error in event updated trigger: {str(e)}")
+        if "already exists" in str(e):
+            logger.error(f"Firebase initialization error in event updated trigger: {str(e)}")
+        else:
+            logger.error(f"Timestamp parsing error in event updated trigger: {str(e)}")
     except Exception as e:
         logger.error(f"Error in event updated trigger: {str(e)}")
 

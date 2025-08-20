@@ -1,40 +1,43 @@
 import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import Layout from './components/Layout/Layout';
-import AdminLayout from './components/AdminLayout';
-import LoadingSpinner from './components/UI/LoadingSpinner';
-import { FirebaseConnectionStatus } from './components/FirebaseConnectionStatus';
+import Layout from './components/public/Layout/Layout';
+import AdminLayout from './components/admin/AdminLayout';
+import LoadingSpinner from './components/shared/UI/LoadingSpinner';
+import { FirebaseConnectionStatus } from './components/shared/FirebaseConnectionStatus';
 import { isAdminSubdomain, getAdminUrl } from './utils/subdomain';
-import RoleBasedDashboard from './components/RoleBasedDashboard';
+import RoleBasedDashboard from './components/shared/RoleBasedDashboard';
 
 // Public Pages
-import LandingPage from './pages/public/LandingPage';
-import EventsPage from './pages/public/EventsPage';
-import EventDetailPage from './pages/public/EventDetailPage';
-import RegisterPage from './pages/public/RegisterPage';
+import LandingPage from './pages/public-new/LandingPage';
+import EventsPage from './pages/public-new/EventsPage';
+import EventDetailPage from './pages/public-new/EventDetailPage';
+import RegisterPage from './pages/public-new/RegisterPage';
+
+// Auth Pages
 import LoginPage from './pages/auth/LoginPage';
 import SignUpPage from './pages/auth/SignUpPage';
 import ForgotPasswordPage from './pages/auth/ForgotPasswordPage';
 
-// Protected Pages - Organizer
-import OrganizerDashboardPage from './pages/organizer/OrganizerDashboardPage';
-import CreateEventPage from './pages/organizer/CreateEventPage';
-import ManageEventsPage from './pages/organizer/ManageEventsPage';
-import EventAnalyticsPage from './pages/organizer/EventAnalyticsPage';
-import AttendeesPage from './pages/organizer/AttendeesPage';
+// Organizer Pages
+import OrganizerDashboardPage from './pages/organizer-new/OrganizerDashboardPage';
+import CreateEventPage from './pages/organizer-new/CreateEventPage';
+import ManageEventsPage from './pages/organizer-new/ManageEventsPage';
+import AttendeesPage from './pages/organizer-new/AttendeesPage';
 
 // Admin Pages
-import AdminDashboardPage from './pages/admin/AdminDashboardPage';
-import AdminAttendeesPage from './pages/admin/AdminAttendeesPage';
-import AdminUsersPage from './pages/admin/AdminUsersPage';
-import AdminAnalyticsPage from './pages/admin/AdminAnalyticsPage';
-import AdminCertificatesPage from './pages/admin/AdminCertificatesPage';
-import AdminFormsPage from './pages/admin/AdminFormsPage';
-import AdminSocialPage from './pages/admin/AdminSocialPage';
-import AdminPaymentVerificationPage from './pages/admin/AdminPaymentVerificationPage';
+import AdminDashboardPage from './pages/admin-new/AdminDashboardPage';
+import AdminAttendeesPage from './pages/admin-new/AdminAttendeesPage';
+import AdminUsersPage from './pages/admin-new/AdminUsersPage';
+import AdminCertificatesPage from './pages/admin-new/AdminCertificatesPage';
+import AdminFormsPage from './pages/admin-new/AdminFormsPage';
+import AdminSocialPage from './pages/admin-new/AdminSocialPage';
+import AdminPaymentVerificationPage from './pages/admin-new/AdminPaymentVerificationPage';
 
-// Utility Pages
+// Analytics Component
+import { AnalyticsPage } from './components/admin/Analytics';
+
+// Utility Pages (keeping in their current locations for now)
 import PaymentPage from './pages/payment/PaymentPage';
 import PaymentSuccessPage from './pages/payment/PaymentSuccessPage';
 import FeedbackPage from './pages/feedback/FeedbackPage';
@@ -138,46 +141,29 @@ const AppContent: React.FC = () => {
         } />
         
         <Route path="/dashboard" element={
+          <ProtectedRoute>
+            <RoleBasedDashboard />
+          </ProtectedRoute>
+        } />
+
+        {/* Admin Dashboard */}
+        <Route path="/admin/dashboard" element={
           <ProtectedRoute requiredRole="admin">
             <AdminDashboardPage />
           </ProtectedRoute>
         } />
 
-        {/* Organizer-specific Dashboard */}
-        <Route path="/organizer" element={
+        {/* Organizer Dashboard */}
+        <Route path="/organizer/dashboard" element={
           <ProtectedRoute requiredRole="organizer">
             <OrganizerDashboardPage />
           </ProtectedRoute>
         } />
 
         {/* Admin-only Routes */}
-        <Route path="/attendees" element={
-          <ProtectedRoute requiredRole="admin">
-            <AdminAttendeesPage />
-          </ProtectedRoute>
-        } />
-
         <Route path="/users" element={
           <ProtectedRoute requiredRole="admin">
             <AdminUsersPage />
-          </ProtectedRoute>
-        } />
-
-        <Route path="/analytics" element={
-          <ProtectedRoute requiredRole="admin">
-            <AdminAnalyticsPage />
-          </ProtectedRoute>
-        } />
-
-        <Route path="/certificates" element={
-          <ProtectedRoute requiredRole="admin">
-            <AdminCertificatesPage />
-          </ProtectedRoute>
-        } />
-
-        <Route path="/forms" element={
-          <ProtectedRoute requiredRole="admin">
-            <AdminFormsPage />
           </ProtectedRoute>
         } />
 
@@ -190,6 +176,31 @@ const AppContent: React.FC = () => {
         <Route path="/payment-verification" element={
           <ProtectedRoute requiredRole="admin">
             <AdminPaymentVerificationPage />
+          </ProtectedRoute>
+        } />
+
+        {/* Shared Routes - Available to both admin and organizer */}
+        <Route path="/attendees" element={
+          <ProtectedRoute>
+            <AdminAttendeesPage />
+          </ProtectedRoute>
+        } />
+
+        <Route path="/analytics" element={
+          <ProtectedRoute>
+            <AnalyticsPage isEventSpecific={false} />
+          </ProtectedRoute>
+        } />
+
+        <Route path="/certificates" element={
+          <ProtectedRoute>
+            <AdminCertificatesPage />
+          </ProtectedRoute>
+        } />
+
+        <Route path="/forms" element={
+          <ProtectedRoute>
+            <AdminFormsPage />
           </ProtectedRoute>
         } />
 
@@ -208,7 +219,7 @@ const AppContent: React.FC = () => {
 
         <Route path="/events/:eventId/analytics" element={
           <ProtectedRoute>
-            <EventAnalyticsPage />
+            <AnalyticsPage isEventSpecific={true} />
           </ProtectedRoute>
         } />
 

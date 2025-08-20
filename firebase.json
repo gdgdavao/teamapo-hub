@@ -58,6 +58,12 @@
       "enabled": true,
       "port": 4000
     },
-    "singleProjectMode": true
+    "singleProjectMode": true,
+    "database": {
+      "port": 9000
+    },
+    "hosting": {
+      "port": 5000
+    }
   }
 }

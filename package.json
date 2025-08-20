@@ -13,7 +13,7 @@
     "emulator:start:import": "firebase emulators:start --only auth,firestore,functions,storage --import=./emulator-data",
     "emulator:export": "firebase emulators:export ./emulator-data",
     "emulator:clear": "firebase emulators:start --only auth,firestore,functions,storage --import=./emulator-data --export-on-exit",
-    "sample-data": "node scripts/populate-sample-data.cjs",
+    "sample-data": "node scripts/populate-sample-data.js",
     "emulator:with-data": "npm run emulator:start && npm run sample-data",
     "dev:full": "concurrently \"npm run emulator:start\" \"npm run dev:emulator\"",
     "firebase:setup": "bash scripts/quick-setup.sh",
@@ -67,7 +67,7 @@
     "eslint": "^9.25.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.19",
-    "firebase-admin": "^12.7.0",
+    "firebase-admin": "^13.4.0",
     "globals": "^16.0.0",
     "typescript": "^5.7.2",
     "vite": "^6.3.5"

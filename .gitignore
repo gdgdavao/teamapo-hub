@@ -23,3 +23,9 @@ dist-ssr
 *.sln
 *.sw?
 .envfirebase-service-account.json
+scripts/.env
+scripts/emulator-data/firebase-export-metadata.json
+scripts/emulator-data/auth_export/accounts.json
+scripts/emulator-data/auth_export/config.json
+scripts/emulator-data/firestore_export/firestore_export.overall_export_metadata
+scripts/emulator-data/storage_export/buckets.json
