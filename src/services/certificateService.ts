@@ -23,6 +23,7 @@ import {
 import { httpsCallable } from 'firebase/functions';
 import { db, storage, functions } from '../config/firebase';
 import { CertificateTemplate, Certificate } from '../types';
+import { NotificationService } from './notificationService';
 
 export interface IssuedCertificate {
   id: string;
@@ -222,7 +223,27 @@ export class CertificateService {
         usageCount: (await getDoc(templateRef)).data()?.usageCount + 1 || 1,
         updatedAt: serverTimestamp()
       });
-      
+
+      // Send notification to user about certificate readiness
+      try {
+        if (data.userId) {
+          await NotificationService.createNotification(
+            data.userId,
+            'certificate_ready',
+            'Certificate Ready',
+            `Your certificate for "${data.eventTitle}" is now available for download!`,
+            {
+              certificateId: response.certificateId,
+              eventId: data.eventId,
+              eventTitle: data.eventTitle,
+              registrationId: data.registrationId
+            }
+          );
+        }
+      } catch (error) {
+        console.warn('Failed to create certificate ready notification:', error);
+      }
+
       return response.certificateId!;
     } catch (error) {
       console.error('Error generating certificate:', error);

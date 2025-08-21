@@ -16,6 +16,18 @@ import EventService from '../../services/eventService';
 import { Event } from '../../types';
 import LoadingSpinner from '../../components/shared/UI/LoadingSpinner';
 
+// Utility function to safely convert various date formats to Date object
+const getDateFromTimestamp = (timestamp: any): Date => {
+  if (!timestamp) return new Date();
+  if (timestamp.toDate && typeof timestamp.toDate === 'function') {
+    return timestamp.toDate();
+  }
+  if (timestamp.seconds) {
+    return new Date(timestamp.seconds * 1000);
+  }
+  return new Date(timestamp);
+};
+
 const OrganizerDashboardPage: React.FC = () => {
   const { userProfile } = useAuth();
   const [events, setEvents] = useState<Event[]>([]);
@@ -27,7 +39,8 @@ const OrganizerDashboardPage: React.FC = () => {
       
       try {
         setLoading(true);
-        const userEvents = await EventService.getEventsByOrganizer(userProfile.uid);
+        // Organizers can now see all events (updated business rule)
+        const userEvents = await EventService.getAllEvents();
         setEvents(userEvents);
       } catch (error) {
         console.error('Error fetching organizer events:', error);
@@ -199,7 +212,7 @@ const OrganizerDashboardPage: React.FC = () => {
                     <div>
                       <h4 className="text-sm font-medium text-gray-900">{event.title}</h4>
                       <p className="text-sm text-gray-500">
-                        {event.startDate.toDate().toLocaleDateString()} • {event.currentAttendees || 0} registered
+                        {getDateFromTimestamp(event.startDate).toLocaleDateString()} • {event.currentAttendees || 0} registered
                       </p>
                     </div>
                   </div>

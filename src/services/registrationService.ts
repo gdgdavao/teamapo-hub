@@ -17,6 +17,7 @@ import {
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '../config/firebase';
 import { Registration, Event, TicketPricing } from '../types';
+import { NotificationService } from './notificationService';
 
 export interface RegistrationData {
   eventId: string;
@@ -140,6 +141,28 @@ export class RegistrationService {
         });
       } catch (error) {
         console.warn('Failed to send registration confirmation email:', error);
+      }
+
+      // Send notification for successful registration (for admin/organizer)
+      try {
+        // Get event details for notification
+        const eventRef = doc(db, this.EVENTS_COLLECTION, registrationData.eventId);
+        const eventSnap = await getDoc(eventRef);
+        if (eventSnap.exists()) {
+          const eventData = eventSnap.data() as Event;
+          // Notify admin/organizer about new registration
+          if (eventData.organizer?.uid) {
+            await NotificationService.createNotification(
+              eventData.organizer.uid,
+              'registration_confirmation',
+              'New Registration',
+              `${registrationData.userDetails.name} has registered for "${eventData.title}"`,
+              { registrationId, eventId: registrationData.eventId, userEmail: registrationData.userDetails.email }
+            );
+          }
+        }
+      } catch (error) {
+        console.warn('Failed to create registration notification:', error);
       }
 
       return {
@@ -294,6 +317,26 @@ export class RegistrationService {
         });
       } catch (error) {
         console.warn('Failed to send check-in notification:', error);
+      }
+
+      // Send notification to organizer about successful check-in
+      try {
+        const eventRef = doc(db, this.EVENTS_COLLECTION, data.eventId);
+        const eventSnap = await getDoc(eventRef);
+        if (eventSnap.exists()) {
+          const eventData = eventSnap.data() as Event;
+          if (eventData.organizer?.uid) {
+            await NotificationService.createNotification(
+              eventData.organizer.uid,
+              'event_update',
+              'Attendee Checked In',
+              `${data.userDetails.name} has been checked in to "${eventData.title}"`,
+              { registrationId, eventId: data.eventId, checkInMethod }
+            );
+          }
+        }
+      } catch (error) {
+        console.warn('Failed to create check-in notification:', error);
       }
     } catch (error) {
       console.error('Error checking in attendee:', error);

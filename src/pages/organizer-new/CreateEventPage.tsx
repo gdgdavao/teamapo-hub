@@ -244,6 +244,7 @@ const CreateEventPage: React.FC = () => {
       return;
     }
 
+    let toastId: string | undefined;
     try {
       setLoading(true);
 
@@ -297,18 +298,24 @@ const CreateEventPage: React.FC = () => {
         return;
       }
 
+      // Centralized notifications
+      toastId = toast.loading(
+        publish
+          ? (isEditMode ? 'Publishing event…' : 'Creating and publishing event…')
+          : (isEditMode ? 'Updating event…' : 'Creating event…')
+      );
+      const warnings: string[] = [];
+
       let savedEventId: string;
 
       if (isEditMode && eventId) {
         // Update existing event
         await EventService.updateEvent(eventId, formData);
         savedEventId = eventId;
-        toast.success(publish ? 'Event updated and published successfully!' : 'Event updated successfully!');
       } else {
         // Create new event
         savedEventId = await EventService.createEvent(formData, currentUser.uid);
         setEventId(savedEventId);
-        toast.success(publish ? 'Event created and published successfully!' : 'Event created successfully!');
       }
 
       // Upload event image if provided
@@ -319,10 +326,9 @@ const CreateEventPage: React.FC = () => {
           const blob = await response.blob();
           const file = new File([blob], 'event-image.jpg', { type: 'image/jpeg' });
           await EventService.uploadEventImage(savedEventId, file);
-          toast.success('Event image uploaded successfully!');
         } catch (error) {
           console.error('Error uploading event image:', error);
-          toast.error('Failed to upload event image, but event was saved');
+          warnings.push('Event image upload failed');
         }
       }
 
@@ -337,10 +343,9 @@ const CreateEventPage: React.FC = () => {
               qrCodeUrl
             }
           });
-          toast.success('Payment QR code uploaded successfully!');
         } catch (error) {
           console.error('Error uploading payment QR code:', error);
-          toast.error('Failed to upload payment QR code, but event was saved');
+          warnings.push('Payment QR upload failed');
         }
       }
 
@@ -348,10 +353,9 @@ const CreateEventPage: React.FC = () => {
       if (publish) {
         try {
           await EventService.publishEvent(savedEventId);
-          // Don't show separate publish message since we already show it in the create/update message
         } catch (error) {
           console.error('Error publishing event:', error);
-          toast.error('Failed to publish event, but event was saved');
+          warnings.push('Publishing failed');
         }
       }
 
@@ -359,6 +363,15 @@ const CreateEventPage: React.FC = () => {
       if (isEditMode) {
         console.log('Skipping statistics call temporarily due to function issues');
       }
+
+      // Show a single final success toast
+      const baseMessage = isEditMode
+        ? (publish ? 'Event updated and published.' : 'Event updated as draft.')
+        : (publish ? 'Event created and published.' : 'Event saved as draft.');
+      const finalMessage = warnings.length > 0
+        ? `${baseMessage} Note: ${warnings.join('; ')}.`
+        : baseMessage;
+      toast.success(finalMessage, { id: toastId });
 
       // Navigate to the appropriate page based on context and publish status
       // Add a small delay to ensure the user sees the success message
@@ -370,9 +383,17 @@ const CreateEventPage: React.FC = () => {
     } catch (error) {
       console.error('Error saving event:', error);
       if (error instanceof Error) {
-        toast.error(`Failed to save event: ${error.message}`);
+        if (toastId) {
+          toast.error(`Failed to save event: ${error.message}`, { id: toastId });
+        } else {
+          toast.error(`Failed to save event: ${error.message}`);
+        }
       } else {
-        toast.error('Failed to save event. Please try again.');
+        if (toastId) {
+          toast.error('Failed to save event. Please try again.', { id: toastId });
+        } else {
+          toast.error('Failed to save event. Please try again.');
+        }
       }
     } finally {
       setLoading(false);
@@ -469,14 +490,33 @@ const CreateEventPage: React.FC = () => {
     if (file) {
       const reader = new FileReader();
       reader.onload = (e) => {
-        setFormData(prev => ({
-          ...prev,
-          paymentConfig: {
-            ...prev.paymentConfig!,
-            qrCodeImage: file,
-            qrCodeUrl: e.target?.result as string
-          }
-        }));
+        setFormData(prev => {
+          const defaultPayment = {
+            bankDetails: { bankName: '', accountName: '', accountNumber: '' },
+            instructions: 'Please follow the payment instructions below and upload your payment proof.',
+            requiresProof: true,
+            requiresTransactionId: false,
+            paymentFields: createDefaultPaymentFields()
+          };
+
+          // Ensure we never spread undefined and always keep required sub-objects
+          const existing = prev.paymentConfig ?? defaultPayment;
+          const safeBankDetails = existing.bankDetails ?? { bankName: '', accountName: '', accountNumber: '' };
+
+          return {
+            ...prev,
+            paymentConfig: {
+              ...existing,
+              bankDetails: safeBankDetails,
+              instructions: existing.instructions ?? defaultPayment.instructions,
+              requiresProof: existing.requiresProof ?? true,
+              requiresTransactionId: existing.requiresTransactionId ?? false,
+              paymentFields: existing.paymentFields ?? createDefaultPaymentFields(),
+              qrCodeImage: file,
+              qrCodeUrl: e.target?.result as string
+            }
+          };
+        });1
       };
       reader.readAsDataURL(file);
     }
@@ -875,14 +915,25 @@ const CreateEventPage: React.FC = () => {
                 <label className="block text-sm font-medium text-gray-700 mb-2">Bank Name</label>
                 <input
                   type="text"
-                  value={formData.paymentConfig?.bankDetails.bankName || ''}
-                  onChange={(e) => setFormData(prev => ({
-                    ...prev,
-                    paymentConfig: {
-                      ...prev.paymentConfig!,
-                      bankDetails: { ...prev.paymentConfig!.bankDetails, bankName: e.target.value }
-                    }
-                  }))}
+                  value={formData.paymentConfig?.bankDetails?.bankName || ''}
+                  onChange={(e) => setFormData(prev => {
+                    const defaultPayment = {
+                      bankDetails: { bankName: '', accountName: '', accountNumber: '' },
+                      instructions: 'Please follow the payment instructions below and upload your payment proof.',
+                      requiresProof: true,
+                      requiresTransactionId: false,
+                      paymentFields: createDefaultPaymentFields()
+                    };
+                    const existing = prev.paymentConfig ?? defaultPayment;
+                    const safeBank = existing.bankDetails ?? { bankName: '', accountName: '', accountNumber: '' };
+                    return {
+                      ...prev,
+                      paymentConfig: {
+                        ...existing,
+                        bankDetails: { ...safeBank, bankName: e.target.value }
+                      }
+                    };
+                  })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   placeholder="e.g., BPI, BDO, GCash"
                 />
@@ -892,14 +943,25 @@ const CreateEventPage: React.FC = () => {
                 <label className="block text-sm font-medium text-gray-700 mb-2">Account Name</label>
                 <input
                   type="text"
-                  value={formData.paymentConfig?.bankDetails.accountName || ''}
-                  onChange={(e) => setFormData(prev => ({
-                    ...prev,
-                    paymentConfig: {
-                      ...prev.paymentConfig!,
-                      bankDetails: { ...prev.paymentConfig!.bankDetails, accountName: e.target.value }
-                    }
-                  }))}
+                  value={formData.paymentConfig?.bankDetails?.accountName || ''}
+                  onChange={(e) => setFormData(prev => {
+                    const defaultPayment = {
+                      bankDetails: { bankName: '', accountName: '', accountNumber: '' },
+                      instructions: 'Please follow the payment instructions below and upload your payment proof.',
+                      requiresProof: true,
+                      requiresTransactionId: false,
+                      paymentFields: createDefaultPaymentFields()
+                    };
+                    const existing = prev.paymentConfig ?? defaultPayment;
+                    const safeBank = existing.bankDetails ?? { bankName: '', accountName: '', accountNumber: '' };
+                    return {
+                      ...prev,
+                      paymentConfig: {
+                        ...existing,
+                        bankDetails: { ...safeBank, accountName: e.target.value }
+                      }
+                    };
+                  })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   placeholder="Account holder name"
                 />
@@ -909,14 +971,25 @@ const CreateEventPage: React.FC = () => {
                 <label className="block text-sm font-medium text-gray-700 mb-2">Account Number</label>
                 <input
                   type="text"
-                  value={formData.paymentConfig?.bankDetails.accountNumber || ''}
-                  onChange={(e) => setFormData(prev => ({
-                    ...prev,
-                    paymentConfig: {
-                      ...prev.paymentConfig!,
-                      bankDetails: { ...prev.paymentConfig!.bankDetails, accountNumber: e.target.value }
-                    }
-                  }))}
+                  value={formData.paymentConfig?.bankDetails?.accountNumber || ''}
+                  onChange={(e) => setFormData(prev => {
+                    const defaultPayment = {
+                      bankDetails: { bankName: '', accountName: '', accountNumber: '' },
+                      instructions: 'Please follow the payment instructions below and upload your payment proof.',
+                      requiresProof: true,
+                      requiresTransactionId: false,
+                      paymentFields: createDefaultPaymentFields()
+                    };
+                    const existing = prev.paymentConfig ?? defaultPayment;
+                    const safeBank = existing.bankDetails ?? { bankName: '', accountName: '', accountNumber: '' };
+                    return {
+                      ...prev,
+                      paymentConfig: {
+                        ...existing,
+                        bankDetails: { ...safeBank, accountNumber: e.target.value }
+                      }
+                    };
+                  })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   placeholder="Account or mobile number"
                 />
@@ -926,14 +999,25 @@ const CreateEventPage: React.FC = () => {
                 <label className="block text-sm font-medium text-gray-700 mb-2">SWIFT Code (Optional)</label>
                 <input
                   type="text"
-                  value={formData.paymentConfig?.bankDetails.swiftCode || ''}
-                  onChange={(e) => setFormData(prev => ({
-                    ...prev,
-                    paymentConfig: {
-                      ...prev.paymentConfig!,
-                      bankDetails: { ...prev.paymentConfig!.bankDetails, swiftCode: e.target.value }
-                    }
-                  }))}
+                  value={formData.paymentConfig?.bankDetails?.swiftCode || ''}
+                  onChange={(e) => setFormData(prev => {
+                    const defaultPayment = {
+                      bankDetails: { bankName: '', accountName: '', accountNumber: '' },
+                      instructions: 'Please follow the payment instructions below and upload your payment proof.',
+                      requiresProof: true,
+                      requiresTransactionId: false,
+                      paymentFields: createDefaultPaymentFields()
+                    };
+                    const existing = prev.paymentConfig ?? defaultPayment;
+                    const safeBank = existing.bankDetails ?? { bankName: '', accountName: '', accountNumber: '' };
+                    return {
+                      ...prev,
+                      paymentConfig: {
+                        ...existing,
+                        bankDetails: { ...safeBank, swiftCode: e.target.value }
+                      }
+                    };
+                  })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   placeholder="For international transfers"
                 />
@@ -1207,8 +1291,11 @@ const CreateEventPage: React.FC = () => {
                     <label className="block text-sm font-medium text-gray-700 mb-1">Price (₱) *</label>
                     <input
                       type="number"
-                      value={ticket.price}
-                      onChange={(e) => updateTicketType(index, { price: parseFloat(e.target.value) || 0 })}
+                      value={ticket.price ?? ''}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        updateTicketType(index, { price: (val === '' ? (undefined as any) : parseFloat(val)) });
+                      }}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       min="0"
                       step="0.01"
@@ -1280,10 +1367,13 @@ const CreateEventPage: React.FC = () => {
                         <label className="block text-sm font-medium text-orange-700 mb-1">Early Bird Price (₱)</label>
                         <input
                           type="number"
-                          value={ticket.earlyBirdPrice || 0}
-                          onChange={(e) => updateTicketType(index, {
-                            earlyBirdPrice: parseFloat(e.target.value) || 0
-                          })}
+                          value={ticket.earlyBirdPrice ?? ''}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            updateTicketType(index, {
+                              earlyBirdPrice: (val === '' ? (undefined as any) : parseFloat(val))
+                            });
+                          }}
                           className="w-full px-3 py-2 border border-orange-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                           min="0"
                           step="0.01"
@@ -2026,23 +2116,23 @@ const CreateEventPage: React.FC = () => {
             <div>
               <h5 className="font-medium text-gray-700 mb-2">Bank Details</h5>
               <div className="space-y-1 text-sm text-gray-600">
-                <div>Bank: {formData.paymentConfig.bankDetails.bankName}</div>
-                <div>Account: {formData.paymentConfig.bankDetails.accountName}</div>
-                <div>Number: {formData.paymentConfig.bankDetails.accountNumber}</div>
+                <div>Bank: {formData.paymentConfig?.bankDetails?.bankName || '-'}</div>
+                <div>Account: {formData.paymentConfig?.bankDetails?.accountName || '-'}</div>
+                <div>Number: {formData.paymentConfig?.bankDetails?.accountNumber || '-'}</div>
               </div>
             </div>
             <div>
               <h5 className="font-medium text-gray-700 mb-2">Verification Settings</h5>
               <div className="space-y-1 text-sm text-gray-600">
-                <div>Screenshot Required: {formData.paymentConfig.requiresProof ? 'Yes' : 'No'}</div>
-                <div>Transaction ID: {formData.paymentConfig.requiresTransactionId ? 'Required' : 'Optional'}</div>
-                <div>Additional Fields: {formData.paymentConfig.paymentFields?.length || 0}</div>
+                <div>Screenshot Required: {formData.paymentConfig?.requiresProof ? 'Yes' : 'No'}</div>
+                <div>Transaction ID: {formData.paymentConfig?.requiresTransactionId ? 'Required' : 'Optional'}</div>
+                <div>Additional Fields: {formData.paymentConfig?.paymentFields?.length || 0}</div>
               </div>
             </div>
           </div>
 
           {/* Payment Form Fields Summary */}
-          {formData.paymentConfig.paymentFields && formData.paymentConfig.paymentFields.length > 0 && (
+          {formData.paymentConfig?.paymentFields && formData.paymentConfig.paymentFields.length > 0 && (
             <div className="mt-4">
               <h5 className="font-medium text-gray-700 mb-2">Payment Verification Fields</h5>
               <div className="space-y-1">
@@ -2059,7 +2149,7 @@ const CreateEventPage: React.FC = () => {
             </div>
           )}
 
-          {formData.paymentConfig.qrCodeUrl && (
+          {formData.paymentConfig?.qrCodeUrl && (
             <div className="mt-4">
               <h5 className="font-medium text-gray-700 mb-2">QR Code</h5>
               <img

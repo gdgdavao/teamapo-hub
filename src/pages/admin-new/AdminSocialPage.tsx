@@ -14,6 +14,9 @@ import {
   XMarkIcon
 } from '@heroicons/react/24/outline';
 import AdminLayout from '../../components/admin/AdminLayout';
+import { aiService } from '../../services/aiService';
+import EventService from '../../services/eventService';
+import ReactMarkdown from 'react-markdown';
 
 interface SocialPost {
   id: string;
@@ -41,6 +44,8 @@ interface Event {
   venue: string;
   imageUrl?: string;
   ticketPrice: number;
+  status?: 'draft' | 'published' | 'ongoing' | 'completed' | 'cancelled' | 'postponed';
+  isPublished?: boolean;
 }
 
 const AdminSocialPage: React.FC = () => {
@@ -55,19 +60,68 @@ const AdminSocialPage: React.FC = () => {
   const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>(['facebook']);
   const [postContent, setPostContent] = useState('');
   const [postImage, setPostImage] = useState<string>('');
+
+  // Cache key for persisting generated captions
+  const CAPTION_CACHE_KEY = 'apohub_social_caption_cache';
   const [scheduleDate, setScheduleDate] = useState('');
   const [scheduleTime, setScheduleTime] = useState('');
+
+  // Load cached caption on component mount
+  useEffect(() => {
+    const cachedCaption = localStorage.getItem(CAPTION_CACHE_KEY);
+    if (cachedCaption) {
+      try {
+        const cached = JSON.parse(cachedCaption);
+        setPostContent(cached.content || '');
+        setPostImage(cached.image || '');
+        if (cached.eventId) {
+          setSelectedEvent(cached.eventId);
+        }
+        if (cached.platforms) {
+          setSelectedPlatforms(cached.platforms);
+        }
+      } catch (error) {
+        console.warn('Error parsing cached caption:', error);
+      }
+    }
+  }, []);
+
+  // Function to save caption to cache
+  const saveCaptionToCache = (content: string, image: string, eventId: string, platforms: string[]) => {
+    try {
+      const cacheData = {
+        content,
+        image,
+        eventId,
+        platforms,
+        timestamp: Date.now()
+      };
+      localStorage.setItem(CAPTION_CACHE_KEY, JSON.stringify(cacheData));
+    } catch (error) {
+      console.warn('Error saving caption to cache:', error);
+    }
+  };
 
   // Load events and posts from API
   useEffect(() => {
     const fetchData = async () => {
       try {
-        // TODO: Implement actual API calls
-        // const eventsData = await EventService.getAllEvents();
-        // const postsData = await SocialMediaService.getAllPosts();
-        // setEvents(eventsData);
-        // setPosts(postsData);
-        setEvents([]);
+        const eventsData = await EventService.getEventsForSocialMedia();
+        setEvents(
+          eventsData.map(ev => ({
+            id: ev.id,
+            title: ev.title,
+            description: ev.description,
+            startDate: (ev.startDate as any)?.toDate ? (ev.startDate as any).toDate().toISOString() : String(ev.startDate),
+            venue: typeof ev.venue === 'string' ? ev.venue : ev.venue?.name || ev.venue?.city || '',
+            imageUrl: ev.imageUrl,
+            ticketPrice: Array.isArray(ev.ticketTypes) && ev.ticketTypes.length > 0 ? ev.ticketTypes[0].price : 0,
+            status: ev.status,
+            isPublished: ev.isPublished,
+          }))
+        );
+
+        // Placeholder for posts fetch
         setPosts([]);
       } catch (error) {
         console.error('Error fetching social media data:', error);
@@ -80,21 +134,50 @@ const AdminSocialPage: React.FC = () => {
   }, []);
 
   const generateAICaption = async () => {
-    if (!selectedEvent) return;
-    
+    if (!selectedEvent) {
+      console.warn('No event selected for AI caption generation');
+      return;
+    }
+
     setAiGenerating(true);
     const event = events.find(e => e.id === selectedEvent);
-    
-    // Simulate AI generation
-    setTimeout(() => {
+
+    try {
       if (event) {
         const eventDate = new Date(event.startDate).toLocaleDateString('en-US', {
           month: 'long',
           day: 'numeric',
           year: 'numeric'
         });
-        
-        const aiCaption = `🚀 Exciting news! Join us for "${event.title}" - an amazing learning opportunity for our tech community!
+
+        // Create concise social media prompt
+        const prompt = `Event: ${event.title}
+Date: ${eventDate}
+Location: ${event.venue}
+Price: ${event.ticketPrice > 0 ? `₱${event.ticketPrice}` : 'Free'}
+
+Create an engaging social media post under 150 words. Include emojis, hashtags (#GDGDavao #TechEvent), and clear call-to-action. Focus on community and learning benefits.`;
+
+        // Generate caption using Google Gemini AI (with caching)
+        const aiCaption = await aiService.generateResponse(prompt);
+
+        setPostContent(aiCaption);
+        setPostImage(event.imageUrl || '');
+
+        // Save to cache for persistence across page navigation
+        saveCaptionToCache(aiCaption, event.imageUrl || '', selectedEvent, selectedPlatforms);
+      }
+    } catch (error) {
+      console.error('Error generating AI caption:', error);
+      // Fallback to a basic template if AI fails
+      if (event) {
+        const eventDate = new Date(event.startDate).toLocaleDateString('en-US', {
+          month: 'long',
+          day: 'numeric',
+          year: 'numeric'
+        });
+
+        const fallbackCaption = `🚀 Exciting news! Join us for "${event.title}" - an amazing learning opportunity for our tech community!
 
 📅 ${eventDate}
 📍 ${event.venue}
@@ -106,11 +189,12 @@ Don't miss out on this incredible experience! Register now through the link in o
 
 #GDGDavao #TechEvent #Learning #Community #${event.title.replace(/\s+/g, '')}`;
 
-        setPostContent(aiCaption);
+        setPostContent(fallbackCaption);
         setPostImage(event.imageUrl || '');
       }
+    } finally {
       setAiGenerating(false);
-    }, 2000);
+    }
   };
 
   const handlePlatformToggle = (platform: string) => {
@@ -249,7 +333,13 @@ Don't miss out on this incredible experience! Register now through the link in o
                 <SparklesIcon className="w-6 h-6 text-purple-600" />
               </div>
               <div className="ml-4">
-                <p className="text-sm text-gray-600">AI Generated</p>
+                <div className="flex items-center space-x-2 mb-1">
+                  <p className="text-sm text-gray-600">AI Generated</p>
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                    <SparklesIcon className="h-3 w-3 mr-1" />
+                    AI
+                  </span>
+                </div>
                 <p className="text-2xl font-bold text-gray-900">
                   {posts.filter(p => p.eventId).length}
                 </p>
@@ -350,193 +440,6 @@ Don't miss out on this incredible experience! Register now through the link in o
           </div>
         </div>
 
-        {/* Create Post Modal */}
-        {showNewPostModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-lg shadow-lg w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-              {/* Header */}
-              <div className="flex items-center justify-between p-6 border-b">
-                <h2 className="text-lg font-semibold text-gray-900">Create New Post</h2>
-                <button
-                  onClick={() => setShowNewPostModal(false)}
-                  className="text-gray-500 hover:text-gray-700"
-                >
-                  <XMarkIcon className="h-6 w-6" />
-                </button>
-              </div>
-              
-              {/* Form */}
-              <form onSubmit={handleSubmit} className="p-6 space-y-6">
-                {/* Event Selection */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Select Event (Optional)
-                  </label>
-                  <select
-                    value={selectedEvent}
-                    onChange={(e) => setSelectedEvent(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    <option value="">Custom Post (No Event)</option>
-                    {events.map(event => (
-                      <option key={event.id} value={event.id}>
-                        {event.title} - {new Date(event.startDate).toLocaleDateString()}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* AI Caption Generator */}
-                {selectedEvent && (
-                  <div className="p-4 bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg border border-purple-200">
-                    <div className="flex items-center justify-between mb-2">
-                      <h3 className="font-medium text-purple-900">AI Caption Generator</h3>
-                      <button
-                        type="button"
-                        onClick={generateAICaption}
-                        disabled={aiGenerating}
-                        className="inline-flex items-center px-3 py-1.5 bg-purple-600 text-white text-sm rounded-md hover:bg-purple-700 transition-colors disabled:opacity-50"
-                      >
-                        {aiGenerating ? (
-                          <>
-                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                            Generating...
-                          </>
-                        ) : (
-                          <>
-                            <SparklesIcon className="h-4 w-4 mr-2" />
-                            Generate Caption
-                          </>
-                        )}
-                      </button>
-                    </div>
-                    <p className="text-sm text-purple-700">
-                      Let AI create an engaging caption for your selected event
-                    </p>
-                  </div>
-                )}
-
-                {/* Platform Selection */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Select Platforms
-                  </label>
-                  <div className="grid grid-cols-2 gap-3">
-                    {[
-                      { id: 'facebook', name: 'Facebook', color: 'bg-blue-600' },
-                      { id: 'twitter', name: 'Twitter', color: 'bg-sky-500' },
-                      { id: 'linkedin', name: 'LinkedIn', color: 'bg-blue-700' },
-                      { id: 'instagram', name: 'Instagram', color: 'bg-pink-500' }
-                    ].map(platform => (
-                      <button
-                        key={platform.id}
-                        type="button"
-                        onClick={() => handlePlatformToggle(platform.id)}
-                        className={`p-3 rounded-lg border text-sm font-medium transition-all ${
-                          selectedPlatforms.includes(platform.id)
-                            ? `${platform.color} text-white border-transparent`
-                            : 'bg-white text-gray-700 border-gray-300 hover:border-gray-400'
-                        }`}
-                      >
-                        {platform.name}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Post Content */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Post Content
-                  </label>
-                  <textarea
-                    value={postContent}
-                    onChange={(e) => setPostContent(e.target.value)}
-                    rows={6}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder="Write your post content here..."
-                    required
-                  />
-                  <div className="mt-1 text-sm text-gray-500">
-                    {postContent.length}/500 characters
-                  </div>
-                </div>
-
-                {/* Image URL */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Image URL (Optional)
-                  </label>
-                  <div className="flex space-x-3">
-                    <input
-                      type="url"
-                      value={postImage}
-                      onChange={(e) => setPostImage(e.target.value)}
-                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      placeholder="https://example.com/image.jpg"
-                    />
-                    <button
-                      type="button"
-                      className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-                    >
-                      <PhotoIcon className="h-5 w-5 text-gray-400" />
-                    </button>
-                  </div>
-                </div>
-
-                {/* Schedule Options */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Schedule Post (Optional)
-                  </label>
-                  <div className="grid grid-cols-2 gap-3">
-                    <input
-                      type="date"
-                      value={scheduleDate}
-                      onChange={(e) => setScheduleDate(e.target.value)}
-                      className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
-                    <input
-                      type="time"
-                      value={scheduleTime}
-                      onChange={(e) => setScheduleTime(e.target.value)}
-                      className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
-                  </div>
-                  <p className="mt-1 text-sm text-gray-500">
-                    Leave empty to publish immediately
-                  </p>
-                </div>
-
-                {/* Submit Buttons */}
-                <div className="flex justify-end space-x-3 pt-4 border-t">
-                  <button
-                    type="button"
-                    onClick={() => setShowNewPostModal(false)}
-                    className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={loading || !postContent || selectedPlatforms.length === 0}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {loading ? (
-                      <>
-                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2 inline-block"></div>
-                        {scheduleDate && scheduleTime ? 'Scheduling...' : 'Publishing...'}
-                      </>
-                    ) : (
-                      scheduleDate && scheduleTime ? 'Schedule Post' : 'Publish Now'
-                    )}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
-
         {/* New Post Modal */}
         {showNewPostModal && (
           <div className="fixed inset-0 z-50 overflow-y-auto">
@@ -571,43 +474,71 @@ Don't miss out on this incredible experience! Register now through the link in o
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
                       >
                         <option value="">Custom Post (No Event)</option>
-                        {events.map(event => (
-                          <option key={event.id} value={event.id}>
-                            {event.title} - {new Date(event.startDate).toLocaleDateString()}
-                          </option>
-                        ))}
+                        {events
+                          .filter(event => {
+                            // Social Media Event Selection Criteria:
+                            // - isPublished === true
+                            // - status === 'ongoing' (always include), or
+                            // - status === 'published' and startDate in the future
+                            const eventDate = new Date(event.startDate);
+                            const now = new Date();
+                            const status = event.status || 'draft';
+                            const isFuture = eventDate >= now;
+                            return event.isPublished === true && (
+                              status === 'ongoing' || (status === 'published' && isFuture)
+                            );
+                          })
+                          .map(event => (
+                            <option key={event.id} value={event.id}>
+                              {event.title} - {new Date(event.startDate).toLocaleDateString()}
+                            </option>
+                          ))}
                       </select>
+                      {events.length > 0 && (
+                        <p className="mt-1 text-xs text-gray-500">
+                          Only showing published (upcoming) and ongoing events suitable for social media promotion
+                        </p>
+                      )}
                     </div>
 
                     {/* AI Caption Generator */}
-                    {selectedEvent && (
-                      <div className="p-4 bg-gradient-to-r from-purple-50 to-indigo-50 rounded-lg border border-purple-200">
-                        <div className="flex items-center justify-between mb-2">
+                    <div className="p-4 bg-gradient-to-r from-purple-50 to-indigo-50 rounded-lg border border-purple-200">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center space-x-2">
                           <h3 className="font-medium text-purple-900">AI Caption Generator</h3>
-                          <button
-                            type="button"
-                            onClick={generateAICaption}
-                            disabled={aiGenerating}
-                            className="inline-flex items-center px-3 py-1 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors disabled:opacity-50 text-sm"
-                          >
-                            {aiGenerating ? (
-                              <>
-                                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                                Generating...
-                              </>
-                            ) : (
-                              <>
-                                <SparklesIcon className="h-4 w-4 mr-2" />
-                                Generate Caption
-                              </>
-                            )}
-                          </button>
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 border border-purple-200">
+                            <SparklesIcon className="h-3 w-3 mr-1" />
+                            AI Powered
+                          </span>
                         </div>
-                        <p className="text-sm text-purple-700">
-                          Let AI create an engaging caption for your selected event
-                        </p>
+                        <button
+                          type="button"
+                          onClick={generateAICaption}
+                          disabled={aiGenerating || !selectedEvent}
+                          className="inline-flex items-center px-3 py-1.5 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
+                        >
+                          {aiGenerating ? (
+                            <>
+                              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                              Generating...
+                            </>
+                          ) : (
+                            <>
+                              <SparklesIcon className="h-4 w-4 mr-2" />
+                              Generate Caption
+                            </>
+                          )}
+                        </button>
                       </div>
-                    )}
+                      <p className="text-sm text-purple-700 mb-2">
+                        Let AI create an engaging caption for your selected event
+                      </p>
+                      {!selectedEvent && (
+                        <div className="text-xs text-amber-600 bg-amber-50 p-2 rounded border border-amber-200">
+                          💡 Select an event above to enable AI caption generation
+                        </div>
+                      )}
+                    </div>
 
                     {/* Platform Selection */}
                     <div>
@@ -706,6 +637,8 @@ Don't miss out on this incredible experience! Register now through the link in o
                           setScheduleDate('');
                           setScheduleTime('');
                           setShowNewPostModal(false);
+                          // Clear cached caption
+                          localStorage.removeItem(CAPTION_CACHE_KEY);
                         }}
                         className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
                       >
@@ -797,9 +730,15 @@ Don't miss out on this incredible experience! Register now through the link in o
                   className="w-full h-32 object-cover rounded-lg mb-3"
                 />
               )}
-              <p className="text-sm text-gray-800 whitespace-pre-wrap">
-                {postContent}
-              </p>
+              <div className="text-sm text-gray-800 prose prose-sm max-w-none">
+                <ReactMarkdown components={{
+                  p: ({children}) => <p className="text-sm text-gray-800 mb-2">{children}</p>,
+                  strong: ({children}) => <strong className="font-semibold">{children}</strong>,
+                  em: ({children}) => <em className="italic">{children}</em>
+                }}>
+                  {postContent}
+                </ReactMarkdown>
+              </div>
               <div className="flex items-center mt-3 pt-3 border-t border-gray-200">
                 <div className="flex space-x-2">
                   {selectedPlatforms.map(platform => (

@@ -22,6 +22,7 @@ import {
 import { httpsCallable } from 'firebase/functions';
 import { db, storage, functions } from '../config/firebase';
 import { PaymentProof, PaymentDetails } from '../types';
+import { NotificationService } from './notificationService';
 
 export interface PaymentVerificationData {
   id: string;
@@ -117,6 +118,34 @@ export class PaymentService {
         paymentProofId: proofId,
         updatedAt: serverTimestamp()
       });
+
+      // Send notification to admin about new payment proof
+      try {
+        // Get admin users to notify
+        const adminQuery = query(
+          collection(db, 'users'),
+          where('role', '==', 'admin')
+        );
+        const adminSnapshot = await getDocs(adminQuery);
+
+        adminSnapshot.docs.forEach(async (adminDoc) => {
+          await NotificationService.createNotification(
+            adminDoc.id,
+            'event_update',
+            'New Payment Proof Submitted',
+            `${data.attendeeName} submitted payment proof for "${data.eventTitle}" (₱${data.ticketPrice})`,
+            {
+              proofId,
+              registrationId: data.registrationId,
+              eventId: data.eventId,
+              attendeeEmail: data.attendeeEmail,
+              amount: data.ticketPrice
+            }
+          );
+        });
+      } catch (error) {
+        console.warn('Failed to create payment proof notification:', error);
+      }
 
       return proofId;
     } catch (error) {
@@ -264,6 +293,40 @@ export class PaymentService {
         } catch (notificationError) {
           console.warn('Failed to send payment notification:', notificationError);
           // Don't throw error for notification failure
+        }
+
+        // Send notification to attendee about payment verification
+        try {
+          // Get the registration to find the user ID (if available)
+          const registrationRef = doc(db, this.REGISTRATIONS_COLLECTION, proofData.registrationId);
+          const registrationSnap = await getDoc(registrationRef);
+
+          if (registrationSnap.exists()) {
+            const registrationData = registrationSnap.data();
+            // If userId exists in registration, send them a notification
+            if (registrationData.userId) {
+              const notificationType = status === 'approved' ? 'payment_success' : 'event_update';
+              const title = status === 'approved' ? 'Payment Approved' : 'Payment Rejected';
+              const message = status === 'approved'
+                ? `Your payment for "${proofData.eventTitle}" has been approved!`
+                : `Your payment for "${proofData.eventTitle}" has been rejected. Please check your payment details.`;
+
+              await NotificationService.createNotification(
+                registrationData.userId,
+                notificationType,
+                title,
+                message,
+                {
+                  registrationId: proofData.registrationId,
+                  eventTitle: proofData.eventTitle,
+                  amount: proofData.ticketPrice,
+                  status: status
+                }
+              );
+            }
+          }
+        } catch (error) {
+          console.warn('Failed to create payment verification notification:', error);
         }
       }
     } catch (error) {

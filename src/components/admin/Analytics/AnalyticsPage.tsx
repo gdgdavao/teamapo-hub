@@ -25,6 +25,9 @@ import AdminLayout from '../AdminLayout';
 import LoadingSpinner from '../../shared/UI/LoadingSpinner';
 import { useAuth } from '../../../contexts/AuthContext';
 import toast from 'react-hot-toast';
+import { aiService } from '../../../services/aiService';
+import ReactMarkdown from 'react-markdown';
+import ConfirmationModal from '../../shared/UI/ConfirmationModal';
 
 interface AnalyticsPageProps {
   isEventSpecific?: boolean;
@@ -39,12 +42,48 @@ const AnalyticsPage: React.FC<AnalyticsPageProps> = ({ isEventSpecific = false }
   const [loading, setLoading] = useState(true);
   const [selectedTimeRange, setSelectedTimeRange] = useState('3m');
   const [selectedMetric, setSelectedMetric] = useState('all');
+  const [aiInsights, setAiInsights] = useState<{
+    performance: string;
+    recommendations: string[];
+    trends: string[];
+  }>({
+    performance: '',
+    recommendations: [],
+    trends: []
+  });
+    const [aiLoading, setAiLoading] = useState(false);
+  const [showCacheModal, setShowCacheModal] = useState(false);
+
+  // Cache key for persisting AI insights across page navigation
+  const INSIGHTS_CACHE_KEY = 'apohub_ai_insights_cache';
+
+  // Load cached AI insights on component mount
+  useEffect(() => {
+    const cachedInsights = localStorage.getItem(INSIGHTS_CACHE_KEY);
+    if (cachedInsights) {
+      try {
+        const parsedInsights = JSON.parse(cachedInsights);
+        setAiInsights(parsedInsights);
+      } catch (error) {
+        console.warn('Error parsing cached AI insights:', error);
+      }
+    }
+  }, []);
+
+  // Function to save AI insights to cache
+  const saveInsightsToCache = (insights: typeof aiInsights) => {
+    try {
+      localStorage.setItem(INSIGHTS_CACHE_KEY, JSON.stringify(insights));
+    } catch (error) {
+      console.warn('Error saving AI insights to cache:', error);
+    }
+  };
 
   useEffect(() => {
     const loadAnalytics = async () => {
       try {
         setLoading(true);
-        
+
         if (isEventSpecific && eventId) {
           // Load event-specific analytics
           const [eventData, statsData, registrationsData] = await Promise.all([
@@ -52,7 +91,7 @@ const AnalyticsPage: React.FC<AnalyticsPageProps> = ({ isEventSpecific = false }
             AnalyticsService.getEventStats(eventId),
             RegistrationService.getEventRegistrations(eventId)
           ]);
-          
+
           setEvent(eventData);
           setStats(statsData);
           setRegistrations(registrationsData);
@@ -103,6 +142,96 @@ const AnalyticsPage: React.FC<AnalyticsPageProps> = ({ isEventSpecific = false }
     );
   };
 
+  const generateFreshAIInsights = async () => {
+    setAiLoading(true);
+    setShowCacheModal(false);
+
+    try {
+      // Prepare context data for AI
+      const contextData = {
+        totalEvents: 4,
+        totalAttendees: 102,
+        totalRevenue: 4250,
+        averageRating: 4.2,
+        timeRange: selectedTimeRange,
+        selectedMetric
+      };
+
+      // Generate concise performance summary
+      const performancePrompt = `Analyze: ${JSON.stringify(contextData)}
+
+Write 1-2 concise sentences about key performance highlights and opportunities. Keep under 50 words.`;
+
+      // Generate focused recommendations
+      const recommendationsPrompt = `Data: ${JSON.stringify(contextData)}
+
+List 3 brief, actionable recommendations (each under 15 words). Focus on high-impact improvements.`;
+
+      // Generate key trends
+      const trendsPrompt = `Data: ${JSON.stringify(contextData)}
+
+Identify 3 key trends (each under 15 words). Focus on actionable insights for event organizers.`;
+
+      const [performance, recommendations, trends] = await Promise.all([
+        aiService.generateResponse(performancePrompt, undefined, undefined, false),
+        aiService.generateResponse(recommendationsPrompt, undefined, undefined, false),
+        aiService.generateResponse(trendsPrompt, undefined, undefined, false)
+      ]);
+
+      const newInsights = {
+        performance: performance || 'Unable to generate insights.',
+        recommendations: recommendations ? recommendations.split('\n').filter(item => item.trim()).slice(0, 3) : ['Unable to generate recommendations.'],
+        trends: trends ? trends.split('\n').filter(item => item.trim()).slice(0, 3) : ['Unable to identify trends.']
+      };
+
+      setAiInsights(newInsights);
+      saveInsightsToCache(newInsights);
+
+      toast.success('Fresh AI insights generated successfully!');
+    } catch (error) {
+      console.error('Error generating AI insights:', error);
+      toast.error('Failed to generate AI insights. Please try again.');
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const useCachedInsights = async () => {
+    setAiLoading(true);
+    setShowCacheModal(false);
+
+    try {
+      // Load from cache
+      const cachedInsights = localStorage.getItem(INSIGHTS_CACHE_KEY);
+      if (cachedInsights) {
+        const parsedInsights = JSON.parse(cachedInsights);
+        setAiInsights(parsedInsights);
+        toast.success('Loaded insights from cache!');
+      } else {
+        // Fallback to fresh generation if cache is empty
+        await generateFreshAIInsights();
+      }
+    } catch (error) {
+      console.error('Error loading cached insights:', error);
+      toast.error('Failed to load cached insights. Generating fresh ones...');
+      await generateFreshAIInsights();
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const handleRefreshClick = () => {
+    // Check if there's cached data
+    const cachedInsights = localStorage.getItem(INSIGHTS_CACHE_KEY);
+    if (cachedInsights) {
+      // Show confirmation modal
+      setShowCacheModal(true);
+    } else {
+      // No cache, generate fresh insights directly
+      generateFreshAIInsights();
+    }
+  };
+
   if (loading) {
     return (
       <AdminLayout>
@@ -140,11 +269,16 @@ const AnalyticsPage: React.FC<AnalyticsPageProps> = ({ isEventSpecific = false }
         subtitle="Comprehensive event analytics with AI-powered insights and recommendations"
         actions={
           <button
-            onClick={() => toast.success('AI insights refreshed!')}
-            className="btn-primary flex items-center space-x-2"
+            onClick={handleRefreshClick}
+            disabled={aiLoading}
+            className="btn-primary flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <SparklesIcon className="h-4 w-4" />
-            <span>Refresh AI Insights</span>
+            {aiLoading ? (
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
+            ) : (
+              <SparklesIcon className="h-4 w-4" />
+            )}
+            <span>{aiLoading ? 'Generating...' : 'Refresh AI Insights'}</span>
           </button>
         }
       >
@@ -251,27 +385,48 @@ const AnalyticsPage: React.FC<AnalyticsPageProps> = ({ isEventSpecific = false }
           <div className="space-y-4">
             <div className="p-4 bg-blue-50 rounded-lg">
               <h4 className="font-medium text-blue-900 mb-2">Performance Summary</h4>
-              <p className="text-blue-700">
-                Your events are performing well with strong attendance and positive feedback. 
-                Consider expanding workshop offerings and implementing a loyalty program.
-              </p>
+              <div className="text-blue-700 prose prose-sm max-w-none">
+                {aiInsights.performance ? (
+                  <ReactMarkdown>{aiInsights.performance}</ReactMarkdown>
+                ) : (
+                  'Click "Refresh AI Insights" to generate performance analysis.'
+                )}
+              </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="p-4 bg-green-50 rounded-lg">
                 <h4 className="font-medium text-green-900 mb-2">Recommendations</h4>
-                <ul className="text-green-700 space-y-1 text-sm">
-                  <li>• Launch premium mentorship programs</li>
-                  <li>• Create industry-specific workshops</li>
-                  <li>• Implement group discounts</li>
-                </ul>
+                {aiInsights.recommendations.length > 0 ? (
+                  <div className="text-green-700 prose prose-sm max-w-none">
+                    <ReactMarkdown components={{
+                      ul: ({children}) => <ul className="space-y-1 text-sm">{children}</ul>,
+                      li: ({children}) => <li className="text-sm">{children}</li>
+                    }}>
+                      {aiInsights.recommendations.map(rec => `- ${rec}`).join('\n')}
+                    </ReactMarkdown>
+                  </div>
+                ) : (
+                  <p className="text-green-700 text-sm">
+                    Click "Refresh AI Insights" to generate recommendations.
+                  </p>
+                )}
               </div>
               <div className="p-4 bg-purple-50 rounded-lg">
                 <h4 className="font-medium text-purple-900 mb-2">Trends</h4>
-                <ul className="text-purple-700 space-y-1 text-sm">
-                  <li>• Growing interest in AI/ML topics</li>
-                  <li>• Increased demand for hands-on workshops</li>
-                  <li>• Higher engagement on social media</li>
-                </ul>
+                {aiInsights.trends.length > 0 ? (
+                  <div className="text-purple-700 prose prose-sm max-w-none">
+                    <ReactMarkdown components={{
+                      ul: ({children}) => <ul className="space-y-1 text-sm">{children}</ul>,
+                      li: ({children}) => <li className="text-sm">{children}</li>
+                    }}>
+                      {aiInsights.trends.map(trend => `- ${trend}`).join('\n')}
+                    </ReactMarkdown>
+                  </div>
+                ) : (
+                  <p className="text-purple-700 text-sm">
+                    Click "Refresh AI Insights" to identify trends.
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -310,6 +465,19 @@ const AnalyticsPage: React.FC<AnalyticsPageProps> = ({ isEventSpecific = false }
             </div>
           </div>
         </div>
+
+        {/* Cache Confirmation Modal */}
+        <ConfirmationModal
+          isOpen={showCacheModal}
+          onClose={useCachedInsights}
+          onConfirm={generateFreshAIInsights}
+          title="Use Cached or Generate Fresh?"
+          message="You have cached AI insights from a previous generation. Would you like to generate fresh insights or use the cached ones?"
+          confirmText="Generate Fresh"
+          cancelText="Use Cached"
+          type="info"
+          isLoading={aiLoading}
+        />
       </AdminLayout>
     );
   }

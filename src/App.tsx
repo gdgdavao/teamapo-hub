@@ -29,10 +29,12 @@ import AttendeesPage from './pages/organizer-new/AttendeesPage';
 import AdminDashboardPage from './pages/admin-new/AdminDashboardPage';
 import AdminAttendeesPage from './pages/admin-new/AdminAttendeesPage';
 import AdminUsersPage from './pages/admin-new/AdminUsersPage';
-import AdminCertificatesPage from './pages/admin-new/AdminCertificatesPage';
 import AdminFormsPage from './pages/admin-new/AdminFormsPage';
 import AdminSocialPage from './pages/admin-new/AdminSocialPage';
 import AdminPaymentVerificationPage from './pages/admin-new/AdminPaymentVerificationPage';
+
+// Shared Pages
+import CertificatesPage from './pages/shared/CertificatesPage';
 
 // Analytics Component
 import { AnalyticsPage } from './components/admin/Analytics';
@@ -194,7 +196,7 @@ const AppContent: React.FC = () => {
 
         <Route path="/certificates" element={
           <ProtectedRoute>
-            <AdminCertificatesPage />
+            <CertificatesPage />
           </ProtectedRoute>
         } />
 

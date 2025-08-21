@@ -225,7 +225,9 @@ export class EventService {
 
       // Create payment configuration if needed
       if (eventData.paymentConfig) {
-        await this.createPaymentConfiguration(eventId, eventData.paymentConfig);
+        // Remove File objects from payment config before saving to Firestore
+        const { qrCodeImage, ...paymentConfigWithoutFile } = eventData.paymentConfig;
+        await this.createPaymentConfiguration(eventId, paymentConfigWithoutFile);
       }
 
       // TODO: Re-enable Firebase Function initialization once function issues are resolved
@@ -283,7 +285,9 @@ export class EventService {
 
       // Update payment configuration if provided
       if (eventData.paymentConfig) {
-        await this.updatePaymentConfiguration(eventId, eventData.paymentConfig);
+        // Remove File objects from payment config before saving to Firestore
+        const { qrCodeImage, ...paymentConfigWithoutFile } = eventData.paymentConfig;
+        await this.updatePaymentConfiguration(eventId, paymentConfigWithoutFile);
       }
     } catch (error) {
       console.error('Error updating event:', error);
@@ -347,6 +351,62 @@ export class EventService {
     } catch (error) {
       console.error('Error getting published events:', error);
       throw new Error('Failed to get published events');
+    }
+  }
+
+  /**
+   * Get events eligible for social media linking
+   * - isPublished === true
+   * - status in ['published' (upcoming only), 'ongoing']
+   */
+  static async getEventsForSocialMedia(): Promise<Event[]> {
+    try {
+      const eventsRef = collection(db, this.EVENTS_COLLECTION);
+      const now = Timestamp.fromDate(new Date());
+
+      // Published and upcoming
+      const publishedUpcomingQuery = query(
+        eventsRef,
+        where('isPublished', '==', true),
+        where('status', '==', 'published'),
+        where('startDate', '>=', now),
+        orderBy('startDate', 'asc')
+      );
+
+      // Ongoing (no date restriction)
+      const ongoingQuery = query(
+        eventsRef,
+        where('isPublished', '==', true),
+        where('status', '==', 'ongoing')
+      );
+
+      const [publishedSnap, ongoingSnap] = await Promise.all([
+        getDocs(publishedUpcomingQuery),
+        getDocs(ongoingQuery)
+      ]);
+
+      const mapDoc = (d: any) => ({ id: d.id, ...d.data() }) as Event;
+      const merged = [
+        ...publishedSnap.docs.map(mapDoc),
+        ...ongoingSnap.docs.map(mapDoc)
+      ];
+
+      // Deduplicate by id
+      const byId = new Map<string, Event>();
+      merged.forEach(ev => byId.set(ev.id, ev));
+      const results = Array.from(byId.values());
+
+      // Sort by startDate ascending
+      results.sort((a, b) => {
+        const aDate = a.startDate instanceof Timestamp ? a.startDate.toDate() : new Date(String(a.startDate));
+        const bDate = b.startDate instanceof Timestamp ? b.startDate.toDate() : new Date(String(b.startDate));
+        return aDate.getTime() - bDate.getTime();
+      });
+
+      return results;
+    } catch (error) {
+      console.error('Error getting events for social media:', error);
+      throw new Error('Failed to get events for social media');
     }
   }
 

@@ -66,11 +66,12 @@ const ManageEventsPage: React.FC = () => {
         if (isAdmin) {
           // Admin can see all events
           eventsData = await EventService.getAllEvents();
+        } else if (userProfile?.role === 'organizer') {
+          // Organizers can also see all events (updated business rule)
+          eventsData = await EventService.getAllEvents();
         } else {
-          // Organizer can only see their own events
-          if (currentUser?.uid) {
-            eventsData = await EventService.getEventsByOrganizer(currentUser.uid);
-          }
+          // Other users (if any) see no events
+          eventsData = [];
         }
 
         setEvents(eventsData);
@@ -84,7 +85,7 @@ const ManageEventsPage: React.FC = () => {
     };
 
     fetchEvents();
-  }, [isAdmin, currentUser?.uid]);
+  }, [isAdmin, userProfile?.role]);
 
   const getStatusIcon = (status: string) => {
     switch (status) {

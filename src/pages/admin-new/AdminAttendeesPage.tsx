@@ -95,16 +95,14 @@ const AdminAttendeesPage: React.FC = () => {
           firestoreRegistrations = await RegistrationService.getAllRegistrations();
           // Fetch all events for filtering
           organizerEvents = await EventService.getAllEvents();
-        } else {
-          // Organizer can only see registrations for their events
-          organizerEvents = await EventService.getEventsByOrganizer(userProfile.uid);
+        } else if (userProfile.role === 'organizer') {
+          // Organizers can now see all events and their registrations (updated business rule)
+          organizerEvents = await EventService.getAllEvents();
           firestoreRegistrations = await RegistrationService.getAllRegistrations();
-          
-          // Filter registrations to only include those for organizer's events
-          const organizerEventIds = new Set(organizerEvents.map(event => event.id));
-          firestoreRegistrations = firestoreRegistrations.filter(reg => 
-            organizerEventIds.has(reg.eventId)
-          );
+        } else {
+          // Other users see nothing
+          organizerEvents = [];
+          firestoreRegistrations = [];
         }
         
         setEvents(organizerEvents);

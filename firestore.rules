@@ -23,12 +23,13 @@ service cloud.firestore {
               get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin');
     }
     
-    function isValidTimestamp(value) {
-      return value is timestamp || 
-             (value is map && value.keys().hasAny(['_methodName']) && value._methodName == 'serverTimestamp') ||
-             value == request.time;
+    function isAdminOrOrganizer() {
+      return request.auth != null &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'organizer');
     }
-    
+
     function isValidEmail(email) {
       return email is string && email.matches('.*@.*[.].*');
     }
@@ -87,6 +88,12 @@ service cloud.firestore {
       allow delete: if isAuthenticated();
     }
     
+    // Certificate templates collection
+    match /certificateTemplates/{templateId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOrganizer();
+    }
+    
     // Certificates collection
     match /certificates/{certificateId} {
       allow read: if true; // Certificates are publicly verifiable
@@ -133,6 +140,15 @@ service cloud.firestore {
                        resource.data.verificationStatus == 'pending';
       allow update: if isAuthenticated();
       allow delete: if isAuthenticated();
+    }
+
+    // Notifications collection
+    match /notifications/{notificationId} {
+      allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
+      allow list: if isAuthenticated() && request.auth.uid == resource.data.userId;
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && request.auth.uid == resource.data.userId;
+      allow delete: if isAuthenticated() && request.auth.uid == resource.data.userId;
     }
     
     // System collection - Configuration and settings
