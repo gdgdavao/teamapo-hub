@@ -17,7 +17,8 @@ import { Link } from 'react-router-dom';
 import AdminLayout from '../../components/admin/AdminLayout';
 import { AnalyticsService, DashboardStats } from '../../services/analyticsService';
 import { EventService } from '../../services/eventService';
-import { PaymentService, PaymentVerificationData } from '../../services/paymentService';
+import { RegistrationService } from '../../services/registrationService';
+import { NotificationService } from '../../services/notificationService';
 import { useAuth } from '../../contexts/AuthContext';
 import toast from 'react-hot-toast';
 
@@ -128,6 +129,61 @@ const EventCard: React.FC<{
   );
 };
 
+const AttendeeCard: React.FC<{
+  registration: any;
+  getDateFromTimestamp: (timestamp: any) => Date;
+}> = ({ registration, getDateFromTimestamp }) => {
+  const getPaymentStatusColor = (status: string) => {
+    switch (status) {
+      case 'paid': return 'bg-green-100 text-green-800';
+      case 'pending': return 'bg-yellow-100 text-yellow-800';
+      case 'failed': return 'bg-red-100 text-red-800';
+      default: return 'bg-gray-100 text-gray-800';
+    }
+  };
+
+  const getPaymentStatusIcon = (status: string) => {
+    switch (status) {
+      case 'paid': return <CheckIcon className="w-4 h-4" />;
+      case 'pending': return <ClockIcon className="w-4 h-4" />;
+      case 'failed': return <XMarkIcon className="w-4 h-4" />;
+      default: return <ClockIcon className="w-4 h-4" />;
+    }
+  };
+
+  return (
+    <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+      <div className="flex items-center space-x-3 flex-1 min-w-0">
+        <div className="w-10 h-10 rounded-full flex-shrink-0 bg-gray-300 flex items-center justify-center">
+          <span className="text-gray-600 font-medium text-sm">
+            {registration.userDetails?.name?.charAt(0).toUpperCase() || 'A'}
+          </span>
+        </div>
+        <div className="min-w-0 flex-1">
+          <h4 className="font-medium text-gray-900 truncate">{registration.userDetails?.name || 'Unknown'}</h4>
+          <p className="text-sm text-gray-600 truncate">{registration.userDetails?.email || 'No email'}</p>
+          <div className="flex items-center mt-1 text-xs text-gray-500 space-x-2">
+            <span>{getDateFromTimestamp(registration.registrationDate).toLocaleDateString()}</span>
+            <span className="font-medium">₱{registration.totalAmount || 0}</span>
+          </div>
+        </div>
+      </div>
+      <div className="flex items-center space-x-3">
+        <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${getPaymentStatusColor(registration.paymentStatus)}`}>
+          {registration.paymentStatus}
+        </span>
+        <Link 
+          to={`/attendees`}
+          className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-white transition-colors"
+          title="View Details"
+        >
+          <EyeIcon className="w-4 h-4" />
+        </Link>
+      </div>
+    </div>
+  );
+};
+
 const AdminDashboardPage: React.FC = () => {
   const [stats, setStats] = useState<DashboardStats>({
     totalEvents: 0,
@@ -142,8 +198,8 @@ const AdminDashboardPage: React.FC = () => {
 
   const [loading, setLoading] = useState(true);
   const [recentEvents, setRecentEvents] = useState<any[]>([]);
-  const [pendingApprovals, setPendingApprovals] = useState<PaymentVerificationData[]>([]);
-  const [pendingPayments, setPendingPayments] = useState<PaymentVerificationData[]>([]);
+  const [pendingAttendees, setPendingAttendees] = useState<any[]>([]);
+  const [previousPendingCount, setPreviousPendingCount] = useState(0);
   const { currentUser, userProfile } = useAuth();
 
   // Helper function to handle different timestamp formats
@@ -156,11 +212,70 @@ const AdminDashboardPage: React.FC = () => {
       console.warn('Unresolved serverTimestamp found, using current date');
       return new Date();
     }
-      console.warn('Invalid timestamp format:', timestamp);
-      return new Date();
+    console.warn('Invalid timestamp format:', timestamp);
+    return new Date();
   }, []);
 
-  // Load dashboard data with optimistic UI
+  // Create notifications for new pending attendees
+  const createNotificationsForNewAttendees = useCallback(async (newPendingRegistrations: any[]) => {
+    if (!currentUser?.uid || !userProfile?.role || userProfile.role !== 'admin') return;
+
+    try {
+      // Get event details for each registration
+      const registrationsWithEventDetails = await Promise.all(
+        newPendingRegistrations.map(async (registration) => {
+          try {
+            const event = await EventService.getEvent(registration.eventId);
+            return {
+              ...registration,
+              eventTitle: event?.title || 'Unknown Event'
+            };
+          } catch (error) {
+            console.warn(`Could not fetch event details for ${registration.eventId}:`, error);
+            return {
+              ...registration,
+              eventTitle: 'Unknown Event'
+            };
+          }
+        })
+      );
+
+      // Create notifications for each new pending attendee
+      const notificationPromises = registrationsWithEventDetails.map(reg => 
+        NotificationService.createAdminPendingAttendeeNotification(
+          currentUser.uid,
+          reg.userDetails?.name || 'Unknown Attendee',
+          reg.eventTitle,
+          reg.id,
+          reg.totalAmount || 0,
+          reg.currency || 'PHP'
+        )
+      );
+
+      await Promise.all(notificationPromises);
+      console.log(`Created ${notificationPromises.length} notifications for new pending attendees`);
+    } catch (error) {
+      console.error('Error creating notifications for new attendees:', error);
+    }
+  }, [currentUser?.uid, userProfile?.role]);
+
+  // Create high priority notification if pending count is high
+  const createHighPriorityNotification = useCallback(async (pendingCount: number) => {
+    if (!currentUser?.uid || !userProfile?.role || userProfile.role !== 'admin') return;
+    if (pendingCount < 10) return; // Only notify for high counts
+
+    try {
+      await NotificationService.createAdminHighPendingCountNotification(
+        currentUser.uid,
+        pendingCount
+      );
+      console.log(`Created high priority notification for ${pendingCount} pending attendees`);
+    } catch (error) {
+      console.error('Error creating high priority notification:', error);
+    }
+  }, [currentUser?.uid, userProfile?.role]);
+
+  // Load dashboard data with optimistic UI and notifications
   useEffect(() => {
     const fetchDashboardData = async () => {
       if (!currentUser || !userProfile || userProfile.role !== 'admin') return;
@@ -172,11 +287,11 @@ const AdminDashboardPage: React.FC = () => {
         const [
           dashboardStats, 
           events, 
-          pendingPaymentProofs
+          allRegistrations
         ] = await Promise.all([
           AnalyticsService.getDashboardStats(),
           EventService.getPublishedEvents(),
-          PaymentService.getPaymentProofsByStatus('pending')
+          RegistrationService.getAllRegistrations()
         ]);
         
         // Update UI immediately (optimistic)
@@ -188,16 +303,33 @@ const AdminDashboardPage: React.FC = () => {
           .slice(0, 5);
         setRecentEvents(sortedEvents);
         
-        // Set pending payment proofs as pending approvals
-        setPendingApprovals(pendingPaymentProofs);
-        setPendingPayments(pendingPaymentProofs);
+        // Get pending attendees (registrations with pending payment status)
+        const pendingRegistrations = allRegistrations
+          .filter(reg => reg.paymentStatus === 'pending')
+          .sort((a, b) => getDateFromTimestamp(b.registrationDate).getTime() - getDateFromTimestamp(a.registrationDate).getTime())
+          .slice(0, 5);
+        
+        setPendingAttendees(pendingRegistrations);
+        
+        // Check for new pending attendees and create notifications
+        const currentPendingCount = pendingRegistrations.length;
+        if (currentPendingCount > previousPendingCount) {
+          const newPendingRegistrations = pendingRegistrations.slice(0, currentPendingCount - previousPendingCount);
+          await createNotificationsForNewAttendees(newPendingRegistrations);
+        }
+        
+        // Create high priority notification if needed
+        await createHighPriorityNotification(currentPendingCount);
         
         // Update stats with real pending data
         setStats(prev => ({
           ...prev,
-          pendingApprovals: pendingPaymentProofs.length,
-          pendingPayments: pendingPaymentProofs.length
+          pendingApprovals: currentPendingCount,
+          pendingPayments: currentPendingCount
         }));
+        
+        // Update previous count for next comparison
+        setPreviousPendingCount(currentPendingCount);
         
       } catch (error) {
         console.error('Error fetching dashboard data:', error);
@@ -209,45 +341,8 @@ const AdminDashboardPage: React.FC = () => {
       }
     };
 
-      fetchDashboardData();
-  }, [currentUser?.uid, userProfile?.role, getDateFromTimestamp]);
-
-  // Optimistic approval handling
-  const handleQuickApproval = useCallback(async (approvalId: string, action: 'approve' | 'reject') => {
-    // Optimistically update UI
-    setPendingApprovals(prev => prev.filter(approval => approval.id !== approvalId));
-    setPendingPayments(prev => prev.filter(payment => payment.id !== approvalId));
-    
-    try {
-      // Call the actual API
-      await PaymentService.verifyPaymentProof(
-        approvalId, 
-        action === 'approve' ? 'approved' : 'rejected',
-        currentUser?.uid || '',
-        userProfile?.displayName || 'Admin'
-      );
-      
-      // Update stats
-      setStats(prev => ({
-        ...prev,
-        pendingApprovals: Math.max(0, prev.pendingApprovals - 1),
-        pendingPayments: Math.max(0, prev.pendingPayments - 1)
-      }));
-      
-      // Show success feedback
-      toast.success(`Payment ${action}d successfully`);
-    } catch (error) {
-      console.error(`Error ${action}ing payment:`, error);
-      toast.error(`Failed to ${action} payment`);
-      
-      // Revert optimistic update on error
-      const approval = pendingApprovals.find(a => a.id === approvalId);
-      if (approval) {
-        setPendingApprovals(prev => [...prev, approval]);
-        setPendingPayments(prev => [...prev, approval]);
-      }
-    }
-  }, [currentUser?.uid, userProfile?.displayName, pendingApprovals]);
+    fetchDashboardData();
+  }, [currentUser?.uid, userProfile?.role, getDateFromTimestamp, previousPendingCount, createNotificationsForNewAttendees, createHighPriorityNotification]);
 
   if (loading) {
     return (
@@ -294,8 +389,8 @@ const AdminDashboardPage: React.FC = () => {
       }
     >
       <div className="space-y-6">
-            {/* Priority Actions Section */}
-            {stats.pendingApprovals > 0 && (
+        {/* Priority Actions Section */}
+        {stats.pendingApprovals > 0 && (
           <div className="bg-gradient-to-r from-orange-50 to-red-50 border border-orange-200 rounded-xl p-6">
             <div className="flex items-start space-x-4">
               <div className="flex-shrink-0">
@@ -303,14 +398,14 @@ const AdminDashboardPage: React.FC = () => {
               </div>
               <div className="flex-1">
                 <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                  {stats.pendingApprovals} payment verifications need your attention
+                  {stats.pendingApprovals} attendee registrations need your attention
                 </h3>
                 <p className="text-gray-600 mb-4">
-                  Review and verify pending payment proofs to complete attendee registrations.
+                  Review and approve pending attendee registrations to complete their event access.
                 </p>
                 <div className="flex space-x-3">
                   <Link
-                    to="/payment-verification"
+                    to="/attendees"
                     className="inline-flex items-center px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors font-medium"
                   >
                     Review Now
@@ -407,12 +502,12 @@ const AdminDashboardPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Quick Approvals */}
+          {/* Latest Pending Attendees */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-100">
             <div className="p-6 border-b border-gray-100">
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2">
-                  <h3 className="text-lg font-semibold text-gray-900">Quick Approvals</h3>
+                  <h3 className="text-lg font-semibold text-gray-900">Latest Pending Attendees</h3>
                   {stats.pendingApprovals > 10 && (
                     <div className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800">
                       High Priority
@@ -420,7 +515,7 @@ const AdminDashboardPage: React.FC = () => {
                   )}
                 </div>
                 <Link
-                  to="/payment-verification"
+                  to="/attendees"
                   className="text-sm text-blue-600 hover:text-blue-700 font-medium"
                 >
                   Review all →
@@ -428,48 +523,16 @@ const AdminDashboardPage: React.FC = () => {
               </div>
             </div>
             <div className="p-6 space-y-4">
-              {pendingApprovals.slice(0, 3).map((approval) => (
-                <div key={approval.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                  <div className="flex items-center space-x-3 flex-1 min-w-0">
-                    <div className="w-10 h-10 rounded-full flex-shrink-0 bg-gray-300 flex items-center justify-center">
-                      <span className="text-gray-600 font-medium text-sm">
-                        {approval.attendeeName.charAt(0).toUpperCase()}
-                      </span>
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <h4 className="font-medium text-gray-900 truncate">{approval.attendeeName}</h4>
-                      <p className="text-sm text-gray-600 truncate">{approval.eventTitle}</p>
-                      <div className="flex items-center mt-1 text-xs text-gray-500 space-x-2">
-                        <span>{new Date(approval.submittedAt).toLocaleDateString()}</span>
-                        <span className="font-medium">₱{approval.ticketPrice}</span>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex space-x-2 flex-shrink-0">
-                    <button 
-                      onClick={() => handleQuickApproval(approval.id, 'approve')}
-                      className="p-2 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-colors duration-200"
-                      title="Approve"
-                    >
-                      <CheckIcon className="w-4 h-4" />
-                    </button>
-                    <button 
-                      onClick={() => handleQuickApproval(approval.id, 'reject')}
-                      className="p-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors duration-200"
-                      title="Reject"
-                    >
-                      <XMarkIcon className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
+              {pendingAttendees.slice(0, 3).map((attendee) => (
+                <AttendeeCard key={attendee.id} registration={attendee} getDateFromTimestamp={getDateFromTimestamp} />
               ))}
-              {pendingApprovals.length > 3 && (
+              {pendingAttendees.length > 3 && (
                 <div className="text-center pt-2">
                   <Link
-                    to="/payment-verification"
+                    to="/attendees"
                     className="text-sm text-gray-500 hover:text-gray-700"
                   >
-                    +{pendingApprovals.length - 3} more pending
+                    +{pendingAttendees.length - 3} more pending
                   </Link>
                 </div>
               )}

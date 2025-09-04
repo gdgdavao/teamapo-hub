@@ -95,6 +95,17 @@ const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ userId }) =
         return <ExclamationTriangleIcon className="w-5 h-5 text-red-500" />;
       case 'refund_processed':
         return <CheckCircleIcon className="w-5 h-5 text-green-500" />;
+      // Admin notification types
+      case 'admin_pending_attendee':
+        return <ExclamationTriangleIcon className="w-5 h-5 text-orange-500" />;
+      case 'admin_high_pending_count':
+        return <ExclamationTriangleIcon className="w-5 h-5 text-red-500" />;
+      case 'admin_event_created':
+        return <CheckCircleIcon className="w-5 h-5 text-blue-500" />;
+      case 'admin_check_in':
+        return <CheckCircleIcon className="w-5 h-5 text-green-500" />;
+      case 'admin_payment_verified':
+        return <CheckCircleIcon className="w-5 h-5 text-green-500" />;
       default:
         return <InformationCircleIcon className="w-5 h-5 text-gray-500" />;
     }

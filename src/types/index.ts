@@ -382,7 +382,12 @@ export type NotificationType =
   | 'feedback_request'
   | 'certificate_ready'
   | 'event_cancelled'
-  | 'refund_processed';
+  | 'refund_processed'
+  | 'admin_pending_attendee'
+  | 'admin_high_pending_count'
+  | 'admin_event_created'
+  | 'admin_check_in'
+  | 'admin_payment_verified';
 
 // API Response Types
 export interface ApiResponse<T> {

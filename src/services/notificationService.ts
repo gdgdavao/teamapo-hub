@@ -152,6 +152,125 @@ export class NotificationService {
   }
 
   /**
+   * Create admin notification for new pending attendee
+   */
+  static async createAdminPendingAttendeeNotification(
+    adminUserId: string,
+    attendeeName: string,
+    eventTitle: string,
+    registrationId: string,
+    amount: number,
+    currency: string = 'PHP'
+  ): Promise<string> {
+    return this.createNotification(
+      adminUserId,
+      'admin_pending_attendee',
+      'New Pending Attendee',
+      `${attendeeName} registered for "${eventTitle}" - Payment verification required`,
+      { 
+        attendeeName, 
+        eventTitle, 
+        registrationId, 
+        amount, 
+        currency,
+        actionRequired: 'payment_verification'
+      }
+    );
+  }
+
+  /**
+   * Create admin notification for high pending count
+   */
+  static async createAdminHighPendingCountNotification(
+    adminUserId: string,
+    pendingCount: number
+  ): Promise<string> {
+    return this.createNotification(
+      adminUserId,
+      'admin_high_pending_count',
+      'High Pending Count Alert',
+      `You have ${pendingCount} pending attendee registrations that need attention`,
+      { 
+        pendingCount,
+        actionRequired: 'review_attendees',
+        priority: 'high'
+      }
+    );
+  }
+
+  /**
+   * Create admin notification for event creation
+   */
+  static async createAdminEventCreatedNotification(
+    adminUserId: string,
+    eventTitle: string,
+    eventId: string
+  ): Promise<string> {
+    return this.createNotification(
+      adminUserId,
+      'admin_event_created',
+      'Event Created Successfully',
+      `Event "${eventTitle}" has been created and is ready for management`,
+      { 
+        eventTitle, 
+        eventId,
+        actionRequired: 'manage_event'
+      }
+    );
+  }
+
+  /**
+   * Create admin notification for check-in activity
+   */
+  static async createAdminCheckInNotification(
+    adminUserId: string,
+    attendeeName: string,
+    eventTitle: string,
+    checkInTime: Date
+  ): Promise<string> {
+    return this.createNotification(
+      adminUserId,
+      'admin_check_in',
+      'Attendee Checked In',
+      `${attendeeName} has checked in for "${eventTitle}" at ${checkInTime.toLocaleTimeString()}`,
+      { 
+        attendeeName, 
+        eventTitle, 
+        checkInTime: checkInTime.toISOString(),
+        actionRequired: 'none'
+      }
+    );
+  }
+
+  /**
+   * Create admin notification for payment verification
+   */
+  static async createAdminPaymentVerifiedNotification(
+    adminUserId: string,
+    attendeeName: string,
+    eventTitle: string,
+    amount: number,
+    currency: string = 'PHP',
+    status: 'approved' | 'rejected'
+  ): Promise<string> {
+    const action = status === 'approved' ? 'approved' : 'rejected';
+    return this.createNotification(
+      adminUserId,
+      'admin_payment_verified',
+      `Payment ${action.charAt(0).toUpperCase() + action.slice(1)}`,
+      `Payment for ${attendeeName} (${eventTitle}) has been ${action}`,
+      { 
+        attendeeName, 
+        eventTitle, 
+        amount, 
+        currency,
+        status,
+        actionRequired: 'none'
+      }
+    );
+  }
+
+  /**
    * Create registration confirmation notification
    */
   static async createRegistrationConfirmation(
@@ -254,5 +373,71 @@ export class NotificationService {
       `Please share your feedback for "${eventTitle}"`,
       { eventId, eventTitle }
     );
+  }
+
+  /**
+   * Create bulk admin notifications for multiple pending attendees
+   */
+  static async createBulkAdminPendingNotifications(
+    adminUserId: string,
+    pendingRegistrations: Array<{
+      attendeeName: string;
+      eventTitle: string;
+      registrationId: string;
+      amount: number;
+      currency?: string;
+    }>
+  ): Promise<string[]> {
+    const notifications: Promise<string>[] = [];
+    
+    for (const registration of pendingRegistrations) {
+      const notification = this.createAdminPendingAttendeeNotification(
+        adminUserId,
+        registration.attendeeName,
+        registration.eventTitle,
+        registration.registrationId,
+        registration.amount,
+        registration.currency
+      );
+      notifications.push(notification);
+    }
+    
+    return Promise.all(notifications);
+  }
+
+  /**
+   * Get admin notifications (for admin users)
+   */
+  static subscribeToAdminNotifications(
+    adminUserId: string,
+    callback: (notifications: Notification[]) => void,
+    limitCount: number = 50
+  ) {
+    const q = query(
+      collection(db, this.COLLECTION),
+      where('userId', '==', adminUserId),
+      where('type', 'in', [
+        'admin_pending_attendee',
+        'admin_high_pending_count',
+        'admin_event_created',
+        'admin_check_in',
+        'admin_payment_verified'
+      ]),
+      orderBy('createdAt', 'desc'),
+      limit(limitCount)
+    );
+
+    return onSnapshot(q, (snapshot) => {
+      const notifications: Notification[] = [];
+      snapshot.forEach((doc) => {
+        notifications.push({
+          id: doc.id,
+          ...doc.data()
+        } as Notification);
+      });
+      callback(notifications);
+    }, (error) => {
+      console.error('Error subscribing to admin notifications:', error);
+    });
   }
 }
