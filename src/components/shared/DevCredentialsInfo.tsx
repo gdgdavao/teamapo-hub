@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { getAdminUrl } from '../../utils/subdomain';
 
 const DevCredentialsInfo: React.FC = () => {
   const [isVisible, setIsVisible] = useState(false);
@@ -40,7 +39,7 @@ const DevCredentialsInfo: React.FC = () => {
               <div className="text-red-700">admin@gdgdavao.org</div>
               <div className="text-red-600">password123</div>
               <a 
-                href={getAdminUrl('/login')}
+                href="/login"
                 className="text-red-600 hover:text-red-800 underline text-xs"
                 target="_blank"
                 rel="noopener noreferrer"
@@ -54,7 +53,7 @@ const DevCredentialsInfo: React.FC = () => {
               <div className="text-blue-700">organizer@gdgdavao.org</div>
               <div className="text-blue-600">password123</div>
               <a 
-                href={getAdminUrl('/login')}
+                href="/login"
                 className="text-blue-600 hover:text-blue-800 underline text-xs"
                 target="_blank"
                 rel="noopener noreferrer"

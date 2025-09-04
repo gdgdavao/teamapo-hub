@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { getAdminUrl } from '../../../utils/subdomain';
 
 const AdminAccessNotification: React.FC = () => {
   const [isVisible, setIsVisible] = useState(true);
@@ -18,19 +17,17 @@ const AdminAccessNotification: React.FC = () => {
             </span>
             <p className="ml-3 font-medium text-blue-900 text-sm">
               <span className="md:hidden">
-                Management portal now available at apohub subdomain
+                Management portal now available
               </span>
               <span className="hidden md:inline">
-                Event organizers and administrators: Access your dashboard via our dedicated management portal
+                Event organizers and administrators: Access your dashboard via our management portal
               </span>
             </p>
           </div>
           <div className="order-3 mt-2 flex-shrink-0 w-full sm:order-2 sm:mt-0 sm:w-auto">
             <a
-              href={getAdminUrl()}
+              href="/dashboard"
               className="flex items-center justify-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-blue-600 bg-white hover:bg-blue-50"
-              target="_blank"
-              rel="noopener noreferrer"
             >
               Management Portal
             </a>
