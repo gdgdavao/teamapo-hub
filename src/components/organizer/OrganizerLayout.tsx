@@ -1,6 +1,6 @@
 import React, { ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
-import { DashboardSidebar } from '../shared';
+import { DashboardNavbar } from '../shared';
 
 interface OrganizerLayoutProps {
   children: ReactNode;
@@ -34,8 +34,8 @@ const OrganizerLayout: React.FC<OrganizerLayoutProps> = ({
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Dashboard Sidebar (handles both admin and organizer roles) */}
-      <DashboardSidebar />
+      {/* Merged Dashboard Navigation (Sidebar + Navbar) */}
+      <DashboardNavbar />
       
       {/* Main Content Area - Adjusted for sidebar */}
       <div className="lg:pl-64">

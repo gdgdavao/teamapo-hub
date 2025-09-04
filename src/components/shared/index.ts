@@ -2,7 +2,6 @@
 export { default as LoadingSpinner } from './UI/LoadingSpinner';
 export { default as ConfirmationModal } from './UI/ConfirmationModal';
 export { default as DashboardNavbar } from './DashboardNavbar';
-export { default as DashboardSidebar } from './DashboardSidebar';
 export { default as NotificationDropdown } from './NotificationDropdown';
 export { FirebaseConnectionStatus } from './FirebaseConnectionStatus';
 export { default as LoginHelper } from './LoginHelper';

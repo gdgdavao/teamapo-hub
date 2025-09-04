@@ -160,11 +160,8 @@ const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ userId }) =
         leaveFrom="transform opacity-100 scale-100 translate-x-0"
         leaveTo="transform opacity-0 scale-95 translate-x-2"
       >
-        <Menu.Items className="absolute z-50 w-80 origin-top-left rounded-lg bg-white shadow-xl ring-1 ring-black ring-opacity-5 focus:outline-none"
+        <Menu.Items className="absolute z-50 w-80 sm:w-80 w-[calc(100vw-2rem)] origin-top-left rounded-lg bg-white shadow-xl ring-1 ring-black ring-opacity-5 focus:outline-none sm:left-full sm:top-0 sm:ml-2 left-auto right-0 top-full mt-2"
           style={{ 
-            left: '100%',
-            top: '0',
-            marginLeft: '0.5rem',
             maxHeight: 'calc(100vh - 6rem)',
             overflowY: 'auto'
           }}
