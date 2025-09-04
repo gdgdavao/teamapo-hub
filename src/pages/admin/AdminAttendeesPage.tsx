@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useParams } from 'react-router-dom';
 import { 
   MagnifyingGlassIcon, 
   CheckIcon,
@@ -81,6 +82,7 @@ interface Registration {
 
 const AdminAttendeesPage: React.FC = () => {
   const { userProfile } = useAuth();
+  const { eventId } = useParams<{ eventId?: string }>();
   const isAdmin = userProfile?.role === 'admin';
   const LayoutComponent = isAdmin ? AdminLayout : OrganizerLayout;
   
@@ -88,10 +90,11 @@ const AdminAttendeesPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [eventFilter, setEventFilter] = useState<string>('all');
+  const [eventFilter, setEventFilter] = useState<string>(eventId || 'all');
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
   const [viewingRegistration, setViewingRegistration] = useState<Registration | null>(null);
   const [events, setEvents] = useState<Event[]>([]);
+  const [currentEvent, setCurrentEvent] = useState<Event | null>(null);
   const [viewMode, setViewMode] = useState<'management'>('management');
 
   // Load registrations from API
@@ -121,6 +124,12 @@ const AdminAttendeesPage: React.FC = () => {
         }
         
         setEvents(organizerEvents);
+        
+        // If viewing a specific event, set the current event and filter registrations
+        if (eventId) {
+          const specificEvent = organizerEvents.find(event => event.id === eventId);
+          setCurrentEvent(specificEvent || null);
+        }
         
         // Transform data to match expected interface
         const transformedRegistrations: Registration[] = [];
@@ -372,7 +381,8 @@ const AdminAttendeesPage: React.FC = () => {
     
 
     const matchesStatus = statusFilter === 'all' || registration.status === statusFilter;
-    const matchesEvent = eventFilter === 'all' || registration.event.id === eventFilter;
+    // If viewing a specific event, only show registrations for that event
+    const matchesEvent = eventId ? registration.event.id === eventId : (eventFilter === 'all' || registration.event.id === eventFilter);
     const matchesPriority = priorityFilter === 'all' || registration.priority === priorityFilter;
     
     return matchesSearch && matchesStatus && matchesEvent && matchesPriority;
@@ -452,8 +462,11 @@ const AdminAttendeesPage: React.FC = () => {
 
   return (
     <LayoutComponent 
-      title="Attendee Management" 
-      subtitle="Review and manage event registrations and payments efficiently."
+      title={currentEvent ? `${currentEvent.title} - Attendees` : "Attendee Management"} 
+      subtitle={currentEvent 
+        ? `Manage registrations and payments for ${currentEvent.title}`
+        : "Review and manage event registrations and payments efficiently."
+      }
       actions={headerActions}
     >
       <div className="space-y-6">
@@ -469,7 +482,7 @@ const AdminAttendeesPage: React.FC = () => {
               <div className="ml-4">
                 <p className="text-sm text-gray-600">Pending</p>
                 <p className="text-2xl font-bold text-gray-900">
-                  {registrations.filter(r => r.status === 'pending').length}
+                  {filteredRegistrations.filter(r => r.status === 'pending').length}
                 </p>
               </div>
             </div>
@@ -483,7 +496,7 @@ const AdminAttendeesPage: React.FC = () => {
               <div className="ml-4">
                 <p className="text-sm text-gray-600">Approved</p>
                 <p className="text-2xl font-bold text-gray-900">
-                  {registrations.filter(r => r.status === 'approved').length}
+                  {filteredRegistrations.filter(r => r.status === 'approved').length}
                 </p>
               </div>
             </div>
@@ -497,7 +510,7 @@ const AdminAttendeesPage: React.FC = () => {
               <div className="ml-4">
                 <p className="text-sm text-gray-600">Paid</p>
                 <p className="text-2xl font-bold text-gray-900">
-                  {registrations.filter(r => r.status === 'paid').length}
+                  {filteredRegistrations.filter(r => r.status === 'paid').length}
                 </p>
               </div>
             </div>
@@ -510,7 +523,7 @@ const AdminAttendeesPage: React.FC = () => {
               </div>
               <div className="ml-4">
                 <p className="text-sm text-gray-600">Total</p>
-                <p className="text-2xl font-bold text-gray-900">{registrations.length}</p>
+                <p className="text-2xl font-bold text-gray-900">{filteredRegistrations.length}</p>
               </div>
             </div>
           </div>
@@ -544,18 +557,26 @@ const AdminAttendeesPage: React.FC = () => {
                 <option value="attended">Attended</option>
               </select>
 
-              <select
-                value={eventFilter}
-                onChange={(e) => setEventFilter(e.target.value)}
-                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              >
-                <option value="all">All Events</option>
-                {events.map(event => (
-                  <option key={event.id} value={event.id}>
-                    {event.title}
-                  </option>
-                ))}
-              </select>
+              {!eventId && (
+                <select
+                  value={eventFilter}
+                  onChange={(e) => setEventFilter(e.target.value)}
+                  className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                  <option value="all">All Events</option>
+                  {events.map(event => (
+                    <option key={event.id} value={event.id}>
+                      {event.title}
+                    </option>
+                  ))}
+                </select>
+              )}
+              
+              {eventId && currentEvent && (
+                <div className="px-3 py-2 bg-blue-100 text-blue-800 rounded-lg border border-blue-200">
+                  Event: {currentEvent.title}
+                </div>
+              )}
             </div>
 
             <div className="text-sm text-gray-600">

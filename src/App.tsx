@@ -147,6 +147,31 @@ const AppContent: React.FC = () => {
         </ProtectedRoute>
       } />
       
+      {/* Admin Event Management Routes */}
+      <Route path="/admin/events/create" element={
+        <ProtectedRoute requiredRole="admin">
+          <CreateEventPage />
+        </ProtectedRoute>
+      } />
+
+      <Route path="/admin/events/edit/:eventId" element={
+        <ProtectedRoute requiredRole="admin">
+          <CreateEventPage />
+        </ProtectedRoute>
+      } />
+
+      <Route path="/admin/events/:eventId/attendees" element={
+        <ProtectedRoute requiredRole="admin">
+          <AdminAttendeesPage />
+        </ProtectedRoute>
+      } />
+
+      <Route path="/admin/events/:eventId/analytics" element={
+        <ProtectedRoute requiredRole="admin">
+          <AnalyticsPage isEventSpecific={true} />
+        </ProtectedRoute>
+      } />
+      
       <Route path="/users" element={
         <ProtectedRoute requiredRole="admin">
           <AdminUsersPage />

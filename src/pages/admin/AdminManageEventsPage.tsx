@@ -11,7 +11,8 @@ import {
   FunnelIcon,
   Squares2X2Icon,
   ListBulletIcon,
-  UserGroupIcon
+  ShareIcon,
+  LinkIcon
 } from '@heroicons/react/24/outline';
 import { CheckCircleIcon, XCircleIcon, ClockIcon } from '@heroicons/react/20/solid';
 import { Link, useNavigate } from 'react-router-dom';
@@ -198,6 +199,14 @@ const ManageEventsPage: React.FC = () => {
     }
   });
 
+  // Calculate stats based on filtered events
+  const statsData = {
+    totalEvents: sortedEvents.length,
+    totalAttendees: sortedEvents.reduce((sum, e) => sum + e.currentAttendees, 0),
+    publishedEvents: sortedEvents.filter(e => e.status === 'published').length,
+    isFiltered: searchTerm.trim() !== '' || statusFilter !== 'all'
+  };
+
   const formatDate = (timestamp: any) => {
     if (!timestamp) return 'N/A';
     
@@ -338,6 +347,17 @@ const ManageEventsPage: React.FC = () => {
     }
   };
 
+  const handleShareEvent = (eventId: string, eventTitle: string) => {
+    const shareUrl = `${window.location.origin}/events/${eventId}/register`;
+    
+    // Copy link to clipboard
+    navigator.clipboard.writeText(shareUrl).then(() => {
+      toast.success('Registration link copied to clipboard!');
+    }).catch(() => {
+      toast.error('Failed to copy link to clipboard');
+    });
+  };
+
   const getPageTitle = () => {
     return 'Events Management';
   };
@@ -374,8 +394,10 @@ const ManageEventsPage: React.FC = () => {
             <div className="flex items-center">
               <CalendarDaysIcon className="h-6 w-6 sm:h-8 sm:w-8 text-blue-600" />
               <div className="ml-3 sm:ml-4">
-                <p className="text-xs sm:text-sm font-medium text-gray-600">Total Events</p>
-                <p className="text-xl sm:text-2xl font-bold text-gray-900">{events.length}</p>
+                <p className="text-xs sm:text-sm font-medium text-gray-600">
+                  {statsData.isFiltered ? 'Filtered Events' : 'Total Events'}
+                </p>
+                <p className="text-xl sm:text-2xl font-bold text-gray-900">{statsData.totalEvents}</p>
               </div>
             </div>
           </div>
@@ -383,9 +405,11 @@ const ManageEventsPage: React.FC = () => {
             <div className="flex items-center">
               <UsersIcon className="h-6 w-6 sm:h-8 sm:w-8 text-green-600" />
               <div className="ml-3 sm:ml-4">
-                <p className="text-xs sm:text-sm font-medium text-gray-600">Total Attendees</p>
+                <p className="text-xs sm:text-sm font-medium text-gray-600">
+                  {statsData.isFiltered ? 'Filtered Attendees' : 'Total Attendees'}
+                </p>
                 <p className="text-xl sm:text-2xl font-bold text-gray-900">
-                  {events.reduce((sum, e) => sum + e.currentAttendees, 0)}
+                  {statsData.totalAttendees}
                 </p>
               </div>
             </div>
@@ -394,9 +418,11 @@ const ManageEventsPage: React.FC = () => {
             <div className="flex items-center">
               <ChartBarIcon className="h-6 w-6 sm:h-8 sm:w-8 text-purple-600" />
               <div className="ml-3 sm:ml-4">
-                <p className="text-xs sm:text-sm font-medium text-gray-600">Published Events</p>
+                <p className="text-xs sm:text-sm font-medium text-gray-600">
+                  {statsData.isFiltered ? 'Filtered Published' : 'Published Events'}
+                </p>
                 <p className="text-xl sm:text-2xl font-bold text-gray-900">
-                  {events.filter(e => e.status === 'published').length}
+                  {statsData.publishedEvents}
                 </p>
               </div>
             </div>
@@ -576,26 +602,37 @@ const ManageEventsPage: React.FC = () => {
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                         <div className="flex items-center space-x-2">
                           <Link
-                            to={`/events/${event.id}`}
+                            to={`/admin/events/${event.id}/attendees`}
                             className="text-blue-600 hover:text-blue-900"
-                            title="View Details"
+                            title="View Attendees"
                           >
                             <EyeIcon className="h-4 w-4" />
                           </Link>
-                                               {/* Edit functionality removed - only admins can edit events */}
+                          <Link
+                            to={`/admin/events/edit/${event.id}`}
+                            className="text-green-600 hover:text-green-900"
+                            title="Edit Event"
+                          >
+                            <PencilIcon className="h-4 w-4" />
+                          </Link>
+                          <button
+                            onClick={() => event.status === 'published' ? handleShareEvent(event.id, event.title) : null}
+                            className={`${
+                              event.status === 'published'
+                                ? 'text-indigo-600 hover:text-indigo-900 cursor-pointer'
+                                : 'text-gray-400 cursor-not-allowed'
+                            }`}
+                            title={event.status === 'published' ? 'Share Registration Link' : 'Event must be published to share'}
+                            disabled={event.status !== 'published'}
+                          >
+                            <ShareIcon className="h-4 w-4" />
+                          </button>
                           <Link
                             to={`/events/${event.id}/analytics`}
                             className="text-purple-600 hover:text-purple-900"
                             title="Analytics"
                           >
                             <ChartBarIcon className="h-4 w-4" />
-                          </Link>
-                          <Link
-                            to={`/events/${event.id}/attendees`}
-                            className="text-orange-600 hover:text-orange-900"
-                            title="Attendees"
-                          >
-                            <UserGroupIcon className="h-4 w-4" />
                           </Link>
                           <button
                             onClick={() => openDeleteModal(event.id, event.title)}
@@ -685,26 +722,38 @@ const ManageEventsPage: React.FC = () => {
                   
                   <div className="flex items-center space-x-1">
                     <Link
-                      to={`/events/${event.id}`}
+                      to={`/admin/events/${event.id}/attendees`}
                       className="flex items-center justify-center space-x-1 px-2 sm:px-3 py-2 text-blue-600 hover:text-blue-900 hover:bg-blue-50 rounded-lg transition-colors text-xs font-medium min-w-0"
                     >
                       <EyeIcon className="h-4 w-4 flex-shrink-0" />
-                      <span className="hidden sm:inline">View</span>
+                      <span className="hidden sm:inline">Attendees</span>
                     </Link>
-                                         {/* Edit functionality removed - only admins can edit events */}
+                    <Link
+                      to={`/admin/events/edit/${event.id}`}
+                      className="flex items-center justify-center space-x-1 px-2 sm:px-3 py-2 text-green-600 hover:text-green-900 hover:bg-green-50 rounded-lg transition-colors text-xs font-medium min-w-0"
+                    >
+                      <PencilIcon className="h-4 w-4 flex-shrink-0" />
+                      <span className="hidden sm:inline">Edit</span>
+                    </Link>
+                    <button
+                      onClick={() => event.status === 'published' ? handleShareEvent(event.id, event.title) : null}
+                      className={`flex items-center justify-center space-x-1 px-2 sm:px-3 py-2 rounded-lg transition-colors text-xs font-medium min-w-0 ${
+                        event.status === 'published'
+                          ? 'text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 cursor-pointer'
+                          : 'text-gray-400 cursor-not-allowed bg-gray-50'
+                      }`}
+                      title={event.status === 'published' ? 'Share Registration Link' : 'Event must be published to share'}
+                      disabled={event.status !== 'published'}
+                    >
+                      <ShareIcon className="h-4 w-4 flex-shrink-0" />
+                      <span className="hidden sm:inline">Share</span>
+                    </button>
                     <Link
                       to={`/events/${event.id}/analytics`}
                       className="flex items-center justify-center space-x-1 px-2 sm:px-3 py-2 text-purple-600 hover:text-purple-900 hover:bg-purple-50 rounded-lg transition-colors text-xs font-medium min-w-0"
                     >
                       <ChartBarIcon className="h-4 w-4 flex-shrink-0" />
                       <span className="hidden sm:inline">Analytics</span>
-                    </Link>
-                    <Link
-                      to={`/events/${event.id}/attendees`}
-                      className="flex items-center justify-center space-x-1 px-2 sm:px-3 py-2 text-orange-600 hover:text-orange-900 hover:bg-orange-50 rounded-lg transition-colors text-xs font-medium min-w-0"
-                    >
-                      <UserGroupIcon className="h-4 w-4 flex-shrink-0" />
-                      <span className="hidden sm:inline">Attendees</span>
                     </Link>
                     <button
                       onClick={() => openDeleteModal(event.id, event.title)}
