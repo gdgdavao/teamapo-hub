@@ -16,6 +16,8 @@ import {
   UserGroupIcon
 } from '@heroicons/react/24/outline';
 import { CheckCircleIcon, XCircleIcon, ClockIcon, CurrencyDollarIcon } from '@heroicons/react/20/solid';
+import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { db } from '../../config/firebase';
 import AdminLayout from '../../components/admin/AdminLayout';
 import OrganizerLayout from '../../components/organizer/OrganizerLayout';
 import { useAuth } from '../../contexts/AuthContext';
@@ -309,18 +311,21 @@ const AdminAttendeesPage: React.FC = () => {
 
   const handlePaymentVerification = async (registrationId: string, action: 'approved' | 'rejected') => {
     try {
-      // Find the registration to get the payment proof ID
+      // Find the registration to get the payment proof data
       const registration = registrations.find(r => r.id === registrationId);
       if (!registration?.paymentProof) {
         throw new Error('No payment proof found for this registration');
       }
 
-      await PaymentService.verifyPaymentProof(
-        registration.paymentProof.id, 
-        action, 
-        userProfile?.uid || 'admin',
-        userProfile?.displayName || 'Admin'
-      );
+      // Update the registration document directly with payment verification status
+      const registrationRef = doc(db, 'registrations', registrationId);
+      await updateDoc(registrationRef, {
+        paymentStatus: action === 'approved' ? 'paid' : 'failed',
+        'paymentProof.verificationStatus': action,
+        'paymentProof.verifiedAt': serverTimestamp(),
+        'paymentProof.verifiedBy': userProfile?.uid || 'admin',
+        updatedAt: serverTimestamp()
+      });
       
       // Update local state
       setRegistrations(prev => 
