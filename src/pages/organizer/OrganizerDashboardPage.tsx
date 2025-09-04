@@ -99,13 +99,8 @@ const OrganizerDashboardPage: React.FC = () => {
       title="Welcome back!"
       subtitle={`Here's what's happening with your events, ${userProfile?.displayName || 'Organizer'}.`}
       actions={
-        <Link
-          to="/events/create"
-          className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-        >
-          <PlusIcon className="w-4 h-4 mr-2" />
-          Create Event
-        </Link>
+        // Create Event functionality removed - only admins can create events
+        null
       }
     >
       {/* Stats Cards */}
@@ -242,13 +237,7 @@ const OrganizerDashboardPage: React.FC = () => {
                       <EyeIcon className="w-3 h-3 mr-1" />
                       View
                     </Link>
-                    <Link
-                      to={`/events/edit/${event.id}`}
-                      className="inline-flex items-center px-3 py-1 border border-gray-300 shadow-sm text-xs font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
-                    >
-                      <PencilIcon className="w-3 h-3 mr-1" />
-                      Edit
-                    </Link>
+                    {/* Edit functionality removed - only admins can edit events */}
                     <Link
                       to={`/events/${event.id}/analytics`}
                       className="inline-flex items-center px-3 py-1 border border-gray-300 shadow-sm text-xs font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
@@ -264,14 +253,7 @@ const OrganizerDashboardPage: React.FC = () => {
             <div className="text-center py-8">
               <CalendarDaysIcon className="w-12 h-12 text-gray-400 mx-auto mb-4" />
               <h3 className="text-lg font-medium text-gray-900 mb-2">No events yet</h3>
-              <p className="text-gray-600 mb-4">Get started by creating your first event</p>
-              <Link
-                to="/events/create"
-                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700"
-              >
-                <PlusIcon className="w-4 h-4 mr-2" />
-                Create Event
-              </Link>
+              <p className="text-gray-600 mb-4">Contact an administrator to create events</p>
             </div>
           )}
         </div>

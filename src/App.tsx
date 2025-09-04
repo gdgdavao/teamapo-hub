@@ -13,8 +13,6 @@ import ForgotPasswordPage from './pages/auth/ForgotPasswordPage';
 
 // Organizer Pages
 import OrganizerDashboardPage from './pages/organizer/OrganizerDashboardPage';
-import CreateEventPage from './pages/organizer/CreateEventPage';
-import ManageEventsPage from './pages/organizer/ManageEventsPage';
 import AttendeesPage from './pages/organizer/AttendeesPage';
 import OrganizerCheckInPage from './pages/organizer/OrganizerCheckInPage';
 
@@ -24,6 +22,8 @@ import AdminAttendeesPage from './pages/admin/AdminAttendeesPage';
 import AdminCheckInPage from './pages/admin/AdminCheckInPage';
 import AdminUsersPage from './pages/admin/AdminUsersPage';
 import AdminPaymentVerificationPage from './pages/admin/AdminPaymentVerificationPage';
+import CreateEventPage from './pages/admin/AdminCreateEventPage';
+import ManageEventsPage from './pages/admin/AdminManageEventsPage';
 
 // Shared Pages
 import CertificatesPage from './pages/shared/CertificatesPage';
@@ -200,7 +200,7 @@ const AppContent: React.FC = () => {
 
 
       <Route path="/events" element={
-        <ProtectedRoute>
+        <ProtectedRoute requiredRole="admin">
           <ManageEventsPage />
         </ProtectedRoute>
       } />

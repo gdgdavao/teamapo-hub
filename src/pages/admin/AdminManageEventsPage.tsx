@@ -14,66 +14,72 @@ import {
   UserGroupIcon
 } from '@heroicons/react/24/outline';
 import { CheckCircleIcon, XCircleIcon, ClockIcon } from '@heroicons/react/20/solid';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { EventService } from '../../services/eventService';
 import { Event } from '../../types';
 import toast from 'react-hot-toast';
 import AdminLayout from '../../components/admin/AdminLayout';
-import OrganizerLayout from '../../components/organizer/OrganizerLayout';
+// OrganizerLayout import removed - this page is now admin-only
 import ConfirmationModal from '../../components/shared/UI/ConfirmationModal';
 
+interface DeleteModalState {
+  isOpen: boolean;
+  eventId: string | null;
+  eventTitle: string;
+  isLoading: boolean;
+  message: string;
+  confirmText: string;
+  type: 'danger' | 'warning' | 'info';
+  isForceDelete: boolean;
+}
+
 const ManageEventsPage: React.FC = () => {
-  const { currentUser, userProfile } = useAuth();
+  const navigate = useNavigate();
+  const { userProfile, loading: authLoading } = useAuth();
+
+  // This page is now admin-only
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [sortBy, setSortBy] = useState('startDate');
   const [events, setEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [sortBy, setSortBy] = useState<string>('startDate');
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
-  
-  // Delete confirmation modal state
-  const [deleteModal, setDeleteModal] = useState<{
-    isOpen: boolean;
-    eventId: string | null;
-    eventTitle: string;
-    isLoading: boolean;
-    message: string;
-    confirmText: string;
-    type: 'danger' | 'warning' | 'info';
-    isForceDelete: boolean;
-  }>({
+  const [deleteModal, setDeleteModal] = useState<DeleteModalState>({
     isOpen: false,
     eventId: null,
     eventTitle: '',
-    isLoading: false,
     message: '',
-    confirmText: 'Delete Event',
-    type: 'danger',
+    confirmText: 'Delete',
+    type: 'warning',
+    isLoading: false,
     isForceDelete: false
   });
 
-  // Determine if user is admin or organizer
-  const isAdmin = userProfile?.role === 'admin';
+  // Redirect non-admin users to dashboard
+  useEffect(() => {
+    if (!authLoading && userProfile && userProfile.role !== 'admin') {
+      toast.error('Only administrators can manage events');
+      navigate('/dashboard');
+    }
+  }, [authLoading, userProfile, navigate]);
 
-  // Load events based on user role
+  // Don't render the component if user is not admin
+  if (authLoading) {
+    return <div>Loading...</div>;
+  }
+
+  if (!userProfile || userProfile.role !== 'admin') {
+    return null; // Will redirect via useEffect
+  }
+
+  // This page is now admin-only, so always fetch all events
   useEffect(() => {
     const fetchEvents = async () => {
       try {
         setLoading(true);
-        let eventsData: Event[] = [];
-
-        if (isAdmin) {
-          // Admin can see all events
-          eventsData = await EventService.getAllEvents();
-        } else if (userProfile?.role === 'organizer') {
-          // Organizers can also see all events (updated business rule)
-          eventsData = await EventService.getAllEvents();
-        } else {
-          // Other users (if any) see no events
-          eventsData = [];
-        }
-
+        // Admin can see all events
+        const eventsData = await EventService.getAllEvents();
         setEvents(eventsData);
       } catch (error) {
         console.error('Error fetching events:', error);
@@ -85,7 +91,7 @@ const ManageEventsPage: React.FC = () => {
     };
 
     fetchEvents();
-  }, [isAdmin, userProfile?.role]);
+  }, [userProfile?.role]);
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -135,8 +141,10 @@ const ManageEventsPage: React.FC = () => {
           aDate = a.startDate.toDate();
         } else if (a.startDate?.seconds && typeof a.startDate.seconds === 'number') {
           aDate = new Date(a.startDate.seconds * 1000);
+        } else if (a.startDate?.seconds && typeof a.startDate.seconds === 'number') {
+          aDate = new Date(a.startDate.seconds * 1000);
         } else {
-          aDate = new Date(a.startDate);
+          aDate = new Date(a.startDate as any);
         }
         
         if (b.startDate?.toDate) {
@@ -144,7 +152,7 @@ const ManageEventsPage: React.FC = () => {
         } else if (b.startDate?.seconds && typeof b.startDate.seconds === 'number') {
           bDate = new Date(b.startDate.seconds * 1000);
         } else {
-          bDate = new Date(b.startDate);
+          bDate = new Date(b.startDate as any);
         }
         
         // Check if dates are valid
@@ -165,8 +173,10 @@ const ManageEventsPage: React.FC = () => {
           aCreatedDate = a.createdAt.toDate();
         } else if (a.createdAt?.seconds && typeof a.createdAt.seconds === 'number') {
           aCreatedDate = new Date(a.createdAt.seconds * 1000);
+        } else if (a.createdAt?.seconds && typeof a.createdAt.seconds === 'number') {
+          aCreatedDate = new Date(a.createdAt.seconds * 1000);
         } else {
-          aCreatedDate = new Date(a.createdAt);
+          aCreatedDate = new Date(a.createdAt as any);
         }
         
         if (b.createdAt?.toDate) {
@@ -174,7 +184,7 @@ const ManageEventsPage: React.FC = () => {
         } else if (b.createdAt?.seconds && typeof b.createdAt.seconds === 'number') {
           bCreatedDate = new Date(b.createdAt.seconds * 1000);
         } else {
-          bCreatedDate = new Date(b.createdAt);
+          bCreatedDate = new Date(b.createdAt as any);
         }
         
         // Check if dates are valid
@@ -329,16 +339,14 @@ const ManageEventsPage: React.FC = () => {
   };
 
   const getPageTitle = () => {
-    return isAdmin ? 'Events Management' : 'My Events';
+    return 'Events Management';
   };
 
   const getPageSubtitle = () => {
-    return isAdmin 
-      ? 'Create, edit, and manage all events for GDG Davao'
-      : 'Create, edit, and manage your events';
+    return 'Create, edit, and manage all events for GDG Davao';
   };
 
-  const LayoutComponent = isAdmin ? AdminLayout : OrganizerLayout;
+  const LayoutComponent = AdminLayout;
 
   if (loading) {
     return (
@@ -356,14 +364,8 @@ const ManageEventsPage: React.FC = () => {
       title={getPageTitle()} 
       subtitle={getPageSubtitle()}
       actions={
-        <Link
-          to="/events/create"
-          className="btn-primary flex items-center justify-center space-x-2 text-sm px-4 py-2 sm:px-6 sm:py-3"
-        >
-          <PlusIcon className="h-4 w-4 sm:h-5 sm:w-5" />
-          <span className="hidden sm:inline">Create Event</span>
-          <span className="sm:hidden">Create</span>
-        </Link>
+        // Create Event functionality removed - only admins can create events
+        null
       }
     >
         {/* Stats Cards */}
@@ -493,11 +495,9 @@ const ManageEventsPage: React.FC = () => {
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Status
                     </th>
-                    {isAdmin && (
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Organizer
-                      </th>
-                    )}
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Organizer
+                    </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Actions
                     </th>
@@ -569,12 +569,10 @@ const ManageEventsPage: React.FC = () => {
                           </select>
                         </div>
                       </td>
-                      {isAdmin && (
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="text-sm text-gray-900">{event.organizer.name}</div>
-                          <div className="text-sm text-gray-500">{event.organizer.email}</div>
-                        </td>
-                      )}
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm text-gray-900">{event.organizer.name}</div>
+                        <div className="text-sm text-gray-500">{event.organizer.email}</div>
+                      </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                         <div className="flex items-center space-x-2">
                           <Link
@@ -584,13 +582,7 @@ const ManageEventsPage: React.FC = () => {
                           >
                             <EyeIcon className="h-4 w-4" />
                           </Link>
-                          <Link
-                            to={`/events/edit/${event.id}`}
-                            className="text-green-600 hover:text-green-900"
-                            title="Edit Event"
-                          >
-                            <PencilIcon className="h-4 w-4" />
-                          </Link>
+                                               {/* Edit functionality removed - only admins can edit events */}
                           <Link
                             to={`/events/${event.id}/analytics`}
                             className="text-purple-600 hover:text-purple-900"
@@ -699,13 +691,7 @@ const ManageEventsPage: React.FC = () => {
                       <EyeIcon className="h-4 w-4 flex-shrink-0" />
                       <span className="hidden sm:inline">View</span>
                     </Link>
-                    <Link
-                      to={`/events/edit/${event.id}`}
-                      className="flex items-center justify-center space-x-1 px-2 sm:px-3 py-2 text-green-600 hover:text-green-900 hover:bg-green-50 rounded-lg transition-colors text-xs font-medium min-w-0"
-                    >
-                      <PencilIcon className="h-4 w-4 flex-shrink-0" />
-                      <span className="hidden sm:inline">Edit</span>
-                    </Link>
+                                         {/* Edit functionality removed - only admins can edit events */}
                     <Link
                       to={`/events/${event.id}/analytics`}
                       className="flex items-center justify-center space-x-1 px-2 sm:px-3 py-2 text-purple-600 hover:text-purple-900 hover:bg-purple-50 rounded-lg transition-colors text-xs font-medium min-w-0"
@@ -743,17 +729,13 @@ const ManageEventsPage: React.FC = () => {
                   : 'Get started by creating your first event.'
                 }
               </p>
-              {!searchTerm && statusFilter === 'all' && (
-                <div className="mt-4 sm:mt-6">
-                  <Link
-                    to="/events/create"
-                    className="btn-primary text-sm px-4 py-2 sm:px-6 sm:py-3 inline-flex items-center space-x-2"
-                  >
-                    <PlusIcon className="h-4 w-4" />
-                    <span>Create Event</span>
-                  </Link>
-                </div>
-              )}
+                             {!searchTerm && statusFilter === 'all' && (
+                 <div className="mt-4 sm:mt-6">
+                   <p className="text-sm text-gray-500">
+                     Contact an administrator to create new events.
+                   </p>
+                 </div>
+               )}
             </div>
           )}
         </div>

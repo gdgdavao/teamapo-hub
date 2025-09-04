@@ -20,7 +20,7 @@ const AdminAccessNotification: React.FC = () => {
                 Management portal now available
               </span>
               <span className="hidden md:inline">
-                Event organizers and administrators: Access your dashboard via our management portal
+                Event organizers: Access your dashboard to view events and manage attendees. Administrators: Full access to create, edit, and manage events.
               </span>
             </p>
           </div>

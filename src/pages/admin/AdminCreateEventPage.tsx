@@ -106,10 +106,25 @@ const CreateEventPage: React.FC = () => {
   const location = useLocation();
   const { currentUser, userProfile, loading: authLoading } = useAuth();
 
-  // Check if we're in admin or organizer context
-  // Since we're using unified routes, we need to determine context from user role
-  const isAdminContext = userProfile?.role === 'admin';
+  // This page is now admin-only
   const isEditMode = location.pathname.includes('/edit/');
+
+  // Redirect non-admin users to dashboard
+  useEffect(() => {
+    if (!authLoading && userProfile && userProfile.role !== 'admin') {
+      toast.error('Only administrators can create and edit events');
+      navigate('/dashboard');
+    }
+  }, [authLoading, userProfile, navigate]);
+
+  // Don't render the component if user is not admin
+  if (authLoading) {
+    return <div>Loading...</div>;
+  }
+
+  if (!userProfile || userProfile.role !== 'admin') {
+    return null; // Will redirect via useEffect
+  }
 
   const [currentStep, setCurrentStep] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -391,8 +406,8 @@ const CreateEventPage: React.FC = () => {
       // Navigate to the appropriate page based on context and publish status
       // Add a small delay to ensure the user sees the success message
       setTimeout(() => {
-        // Both admin and organizer now use the same unified routes
-        navigate('/events');
+        // Since only admins can create events, always navigate to admin dashboard
+        navigate('/admin/dashboard');
       }, 1500); // 1.5 second delay to show success message
 
     } catch (error) {
@@ -2107,7 +2122,7 @@ const CreateEventPage: React.FC = () => {
               </div>
               <div className="flex items-center space-x-2">
                 <span className="flex-shrink-0 w-5 h-5 bg-green-600 text-white rounded-full flex items-center justify-center text-xs">4</span>
-                <span>Organizer verifies payment and confirms registration</span>
+                <span>Admin verifies payment and confirms registration</span>
               </div>
               <div className="flex items-center space-x-2">
                 <span className="flex-shrink-0 w-5 h-5 bg-green-600 text-white rounded-full flex items-center justify-center text-xs">5</span>
@@ -2407,16 +2422,16 @@ const CreateEventPage: React.FC = () => {
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center space-x-4">
               <button
-                onClick={() => navigate('/events')}
+                onClick={() => navigate('/admin/dashboard')}
                 className="flex items-center text-gray-600 hover:text-gray-900"
               >
                 <ArrowLeftIcon className="w-5 h-5 mr-2" />
-                Back to Events
+                Back to Admin Dashboard
               </button>
               <div className="h-6 border-l border-gray-300" />
               <div className="flex items-center space-x-2 text-sm text-gray-500">
                 <HomeIcon className="w-4 h-4" />
-                <span>{isAdminContext ? 'Admin' : 'Organizer'}</span>
+                <span>Admin</span>
                 <ChevronRightIcon className="w-4 h-4" />
                 <span>Events</span>
                 <ChevronRightIcon className="w-4 h-4" />

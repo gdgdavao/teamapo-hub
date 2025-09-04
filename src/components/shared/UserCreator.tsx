@@ -137,7 +137,7 @@ const UserCreator: React.FC = () => {
             <option value="admin">Admin</option>
           </select>
           <p className="mt-1 text-xs text-gray-500">
-            Organizers can create events, Admins have full system access
+                            Only Admins can create events and have full system access
           </p>
         </div>
 
@@ -170,7 +170,7 @@ const UserCreator: React.FC = () => {
         <h3 className="text-sm font-medium text-yellow-800 mb-2">Important Notes:</h3>
         <ul className="text-xs text-yellow-700 space-y-1">
           <li>• Any valid email address can be used</li>
-          <li>• Choose appropriate role: Organizer for event management, Admin for full access</li>
+                          <li>• Choose appropriate role: Organizer for event viewing and attendee management, Admin for full access</li>
           <li>• Attendees don't need accounts - they register anonymously for events</li>
           <li>• Remove this component after creating user accounts</li>
           <li>• Use only in development environment</li>
