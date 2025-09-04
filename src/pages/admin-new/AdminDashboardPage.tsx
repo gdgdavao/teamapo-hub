@@ -19,7 +19,8 @@ import {
   SparklesIcon,
   ExclamationTriangleIcon,
   CurrencyDollarIcon,
-  UserCircleIcon
+  UserCircleIcon,
+  QrCodeIcon
 } from '@heroicons/react/24/outline';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../../components/admin/AdminLayout';
@@ -155,6 +156,14 @@ const AdminDashboardPage: React.FC = () => {
       href: '/events/create',
       color: 'from-blue-500 to-blue-600',
       iconBg: 'bg-blue-500'
+    },
+    {
+      title: 'Check-In Station',
+      description: 'Scan QR codes and check in attendees',
+      icon: QrCodeIcon,
+      href: '/admin/checkin',
+      color: 'from-emerald-500 to-emerald-600',
+      iconBg: 'bg-emerald-500'
     },
     {
       title: 'Review Attendees',

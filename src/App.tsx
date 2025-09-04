@@ -24,10 +24,12 @@ import OrganizerDashboardPage from './pages/organizer-new/OrganizerDashboardPage
 import CreateEventPage from './pages/organizer-new/CreateEventPage';
 import ManageEventsPage from './pages/organizer-new/ManageEventsPage';
 import AttendeesPage from './pages/organizer-new/AttendeesPage';
+import OrganizerCheckInPage from './pages/organizer-new/OrganizerCheckInPage';
 
 // Admin Pages
 import AdminDashboardPage from './pages/admin-new/AdminDashboardPage';
 import AdminAttendeesPage from './pages/admin-new/AdminAttendeesPage';
+import AdminCheckInPage from './pages/admin-new/AdminCheckInPage';
 import AdminUsersPage from './pages/admin-new/AdminUsersPage';
 import AdminPaymentVerificationPage from './pages/admin-new/AdminPaymentVerificationPage';
 
@@ -159,8 +161,21 @@ const AppContent: React.FC = () => {
             <OrganizerDashboardPage />
           </ProtectedRoute>
         } />
+        
+        {/* Organizer Check-In */}
+        <Route path="/organizer/checkin" element={
+          <ProtectedRoute requiredRole="organizer">
+            <OrganizerCheckInPage />
+          </ProtectedRoute>
+        } />
 
         {/* Admin-only Routes */}
+        <Route path="/admin/checkin" element={
+          <ProtectedRoute requiredRole="admin">
+            <AdminCheckInPage />
+          </ProtectedRoute>
+        } />
+        
         <Route path="/users" element={
           <ProtectedRoute requiredRole="admin">
             <AdminUsersPage />

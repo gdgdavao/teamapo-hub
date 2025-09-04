@@ -13,7 +13,8 @@ import {
   BellIcon,
   DocumentTextIcon,
   FunnelIcon,
-  UserGroupIcon
+  UserGroupIcon,
+  CameraIcon
 } from '@heroicons/react/24/outline';
 import { CheckCircleIcon, XCircleIcon, ClockIcon, CurrencyDollarIcon } from '@heroicons/react/20/solid';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
@@ -91,6 +92,7 @@ const AdminAttendeesPage: React.FC = () => {
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
   const [viewingRegistration, setViewingRegistration] = useState<Registration | null>(null);
   const [events, setEvents] = useState<Event[]>([]);
+  const [viewMode, setViewMode] = useState<'management'>('management');
 
   // Load registrations from API
   useEffect(() => {
@@ -356,8 +358,10 @@ const AdminAttendeesPage: React.FC = () => {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-    }
+    } 
   };
+
+
 
   const filteredRegistrations = registrations.filter(registration => {
     const matchesSearch = 
@@ -532,8 +536,8 @@ const AdminAttendeesPage: React.FC = () => {
                 onChange={(e) => setStatusFilter(e.target.value)}
                 className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               >
-                <option value="pending">Pending Review</option>
                 <option value="all">All Status</option>
+                <option value="pending">Pending Review</option>
                 <option value="approved">Approved</option>
                 <option value="rejected">Rejected</option>
                 <option value="paid">Paid</option>
@@ -606,26 +610,26 @@ const AdminAttendeesPage: React.FC = () => {
                         <h3 className="text-lg font-semibold text-gray-900">
                           {registration.attendee.name}
                         </h3>
-                                                  <div className="flex items-center space-x-1">
-                            {getStatusIcon(registration.status)}
-                            <span className={`px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(registration.status)}`}>
-                              {registration.status}
+                        <div className="flex items-center space-x-1">
+                          {getStatusIcon(registration.status)}
+                          <span className={`px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(registration.status)}`}>
+                            {registration.status}
+                          </span>
+                          {registration.paymentStatus && (
+                            <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                              registration.paymentStatus === 'paid' ? 'bg-green-100 text-green-800' :
+                              registration.paymentStatus === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                              'bg-red-100 text-red-800'
+                            }`}>
+                              Payment: {registration.paymentStatus}
                             </span>
-                            {registration.paymentStatus && (
-                              <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                                registration.paymentStatus === 'paid' ? 'bg-green-100 text-green-800' :
-                                registration.paymentStatus === 'pending' ? 'bg-yellow-100 text-yellow-800' :
-                                'bg-red-100 text-red-800'
-                              }`}>
-                                Payment: {registration.paymentStatus}
-                              </span>
-                            )}
-                            {registration.paymentStatus === 'pending' && registration.paymentProof && (
-                              <span className="px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-800">
-                                📄 Proof Submitted
-                              </span>
-                            )}
-                          </div>
+                          )}
+                          {registration.paymentStatus === 'pending' && registration.paymentProof && (
+                            <span className="px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-800">
+                              📄 Proof Submitted
+                            </span>
+                          )}
+                        </div>
                       </div>
                       
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-600">
@@ -682,6 +686,7 @@ const AdminAttendeesPage: React.FC = () => {
             </div>
           )}
         </div>
+
 
         {/* Registration Details Modal */}
         {viewingRegistration && (
@@ -946,19 +951,7 @@ const AdminAttendeesPage: React.FC = () => {
                     </>
                   )}
                   
-                  {/* Status Progression Actions */}
-                  {viewingRegistration.status === 'approved' && viewingRegistration.paymentStatus === 'paid' && (
-                    <button
-                      onClick={() => {
-                        handleStatusChange(viewingRegistration.id, 'attended');
-                        setViewingRegistration(null);
-                      }}
-                      className="inline-flex items-center px-6 py-3 bg-purple-600 text-white font-medium rounded-lg hover:bg-purple-700 transition-colors shadow-sm"
-                    >
-                      <CheckIcon className="h-5 w-5 mr-2" />
-                      Mark as Attended
-                    </button>
-                  )}
+
                   
                   {/* Reject/Cancel Action - for any non-approved status */}
                   {viewingRegistration.status !== 'rejected' && viewingRegistration.status !== 'cancelled' && (

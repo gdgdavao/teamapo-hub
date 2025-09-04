@@ -9,7 +9,8 @@ import {
   ArrowRightOnRectangleIcon,
   Bars3Icon,
   XMarkIcon,
-  UserCircleIcon
+  UserCircleIcon,
+  QrCodeIcon
 } from '@heroicons/react/24/outline';
 import { useAuth } from '../../contexts/AuthContext';
 import NotificationDropdown from './NotificationDropdown';
@@ -50,6 +51,7 @@ const DashboardSidebar: React.FC = () => {
     { name: 'Dashboard', href: '/admin/dashboard', icon: ChartBarIcon },
     { name: 'Events', href: '/events', icon: CalendarDaysIcon },
     { name: 'Attendees', href: '/attendees', icon: UserGroupIcon },
+    { name: 'Check-In', href: '/admin/checkin', icon: QrCodeIcon },
     { name: 'Users', href: '/users', icon: UserCircleIcon },
     { name: 'Analytics', href: '/analytics', icon: ChartBarIcon },
     { name: 'Certificates', href: '/certificates', icon: AcademicCapIcon },
@@ -57,6 +59,7 @@ const DashboardSidebar: React.FC = () => {
     { name: 'Dashboard', href: '/organizer/dashboard', icon: ChartBarIcon },
     { name: 'Events', href: '/events', icon: CalendarDaysIcon },
     { name: 'Attendees', href: '/attendees', icon: UserGroupIcon },
+    { name: 'Check-In', href: '/organizer/checkin', icon: QrCodeIcon },
     { name: 'Certificates', href: '/certificates', icon: AcademicCapIcon },
   ];
 

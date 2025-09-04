@@ -8,7 +8,8 @@ import {
   EyeIcon,
   PencilIcon,
   DocumentTextIcon,
-  AcademicCapIcon
+  AcademicCapIcon,
+  QrCodeIcon
 } from '@heroicons/react/24/outline';
 import OrganizerLayout from '../../components/organizer/OrganizerLayout';
 import { useAuth } from '../../contexts/AuthContext';
@@ -133,7 +134,24 @@ const OrganizerDashboardPage: React.FC = () => {
       </div>
 
       {/* Quick Actions */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <Link
+          to="/organizer/checkin"
+          className="bg-white rounded-lg shadow-sm p-6 hover:shadow-md transition-shadow group"
+        >
+          <div className="flex items-center">
+            <div className="flex items-center justify-center w-12 h-12 rounded-lg bg-emerald-500 group-hover:bg-emerald-600 transition-colors">
+              <QrCodeIcon className="w-6 h-6 text-white" />
+            </div>
+            <div className="ml-4">
+              <h3 className="text-lg font-medium text-gray-900 group-hover:text-emerald-600 transition-colors">
+                Check-In Station
+              </h3>
+              <p className="text-sm text-gray-600">Scan QR codes and check in attendees</p>
+            </div>
+          </div>
+        </Link>
+
         <Link
           to="/attendees"
           className="bg-white rounded-lg shadow-sm p-6 hover:shadow-md transition-shadow group"
