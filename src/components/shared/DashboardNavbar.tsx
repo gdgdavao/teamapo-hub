@@ -266,6 +266,8 @@ const DashboardNavbar: React.FC = () => {
               );
             })}
 
+
+
             {/* More menu for tablet */}
             {(isAdmin && (primaryNavItems.length > 4 || moreNavItems.length > 0)) && (
               <Menu as="div" className="relative">
@@ -318,6 +320,7 @@ const DashboardNavbar: React.FC = () => {
 
           {/* Right side - User menu (hidden on mobile) */}
           <div className="hidden lg:flex items-center space-x-2 sm:space-x-3">
+
             {/* Notifications */}
             {currentUser && (
               <NotificationDropdown userId={currentUser.uid} />
@@ -445,6 +448,8 @@ const DashboardNavbar: React.FC = () => {
                 </Link>
               );
             })}
+
+
           </nav>
 
           {/* Mobile Menu Footer */}

@@ -119,46 +119,43 @@ const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ userId }) =
     return time.toLocaleDateString();
   };
 
-  return (
-    <Menu as="div" className="relative w-full">
+    return (
+    <Menu as="div" className="relative">
       <Menu.Button
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex items-center justify-between p-3 text-gray-600 hover:text-gray-900 hover:bg-gray-50 rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
+        className={`flex items-center justify-center p-2 rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 ${
+          unreadCount > 0 
+            ? 'text-blue-600 bg-blue-50 hover:bg-blue-100' 
+            : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+        }`}
         title="Notifications"
       >
-        <div className="flex items-center space-x-3">
-          <div className="relative">
-            <BellIcon className="w-5 h-5" />
-            {unreadCount > 0 && (
-              <span className="absolute -top-1 -right-1 inline-flex items-center justify-center w-4 h-4 text-xs font-bold text-white bg-red-500 rounded-full">
-                {unreadCount > 9 ? '9+' : unreadCount}
-              </span>
-            )}
-          </div>
-          <span className="text-sm font-medium">Notifications</span>
+        <div className="relative">
+          <BellIcon className="w-5 h-5" />
+          {unreadCount > 0 && (
+            <span className="absolute -top-1 -right-1 inline-flex items-center justify-center w-4 h-4 text-xs font-bold text-white bg-red-500 rounded-full">
+              {unreadCount > 9 ? '9+' : unreadCount}
+            </span>
+          )}
         </div>
-        {unreadCount > 0 && (
-          <span className="text-xs font-medium text-blue-600 bg-blue-100 px-2 py-1 rounded-full">
-            {unreadCount}
-          </span>
-        )}
       </Menu.Button>
 
       <Transition
         as={Fragment}
         enter="transition ease-out duration-200"
-        enterFrom="transform opacity-0 scale-95 translate-y-1"
-        enterTo="transform opacity-100 scale-100 translate-y-0"
+        enterFrom="transform opacity-0 scale-95 translate-x-2"
+        enterTo="transform opacity-100 scale-100 translate-x-0"
         leave="transition ease-in duration-150"
-        leaveFrom="transform opacity-100 scale-100 translate-y-0"
-        leaveTo="transform opacity-0 scale-95 translate-y-1"
+        leaveFrom="transform opacity-100 scale-100 translate-x-0"
+        leaveTo="transform opacity-0 scale-95 translate-x-2"
       >
-        <Menu.Items className="absolute left-0 z-50 mt-2 w-80 origin-top-left rounded-lg bg-white shadow-xl ring-1 ring-black ring-opacity-5 focus:outline-none"
+        <Menu.Items className="absolute z-50 w-80 origin-top-left rounded-lg bg-white shadow-xl ring-1 ring-black ring-opacity-5 focus:outline-none"
           style={{ 
-            left: '100%', 
-            marginLeft: '0.5rem',
+            left: '100%',
             top: '0',
-            marginTop: '0'
+            marginLeft: '0.5rem',
+            maxHeight: 'calc(100vh - 6rem)',
+            overflowY: 'auto'
           }}
         >
           {/* Header */}

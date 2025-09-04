@@ -69,7 +69,7 @@ const DashboardSidebar: React.FC = () => {
       <div className="hidden lg:fixed lg:inset-y-0 lg:flex lg:w-64 lg:flex-col">
         <div className="flex min-h-0 flex-1 flex-col bg-white border-r border-gray-200 shadow-sm">
           {/* Logo and Brand */}
-          <div className="flex h-16 flex-shrink-0 items-center px-4 border-b border-gray-200">
+          <div className="flex h-16 flex-shrink-0 items-center justify-between px-4 border-b border-gray-200">
             <Link
               to={isAdmin ? "/admin/dashboard" : "/organizer/dashboard"}
               className="flex items-center transition-transform duration-200 hover:scale-105"
@@ -80,6 +80,13 @@ const DashboardSidebar: React.FC = () => {
                 className="h-7 w-auto"
               />
             </Link>
+            
+            {/* Notifications - Moved to top navbar */}
+            {currentUser && (
+              <div className="flex-shrink-0">
+                <NotificationDropdown userId={currentUser.uid} />
+              </div>
+            )}
           </div>
 
           {/* Navigation */}
@@ -108,14 +115,7 @@ const DashboardSidebar: React.FC = () => {
           </nav>
 
           {/* User section */}
-          <div className="flex-shrink-0 border-t border-gray-200 p-4 space-y-3">
-            {/* Notifications - Full width */}
-            {currentUser && (
-              <div className="w-full">
-                <NotificationDropdown userId={currentUser.uid} />
-              </div>
-            )}
-            
+          <div className="flex-shrink-0 border-t border-gray-200 p-4">
             {/* User info and logout */}
             <div className="flex items-center">
               <div className="flex-shrink-0">
