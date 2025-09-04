@@ -43,6 +43,16 @@ export interface EventFormData {
   venueAddress?: string;
   city: string;
 
+  // Speakers (as per PRD requirement)
+  speakers: {
+    id: string;
+    name: string;
+    title: string;
+    company?: string;
+    bio: string;
+    photoUrl?: string;
+  }[];
+
   // Pricing & Tickets
   ticketTypes: TicketType[];
   promoCodes: PromoCode[];
@@ -174,7 +184,7 @@ export class EventService {
           name: organizerInfo.name,
           email: organizerInfo.email
         },
-        speakers: [],
+        speakers: eventData.speakers || [],
         startDate: this.combineDateAndTime(eventData.startDate, eventData.startTime),
         endDate: this.combineDateAndTime(eventData.endDate, eventData.endTime),
         timezone: eventData.timezone,

@@ -49,13 +49,6 @@ export interface Event {
   isPublished: boolean;
   registrationDeadline?: Timestamp;
   requirements?: string[];
-  agenda?: AgendaItem[];
-  sponsors?: Sponsor[];
-  socialLinks?: {
-    website?: string;
-    discord?: string;
-    telegram?: string;
-  };
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -146,25 +139,6 @@ export interface TicketPricing {
   timeRemaining?: number; // in milliseconds for early bird
 }
 
-export interface AgendaItem {
-  id: string;
-  title: string;
-  description?: string;
-  startTime: string; // HH:mm format
-  endTime: string;
-  speaker?: string;
-  type: 'presentation' | 'workshop' | 'break' | 'networking' | 'panel';
-}
-
-export interface Sponsor {
-  id: string;
-  name: string;
-  logoUrl: string;
-  website?: string;
-  tier: 'platinum' | 'gold' | 'silver' | 'bronze' | 'community';
-  description?: string;
-}
-
 // Registration Types
 export interface Registration {
   id: string;
@@ -193,6 +167,7 @@ export interface Registration {
   pricing: TicketPricing;
   paymentStatus: PaymentStatus;
   paymentDetails?: PaymentDetails;
+  paymentProof?: PaymentProof;
   attendanceStatus: AttendanceStatus;
   checkInTime?: Timestamp;
   feedbackSubmitted: boolean;
@@ -436,8 +411,6 @@ export interface EventFormData {
   maxAttendees?: number;
   registrationDeadline?: Date;
   requirements?: string[];
-  agenda?: Omit<AgendaItem, 'id'>[];
-  sponsors?: Omit<Sponsor, 'id'>[];
 }
 
 export interface RegistrationFormData {

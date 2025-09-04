@@ -29,8 +29,6 @@ import AttendeesPage from './pages/organizer-new/AttendeesPage';
 import AdminDashboardPage from './pages/admin-new/AdminDashboardPage';
 import AdminAttendeesPage from './pages/admin-new/AdminAttendeesPage';
 import AdminUsersPage from './pages/admin-new/AdminUsersPage';
-import AdminFormsPage from './pages/admin-new/AdminFormsPage';
-import AdminSocialPage from './pages/admin-new/AdminSocialPage';
 import AdminPaymentVerificationPage from './pages/admin-new/AdminPaymentVerificationPage';
 
 // Shared Pages
@@ -169,18 +167,6 @@ const AppContent: React.FC = () => {
           </ProtectedRoute>
         } />
 
-        <Route path="/social" element={
-          <ProtectedRoute requiredRole="admin">
-            <AdminSocialPage />
-          </ProtectedRoute>
-        } />
-
-        <Route path="/payment-verification" element={
-          <ProtectedRoute requiredRole="admin">
-            <AdminPaymentVerificationPage />
-          </ProtectedRoute>
-        } />
-
         {/* Shared Routes - Available to both admin and organizer */}
         <Route path="/attendees" element={
           <ProtectedRoute>
@@ -197,12 +183,6 @@ const AppContent: React.FC = () => {
         <Route path="/certificates" element={
           <ProtectedRoute>
             <CertificatesPage />
-          </ProtectedRoute>
-        } />
-
-        <Route path="/forms" element={
-          <ProtectedRoute>
-            <AdminFormsPage />
           </ProtectedRoute>
         } />
 

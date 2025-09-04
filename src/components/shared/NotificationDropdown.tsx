@@ -120,16 +120,26 @@ const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ userId }) =
   };
 
   return (
-    <Menu as="div" className="relative">
+    <Menu as="div" className="relative w-full">
       <Menu.Button
         onClick={() => setIsOpen(!isOpen)}
-        className="relative p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-50 transition-all duration-200 transform hover:scale-110 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
+        className="w-full flex items-center justify-between p-3 text-gray-600 hover:text-gray-900 hover:bg-gray-50 rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
         title="Notifications"
       >
-        <BellIcon className="w-5 h-5" />
+        <div className="flex items-center space-x-3">
+          <div className="relative">
+            <BellIcon className="w-5 h-5" />
+            {unreadCount > 0 && (
+              <span className="absolute -top-1 -right-1 inline-flex items-center justify-center w-4 h-4 text-xs font-bold text-white bg-red-500 rounded-full">
+                {unreadCount > 9 ? '9+' : unreadCount}
+              </span>
+            )}
+          </div>
+          <span className="text-sm font-medium">Notifications</span>
+        </div>
         {unreadCount > 0 && (
-          <span className="absolute -top-1 -right-1 inline-flex items-center justify-center w-5 h-5 text-xs font-bold text-white bg-red-500 rounded-full animate-pulse">
-            {unreadCount > 99 ? '99+' : unreadCount}
+          <span className="text-xs font-medium text-blue-600 bg-blue-100 px-2 py-1 rounded-full">
+            {unreadCount}
           </span>
         )}
       </Menu.Button>
@@ -143,7 +153,14 @@ const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ userId }) =
         leaveFrom="transform opacity-100 scale-100 translate-y-0"
         leaveTo="transform opacity-0 scale-95 translate-y-1"
       >
-        <Menu.Items className="absolute right-0 z-50 mt-2 w-96 origin-top-right rounded-lg bg-white shadow-xl ring-1 ring-black ring-opacity-5 focus:outline-none">
+        <Menu.Items className="absolute left-0 z-50 mt-2 w-80 origin-top-left rounded-lg bg-white shadow-xl ring-1 ring-black ring-opacity-5 focus:outline-none"
+          style={{ 
+            left: '100%', 
+            marginLeft: '0.5rem',
+            top: '0',
+            marginTop: '0'
+          }}
+        >
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
             <h3 className="text-lg font-semibold text-gray-900">Notifications</h3>

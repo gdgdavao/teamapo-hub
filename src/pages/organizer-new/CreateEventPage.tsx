@@ -25,7 +25,8 @@ import {
   TagIcon,
   ArrowLeftIcon,
   HomeIcon,
-  ChevronRightIcon
+  ChevronRightIcon,
+  UserIcon
 } from '@heroicons/react/24/outline';
 import { FormBuilder, FormField } from '../../components/shared/FormBuilder';
 import { TicketType, PromoCode } from '../../types';
@@ -65,6 +66,16 @@ interface EventFormData {
   venueName?: string;
   venueAddress?: string;
   city: string;
+
+  // Speakers (as per PRD requirement)
+  speakers: {
+    id: string;
+    name: string;
+    title: string;
+    company?: string;
+    bio: string;
+    photoUrl?: string;
+  }[];
 
   // Pricing & Tickets
   ticketTypes: TicketType[];
@@ -115,6 +126,9 @@ const CreateEventPage: React.FC = () => {
     timezone: 'Asia/Manila',
     venueType: 'offline',
     city: 'Davao City',
+
+    // Speakers
+    speakers: [],
 
     // New ticket system
     ticketTypes: [],
@@ -209,6 +223,7 @@ const CreateEventPage: React.FC = () => {
           venueName: event.venue.name,
           venueAddress: event.venue.address,
           city: event.venue.city,
+          speakers: event.speakers || [],
           ticketTypes: event.ticketTypes,
           promoCodes: event.promoCodes || [],
           isPaid: event.ticketTypes.some(ticket => ticket.price > 0),
@@ -478,11 +493,12 @@ const CreateEventPage: React.FC = () => {
   const steps = [
     { id: 0, title: 'Basic Information', icon: DocumentTextIcon },
     { id: 1, title: 'Date & Venue', icon: CalendarDaysIcon },
-    { id: 2, title: 'Tickets & Pricing', icon: TicketIcon },
-    { id: 3, title: 'Promo Codes', icon: TagIcon },
-    { id: 4, title: 'Registration Form', icon: UserGroupIcon },
-    { id: 5, title: 'Feedback Form', icon: ChatBubbleLeftRightIcon },
-    { id: 6, title: 'Review & Publish', icon: CheckCircleIcon }
+    { id: 2, title: 'Speaker Profiles', icon: UserIcon },
+    { id: 3, title: 'Tickets & Pricing', icon: TicketIcon },
+    { id: 4, title: 'Promo Codes', icon: TagIcon },
+    { id: 5, title: 'Registration Form', icon: UserGroupIcon },
+    { id: 6, title: 'Feedback Form', icon: ChatBubbleLeftRightIcon },
+    { id: 7, title: 'Review & Publish', icon: CheckCircleIcon }
   ];
 
   const handleQRCodeUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -529,14 +545,16 @@ const CreateEventPage: React.FC = () => {
       case 1:
         return renderDateVenueStep();
       case 2:
-        return renderTicketManagementStep();
+        return renderSpeakerProfilesStep();
       case 3:
-        return renderPromoCodeStep();
+        return renderTicketManagementStep();
       case 4:
-        return renderFormBuilderStep('registration');
+        return renderPromoCodeStep();
       case 5:
-        return renderFormBuilderStep('feedback');
+        return renderFormBuilderStep('registration');
       case 6:
+        return renderFormBuilderStep('feedback');
+      case 7:
         return renderReviewStep();
       default:
         return null;
@@ -797,6 +815,166 @@ const CreateEventPage: React.FC = () => {
       )}
     </div>
   );
+
+  const renderSpeakerProfilesStep = () => {
+    const addSpeaker = () => {
+      const newSpeaker = {
+        id: `speaker_${Date.now()}`,
+        name: '',
+        title: '',
+        company: '',
+        bio: '',
+        photoUrl: ''
+      };
+      setFormData(prev => ({
+        ...prev,
+        speakers: [...prev.speakers, newSpeaker]
+      }));
+    };
+
+    const updateSpeaker = (index: number, updates: Partial<typeof formData.speakers[0]>) => {
+      setFormData(prev => ({
+        ...prev,
+        speakers: prev.speakers.map((speaker, i) =>
+          i === index ? { ...speaker, ...updates } : speaker
+        )
+      }));
+    };
+
+    const removeSpeaker = (index: number) => {
+      setFormData(prev => ({
+        ...prev,
+        speakers: prev.speakers.filter((_, i) => i !== index)
+      }));
+    };
+
+    return (
+      <div className="space-y-6">
+        {/* Step-specific guidance box */}
+        <div className="bg-blue-50 border-l-4 border-blue-400 p-4 rounded-r-lg">
+          <div className="flex items-center">
+            <div className="flex-shrink-0">
+              <UserIcon className="h-5 w-5 text-blue-400" />
+            </div>
+            <div className="ml-3">
+              <h3 className="text-sm font-medium text-blue-800">
+                Add Speaker Profiles
+              </h3>
+              <div className="mt-1 text-sm text-blue-700">
+                <p>Showcase the speakers at your event. Include their name, title, company, and a short bio as specified in the PRD.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900">Speaker Profiles</h3>
+            <p className="text-gray-600">Add speakers to highlight at your event</p>
+          </div>
+          <button
+            type="button"
+            onClick={addSpeaker}
+            className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+          >
+            <PlusIcon className="w-4 h-4" />
+            <span>Add Speaker</span>
+          </button>
+        </div>
+
+        {formData.speakers.length === 0 ? (
+          <div className="text-center py-12 bg-gray-50 rounded-lg">
+            <UserIcon className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+            <h3 className="text-lg font-medium text-gray-900 mb-2">No speakers yet</h3>
+            <p className="text-gray-600 mb-4">Add your first speaker to get started</p>
+            <button
+              type="button"
+              onClick={addSpeaker}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            >
+              Add Speaker
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-6">
+            {formData.speakers.map((speaker, index) => (
+              <div key={speaker.id} className="border border-gray-200 rounded-lg p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h4 className="text-lg font-medium text-gray-900">
+                    Speaker {index + 1}
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={() => removeSpeaker(index)}
+                    className="p-1 text-gray-400 hover:text-red-600"
+                  >
+                    <TrashIcon className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
+                    <input
+                      type="text"
+                      value={speaker.name}
+                      onChange={(e) => updateSpeaker(index, { name: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      placeholder="Speaker's full name"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Title/Role *</label>
+                    <input
+                      type="text"
+                      value={speaker.title}
+                      onChange={(e) => updateSpeaker(index, { title: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      placeholder="e.g., Senior Developer, CTO"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Company</label>
+                    <input
+                      type="text"
+                      value={speaker.company || ''}
+                      onChange={(e) => updateSpeaker(index, { company: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      placeholder="Company name"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Photo URL</label>
+                    <input
+                      type="url"
+                      value={speaker.photoUrl || ''}
+                      onChange={(e) => updateSpeaker(index, { photoUrl: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      placeholder="https://example.com/photo.jpg"
+                    />
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Bio *</label>
+                    <textarea
+                      value={speaker.bio}
+                      onChange={(e) => updateSpeaker(index, { bio: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      rows={3}
+                      placeholder="Short bio about the speaker..."
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const renderPricingPaymentStep = () => (
     <div className="space-y-6">

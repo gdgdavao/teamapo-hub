@@ -24,6 +24,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { RegistrationService } from '../../services/registrationService';
 import { EventService } from '../../services/eventService';
+import { PaymentService } from '../../services/paymentService';
 import { Registration as FirestoreRegistration, Event } from '../../types';
 
 // Utility function to format dates
@@ -61,6 +62,17 @@ interface Registration {
   status: 'pending' | 'approved' | 'rejected' | 'paid' | 'attended' | 'cancelled';
   registrationDate: string;
   paymentStatus?: 'pending' | 'paid' | 'failed' | 'refunded';
+  paymentProof?: {
+    id: string;
+    registrationId: string;
+    proofImageUrl?: string;
+    transactionId?: string;
+    submittedAt: string;
+    verificationStatus: 'pending' | 'approved' | 'rejected';
+    verifiedAt?: string;
+    verifiedBy?: string;
+    notes?: string;
+  };
   notes?: string;
   requirements?: string[];
   formSubmission?: Record<string, any>;
@@ -77,9 +89,12 @@ const AttendeesPage: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [eventFilter, setEventFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [viewMode, setViewMode] = useState<'attendees' | 'payments'>('attendees');
   const [selectedRegistrations, setSelectedRegistrations] = useState<string[]>([]);
   const [viewingRegistration, setViewingRegistration] = useState<Registration | null>(null);
   const [showingQRCode, setShowingQRCode] = useState<Registration | null>(null);
+  const [verifyingPayment, setVerifyingPayment] = useState<Registration | null>(null);
+  const [verificationNotes, setVerificationNotes] = useState('');
 
   // Load registrations and events from Firestore
   useEffect(() => {
@@ -159,6 +174,17 @@ const AttendeesPage: React.FC = () => {
                 status: getDisplayStatus(reg),
                 registrationDate: reg.registrationDate.toDate().toISOString(),
                 paymentStatus: mapPaymentStatus(reg.paymentStatus),
+                paymentProof: reg.paymentProof ? {
+                  id: reg.paymentProof.id,
+                  registrationId: reg.paymentProof.registrationId,
+                  proofImageUrl: reg.paymentProof.proofImageUrl,
+                  transactionId: reg.paymentProof.transactionId,
+                  submittedAt: reg.paymentProof.submittedAt.toDate().toISOString(),
+                  verificationStatus: reg.paymentProof.verificationStatus,
+                  verifiedAt: reg.paymentProof.verifiedAt ? reg.paymentProof.verifiedAt.toDate().toISOString() : undefined,
+                  verifiedBy: reg.paymentProof.verifiedBy,
+                  notes: reg.paymentProof.notes
+                } : undefined,
                 notes: (reg as any).adminNotes || undefined,
                 requirements: undefined,
                 formSubmission: (reg as any).customResponses || undefined,
@@ -185,6 +211,13 @@ const AttendeesPage: React.FC = () => {
 
     fetchData();
   }, [userProfile?.uid]);
+
+  // Debug logging
+  useEffect(() => {
+    console.log('Current registrations:', registrations);
+    console.log('View mode:', viewMode);
+    console.log('Viewing registration:', viewingRegistration);
+  }, [registrations, viewMode, viewingRegistration]);
 
   const handleCheckIn = async (registrationId: string) => {
     try {
@@ -280,12 +313,94 @@ const AttendeesPage: React.FC = () => {
     setSelectedRegistrations([]);
   };
 
+  const handlePaymentVerification = async (registrationId: string, status: 'approved' | 'rejected') => {
+    if (!userProfile?.uid) return;
+    
+    try {
+      await PaymentService.verifyPaymentProof(
+        registrationId,
+        status,
+        userProfile.uid,
+        userProfile.displayName || 'Organizer',
+        verificationNotes
+      );
+
+      // Refresh registrations data
+      const organizerEvents = await EventService.getEventsByOrganizer(userProfile.uid);
+      const allRegistrations: Registration[] = [];
+      
+      for (const event of organizerEvents) {
+        const eventRegistrations = await RegistrationService.getEventRegistrations(event.id);
+        const transformedRegs: Registration[] = eventRegistrations.map(reg => {
+          // Transform registration data (same logic as in useEffect)
+          const getDisplayStatus = (fsReg: any): Registration['status'] => {
+            const regStatus = fsReg.attendanceStatus || fsReg.status;
+            if (regStatus === 'checked_in' || regStatus === 'attended') return 'attended';
+            if (regStatus === 'approved') return 'approved';
+            if (regStatus === 'rejected') return 'rejected';
+            if (regStatus === 'cancelled') return 'cancelled';
+            
+            if (fsReg.paymentStatus === 'paid') return 'paid';
+            if (fsReg.paymentStatus === 'pending') return 'pending';
+            return 'pending';
+          };
+
+          const mapPaymentStatus = (status: any): Registration['paymentStatus'] => {
+            if (status === 'paid' || status === 'completed') return 'paid';
+            if (status === 'pending' || status === 'processing') return 'pending';
+            if (status === 'failed') return 'failed';
+            if (status === 'refunded') return 'refunded';
+            return 'pending';
+          };
+
+          return {
+            id: reg.id,
+            attendee: {
+              id: reg.userId || reg.id,
+              name: reg.userDetails.name,
+              email: reg.userDetails.email,
+              phone: reg.userDetails.phoneNumber,
+              organization: reg.userDetails.organization,
+            },
+            event: {
+              id: event.id,
+              title: event.title,
+              date: event.startDate.toDate().toISOString(),
+              venue: event.venue?.name || event.venue?.address || 'TBA',
+              ticketPrice: reg.totalAmount || 0
+            },
+            status: getDisplayStatus(reg),
+            registrationDate: reg.registrationDate.toDate().toISOString(),
+            paymentStatus: mapPaymentStatus(reg.paymentStatus),
+            qrCode: reg.qrCode,
+            checkInTime: reg.checkInTime?.toDate().toISOString()
+          };
+        });
+        allRegistrations.push(...transformedRegs);
+      }
+      
+      setRegistrations(allRegistrations);
+      setVerifyingPayment(null);
+      setVerificationNotes('');
+      
+      console.log(`Payment ${status} successfully`);
+    } catch (error) {
+      console.error('Error verifying payment:', error);
+      alert('Failed to verify payment. Please try again.');
+    }
+  };
+
   const filteredRegistrations = registrations.filter(registration => {
     const matchesSearch = 
       registration.attendee.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       registration.attendee.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
       registration.event.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
       registration.attendee.organization?.toLowerCase().includes(searchTerm.toLowerCase());
+    
+    // In payment verification mode, only show registrations with pending payments
+    if (viewMode === 'payments') {
+      return matchesSearch && registration.paymentStatus === 'pending';
+    }
     
     const matchesStatus = statusFilter === 'all' || registration.status === statusFilter;
     const matchesEvent = eventFilter === 'all' || registration.event.id === eventFilter;
@@ -384,6 +499,46 @@ const AttendeesPage: React.FC = () => {
         </div>
       </div>
 
+      {/* View Mode Tabs */}
+      <div className="border-b border-gray-200 bg-white">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <nav className="-mb-px flex">
+            <button
+              onClick={() => {
+                setViewMode('attendees');
+                setStatusFilter('all'); // Reset filter when switching views
+              }}
+              className={`py-4 px-6 text-sm font-medium border-b-2 transition-colors ${
+                viewMode === 'attendees'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              All Attendees
+              <span className="ml-2 bg-gray-100 text-gray-900 py-0.5 px-2.5 rounded-full text-xs">
+                {registrations.length}
+              </span>
+            </button>
+            <button
+              onClick={() => {
+                setViewMode('payments');
+                setStatusFilter('pending'); // Auto-filter to pending payments
+              }}
+              className={`py-4 px-6 text-sm font-medium border-b-2 transition-colors ${
+                viewMode === 'payments'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              Payment Verification
+              <span className="ml-2 bg-yellow-100 text-yellow-800 py-0.5 px-2.5 rounded-full text-xs">
+                {registrations.filter(r => r.paymentStatus === 'pending').length}
+              </span>
+            </button>
+          </nav>
+        </div>
+      </div>
+
       {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <div className="space-y-6">
@@ -396,7 +551,7 @@ const AttendeesPage: React.FC = () => {
               </p>
             </div>
             <div className="mt-4 sm:mt-0 flex items-center space-x-3">
-              {selectedRegistrations.length > 0 && (
+              {selectedRegistrations.length > 0 && viewMode !== 'payments' && (
                 <button
                   onClick={handleBulkCheckIn}
                   className="inline-flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium"
@@ -605,10 +760,31 @@ const AttendeesPage: React.FC = () => {
                             {registration.attendee.name}
                           </h3>
                           <div className="flex items-center space-x-1">
-                            {getStatusIcon(registration.status)}
-                            <span className={`px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(registration.status)}`}>
-                              {registration.status}
-                            </span>
+                            {viewMode === 'payments' ? (
+                              <>
+                                <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                                  registration.paymentStatus === 'paid' ? 'bg-green-100 text-green-800' :
+                                  registration.paymentStatus === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                                  'bg-red-100 text-red-800'
+                                }`}>
+                                  Payment: {registration.paymentStatus}
+                                </span>
+                                {registration.paymentStatus === 'pending' && (
+                                  <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                                    registration.paymentProof ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-600'
+                                  }`}>
+                                    {registration.paymentProof ? '📄 Proof Submitted' : '❌ No Proof'}
+                                  </span>
+                                )}
+                              </>
+                            ) : (
+                              <>
+                                {getStatusIcon(registration.status)}
+                                <span className={`px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(registration.status)}`}>
+                                  {registration.status}
+                                </span>
+                              </>
+                            )}
                           </div>
                         </div>
                         
@@ -659,30 +835,72 @@ const AttendeesPage: React.FC = () => {
 
                       {/* Action Buttons */}
                       <div className="flex items-center space-x-2">
-                        {registration.status !== 'attended' && registration.status !== 'cancelled' && (
-                          <button
-                            onClick={() => handleCheckIn(registration.id)}
-                            className="inline-flex items-center px-3 py-1.5 bg-green-600 text-white text-sm rounded-md hover:bg-green-700 transition-colors"
-                          >
-                            <CheckIcon className="w-4 h-4 mr-1" />
-                            Check In
-                          </button>
-                        )}
-                        <button
-                          onClick={() => setViewingRegistration(registration)}
-                          className="inline-flex items-center px-3 py-1.5 bg-white border border-gray-300 text-gray-700 text-sm rounded-md hover:bg-gray-50 transition-colors"
-                        >
-                          <EyeIcon className="w-4 h-4 mr-1" />
-                          View
-                        </button>
-                        {registration.qrCode && (
-                          <button
-                            onClick={() => setShowingQRCode(registration)}
-                            className="inline-flex items-center px-3 py-1.5 bg-white border border-gray-300 text-gray-700 text-sm rounded-md hover:bg-gray-50 transition-colors"
-                          >
-                            <QrCodeIcon className="w-4 h-4 mr-1" />
-                            QR
-                          </button>
+                        {viewMode === 'payments' ? (
+                          // Payment verification buttons
+                          <>
+                            {registration.paymentStatus === 'pending' && registration.paymentProof && (
+                              <>
+                                <button
+                                  onClick={() => handlePaymentVerification(registration.id, 'approved')}
+                                  className="inline-flex items-center px-3 py-1.5 bg-green-600 text-white text-sm rounded-md hover:bg-green-700 transition-colors"
+                                >
+                                  <CheckIcon className="w-4 h-4 mr-1" />
+                                  Approve
+                                </button>
+                                <button
+                                  onClick={() => handlePaymentVerification(registration.id, 'rejected')}
+                                  className="inline-flex items-center px-3 py-1.5 bg-red-600 text-white text-sm rounded-md hover:bg-red-700 transition-colors"
+                                >
+                                  <XMarkIcon className="w-4 h-4 mr-1" />
+                                  Reject
+                                </button>
+                              </>
+                            )}
+                            {registration.paymentStatus === 'pending' && !registration.paymentProof && (
+                              <span className="inline-flex items-center px-3 py-1.5 bg-gray-100 text-gray-600 text-sm rounded-md">
+                                Waiting for proof
+                              </span>
+                            )}
+                            <button
+                              onClick={() => {
+                                console.log('View Payment clicked for:', registration);
+                                setViewingRegistration(registration);
+                              }}
+                              className="inline-flex items-center px-3 py-1.5 bg-white border border-gray-300 text-gray-700 text-sm rounded-md hover:bg-gray-50 transition-colors"
+                            >
+                              <EyeIcon className="w-4 h-4 mr-1" />
+                              View Payment
+                            </button>
+                          </>
+                        ) : (
+                          // Regular attendee management buttons
+                          <>
+                            {registration.status !== 'attended' && registration.status !== 'cancelled' && (
+                              <button
+                                onClick={() => handleCheckIn(registration.id)}
+                                className="inline-flex items-center px-3 py-1.5 bg-green-600 text-white text-sm rounded-md hover:bg-green-700 transition-colors"
+                              >
+                                <CheckIcon className="w-4 h-4 mr-1" />
+                                Check In
+                              </button>
+                            )}
+                            <button
+                              onClick={() => setViewingRegistration(registration)}
+                              className="inline-flex items-center px-3 py-1.5 bg-white border border-gray-300 text-gray-700 text-sm rounded-md hover:bg-gray-50 transition-colors"
+                            >
+                              <EyeIcon className="w-4 h-4 mr-1" />
+                              View
+                            </button>
+                            {registration.qrCode && (
+                              <button
+                                onClick={() => setShowingQRCode(registration)}
+                                className="inline-flex items-center px-3 py-1.5 bg-white border border-gray-300 text-gray-700 text-sm rounded-md hover:bg-gray-50 transition-colors"
+                              >
+                                <QrCodeIcon className="w-4 h-4 mr-1" />
+                                QR
+                              </button>
+                            )}
+                          </>
                         )}
                       </div>
                     </div>
@@ -699,7 +917,7 @@ const AttendeesPage: React.FC = () => {
                 {/* Header */}
                 <div className="flex items-center justify-between p-4 border-b">
                   <h2 className="text-lg font-semibold text-gray-900">
-                    Attendee Details
+                    {viewMode === 'payments' ? 'Payment Verification' : 'Attendee Details'}
                   </h2>
                   <button
                     onClick={() => setViewingRegistration(null)}
@@ -711,83 +929,229 @@ const AttendeesPage: React.FC = () => {
                 
                 {/* Content */}
                 <div className="p-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {/* Attendee Info */}
-                    <div className="space-y-4">
-                      <div>
-                        <span className="text-sm font-medium text-gray-700">Name</span>
-                        <div className="text-lg font-semibold text-gray-900">
-                          {viewingRegistration.attendee.name}
+                  {viewMode === 'payments' ? (
+                    // Payment verification view
+                    <div className="space-y-6">
+                      {/* Payment Status */}
+                      <div className="bg-gray-50 p-4 rounded-lg">
+                        <h3 className="text-lg font-semibold text-gray-900 mb-3">Payment Information</h3>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <span className="text-sm font-medium text-gray-700">Payment Status</span>
+                            <div className={`inline-block px-2 py-1 text-xs font-medium rounded-full ml-2 ${
+                              viewingRegistration.paymentStatus === 'paid' ? 'bg-green-100 text-green-800' :
+                              viewingRegistration.paymentStatus === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                              'bg-red-100 text-red-800'
+                            }`}>
+                              {viewingRegistration.paymentStatus}
+                            </div>
+                          </div>
+                          <div>
+                            <span className="text-sm font-medium text-gray-700">Amount</span>
+                            <div className="text-gray-900 font-semibold">
+                              ₱{viewingRegistration.event.ticketPrice.toLocaleString()}
+                            </div>
+                          </div>
                         </div>
                       </div>
+
+                      {/* Attendee Info */}
                       <div>
-                        <span className="text-sm font-medium text-gray-700">Email</span>
-                        <div className="text-gray-900">
-                          {viewingRegistration.attendee.email}
+                        <h3 className="text-lg font-semibold text-gray-900 mb-3">Attendee Details</h3>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <span className="text-sm font-medium text-gray-700">Name</span>
+                            <div className="text-gray-900">
+                              {viewingRegistration.attendee.name}
+                            </div>
+                          </div>
+                          <div>
+                            <span className="text-sm font-medium text-gray-700">Email</span>
+                            <div className="text-gray-900">
+                              {viewingRegistration.attendee.email}
+                            </div>
+                          </div>
                         </div>
                       </div>
-                      <div>
-                        <span className="text-sm font-medium text-gray-700">Phone</span>
-                        <div className="text-gray-900">
-                          {viewingRegistration.attendee.phone || 'N/A'}
-                        </div>
-                      </div>
-                      <div>
-                        <span className="text-sm font-medium text-gray-700">Organization</span>
-                        <div className="text-gray-900">
-                          {viewingRegistration.attendee.organization || 'N/A'}
-                        </div>
-                      </div>
-                      <div>
-                        <span className="text-sm font-medium text-gray-700">Status</span>
-                        <div className={`inline-block px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(viewingRegistration.status)}`}>
-                          {viewingRegistration.status}
-                        </div>
-                      </div>
-                    </div>
-                    
-                    {/* Event Info */}
-                    <div className="space-y-4">
-                      <div>
-                        <span className="text-sm font-medium text-gray-700">Event</span>
-                        <div className="text-lg font-semibold text-gray-900">
-                          {viewingRegistration.event.title}
-                        </div>
-                      </div>
-                      <div>
-                        <span className="text-sm font-medium text-gray-700">Date & Time</span>
-                        <div className="text-gray-900">
-                          {formatDate(viewingRegistration.event.date)}
-                        </div>
-                      </div>
-                      <div>
-                        <span className="text-sm font-medium text-gray-700">Venue</span>
-                        <div className="text-gray-900">
-                          {viewingRegistration.event.venue}
-                        </div>
-                      </div>
-                      <div>
-                        <span className="text-sm font-medium text-gray-700">Ticket Price</span>
-                        <div className="text-gray-900">
-                          ₱{viewingRegistration.event.ticketPrice.toLocaleString()}
-                        </div>
-                      </div>
-                      <div>
-                        <span className="text-sm font-medium text-gray-700">Registration Date</span>
-                        <div className="text-gray-900">
-                          {formatDate(viewingRegistration.registrationDate)}
-                        </div>
-                      </div>
-                      {viewingRegistration.checkInTime && (
-                        <div>
-                          <span className="text-sm font-medium text-gray-700">Check-in Time</span>
-                          <div className="text-gray-900">
-                            {formatDate(viewingRegistration.checkInTime)}
+
+                      {/* Payment Proof Section */}
+                      {viewingRegistration.paymentProof && (
+                        <div className="bg-blue-50 p-4 rounded-lg">
+                          <h3 className="text-lg font-semibold text-gray-900 mb-3">Payment Proof</h3>
+                          <div className="space-y-4">
+                            <div className="grid grid-cols-2 gap-4">
+                              <div>
+                                <span className="text-sm font-medium text-gray-700">Transaction ID</span>
+                                <div className="text-gray-900 font-mono text-sm">
+                                  {viewingRegistration.paymentProof.transactionId || 'N/A'}
+                                </div>
+                              </div>
+                              <div>
+                                <span className="text-sm font-medium text-gray-700">Submitted</span>
+                                <div className="text-gray-900 text-sm">
+                                  {formatDate(viewingRegistration.paymentProof.submittedAt)}
+                                </div>
+                              </div>
+                            </div>
+                            
+                            {viewingRegistration.paymentProof.notes && (
+                              <div>
+                                <span className="text-sm font-medium text-gray-700">Notes</span>
+                                <div className="text-gray-900 text-sm mt-1">
+                                  {viewingRegistration.paymentProof.notes}
+                                </div>
+                              </div>
+                            )}
+                            
+                            {viewingRegistration.paymentProof.proofImageUrl && (
+                              <div>
+                                <span className="text-sm font-medium text-gray-700">Payment Screenshot</span>
+                                <div className="mt-2">
+                                  <img
+                                    src={viewingRegistration.paymentProof.proofImageUrl}
+                                    alt="Payment proof"
+                                    className="max-w-full h-auto max-h-64 rounded-lg border border-gray-200 cursor-pointer"
+                                    onClick={() => window.open(viewingRegistration.paymentProof?.proofImageUrl, '_blank')}
+                                  />
+                                  <p className="text-xs text-gray-500 mt-1">Click to view full size</p>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         </div>
                       )}
+
+                      {/* No Payment Proof Warning */}
+                      {!viewingRegistration.paymentProof && viewingRegistration.paymentStatus === 'pending' && (
+                        <div className="bg-yellow-50 border border-yellow-200 p-4 rounded-lg">
+                          <div className="flex">
+                            <div className="flex-shrink-0">
+                              <svg className="h-5 w-5 text-yellow-400" viewBox="0 0 20 20" fill="currentColor">
+                                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                              </svg>
+                            </div>
+                            <div className="ml-3">
+                              <h3 className="text-sm font-medium text-yellow-800">No Payment Proof Submitted</h3>
+                              <p className="text-sm text-yellow-700 mt-1">
+                                This registration is marked as pending payment, but no payment proof has been submitted yet.
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Payment Actions */}
+                      <div className="flex justify-between pt-4 border-t">
+                        <button
+                          onClick={() => setViewingRegistration(null)}
+                          className="px-4 py-2 bg-white border border-gray-300 text-gray-700 text-sm rounded-md hover:bg-gray-50 transition-colors"
+                        >
+                          Close
+                        </button>
+                        {viewingRegistration.paymentStatus === 'pending' && viewingRegistration.paymentProof && (
+                          <div className="flex space-x-3">
+                            <button
+                              onClick={() => {
+                                handlePaymentVerification(viewingRegistration.id, 'rejected');
+                                setViewingRegistration(null);
+                              }}
+                              className="px-4 py-2 bg-red-600 text-white text-sm rounded-md hover:bg-red-700 transition-colors"
+                            >
+                              Reject Payment
+                            </button>
+                            <button
+                              onClick={() => {
+                                handlePaymentVerification(viewingRegistration.id, 'approved');
+                                setViewingRegistration(null);
+                              }}
+                              className="px-4 py-2 bg-green-600 text-white text-sm rounded-md hover:bg-green-700 transition-colors"
+                            >
+                              Approve Payment
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    // Regular attendee view
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Attendee Info */}
+                      <div className="space-y-4">
+                        <div>
+                          <span className="text-sm font-medium text-gray-700">Name</span>
+                          <div className="text-lg font-semibold text-gray-900">
+                            {viewingRegistration.attendee.name}
+                          </div>
+                        </div>
+                        <div>
+                          <span className="text-sm font-medium text-gray-700">Email</span>
+                          <div className="text-gray-900">
+                            {viewingRegistration.attendee.email}
+                          </div>
+                        </div>
+                        <div>
+                          <span className="text-sm font-medium text-gray-700">Phone</span>
+                          <div className="text-gray-900">
+                            {viewingRegistration.attendee.phone || 'N/A'}
+                          </div>
+                        </div>
+                        <div>
+                          <span className="text-sm font-medium text-gray-700">Organization</span>
+                          <div className="text-gray-900">
+                            {viewingRegistration.attendee.organization || 'N/A'}
+                          </div>
+                        </div>
+                        <div>
+                          <span className="text-sm font-medium text-gray-700">Status</span>
+                          <div className={`inline-block px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(viewingRegistration.status)}`}>
+                            {viewingRegistration.status}
+                          </div>
+                        </div>
+                      </div>
+                      
+                      {/* Event Info */}
+                      <div className="space-y-4">
+                        <div>
+                          <span className="text-sm font-medium text-gray-700">Event</span>
+                          <div className="text-lg font-semibold text-gray-900">
+                            {viewingRegistration.event.title}
+                          </div>
+                        </div>
+                        <div>
+                          <span className="text-sm font-medium text-gray-700">Date & Time</span>
+                          <div className="text-gray-900">
+                            {formatDate(viewingRegistration.event.date)}
+                          </div>
+                        </div>
+                        <div>
+                          <span className="text-sm font-medium text-gray-700">Venue</span>
+                          <div className="text-gray-900">
+                            {viewingRegistration.event.venue}
+                          </div>
+                        </div>
+                        <div>
+                          <span className="text-sm font-medium text-gray-700">Ticket Price</span>
+                          <div className="text-gray-900">
+                            ₱{viewingRegistration.event.ticketPrice.toLocaleString()}
+                          </div>
+                        </div>
+                        <div>
+                          <span className="text-sm font-medium text-gray-700">Registration Date</span>
+                          <div className="text-gray-900">
+                            {formatDate(viewingRegistration.registrationDate)}
+                          </div>
+                        </div>
+                        {viewingRegistration.checkInTime && (
+                          <div>
+                            <span className="text-sm font-medium text-gray-700">Check-in Time</span>
+                            <div className="text-gray-900">
+                              {formatDate(viewingRegistration.checkInTime)}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                   
                   {/* Notes and QR Code */}
                   <div className="mt-6 space-y-4">
@@ -825,28 +1189,30 @@ const AttendeesPage: React.FC = () => {
                 </div>
                 
                 {/* Footer */}
-                <div className="flex justify-between items-center p-4 border-t">
-                  <div className="flex space-x-2">
-                    {viewingRegistration.status !== 'attended' && viewingRegistration.status !== 'cancelled' && (
-                      <button
-                        onClick={() => {
-                          handleCheckIn(viewingRegistration.id);
-                          setViewingRegistration(null);
-                        }}
-                        className="inline-flex items-center px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors"
-                      >
-                        <CheckIcon className="w-4 h-4 mr-2" />
-                        Check In
-                      </button>
-                    )}
+                {viewMode !== 'payments' && (
+                  <div className="flex justify-between items-center p-4 border-t">
+                    <div className="flex space-x-2">
+                      {viewingRegistration.status !== 'attended' && viewingRegistration.status !== 'cancelled' && (
+                        <button
+                          onClick={() => {
+                            handleCheckIn(viewingRegistration.id);
+                            setViewingRegistration(null);
+                          }}
+                          className="inline-flex items-center px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors"
+                        >
+                          <CheckIcon className="w-4 h-4 mr-2" />
+                          Check In
+                        </button>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => setViewingRegistration(null)}
+                      className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
+                    >
+                      Close
+                    </button>
                   </div>
-                  <button
-                    onClick={() => setViewingRegistration(null)}
-                    className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
-                  >
-                    Close
-                  </button>
-                </div>
+                )}
               </div>
             </div>
           )}

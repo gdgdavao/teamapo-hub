@@ -21,6 +21,7 @@ import OrganizerLayout from '../../components/organizer/OrganizerLayout';
 import { useAuth } from '../../contexts/AuthContext';
 import { RegistrationService } from '../../services/registrationService';
 import { EventService } from '../../services/eventService';
+import { PaymentService } from '../../services/paymentService';
 import { Registration as FirestoreRegistration, Event } from '../../types';
 
 // Utility function to format dates
@@ -58,6 +59,17 @@ interface Registration {
   status: 'pending' | 'approved' | 'rejected' | 'paid' | 'attended' | 'cancelled';
   registrationDate: string;
   paymentStatus?: 'pending' | 'paid' | 'failed' | 'refunded';
+  paymentProof?: {
+    id: string;
+    registrationId: string;
+    proofImageUrl?: string;
+    transactionId?: string;
+    submittedAt: string;
+    verificationStatus: 'pending' | 'approved' | 'rejected';
+    verifiedAt?: string;
+    verifiedBy?: string;
+    notes?: string;
+  };
   notes?: string;
   requirements?: string[];
   formSubmission?: Record<string, any>;
@@ -75,6 +87,7 @@ const AdminAttendeesPage: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<string>('pending');
   const [eventFilter, setEventFilter] = useState<string>('all');
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
+  const [viewMode, setViewMode] = useState<'attendees' | 'payments'>('attendees');
   const [selectedRegistrations, setSelectedRegistrations] = useState<string[]>([]);
   const [viewingRegistration, setViewingRegistration] = useState<Registration | null>(null);
   const [events, setEvents] = useState<Event[]>([]);
@@ -172,6 +185,17 @@ const AdminAttendeesPage: React.FC = () => {
             status: getDisplayStatus(reg),
             registrationDate: reg.registrationDate.toDate().toISOString(),
             paymentStatus: mapPaymentStatus(reg.paymentStatus),
+            paymentProof: reg.paymentProof ? {
+              id: reg.paymentProof.id,
+              registrationId: reg.paymentProof.registrationId,
+              proofImageUrl: reg.paymentProof.proofImageUrl,
+              transactionId: reg.paymentProof.transactionId,
+              submittedAt: reg.paymentProof.submittedAt.toDate().toISOString(),
+              verificationStatus: reg.paymentProof.verificationStatus,
+              verifiedAt: reg.paymentProof.verifiedAt ? reg.paymentProof.verifiedAt.toDate().toISOString() : undefined,
+              verifiedBy: reg.paymentProof.verifiedBy,
+              notes: reg.paymentProof.notes
+            } : undefined,
             notes: (reg as any).adminNotes || undefined,
             requirements: undefined,
             formSubmission: (reg as any).customResponses || undefined,
@@ -284,6 +308,46 @@ const AdminAttendeesPage: React.FC = () => {
     updateBulkStatus();
   };
 
+  const handlePaymentVerification = async (registrationId: string, action: 'approved' | 'rejected') => {
+    try {
+      // Find the registration to get the payment proof ID
+      const registration = registrations.find(r => r.id === registrationId);
+      if (!registration?.paymentProof) {
+        throw new Error('No payment proof found for this registration');
+      }
+
+      await PaymentService.verifyPaymentProof(
+        registration.paymentProof.id, 
+        action, 
+        userProfile?.uid || 'admin',
+        userProfile?.displayName || 'Admin'
+      );
+      
+      // Update local state
+      setRegistrations(prev => 
+        prev.map(reg => 
+          reg.id === registrationId 
+            ? { 
+                ...reg, 
+                paymentStatus: action === 'approved' ? 'paid' : 'failed',
+                paymentProof: reg.paymentProof ? {
+                  ...reg.paymentProof,
+                  verificationStatus: action,
+                  verifiedAt: new Date().toISOString(),
+                  verifiedBy: userProfile?.uid || 'admin'
+                } : reg.paymentProof
+              }
+            : reg
+        )
+      );
+      
+      console.log(`Payment ${action} for registration ${registrationId}`);
+    } catch (error) {
+      console.error('Failed to update payment status:', error);
+      alert(`Failed to ${action} payment. Please try again.`);
+    }
+  };
+
   const toggleRegistrationSelection = (registrationId: string) => {
     setSelectedRegistrations(prev => 
       prev.includes(registrationId)
@@ -308,6 +372,12 @@ const AdminAttendeesPage: React.FC = () => {
       registration.event.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
       registration.attendee.organization?.toLowerCase().includes(searchTerm.toLowerCase());
     
+    // In payment verification mode, only show registrations with pending payments
+    if (viewMode === 'payments') {
+      return matchesSearch && registration.paymentStatus === 'pending';
+    }
+    
+    // In regular attendee mode, apply all filters
     const matchesStatus = statusFilter === 'all' || registration.status === statusFilter;
     const matchesEvent = eventFilter === 'all' || registration.event.id === eventFilter;
     const matchesPriority = priorityFilter === 'all' || registration.priority === priorityFilter;
@@ -395,6 +465,32 @@ const AdminAttendeesPage: React.FC = () => {
       actions={headerActions}
     >
       <div className="space-y-6">
+        {/* Tab Navigation */}
+        <div className="bg-white rounded-lg border border-gray-200 p-1">
+          <div className="flex space-x-1">
+            <button
+              onClick={() => setViewMode('attendees')}
+              className={`flex-1 px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+                viewMode === 'attendees'
+                  ? 'bg-blue-100 text-blue-700'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              👥 Attendee Management
+            </button>
+            <button
+              onClick={() => setViewMode('payments')}
+              className={`flex-1 px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+                viewMode === 'payments'
+                  ? 'bg-blue-100 text-blue-700'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              💳 Payment Verification
+            </button>
+          </div>
+        </div>
+
         {/* Quick Stats */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
           <div className="bg-white rounded-xl border border-gray-200 p-6">
@@ -600,10 +696,31 @@ const AdminAttendeesPage: React.FC = () => {
                           {registration.attendee.name}
                         </h3>
                         <div className="flex items-center space-x-1">
-                          {getStatusIcon(registration.status)}
-                          <span className={`px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(registration.status)}`}>
-                            {registration.status}
-                          </span>
+                          {viewMode === 'payments' ? (
+                            <>
+                              <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                                registration.paymentStatus === 'paid' ? 'bg-green-100 text-green-800' :
+                                registration.paymentStatus === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                                'bg-red-100 text-red-800'
+                              }`}>
+                                Payment: {registration.paymentStatus}
+                              </span>
+                              {registration.paymentStatus === 'pending' && (
+                                <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                                  registration.paymentProof ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-600'
+                                }`}>
+                                  {registration.paymentProof ? '📄 Proof Submitted' : '❌ No Proof'}
+                                </span>
+                              )}
+                            </>
+                          ) : (
+                            <>
+                              {getStatusIcon(registration.status)}
+                              <span className={`px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(registration.status)}`}>
+                                {registration.status}
+                              </span>
+                            </>
+                          )}
                         </div>
                       </div>
                       
@@ -647,24 +764,67 @@ const AdminAttendeesPage: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Action Buttons for Pending */}
-                  {registration.status === 'pending' && (
-                    <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-100">
-                      <div className="flex items-center space-x-2 ml-4">
-                        <button
-                          onClick={() => handleStatusChange(registration.id, 'approved')}
-                          className="btn-primary text-sm px-4 py-2"
-                        >
-                          Approve
-                        </button>
-                        <button
-                          onClick={() => handleStatusChange(registration.id, 'rejected')}
-                          className="btn-danger text-sm px-4 py-2"
-                        >
-                          Reject
-                        </button>
+                  {/* Action Buttons */}
+                  {viewMode === 'payments' ? (
+                    // Payment verification buttons
+                    registration.paymentStatus === 'pending' && (
+                      <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-100">
+                        <div className="flex items-center space-x-2 ml-4">
+                          {registration.paymentProof ? (
+                            <>
+                              <button
+                                onClick={() => handlePaymentVerification(registration.id, 'approved')}
+                                className="btn-primary text-sm px-4 py-2"
+                              >
+                                Approve Payment
+                              </button>
+                              <button
+                                onClick={() => handlePaymentVerification(registration.id, 'rejected')}
+                                className="btn-danger text-sm px-4 py-2"
+                              >
+                                Reject Payment
+                              </button>
+                            </>
+                          ) : (
+                            <span className="text-sm text-gray-500 italic">
+                              Waiting for payment proof submission
+                            </span>
+                          )}
+                          <button
+                            onClick={() => setViewingRegistration(registration)}
+                            className="btn-outline text-sm px-4 py-2"
+                          >
+                            View Proof
+                          </button>
+                        </div>
                       </div>
-                    </div>
+                    )
+                  ) : (
+                    // Regular attendee management buttons  
+                    registration.status === 'pending' && (
+                      <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-100">
+                        <div className="flex items-center space-x-2 ml-4">
+                          <button
+                            onClick={() => handleStatusChange(registration.id, 'approved')}
+                            className="btn-primary text-sm px-4 py-2"
+                          >
+                            Approve
+                          </button>
+                          <button
+                            onClick={() => handleStatusChange(registration.id, 'rejected')}
+                            className="btn-danger text-sm px-4 py-2"
+                          >
+                            Reject
+                          </button>
+                          <button
+                            onClick={() => setViewingRegistration(registration)}
+                            className="btn-outline text-sm px-4 py-2"
+                          >
+                            View Proof
+                          </button>
+                        </div>
+                      </div>
+                    )
                   )}
                 </div>
               ))}
@@ -766,6 +926,94 @@ const AdminAttendeesPage: React.FC = () => {
                     </div>
                   </div>
                 </div>
+                
+                {/* Payment Proof Section - only show in payment mode */}
+                {viewMode === 'payments' && viewingRegistration.paymentProof && (
+                  <div className="mt-6 border-t pt-4">
+                    <h3 className="text-lg font-semibold text-gray-900 mb-4">Payment Proof</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Payment Details */}
+                      <div className="space-y-3">
+                        <div>
+                          <span className="text-sm font-medium text-gray-700">Transaction ID</span>
+                          <div className="text-gray-900 font-mono text-sm">
+                            {viewingRegistration.paymentProof.transactionId || 'Not provided'}
+                          </div>
+                        </div>
+                        <div>
+                          <span className="text-sm font-medium text-gray-700">Submitted On</span>
+                          <div className="text-gray-900">
+                            {formatDate(viewingRegistration.paymentProof.submittedAt)}
+                          </div>
+                        </div>
+                        <div>
+                          <span className="text-sm font-medium text-gray-700">Verification Status</span>
+                          <div className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${
+                            viewingRegistration.paymentProof.verificationStatus === 'approved' 
+                              ? 'bg-green-100 text-green-800'
+                              : viewingRegistration.paymentProof.verificationStatus === 'rejected'
+                              ? 'bg-red-100 text-red-800'
+                              : 'bg-yellow-100 text-yellow-800'
+                          }`}>
+                            {viewingRegistration.paymentProof.verificationStatus}
+                          </div>
+                        </div>
+                        {viewingRegistration.paymentProof.notes && (
+                          <div>
+                            <span className="text-sm font-medium text-gray-700">Admin Notes</span>
+                            <div className="text-gray-900 text-sm">
+                              {viewingRegistration.paymentProof.notes}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      
+                      {/* Payment Screenshot */}
+                      <div>
+                        <span className="text-sm font-medium text-gray-700 block mb-2">Payment Screenshot</span>
+                        {viewingRegistration.paymentProof.proofImageUrl ? (
+                          <div className="border rounded-lg overflow-hidden">
+                            <img 
+                              src={viewingRegistration.paymentProof.proofImageUrl} 
+                              alt="Payment proof"
+                              className="w-full h-64 object-contain bg-gray-50 cursor-pointer"
+                              onClick={() => window.open(viewingRegistration.paymentProof!.proofImageUrl!, '_blank')}
+                            />
+                            <p className="text-xs text-gray-500 mt-1 text-center">Click to view full size</p>
+                          </div>
+                        ) : (
+                          <div className="border rounded-lg h-64 flex items-center justify-center bg-gray-50">
+                            <span className="text-gray-500">No image provided</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    
+                    {/* Verification Actions */}
+                    {viewingRegistration.paymentProof.verificationStatus === 'pending' && (
+                      <div className="mt-4 flex justify-center space-x-3">
+                        <button
+                          onClick={() => {
+                            handlePaymentVerification(viewingRegistration.id, 'approved');
+                            setViewingRegistration(null);
+                          }}
+                          className="btn-primary px-6 py-2"
+                        >
+                          Approve Payment
+                        </button>
+                        <button
+                          onClick={() => {
+                            handlePaymentVerification(viewingRegistration.id, 'rejected');
+                            setViewingRegistration(null);
+                          }}
+                          className="btn-danger px-6 py-2"
+                        >
+                          Reject Payment
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
                 
                 {/* Notes and Requirements */}
                 <div className="mt-4">

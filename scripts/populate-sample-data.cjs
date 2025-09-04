@@ -485,6 +485,247 @@ const generateSampleRegistrations = () => [
       discountAmount: 0,
       isEarlyBird: false
     }
+  },
+  // PENDING PAYMENT REGISTRATIONS - These need verification
+  {
+    id: 'reg-005',
+    eventId: 'event-001',
+    userId: '', // Anonymous registration
+    userDetails: {
+      name: 'Emma Designer',
+      email: 'emma.designer@creative.com',
+      phoneNumber: '+639123456784',
+      organization: 'Creative Studio'
+    },
+    ticketTypeId: 'early-bird',
+    quantity: 1,
+    originalAmount: 500,
+    discountAmount: 0,
+    totalAmount: 500,
+    currency: 'PHP',
+    paymentStatus: 'pending',
+    attendanceStatus: 'registered',
+    feedbackSubmitted: false,
+    certificateIssued: false,
+    qrCode: 'QR-REG-005-EMMA',
+    registrationDate: Timestamp.fromDate(new Date('2025-01-02')),
+    updatedAt: Timestamp.now(),
+    paymentProof: {
+      id: 'proof-005',
+      registrationId: 'reg-005',
+      proofImageUrl: 'https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?w=400',
+      transactionId: 'GCash-20250102-001234',
+      submittedAt: Timestamp.fromDate(new Date('2025-01-02T14:30:00Z')),
+      verificationStatus: 'pending',
+      notes: 'Payment via GCash - Screenshot attached'
+    },
+    pricing: {
+      ticketTypeId: 'early-bird',
+      originalPrice: 500,
+      currentPrice: 500,
+      discountAmount: 0,
+      isEarlyBird: false
+    }
+  },
+  {
+    id: 'reg-006',
+    eventId: 'event-001',
+    userId: '', // Anonymous registration
+    userDetails: {
+      name: 'Frank Mobile',
+      email: 'frank.mobile@apps.dev',
+      phoneNumber: '+639123456785',
+      organization: 'Mobile Solutions Inc'
+    },
+    ticketTypeId: 'regular',
+    quantity: 1,
+    originalAmount: 750,
+    discountAmount: 0,
+    totalAmount: 750,
+    currency: 'PHP',
+    paymentStatus: 'pending',
+    attendanceStatus: 'registered',
+    feedbackSubmitted: false,
+    certificateIssued: false,
+    qrCode: 'QR-REG-006-FRANK',
+    registrationDate: Timestamp.fromDate(new Date('2025-01-03')),
+    updatedAt: Timestamp.now(),
+    paymentProof: {
+      id: 'proof-006',
+      registrationId: 'reg-006',
+      proofImageUrl: 'https://images.unsplash.com/photo-1563013544-824ae1b704d3?w=400',
+      transactionId: 'Maya-20250103-567890',
+      submittedAt: Timestamp.fromDate(new Date('2025-01-03T09:15:00Z')),
+      verificationStatus: 'pending',
+      notes: 'Paid through Maya wallet'
+    },
+    pricing: {
+      ticketTypeId: 'regular',
+      originalPrice: 750,
+      currentPrice: 750,
+      discountAmount: 0,
+      isEarlyBird: false
+    }
+  },
+  {
+    id: 'reg-007',
+    eventId: 'event-003',
+    userId: '', // Anonymous registration
+    userDetails: {
+      name: 'Grace Fullstack',
+      email: 'grace.fullstack@webdev.co',
+      phoneNumber: '+639123456786',
+      organization: 'Web Development Co'
+    },
+    ticketTypeId: 'professional',
+    quantity: 1,
+    originalAmount: 3000,
+    discountAmount: 0,
+    totalAmount: 3000,
+    currency: 'PHP',
+    paymentStatus: 'pending',
+    attendanceStatus: 'registered',
+    feedbackSubmitted: false,
+    certificateIssued: false,
+    qrCode: 'QR-REG-007-GRACE',
+    registrationDate: Timestamp.fromDate(new Date('2025-01-04')),
+    updatedAt: Timestamp.now(),
+    paymentProof: {
+      id: 'proof-007',
+      registrationId: 'reg-007',
+      proofImageUrl: 'https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?w=400',
+      transactionId: 'BPI-20250104-112233',
+      submittedAt: Timestamp.fromDate(new Date('2025-01-04T16:45:00Z')),
+      verificationStatus: 'pending',
+      notes: 'Bank transfer - BPI Online Banking'
+    },
+    pricing: {
+      ticketTypeId: 'professional',
+      originalPrice: 3000,
+      currentPrice: 3000,
+      discountAmount: 0,
+      isEarlyBird: false
+    }
+  },
+  {
+    id: 'reg-008',
+    eventId: 'event-003',
+    userId: '', // Anonymous registration
+    userDetails: {
+      name: 'Henry Student',
+      email: 'henry.student@college.edu',
+      phoneNumber: '+639123456787',
+      organization: 'Davao College of Technology'
+    },
+    ticketTypeId: 'student',
+    quantity: 1,
+    originalAmount: 1500,
+    discountAmount: 0,
+    totalAmount: 1500,
+    currency: 'PHP',
+    paymentStatus: 'pending',
+    attendanceStatus: 'registered',
+    feedbackSubmitted: false,
+    certificateIssued: false,
+    qrCode: 'QR-REG-008-HENRY',
+    registrationDate: Timestamp.fromDate(new Date('2025-01-05')),
+    updatedAt: Timestamp.now(),
+    paymentProof: {
+      id: 'proof-008',
+      registrationId: 'reg-008',
+      proofImageUrl: 'https://images.unsplash.com/photo-1563013544-824ae1b704d3?w=400',
+      transactionId: 'GCash-20250105-445566',
+      submittedAt: Timestamp.fromDate(new Date('2025-01-05T11:20:00Z')),
+      verificationStatus: 'pending',
+      notes: 'Student payment via GCash - ID verification attached'
+    },
+    pricing: {
+      ticketTypeId: 'student',
+      originalPrice: 1500,
+      currentPrice: 1500,
+      discountAmount: 0,
+      isEarlyBird: false
+    }
+  },
+  {
+    id: 'reg-009',
+    eventId: 'event-001',
+    userId: '', // Anonymous registration
+    userDetails: {
+      name: 'Ivy Marketing',
+      email: 'ivy.marketing@digital.agency',
+      phoneNumber: '+639123456788',
+      organization: 'Digital Marketing Agency'
+    },
+    ticketTypeId: 'early-bird',
+    quantity: 1,
+    originalAmount: 500,
+    discountAmount: 0,
+    totalAmount: 500,
+    currency: 'PHP',
+    paymentStatus: 'pending',
+    attendanceStatus: 'registered',
+    feedbackSubmitted: false,
+    certificateIssued: false,
+    qrCode: 'QR-REG-009-IVY',
+    registrationDate: Timestamp.fromDate(new Date('2025-01-06')),
+    updatedAt: Timestamp.now(),
+    paymentProof: {
+      id: 'proof-009',
+      registrationId: 'reg-009',
+      proofImageUrl: 'https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?w=400',
+      transactionId: 'PayMaya-20250106-778899',
+      submittedAt: Timestamp.fromDate(new Date('2025-01-06T13:10:00Z')),
+      verificationStatus: 'pending',
+      notes: 'PayMaya transaction - Receipt screenshot'
+    },
+    pricing: {
+      ticketTypeId: 'early-bird',
+      originalPrice: 500,
+      currentPrice: 500,
+      discountAmount: 0,
+      isEarlyBird: false
+    }
+  },
+  {
+    id: 'reg-010',
+    eventId: 'event-003',
+    userId: '', // Anonymous registration
+    userDetails: {
+      name: 'Jack Entrepreneur',
+      email: 'jack.entrepreneur@startup.ph',
+      phoneNumber: '+639123456789',
+      organization: 'TechStartup Philippines'
+    },
+    ticketTypeId: 'professional',
+    quantity: 1,
+    originalAmount: 3000,
+    discountAmount: 0,
+    totalAmount: 3000,
+    currency: 'PHP',
+    paymentStatus: 'pending',
+    attendanceStatus: 'registered',
+    feedbackSubmitted: false,
+    certificateIssued: false,
+    qrCode: 'QR-REG-010-JACK',
+    registrationDate: Timestamp.fromDate(new Date('2025-01-07')),
+    updatedAt: Timestamp.now(),
+    paymentProof: {
+      id: 'proof-010',
+      registrationId: 'reg-010',
+      proofImageUrl: 'https://images.unsplash.com/photo-1563013544-824ae1b704d3?w=400',
+      transactionId: 'UnionBank-20250107-334455',
+      submittedAt: Timestamp.fromDate(new Date('2025-01-07T10:30:00Z')),
+      verificationStatus: 'pending',
+      notes: 'UnionBank online transfer'
+    },
+    pricing: {
+      ticketTypeId: 'professional',
+      originalPrice: 3000,
+      currentPrice: 3000,
+      discountAmount: 0,
+      isEarlyBird: false
+    }
   }
 ];
 
@@ -740,7 +981,9 @@ async function populateSampleData() {
     console.log('📋 What was created:');
     console.log('   • 3 Auth Users + Firestore Documents (1 admin, 2 organizers)');
     console.log('   • 4 Events (3 published, 1 draft)');
-    console.log('   • 4 Registrations across different events');
+    console.log('   • 10 Registrations across different events');
+    console.log('     - 4 with paid status (confirmed)');
+    console.log('     - 6 with pending payment status (need verification)');
     console.log('   • 1 Feedback submission');
     console.log('   • 1 Certificate');
     console.log('   • 4 System settings');
@@ -752,6 +995,13 @@ async function populateSampleData() {
     console.log('   • Or: carlos.dev@gdgdavao.org / password123 (organizer role)');
     console.log('   • Browse events, view registrations, check analytics');
     console.log('   • Test event creation, editing, and management');
+    console.log('   • Use Payment Verification tab to approve/reject pending payments');
+    console.log('');
+    console.log('💳 Payment Verification Testing:');
+    console.log('   • 6 registrations need payment verification');
+    console.log('   • Navigate to Attendees page → Payment Verification tab');
+    console.log('   • Approve or reject pending payments');
+    console.log('   • Test payment workflow integration');
     console.log('');
     console.log('📊 Next Steps:');
     console.log('   1. Start your app: npm run dev:emulator');
