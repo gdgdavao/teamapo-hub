@@ -171,6 +171,12 @@ const AppContent: React.FC = () => {
           <AnalyticsPage isEventSpecific={true} />
         </ProtectedRoute>
       } />
+
+      <Route path="/admin/analytics" element={
+        <ProtectedRoute requiredRole="admin">
+          <AnalyticsPage isEventSpecific={false} />
+        </ProtectedRoute>
+      } />
       
       <Route path="/users" element={
         <ProtectedRoute requiredRole="admin">

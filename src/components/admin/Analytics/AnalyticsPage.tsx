@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, useSearchParams, Link } from 'react-router-dom';
 import { 
   ChartBarIcon, 
   UsersIcon, 
@@ -34,7 +34,13 @@ interface AnalyticsPageProps {
 }
 
 const AnalyticsPage: React.FC<AnalyticsPageProps> = ({ isEventSpecific = false }) => {
-  const { eventId } = useParams<{ eventId: string }>();
+  const { eventId: paramEventId } = useParams<{ eventId: string }>();
+  const [searchParams] = useSearchParams();
+  const queryEventId = searchParams.get('eventId');
+  
+  // Use eventId from URL params first, then from query params
+  const eventId = paramEventId || queryEventId;
+  
   const { userProfile } = useAuth();
   const [event, setEvent] = useState<Event | null>(null);
   const [stats, setStats] = useState<EventStats | null>(null);
@@ -84,7 +90,7 @@ const AnalyticsPage: React.FC<AnalyticsPageProps> = ({ isEventSpecific = false }
       try {
         setLoading(true);
 
-        if (isEventSpecific && eventId) {
+        if ((isEventSpecific || eventId) && eventId) {
           // Load event-specific analytics
           const [eventData, statsData, registrationsData] = await Promise.all([
             EventService.getEvent(eventId),
@@ -261,7 +267,7 @@ Identify 3 key trends (each under 15 words). Focus on actionable insights for ev
     );
   }
 
-  if (!isEventSpecific) {
+  if (!isEventSpecific && !eventId) {
     // General analytics view (admin dashboard)
     return (
       <AdminLayout 

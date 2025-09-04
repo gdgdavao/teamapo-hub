@@ -24,8 +24,6 @@ import {
   TicketIcon,
   TagIcon,
   ArrowLeftIcon,
-  HomeIcon,
-  ChevronRightIcon,
   UserIcon
 } from '@heroicons/react/24/outline';
 import { FormBuilder, FormField } from '../../components/shared/FormBuilder';
@@ -424,46 +422,6 @@ const CreateEventPage: React.FC = () => {
         } else {
           toast.error('Failed to save event. Please try again.');
         }
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleDuplicateEvent = async () => {
-    // Wait for auth to be fully initialized
-    if (authLoading) {
-      toast.error('Please wait for authentication to complete');
-      return;
-    }
-    
-    if (!currentUser || !eventId) {
-      toast.error('Unable to duplicate event');
-      return;
-    }
-
-    try {
-      setLoading(true);
-      
-      // Ensure auth token is fresh
-      try {
-        await currentUser.getIdToken(true);
-      } catch (authError) {
-        console.error('Auth token refresh failed:', authError);
-        toast.error('Authentication expired. Please sign in again.');
-        setLoading(false);
-        return;
-      }
-      
-      // TODO: Re-enable duplicate function once function issues are resolved
-      toast.error('Event duplication temporarily disabled due to function issues. Please copy the event manually.');
-      console.log('Skipping duplicate function call temporarily');
-    } catch (error: any) {
-      console.error('Error duplicating event:', error);
-      if (error.code === 'unauthenticated' || error.message?.includes('unauthenticated')) {
-        toast.error('Authentication error. Please sign out and sign in again.');
-      } else {
-      toast.error('Failed to duplicate event');
       }
     } finally {
       setLoading(false);
@@ -2417,50 +2375,28 @@ const CreateEventPage: React.FC = () => {
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
-      <div className="bg-white border-b border-gray-200">
+      <div className="sticky top-0 z-50 bg-white border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center space-x-4">
               <button
-                onClick={() => navigate('/admin/dashboard')}
+                onClick={() => navigate('/events')}
                 className="flex items-center text-gray-600 hover:text-gray-900"
               >
                 <ArrowLeftIcon className="w-5 h-5 mr-2" />
-                Back to Admin Dashboard
+                Back to Events
               </button>
-              <div className="h-6 border-l border-gray-300" />
-              <div className="flex items-center space-x-2 text-sm text-gray-500">
-                <HomeIcon className="w-4 h-4" />
-                <span>Admin</span>
-                <ChevronRightIcon className="w-4 h-4" />
-                <span>Events</span>
-                <ChevronRightIcon className="w-4 h-4" />
-                <span className="text-gray-900 font-medium">
-                  {isEditMode ? 'Edit Event' : 'Create Event'}
-                </span>
-              </div>
-            </div>
-            <div className="flex items-center space-x-4">
-              {isEditMode && (
-                <button
-                  onClick={handleDuplicateEvent}
-                  disabled={loading || authLoading}
-                  className="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
-                >
-                  {authLoading ? 'Authenticating...' : loading ? 'Duplicating...' : 'Duplicate Event'}
-                </button>
-              )}
             </div>
           </div>
         </div>
       </div>
 
       {/* Content */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 pb-8">
         <div className="lg:grid lg:grid-cols-12 lg:gap-8">
           {/* Sidebar - Step Navigation */}
           <div className="lg:col-span-3">
-            <div className="bg-white rounded-lg shadow p-6 sticky top-8">
+            <div className="bg-white rounded-lg shadow p-6 sticky top-24">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">
                 {isEditMode ? 'Edit Event' : 'Create Event'}
               </h3>

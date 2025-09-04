@@ -499,218 +499,114 @@ const ManageEventsPage: React.FC = () => {
         </div>
 
         {/* Events Display */}
-        <div className="bg-white rounded-lg shadow-sm overflow-hidden">
-          {/* Desktop Table View */}
-          <div className="hidden lg:block">
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Event
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Date & Venue
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Attendees
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Pricing
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Status
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Organizer
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {sortedEvents.map((event) => (
-                    <tr key={event.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex items-center">
-                          {event.imageUrl && (
-                            <img
-                              src={event.imageUrl}
-                              alt={event.title}
-                              className="w-10 h-10 rounded-lg object-cover mr-3"
-                            />
-                          )}
-                          <div>
-                            <div className="text-sm font-medium text-gray-900">{event.title}</div>
-                            <div className="text-sm text-gray-500 truncate max-w-xs">
-                              {event.shortDescription || event.description}
-                            </div>
-                            <div className="text-xs text-gray-400 mt-1">
-                              {event.category} • {event.tags?.slice(0, 2).join(', ')}
-                            </div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm text-gray-900">{formatDate(event.startDate)}</div>
-                        <div className="text-sm text-gray-500">
-                          {event.venue.type === 'online' ? 'Online' : event.venue.name || event.venue.city}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm text-gray-900">
-                          {event.currentAttendees}
-                          {event.maxAttendees && ` / ${event.maxAttendees}`}
-                        </div>
-                        {event.maxAttendees && (
-                          <div className="w-full bg-gray-200 rounded-full h-2 mt-1">
-                            <div 
-                              className="bg-blue-600 h-2 rounded-full" 
-                              style={{ 
-                                width: `${(event.currentAttendees / event.maxAttendees) * 100}%` 
-                              }}
-                            ></div>
-                          </div>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm text-gray-900">
-                          {formatPrice(event.ticketTypes)}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex items-center space-x-2">
-                          {getStatusIcon(event.status)}
-                          <select
-                            value={event.status}
-                            onChange={(e) => handleStatusChange(event.id, e.target.value)}
-                            className={`text-xs font-medium rounded-full px-2 py-1 border-0 ${getStatusColor(event.status)}`}
-                          >
-                            <option value="draft">Draft</option>
-                            <option value="published">Published</option>
-                            <option value="ongoing">Ongoing</option>
-                            <option value="completed">Completed</option>
-                            <option value="cancelled">Cancelled</option>
-                          </select>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm text-gray-900">{event.organizer.name}</div>
-                        <div className="text-sm text-gray-500">{event.organizer.email}</div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                        <div className="flex items-center space-x-2">
-                          <Link
-                            to={`/admin/events/${event.id}/attendees`}
-                            className="text-blue-600 hover:text-blue-900"
-                            title="View Attendees"
-                          >
-                            <EyeIcon className="h-4 w-4" />
-                          </Link>
-                          <Link
-                            to={`/admin/events/edit/${event.id}`}
-                            className="text-green-600 hover:text-green-900"
-                            title="Edit Event"
-                          >
-                            <PencilIcon className="h-4 w-4" />
-                          </Link>
-                          <button
-                            onClick={() => event.status === 'published' ? handleShareEvent(event.id, event.title) : null}
-                            className={`${
-                              event.status === 'published'
-                                ? 'text-indigo-600 hover:text-indigo-900 cursor-pointer'
-                                : 'text-gray-400 cursor-not-allowed'
-                            }`}
-                            title={event.status === 'published' ? 'Share Registration Link' : 'Event must be published to share'}
-                            disabled={event.status !== 'published'}
-                          >
-                            <ShareIcon className="h-4 w-4" />
-                          </button>
-                          <Link
-                            to={`/events/${event.id}/analytics`}
-                            className="text-purple-600 hover:text-purple-900"
-                            title="Analytics"
-                          >
-                            <ChartBarIcon className="h-4 w-4" />
-                          </Link>
-                          <button
-                            onClick={() => openDeleteModal(event.id, event.title)}
-                            className="text-red-600 hover:text-red-900"
-                            title="Delete Event"
-                          >
-                            <TrashIcon className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Mobile Card View */}
-          <div className="lg:hidden space-y-3 p-4">
+        {viewMode === 'grid' ? (
+          /* Grid View */
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6">
             {sortedEvents.map((event) => (
-              <div key={event.id} className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                {/* Event Header */}
-                <div className="flex items-start justify-between mb-3">
-                  <div className="flex-1 min-w-0 pr-3">
-                    <div className="flex items-center">
-                      {event.imageUrl && (
-                        <img
-                          src={event.imageUrl}
-                          alt={event.title}
-                          className="w-12 h-12 rounded-lg object-cover mr-3"
-                        />
-                      )}
-                      <div>
-                        <h3 className="text-sm font-semibold text-gray-900 truncate">
-                          {event.title}
-                        </h3>
-                        <p className="text-xs text-gray-600 mt-1 line-clamp-2">
-                          {event.shortDescription || event.description}
-                        </p>
-                        <div className="text-xs text-gray-400 mt-1">
-                          {event.category} • {event.tags?.slice(0, 2).join(', ')}
-                        </div>
-                      </div>
+              <div key={event.id} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow">
+                {/* Event Image */}
+                <div className="relative h-48 bg-gray-200">
+                  {event.imageUrl ? (
+                    <img
+                      src={event.imageUrl}
+                      alt={event.title}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-blue-100 to-indigo-200">
+                      <CalendarDaysIcon className="h-12 w-12 text-blue-500" />
+                    </div>
+                  )}
+                  {/* Status Badge */}
+                  <div className="absolute top-3 right-3">
+                    <div className={`flex items-center space-x-1 px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(event.status)}`}>
+                      {getStatusIcon(event.status)}
+                      <span className="capitalize">{event.status}</span>
                     </div>
                   </div>
-                  <div className="flex items-center space-x-1 flex-shrink-0">
-                    {getStatusIcon(event.status)}
+                  {/* Price Badge */}
+                  <div className="absolute bottom-3 left-3">
+                    <div className="bg-black bg-opacity-75 text-white px-2 py-1 rounded-md text-xs font-medium">
+                      {formatPrice(event.ticketTypes)}
+                    </div>
                   </div>
                 </div>
 
-                {/* Event Details */}
-                <div className="grid grid-cols-2 gap-3 text-xs text-gray-600 mb-3">
-                  <div>
-                    <span className="font-medium">Date:</span>
-                    <div>{formatDate(event.startDate)}</div>
+                {/* Event Content */}
+                <div className="p-4">
+                  {/* Title and Category */}
+                  <div className="mb-3">
+                    <h3 className="text-lg font-semibold text-gray-900 mb-1 line-clamp-2">
+                      {event.title}
+                    </h3>
+                    <div className="flex items-center space-x-2 text-xs text-gray-500">
+                      <span className="bg-gray-100 px-2 py-1 rounded-md">{event.category}</span>
+                      {event.tags?.slice(0, 2).map((tag, index) => (
+                        <span key={index} className="bg-blue-100 text-blue-700 px-2 py-1 rounded-md">
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
                   </div>
-                  <div>
-                    <span className="font-medium">Venue:</span>
-                    <div>{event.venue.type === 'online' ? 'Online' : event.venue.name || event.venue.city}</div>
-                  </div>
-                  <div>
-                    <span className="font-medium">Attendees:</span>
-                    <div>{event.currentAttendees}{event.maxAttendees && ` / ${event.maxAttendees}`}</div>
-                  </div>
-                  <div>
-                    <span className="font-medium">Pricing:</span>
-                    <div>{formatPrice(event.ticketTypes)}</div>
-                  </div>
-                </div>
 
-                {/* Status and Actions */}
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-3 sm:space-y-0 pt-3 border-t border-gray-200">
-                  <div className="flex items-center space-x-2">
-                    {getStatusIcon(event.status)}
+                  {/* Description */}
+                  <p className="text-sm text-gray-600 mb-4 line-clamp-3">
+                    {event.shortDescription || event.description}
+                  </p>
+
+                  {/* Event Details */}
+                  <div className="space-y-2 mb-4">
+                    <div className="flex items-center text-sm text-gray-600">
+                      <CalendarDaysIcon className="h-4 w-4 mr-2 text-gray-400" />
+                      <span>{formatDate(event.startDate)}</span>
+                    </div>
+                    <div className="flex items-center text-sm text-gray-600">
+                      <UsersIcon className="h-4 w-4 mr-2 text-gray-400" />
+                      <span>
+                        {event.currentAttendees} attendees
+                        {event.maxAttendees && ` / ${event.maxAttendees} max`}
+                      </span>
+                    </div>
+                    <div className="flex items-center text-sm text-gray-600">
+                      <svg className="h-4 w-4 mr-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                      </svg>
+                      <span>{event.venue.type === 'online' ? 'Online' : event.venue.name || event.venue.city}</span>
+                    </div>
+                  </div>
+
+                  {/* Attendee Progress Bar */}
+                  {event.maxAttendees && (
+                    <div className="mb-4">
+                      <div className="flex justify-between text-xs text-gray-600 mb-1">
+                        <span>Registration Progress</span>
+                        <span>{Math.round((event.currentAttendees / event.maxAttendees) * 100)}%</span>
+                      </div>
+                      <div className="w-full bg-gray-200 rounded-full h-2">
+                        <div 
+                          className="bg-blue-600 h-2 rounded-full transition-all duration-300" 
+                          style={{ 
+                            width: `${Math.min((event.currentAttendees / event.maxAttendees) * 100, 100)}%` 
+                          }}
+                        ></div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Organizer Info */}
+                  <div className="mb-4 p-2 bg-gray-50 rounded-md">
+                    <div className="text-xs text-gray-500">Organizer</div>
+                    <div className="text-sm font-medium text-gray-900">{event.organizer.name}</div>
+                    <div className="text-xs text-gray-600">{event.organizer.email}</div>
+                  </div>
+
+                  {/* Status Selector */}
+                  <div className="mb-4">
                     <select
                       value={event.status}
                       onChange={(e) => handleStatusChange(event.id, e.target.value)}
-                      className={`text-xs font-medium rounded-lg px-3 py-2 border focus:ring-2 focus:ring-blue-500 ${getStatusColor(event.status)}`}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
                     >
                       <option value="draft">Draft</option>
                       <option value="published">Published</option>
@@ -719,88 +615,363 @@ const ManageEventsPage: React.FC = () => {
                       <option value="cancelled">Cancelled</option>
                     </select>
                   </div>
-                  
-                  <div className="flex items-center space-x-1">
-                    <Link
-                      to={`/admin/events/${event.id}/attendees`}
-                      className="flex items-center justify-center space-x-1 px-2 sm:px-3 py-2 text-blue-600 hover:text-blue-900 hover:bg-blue-50 rounded-lg transition-colors text-xs font-medium min-w-0"
-                    >
-                      <EyeIcon className="h-4 w-4 flex-shrink-0" />
-                      <span className="hidden sm:inline">Attendees</span>
-                    </Link>
-                    <Link
-                      to={`/admin/events/edit/${event.id}`}
-                      className="flex items-center justify-center space-x-1 px-2 sm:px-3 py-2 text-green-600 hover:text-green-900 hover:bg-green-50 rounded-lg transition-colors text-xs font-medium min-w-0"
-                    >
-                      <PencilIcon className="h-4 w-4 flex-shrink-0" />
-                      <span className="hidden sm:inline">Edit</span>
-                    </Link>
-                    <button
-                      onClick={() => event.status === 'published' ? handleShareEvent(event.id, event.title) : null}
-                      className={`flex items-center justify-center space-x-1 px-2 sm:px-3 py-2 rounded-lg transition-colors text-xs font-medium min-w-0 ${
-                        event.status === 'published'
-                          ? 'text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 cursor-pointer'
-                          : 'text-gray-400 cursor-not-allowed bg-gray-50'
-                      }`}
-                      title={event.status === 'published' ? 'Share Registration Link' : 'Event must be published to share'}
-                      disabled={event.status !== 'published'}
-                    >
-                      <ShareIcon className="h-4 w-4 flex-shrink-0" />
-                      <span className="hidden sm:inline">Share</span>
-                    </button>
-                    <Link
-                      to={`/events/${event.id}/analytics`}
-                      className="flex items-center justify-center space-x-1 px-2 sm:px-3 py-2 text-purple-600 hover:text-purple-900 hover:bg-purple-50 rounded-lg transition-colors text-xs font-medium min-w-0"
-                    >
-                      <ChartBarIcon className="h-4 w-4 flex-shrink-0" />
-                      <span className="hidden sm:inline">Analytics</span>
-                    </Link>
-                    <button
-                      onClick={() => openDeleteModal(event.id, event.title)}
-                      className="flex items-center justify-center space-x-1 px-2 sm:px-3 py-2 text-red-600 hover:text-red-900 hover:bg-red-50 rounded-lg transition-colors text-xs font-medium min-w-0"
-                    >
-                      <TrashIcon className="h-4 w-4 flex-shrink-0" />
-                      <span className="hidden sm:inline">Delete</span>
-                    </button>
+
+                  {/* Action Buttons */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <Link
+                        to={`/admin/events/${event.id}/attendees`}
+                        className="flex items-center justify-center w-8 h-8 text-blue-600 hover:text-blue-900 hover:bg-blue-50 rounded-lg transition-colors"
+                        title="View Attendees"
+                      >
+                        <EyeIcon className="h-4 w-4" />
+                      </Link>
+                      <Link
+                        to={`/admin/events/edit/${event.id}`}
+                        className="flex items-center justify-center w-8 h-8 text-green-600 hover:text-green-900 hover:bg-green-50 rounded-lg transition-colors"
+                        title="Edit Event"
+                      >
+                        <PencilIcon className="h-4 w-4" />
+                      </Link>
+                      <button
+                        onClick={() => event.status === 'published' ? handleShareEvent(event.id, event.title) : null}
+                        className={`flex items-center justify-center w-8 h-8 rounded-lg transition-colors ${
+                          event.status === 'published'
+                            ? 'text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 cursor-pointer'
+                            : 'text-gray-400 cursor-not-allowed bg-gray-50'
+                        }`}
+                        title={event.status === 'published' ? 'Share Registration Link' : 'Event must be published to share'}
+                        disabled={event.status !== 'published'}
+                      >
+                        <ShareIcon className="h-4 w-4" />
+                      </button>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <Link
+                        to={`/admin/analytics?eventId=${event.id}`}
+                        className="flex items-center justify-center w-8 h-8 text-purple-600 hover:text-purple-900 hover:bg-purple-50 rounded-lg transition-colors"
+                        title="Analytics"
+                      >
+                        <ChartBarIcon className="h-4 w-4" />
+                      </Link>
+                      <button
+                        onClick={() => openDeleteModal(event.id, event.title)}
+                        className="flex items-center justify-center w-8 h-8 text-red-600 hover:text-red-900 hover:bg-red-50 rounded-lg transition-colors"
+                        title="Delete Event"
+                      >
+                        <TrashIcon className="h-4 w-4" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
             ))}
           </div>
-          
-          {sortedEvents.length === 0 && (
-            <div className="text-center py-8 sm:py-12 px-4">
-              <CalendarDaysIcon className="mx-auto h-10 w-10 sm:h-12 sm:w-12 text-gray-400" />
-              <h3 className="mt-2 text-sm font-medium text-gray-900">No events found</h3>
-              <p className="mt-1 text-xs sm:text-sm text-gray-500 max-w-sm mx-auto">
-                {searchTerm || statusFilter !== 'all' 
-                  ? 'Try adjusting your search or filter criteria.'
-                  : 'Get started by creating your first event.'
-                }
-              </p>
-                             {!searchTerm && statusFilter === 'all' && (
-                 <div className="mt-4 sm:mt-6">
-                   <p className="text-sm text-gray-500">
-                     Contact an administrator to create new events.
-                   </p>
-                 </div>
-               )}
+        ) : (
+          /* List View */
+          <div className="bg-white rounded-lg shadow-sm overflow-hidden">
+            {/* Desktop Table View */}
+            <div className="hidden lg:block">
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Event
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Date & Venue
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Attendees
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Pricing
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Status
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Organizer
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {sortedEvents.map((event) => (
+                      <tr key={event.id} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="flex items-center">
+                            {event.imageUrl && (
+                              <img
+                                src={event.imageUrl}
+                                alt={event.title}
+                                className="w-10 h-10 rounded-lg object-cover mr-3"
+                              />
+                            )}
+                            <div>
+                              <div className="text-sm font-medium text-gray-900">{event.title}</div>
+                              <div className="text-sm text-gray-500 truncate max-w-xs">
+                                {event.shortDescription || event.description}
+                              </div>
+                              <div className="text-xs text-gray-400 mt-1">
+                                {event.category} • {event.tags?.slice(0, 2).join(', ')}
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm text-gray-900">{formatDate(event.startDate)}</div>
+                          <div className="text-sm text-gray-500">
+                            {event.venue.type === 'online' ? 'Online' : event.venue.name || event.venue.city}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm text-gray-900">
+                            {event.currentAttendees}
+                            {event.maxAttendees && ` / ${event.maxAttendees}`}
+                          </div>
+                          {event.maxAttendees && (
+                            <div className="w-full bg-gray-200 rounded-full h-2 mt-1">
+                              <div 
+                                className="bg-blue-600 h-2 rounded-full" 
+                                style={{ 
+                                  width: `${(event.currentAttendees / event.maxAttendees) * 100}%` 
+                                }}
+                              ></div>
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm text-gray-900">
+                            {formatPrice(event.ticketTypes)}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="flex items-center space-x-2">
+                            {getStatusIcon(event.status)}
+                            <select
+                              value={event.status}
+                              onChange={(e) => handleStatusChange(event.id, e.target.value)}
+                              className={`text-xs font-medium rounded-full px-2 py-1 border-0 ${getStatusColor(event.status)}`}
+                            >
+                              <option value="draft">Draft</option>
+                              <option value="published">Published</option>
+                              <option value="ongoing">Ongoing</option>
+                              <option value="completed">Completed</option>
+                              <option value="cancelled">Cancelled</option>
+                            </select>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm text-gray-900">{event.organizer.name}</div>
+                          <div className="text-sm text-gray-500">{event.organizer.email}</div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                          <div className="flex items-center space-x-2">
+                            <Link
+                              to={`/admin/events/${event.id}/attendees`}
+                              className="text-blue-600 hover:text-blue-900"
+                              title="View Attendees"
+                            >
+                              <EyeIcon className="h-4 w-4" />
+                            </Link>
+                            <Link
+                              to={`/admin/events/edit/${event.id}`}
+                              className="text-green-600 hover:text-green-900"
+                              title="Edit Event"
+                            >
+                              <PencilIcon className="h-4 w-4" />
+                            </Link>
+                            <button
+                              onClick={() => event.status === 'published' ? handleShareEvent(event.id, event.title) : null}
+                              className={`${
+                                event.status === 'published'
+                                  ? 'text-indigo-600 hover:text-indigo-900 cursor-pointer'
+                                  : 'text-gray-400 cursor-not-allowed'
+                              }`}
+                              title={event.status === 'published' ? 'Share Registration Link' : 'Event must be published to share'}
+                              disabled={event.status !== 'published'}
+                            >
+                              <ShareIcon className="h-4 w-4" />
+                            </button>
+                            <Link
+                              to={`/admin/analytics?eventId=${event.id}`}
+                              className="text-purple-600 hover:text-purple-900"
+                              title="Analytics"
+                            >
+                              <ChartBarIcon className="h-4 w-4" />
+                            </Link>
+                            <button
+                              onClick={() => openDeleteModal(event.id, event.title)}
+                              className="text-red-600 hover:text-red-900"
+                              title="Delete Event"
+                            >
+                              <TrashIcon className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          )}
-        </div>
 
-              {/* Delete Confirmation Modal */}
-      <ConfirmationModal
-        isOpen={deleteModal.isOpen}
-        onClose={closeDeleteModal}
-        onConfirm={deleteModal.isForceDelete ? handleForceDelete : handleDeleteEvent}
-        title="Delete Event"
-        message={deleteModal.message}
-        confirmText={deleteModal.confirmText}
-        cancelText="Cancel"
-        type={deleteModal.type}
-        isLoading={deleteModal.isLoading}
-      />
+            {/* Mobile Card View */}
+            <div className="lg:hidden space-y-3 p-4">
+              {sortedEvents.map((event) => (
+                <div key={event.id} className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                  {/* Event Header */}
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="flex-1 min-w-0 pr-3">
+                      <div className="flex items-center">
+                        {event.imageUrl && (
+                          <img
+                            src={event.imageUrl}
+                            alt={event.title}
+                            className="w-12 h-12 rounded-lg object-cover mr-3"
+                          />
+                        )}
+                        <div>
+                          <h3 className="text-sm font-semibold text-gray-900 truncate">
+                            {event.title}
+                          </h3>
+                          <p className="text-xs text-gray-600 mt-1 line-clamp-2">
+                            {event.shortDescription || event.description}
+                          </p>
+                          <div className="text-xs text-gray-400 mt-1">
+                            {event.category} • {event.tags?.slice(0, 2).join(', ')}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-1 flex-shrink-0">
+                      {getStatusIcon(event.status)}
+                    </div>
+                  </div>
+
+                  {/* Event Details */}
+                  <div className="grid grid-cols-2 gap-3 text-xs text-gray-600 mb-3">
+                    <div>
+                      <span className="font-medium">Date:</span>
+                      <div>{formatDate(event.startDate)}</div>
+                    </div>
+                    <div>
+                      <span className="font-medium">Venue:</span>
+                      <div>{event.venue.type === 'online' ? 'Online' : event.venue.name || event.venue.city}</div>
+                    </div>
+                    <div>
+                      <span className="font-medium">Attendees:</span>
+                      <div>{event.currentAttendees}{event.maxAttendees && ` / ${event.maxAttendees}`}</div>
+                    </div>
+                    <div>
+                      <span className="font-medium">Pricing:</span>
+                      <div>{formatPrice(event.ticketTypes)}</div>
+                    </div>
+                  </div>
+
+                  {/* Status and Actions */}
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-3 sm:space-y-0 pt-3 border-t border-gray-200">
+                    <div className="flex items-center space-x-2">
+                      {getStatusIcon(event.status)}
+                      <select
+                        value={event.status}
+                        onChange={(e) => handleStatusChange(event.id, e.target.value)}
+                        className={`text-xs font-medium rounded-lg px-3 py-2 border focus:ring-2 focus:ring-blue-500 ${getStatusColor(event.status)}`}
+                      >
+                        <option value="draft">Draft</option>
+                        <option value="published">Published</option>
+                        <option value="ongoing">Ongoing</option>
+                        <option value="completed">Completed</option>
+                        <option value="cancelled">Cancelled</option>
+                      </select>
+                    </div>
+                    
+                    <div className="flex items-center space-x-1">
+                      <Link
+                        to={`/admin/events/${event.id}/attendees`}
+                        className="flex items-center justify-center space-x-1 px-2 sm:px-3 py-2 text-blue-600 hover:text-blue-900 hover:bg-blue-50 rounded-lg transition-colors text-xs font-medium min-w-0"
+                      >
+                        <EyeIcon className="h-4 w-4 flex-shrink-0" />
+                        <span className="hidden sm:inline">Attendees</span>
+                      </Link>
+                      <Link
+                        to={`/admin/events/edit/${event.id}`}
+                        className="flex items-center justify-center space-x-1 px-2 sm:px-3 py-2 text-green-600 hover:text-green-900 hover:bg-green-50 rounded-lg transition-colors text-xs font-medium min-w-0"
+                      >
+                        <PencilIcon className="h-4 w-4 flex-shrink-0" />
+                        <span className="hidden sm:inline">Edit</span>
+                      </Link>
+                      <button
+                        onClick={() => event.status === 'published' ? handleShareEvent(event.id, event.title) : null}
+                        className={`flex items-center justify-center space-x-1 px-2 sm:px-3 py-2 rounded-lg transition-colors text-xs font-medium min-w-0 ${
+                          event.status === 'published'
+                            ? 'text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 cursor-pointer'
+                            : 'text-gray-400 cursor-not-allowed bg-gray-50'
+                        }`}
+                        title={event.status === 'published' ? 'Share Registration Link' : 'Event must be published to share'}
+                        disabled={event.status !== 'published'}
+                      >
+                        <ShareIcon className="h-4 w-4 flex-shrink-0" />
+                        <span className="hidden sm:inline">Share</span>
+                      </button>
+                      <Link
+                        to={`/admin/analytics?eventId=${event.id}`}
+                        className="flex items-center justify-center space-x-1 px-2 sm:px-3 py-2 text-purple-600 hover:text-purple-900 hover:bg-purple-50 rounded-lg transition-colors text-xs font-medium min-w-0"
+                      >
+                        <ChartBarIcon className="h-4 w-4 flex-shrink-0" />
+                        <span className="hidden sm:inline">Analytics</span>
+                      </Link>
+                      <button
+                        onClick={() => openDeleteModal(event.id, event.title)}
+                        className="flex items-center justify-center space-x-1 px-2 sm:px-3 py-2 text-red-600 hover:text-red-900 hover:bg-red-50 rounded-lg transition-colors text-xs font-medium min-w-0"
+                      >
+                        <TrashIcon className="h-4 w-4 flex-shrink-0" />
+                        <span className="hidden sm:inline">Delete</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        
+        {sortedEvents.length === 0 && (
+          <div className="text-center py-8 sm:py-12 px-4">
+            <CalendarDaysIcon className="mx-auto h-10 w-10 sm:h-12 sm:w-12 text-gray-400" />
+            <h3 className="mt-2 text-sm font-medium text-gray-900">No events found</h3>
+            <p className="mt-1 text-xs sm:text-sm text-gray-500 max-w-sm mx-auto">
+              {searchTerm || statusFilter !== 'all' 
+                ? 'Try adjusting your search or filter criteria.'
+                : 'Get started by creating your first event.'
+              }
+            </p>
+            {!searchTerm && statusFilter === 'all' && (
+              <div className="mt-4 sm:mt-6">
+                <p className="text-sm text-gray-500">
+                  Contact an administrator to create new events.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Delete Confirmation Modal */}
+        <ConfirmationModal
+          isOpen={deleteModal.isOpen}
+          onClose={closeDeleteModal}
+          onConfirm={deleteModal.isForceDelete ? handleForceDelete : handleDeleteEvent}
+          title="Delete Event"
+          message={deleteModal.message}
+          confirmText={deleteModal.confirmText}
+          cancelText="Cancel"
+          type={deleteModal.type}
+          isLoading={deleteModal.isLoading}
+        />
       </LayoutComponent>
     );
   };
