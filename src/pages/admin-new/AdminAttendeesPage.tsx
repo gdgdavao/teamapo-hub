@@ -89,7 +89,6 @@ const AdminAttendeesPage: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [eventFilter, setEventFilter] = useState<string>('all');
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
-  const [selectedRegistrations, setSelectedRegistrations] = useState<string[]>([]);
   const [viewingRegistration, setViewingRegistration] = useState<Registration | null>(null);
   const [events, setEvents] = useState<Event[]>([]);
 
@@ -271,43 +270,7 @@ const AdminAttendeesPage: React.FC = () => {
     }
   };
 
-  const handleBulkAction = (action: 'approve' | 'reject') => {
-    if (selectedRegistrations.length === 0) return;
 
-    const newStatus = action === 'approve' ? 'approved' : 'rejected';
-
-    const updateBulkStatus = async () => {
-      try {
-        // Update all selected registrations in parallel
-        const updatePromises = selectedRegistrations.map(registrationId =>
-          RegistrationService.updateRegistrationStatus(
-            registrationId,
-            newStatus as 'approved' | 'rejected'
-          )
-        );
-
-        await Promise.all(updatePromises);
-
-        // Update local state after successful updates
-        setRegistrations(prev => 
-          prev.map(reg => 
-            selectedRegistrations.includes(reg.id)
-              ? { ...reg, status: newStatus as Registration['status'] }
-              : reg
-          )
-        );
-
-        setSelectedRegistrations([]);
-        
-        console.log(`Bulk ${action} completed for ${selectedRegistrations.length} registrations`);
-      } catch (error) {
-        console.error(`Failed to bulk ${action} registrations:`, error);
-        alert(`Failed to bulk ${action} registrations. Please try again.`);
-      }
-    };
-
-    updateBulkStatus();
-  };
 
   const handlePaymentVerification = async (registrationId: string, action: 'approved' | 'rejected') => {
     try {
@@ -352,21 +315,48 @@ const AdminAttendeesPage: React.FC = () => {
     }
   };
 
-  const toggleRegistrationSelection = (registrationId: string) => {
-    setSelectedRegistrations(prev => 
-      prev.includes(registrationId)
-        ? prev.filter(id => id !== registrationId)
-        : [...prev, registrationId]
-    );
-  };
+  const exportToCSV = () => {
+    // Define CSV headers
+    const headers = [
+      'Attendee Name',
+      'Email',
+      'Phone',
+      'Organization'
+    ];
 
-  const selectAllVisible = () => {
-    const visibleIds = filteredRegistrations.map(reg => reg.id);
-    setSelectedRegistrations(visibleIds);
-  };
+    // Convert registrations to CSV rows
+    const csvRows = [headers.join(',')];
+    
+    filteredRegistrations.forEach(registration => {
+      const row = [
+        `"${registration.attendee.name}"`,
+        `"${registration.attendee.email}"`,
+        `"${registration.attendee.phone || ''}"`,
+        `"${registration.attendee.organization || ''}"`
+      ];
+      csvRows.push(row.join(','));
+    });
 
-  const clearSelection = () => {
-    setSelectedRegistrations([]);
+    // Create and download CSV file
+    const csvContent = csvRows.join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    
+    if (link.download !== undefined) {
+      const url = URL.createObjectURL(blob);
+      link.setAttribute('href', url);
+      
+      // Get event name for filename (use first event if multiple)
+      const eventName = filteredRegistrations.length > 0 
+        ? filteredRegistrations[0].event.title.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()
+        : 'event';
+      
+      link.setAttribute('download', `${eventName}_attendees_export.csv`);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
   };
 
   const filteredRegistrations = registrations.filter(registration => {
@@ -446,11 +436,10 @@ const AdminAttendeesPage: React.FC = () => {
 
   const headerActions = (
     <div className="flex items-center space-x-3">
-      <button className="inline-flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium">
-        <CheckIcon className="w-4 h-4 mr-2" />
-        Bulk Approve
-      </button>
-      <button className="inline-flex items-center px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors">
+      <button 
+        onClick={exportToCSV}
+        className="inline-flex items-center px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+      >
         <FunnelIcon className="w-4 h-4 mr-2" />
         Export Data
       </button>
@@ -571,52 +560,8 @@ const AdminAttendeesPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Bulk Actions */}
-        {selectedRegistrations.length > 0 && (
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-3">
-                <span className="text-sm font-medium text-blue-900">
-                  {selectedRegistrations.length} registration{selectedRegistrations.length !== 1 ? 's' : ''} selected
-                </span>
-                <button
-                  onClick={clearSelection}
-                  className="text-sm text-blue-600 hover:text-blue-800 underline"
-                >
-                  Clear Selection
-                </button>
-              </div>
-              <div className="flex items-center space-x-2">
-                <button
-                  onClick={() => handleBulkAction('approve')}
-                  className="inline-flex items-center px-3 py-1.5 bg-green-600 text-white text-sm rounded-md hover:bg-green-700 transition-colors"
-                >
-                  <CheckIcon className="w-4 h-4 mr-1" />
-                  Approve All
-                </button>
-                <button
-                  onClick={() => handleBulkAction('reject')}
-                  className="inline-flex items-center px-3 py-1.5 bg-red-600 text-white text-sm rounded-md hover:bg-red-700 transition-colors"
-                >
-                  <XMarkIcon className="w-4 h-4 mr-1" />
-                  Reject All
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* Quick Actions */}
-        <div className="mb-6 flex items-center justify-between">
-          <div className="flex space-x-2">
-            <button
-              onClick={selectAllVisible}
-              className="text-sm text-blue-600 hover:text-blue-700 font-medium"
-            >
-              Select All Visible ({filteredRegistrations.length})
-            </button>
-          </div>
-          
+        <div className="mb-6 flex items-center justify-end">
           <div className="text-sm text-gray-500">
             Showing {filteredRegistrations.length} of {registrations.length} registrations
           </div>
@@ -640,15 +585,6 @@ const AdminAttendeesPage: React.FC = () => {
               {filteredRegistrations.map((registration) => (
                 <div key={registration.id} className="p-6 hover:bg-gray-50 transition-colors">
                   <div className="flex items-start space-x-4">
-                    {/* Selection Checkbox */}
-                    <div className="flex items-center pt-1">
-                      <input
-                        type="checkbox"
-                        checked={selectedRegistrations.includes(registration.id)}
-                        onChange={() => toggleRegistrationSelection(registration.id)}
-                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                      />
-                    </div>
 
                     {/* Avatar */}
                     <div className="flex-shrink-0">
