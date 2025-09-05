@@ -106,6 +106,11 @@ export class EventService {
       return null;
     }
     
+    // Strip functions entirely (e.g., objects carrying toDate as a function)
+    if (typeof obj === 'function') {
+      return undefined as any;
+    }
+
     if (Array.isArray(obj)) {
       return obj.map(item => this.removeUndefinedValues(item)).filter(item => item !== undefined);
     }
@@ -113,7 +118,7 @@ export class EventService {
     if (typeof obj === 'object') {
       const cleaned: any = {};
       for (const [key, value] of Object.entries(obj)) {
-        if (value !== undefined) {
+        if (value !== undefined && typeof value !== 'function') {
           const cleanedValue = this.removeUndefinedValues(value);
           if (cleanedValue !== undefined) {
             cleaned[key] = cleanedValue;
@@ -124,6 +129,79 @@ export class EventService {
     }
     
     return obj;
+  }
+
+  /**
+   * Convert various date-like inputs to Firestore Timestamp
+   */
+  private static toFirestoreTimestamp(value: any): Timestamp | undefined {
+    try {
+      if (!value) return undefined;
+      if (value instanceof Timestamp) return value;
+      if (value instanceof Date) return Timestamp.fromDate(value);
+      if (typeof value === 'number') return Timestamp.fromMillis(value);
+      if (typeof value === 'string') {
+        const d = new Date(value);
+        if (!isNaN(d.getTime())) return Timestamp.fromDate(d);
+        return undefined;
+      }
+      if (typeof value === 'object') {
+        if (typeof (value as any).toDate === 'function') {
+          const d = (value as any).toDate();
+          if (d instanceof Date && !isNaN(d.getTime())) return Timestamp.fromDate(d);
+        }
+        if (typeof (value as any).seconds === 'number') {
+          const seconds = (value as any).seconds as number;
+          const nanos = (value as any).nanoseconds as number | undefined;
+          return new Timestamp(seconds, nanos ?? 0);
+        }
+      }
+    } catch (_e) {
+      // fall through
+    }
+    return undefined;
+  }
+
+  /**
+   * Sanitize ticket types to ensure Firestore-serializable values
+   */
+  private static sanitizeTicketTypes(ticketTypes: TicketType[] = []): TicketType[] {
+    return ticketTypes.map((t) => {
+      const sanitized: any = { ...t };
+      // Coerce required numeric fields
+      sanitized.price = typeof t.price === 'number' ? t.price : 0;
+      sanitized.currentSold = typeof t.currentSold === 'number' ? t.currentSold : 0;
+      sanitized.isActive = !!t.isActive;
+      sanitized.isEarlyBird = !!t.isEarlyBird;
+
+      // Convert date-like fields
+      const ebd = this.toFirestoreTimestamp(t.earlyBirdDeadline as any);
+      if (ebd) sanitized.earlyBirdDeadline = ebd; else delete sanitized.earlyBirdDeadline;
+
+      const vf = this.toFirestoreTimestamp((t as any).validFrom);
+      if (vf) sanitized.validFrom = vf; else delete sanitized.validFrom;
+
+      const vu = this.toFirestoreTimestamp((t as any).validUntil);
+      if (vu) sanitized.validUntil = vu; else delete sanitized.validUntil;
+
+      // Remove any accidental function-valued properties
+      return this.removeUndefinedValues(sanitized);
+    });
+  }
+
+  /**
+   * Sanitize promo codes to ensure Firestore-serializable values
+   */
+  private static sanitizePromoCodes(promoCodes: PromoCode[] = []): any[] {
+    return promoCodes.map((p) => {
+      const sanitized: any = { ...p };
+      const fieldsToConvert = ['validFrom', 'validUntil', 'createdAt', 'updatedAt'];
+      fieldsToConvert.forEach((k) => {
+        const ts = this.toFirestoreTimestamp((p as any)[k]);
+        if (ts) sanitized[k] = ts; else delete sanitized[k];
+      });
+      return this.removeUndefinedValues(sanitized);
+    });
   }
 
   /**
@@ -189,8 +267,8 @@ export class EventService {
         endDate: this.combineDateAndTime(eventData.endDate, eventData.endTime),
         timezone: eventData.timezone,
         venue: venue,
-        ticketTypes: eventData.ticketTypes || [],
-        promoCodes: eventData.promoCodes || [],
+        ticketTypes: this.sanitizeTicketTypes(eventData.ticketTypes || []),
+        promoCodes: this.sanitizePromoCodes(eventData.promoCodes || []),
         tags: eventData.tags || [],
         category: eventData.category,
         status: 'draft',
@@ -225,10 +303,8 @@ export class EventService {
       // Create the event document
       await setDoc(eventRef, cleanedEvent);
 
-      // Upload event image if provided
-      if (eventData.imageUrl && eventData.imageUrl.startsWith('data:')) {
-        await this.uploadEventImageFromDataUrl(eventId, eventData.imageUrl);
-      }
+      // Note: Base64 image uploads are now handled in the UI layer before calling createEvent
+      // This prevents Firestore size limit errors from large base64 strings
 
       // Create registration and feedback forms as subcollections
       await this.createEventForms(eventId, eventData);
@@ -237,7 +313,7 @@ export class EventService {
       if (eventData.paymentConfig) {
         // Remove File objects from payment config before saving to Firestore
         const { qrCodeImage, ...paymentConfigWithoutFile } = eventData.paymentConfig;
-        await this.createPaymentConfiguration(eventId, paymentConfigWithoutFile);
+        await this.createPaymentConfiguration(eventId, this.removeUndefinedValues(paymentConfigWithoutFile));
       }
 
       // TODO: Re-enable Firebase Function initialization once function issues are resolved
@@ -275,6 +351,14 @@ export class EventService {
         }
       });
 
+      // Normalize nested arrays if provided
+      if (eventData.ticketTypes) {
+        updateData.ticketTypes = this.sanitizeTicketTypes(eventData.ticketTypes as TicketType[]);
+      }
+      if (eventData.promoCodes) {
+        updateData.promoCodes = this.sanitizePromoCodes(eventData.promoCodes as PromoCode[]);
+      }
+
       // Handle date/time updates
       if (eventData.startDate && eventData.startTime) {
         updateData.startDate = this.combineDateAndTime(eventData.startDate, eventData.startTime);
@@ -297,7 +381,7 @@ export class EventService {
       if (eventData.paymentConfig) {
         // Remove File objects from payment config before saving to Firestore
         const { qrCodeImage, ...paymentConfigWithoutFile } = eventData.paymentConfig;
-        await this.updatePaymentConfiguration(eventId, paymentConfigWithoutFile);
+        await this.updatePaymentConfiguration(eventId, this.removeUndefinedValues(paymentConfigWithoutFile));
       }
     } catch (error) {
       console.error('Error updating event:', error);

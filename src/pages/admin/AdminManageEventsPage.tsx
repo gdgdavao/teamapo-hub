@@ -352,7 +352,10 @@ const ManageEventsPage: React.FC = () => {
     
     // Copy link to clipboard
     navigator.clipboard.writeText(shareUrl).then(() => {
-      toast.success('Registration link copied to clipboard!');
+      toast.success(`Registration link for "${eventTitle}" copied to clipboard!`, {
+        duration: 4000,
+        icon: '🔗'
+      });
     }).catch(() => {
       toast.error('Failed to copy link to clipboard');
     });
@@ -952,9 +955,13 @@ const ManageEventsPage: React.FC = () => {
             </p>
             {!searchTerm && statusFilter === 'all' && (
               <div className="mt-4 sm:mt-6">
-                <p className="text-sm text-gray-500">
-                  Contact an administrator to create new events.
-                </p>
+                <Link 
+                to="/events/create"
+                className="inline-flex items-center px-4 py-2.5 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-xl
+                hover:from-blue-600 hover:to-blue-700 transition-all duration-200 shadow-lg hover:shadow-xl font-medium">
+                  <PlusIcon className="w-5 h-5 mr-2" />
+                  Create Event
+                  </Link>
               </div>
             )}
           </div>

@@ -1,5 +1,33 @@
 import { TicketType, PromoCode, TicketPricing } from '../types';
 
+function toDateSafe(value: any): Date | null {
+  try {
+    if (!value) return null;
+    if (value instanceof Date) return value;
+    if (typeof value === 'object') {
+      if (typeof (value as any).toDate === 'function') {
+        const d = (value as any).toDate();
+        return d instanceof Date ? d : null;
+      }
+      if (typeof (value as any).seconds === 'number') {
+        const seconds = (value as any).seconds as number;
+        return new Date(seconds * 1000);
+      }
+    }
+    if (typeof value === 'number') {
+      // treat as milliseconds
+      return new Date(value);
+    }
+    if (typeof value === 'string') {
+      const d = new Date(value);
+      return isNaN(d.getTime()) ? null : d;
+    }
+  } catch (_e) {
+    // ignore and return null
+  }
+  return null;
+}
+
 export interface PricingCalculationInput {
   ticketType: TicketType;
   quantity: number;
@@ -32,8 +60,8 @@ export function calculateTicketPricing(input: PricingCalculationInput): PricingC
 
   // Check early bird pricing
   if (ticketType.earlyBirdPrice && ticketType.earlyBirdDeadline) {
-    const deadline = ticketType.earlyBirdDeadline.toDate();
-    if (currentDate <= deadline) {
+    const deadline = toDateSafe(ticketType.earlyBirdDeadline);
+    if (deadline && currentDate <= deadline) {
       isEarlyBird = true;
       const earlyBirdDiscount = unitPrice - ticketType.earlyBirdPrice;
       discountAmount += earlyBirdDiscount;
@@ -97,14 +125,14 @@ export function validatePromoCode(
   }
 
   // Check date validity
-  const validFrom = promoCode.validFrom.toDate();
-  const validUntil = promoCode.validUntil.toDate();
+  const validFrom = toDateSafe(promoCode.validFrom);
+  const validUntil = toDateSafe(promoCode.validUntil);
   
-  if (currentDate < validFrom) {
+  if (validFrom && currentDate < validFrom) {
     errors.push('Promo code is not yet valid');
   }
   
-  if (currentDate > validUntil) {
+  if (validUntil && currentDate > validUntil) {
     errors.push('Promo code has expired');
   }
 
@@ -134,7 +162,10 @@ export function getCurrentTicketPricing(ticketType: TicketType, currentDate: Dat
   
   let timeRemaining: number | undefined;
   if (ticketType.earlyBirdDeadline && calculation.isEarlyBird) {
-    timeRemaining = ticketType.earlyBirdDeadline.toDate().getTime() - currentDate.getTime();
+    const deadline = toDateSafe(ticketType.earlyBirdDeadline);
+    if (deadline) {
+      timeRemaining = deadline.getTime() - currentDate.getTime();
+    }
   }
 
   return {

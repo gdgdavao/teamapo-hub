@@ -841,6 +841,114 @@ def deleteEventData(req: https_fn.CallableRequest) -> Dict[str, Any]:
 
 
 @https_fn.on_call()
+def validateRegistration(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Validate registration data without authentication (for anonymous registrations)
+    """
+    try:
+        event_id = req.data.get('eventId')
+        ticket_type_id = req.data.get('ticketTypeId')
+        quantity = req.data.get('quantity', 1)
+        promo_code = req.data.get('promoCode')
+        
+        if not event_id or not ticket_type_id:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="Event ID and ticket type ID are required"
+            )
+        
+        # Get event data
+        event_ref = get_db().collection('events').document(event_id)
+        event_doc = event_ref.get()
+        
+        if not event_doc.exists:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.NOT_FOUND,
+                message="Event not found"
+            )
+        
+        event_data = event_doc.to_dict()
+        
+        # Check if event is published
+        if not event_data.get('isPublished', False):
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
+                message="Event is not published"
+            )
+        
+        # Check if event is full
+        current_attendees = event_data.get('currentAttendees', 0)
+        max_attendees = event_data.get('maxAttendees')
+        
+        if max_attendees and current_attendees >= max_attendees:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
+                message="Event is full"
+            )
+        
+        # Find ticket type
+        ticket_types = event_data.get('ticketTypes', [])
+        ticket_type = None
+        for tt in ticket_types:
+            if tt.get('id') == ticket_type_id:
+                ticket_type = tt
+                break
+        
+        if not ticket_type:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.NOT_FOUND,
+                message="Ticket type not found"
+            )
+        
+        # Calculate pricing
+        original_price = ticket_type.get('price', 0)
+        current_price = original_price
+        
+        # Apply promo code if provided
+        promo_code_data = None
+        if promo_code:
+            promoCodes = event_data.get('promoCodes', [])
+            for pc in promoCodes:
+                if pc.get('code') == promo_code and pc.get('isActive', False):
+                    promo_code_data = pc
+                    break
+            
+            if promo_code_data:
+                discount_type = promo_code_data.get('discountType', 'percentage')
+                discount_value = promo_code_data.get('discountValue', 0)
+                
+                if discount_type == 'percentage':
+                    current_price = original_price * (1 - discount_value / 100)
+                elif discount_type == 'fixed':
+                    current_price = max(0, original_price - discount_value)
+        
+        # Calculate totals
+        original_amount = original_price * quantity
+        discount_amount = (original_price - current_price) * quantity
+        total_amount = current_price * quantity
+        
+        return {
+            'isValid': True,
+            'pricing': {
+                'originalPrice': original_price,
+                'currentPrice': current_price,
+                'discountAmount': discount_amount,
+                'promoCode': promo_code_data
+            },
+            'message': 'Registration validation successful'
+        }
+        
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error validating registration: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error during validation"
+        )
+
+
+@https_fn.on_call()
 def registerForEvent(req: https_fn.CallableRequest) -> Dict[str, Any]:
     """
     Register a user for an event
@@ -1500,6 +1608,109 @@ def bulkProcessPayments(req: https_fn.CallableRequest) -> Dict[str, Any]:
         raise https_fn.HttpsError(
             code=https_fn.FunctionsErrorCode.INTERNAL,
             message="Internal server error during bulk processing"
+        )
+
+
+# Callable utilities for notifications/emails
+@https_fn.on_call()
+def sendConfirmationEmail(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Queue or simulate sending a registration confirmation email.
+    This is a lightweight stub to support local dev and avoid client errors.
+    """
+    try:
+        data: Dict[str, Any] = req.data or {}
+        registration_id = data.get('registrationId')
+        event_id = data.get('eventId')
+        user_email = data.get('userEmail')
+        user_name = data.get('userName', 'Attendee')
+
+        if not registration_id or not event_id or not user_email:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="registrationId, eventId, and userEmail are required"
+            )
+
+        # Log activity for traceability in emulator
+        try:
+            get_db().collection('activity_logs').add({
+                'type': 'email_confirmation_queued',
+                'registrationId': registration_id,
+                'eventId': event_id,
+                'userEmail': user_email,
+                'userName': user_name,
+                'timestamp': firestore.SERVER_TIMESTAMP
+            })
+        except Exception as log_err:
+            logger.warning(f"Failed to write activity log for confirmation email: {str(log_err)}")
+
+        logger.info(f"sendConfirmationEmail queued for {user_email} (registration {registration_id})")
+        return {
+            'success': True,
+            'message': 'Confirmation email queued',
+            'registrationId': registration_id,
+            'eventId': event_id
+        }
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error in sendConfirmationEmail: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error queuing confirmation email"
+        )
+
+
+@https_fn.on_call()
+def sendPaymentNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Notify attendee or admins of payment status change.
+    This is a lightweight stub to support local dev and avoid client errors.
+    """
+    try:
+        data: Dict[str, Any] = req.data or {}
+        registration_id = data.get('registrationId')
+        status = data.get('status')  # expected: 'approved' | 'rejected' | 'pending'
+        event_title = data.get('eventTitle')
+        attendee_email = data.get('attendeeEmail')
+        attendee_name = data.get('attendeeName', 'Attendee')
+
+        if not registration_id or not status:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="registrationId and status are required"
+            )
+
+        # Log activity for traceability in emulator
+        try:
+            get_db().collection('activity_logs').add({
+                'type': 'payment_notification',
+                'registrationId': registration_id,
+                'status': status,
+                'eventTitle': event_title,
+                'attendeeEmail': attendee_email,
+                'attendeeName': attendee_name,
+                'timestamp': firestore.SERVER_TIMESTAMP
+            })
+        except Exception as log_err:
+            logger.warning(f"Failed to write activity log for payment notification: {str(log_err)}")
+
+        logger.info(
+            f"sendPaymentNotification queued for registration {registration_id} with status {status}"
+        )
+        return {
+            'success': True,
+            'message': 'Payment notification queued',
+            'registrationId': registration_id,
+            'status': status
+        }
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error in sendPaymentNotification: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error queuing payment notification"
         )
 
 

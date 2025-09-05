@@ -38,6 +38,9 @@ import FeedbackPage from './pages/feedback/FeedbackPage';
 import CertificateVerificationPage from './pages/verification/CertificateVerificationPage';
 import NotFoundPage from './pages/error/NotFoundPage';
 
+// Public Pages
+import EventRegistrationPage from './pages/public/EventRegistrationPage';
+
 // Protected Route Component
 const ProtectedRoute: React.FC<{ 
   children: React.ReactNode; 
@@ -246,6 +249,9 @@ const AppContent: React.FC = () => {
       {/* Certificate Verification Route */}
       <Route path="/verify/:code" element={<CertificateVerificationPage />} />
       <Route path="/verify" element={<CertificateVerificationPage />} />
+
+      {/* Public Event Registration Route */}
+      <Route path="/events/:eventId/register" element={<EventRegistrationPage />} />
 
       {/* 404 Route */}
       <Route path="*" element={<NotFoundPage />} />

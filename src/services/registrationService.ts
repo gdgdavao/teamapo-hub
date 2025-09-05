@@ -56,25 +56,17 @@ export class RegistrationService {
   private static readonly EVENTS_COLLECTION = 'events';
 
   /**
-   * Register for an event
+   * Create a pending registration (before payment)
    */
-  static async registerForEvent(registrationData: RegistrationData): Promise<{
+  static async createPendingRegistration(registrationData: RegistrationData): Promise<{
     registrationId: string;
     pricing: TicketPricing;
     qrCode: string;
     requiresPayment: boolean;
   }> {
     try {
-      // Validate event and get pricing using Firebase Function
-      const validateRegistration = httpsCallable(functions, 'validateRegistration');
-      const validationResult = await validateRegistration(registrationData);
-      
-      const validation = validationResult.data as { 
-        isValid: boolean; 
-        pricing: TicketPricing; 
-        errors?: string[];
-        message?: string; 
-      };
+      // Validate event and get pricing locally (bypassing functions for now)
+      const validation = await this.validateRegistrationLocally(registrationData);
       
       if (!validation.isValid) {
         throw new Error(validation.message || validation.errors?.join(', ') || 'Registration validation failed');
@@ -87,9 +79,133 @@ export class RegistrationService {
       // Generate QR code
       const qrCode = this.generateQRCode(registrationId);
 
-      // Determine payment status
+      // Determine payment status - force pending for manual approval flow
       const requiresPayment = validation.pricing.currentPrice > 0;
-      const paymentStatus = requiresPayment ? 'pending' : 'paid';
+      const paymentStatus = 'pending';
+
+      // Create pending registration document
+      const registration: Omit<Registration, 'id'> = {
+        eventId: registrationData.eventId,
+        userId: '', // Anonymous registration
+        userDetails: registrationData.userDetails,
+        ticketTypeId: registrationData.ticketTypeId,
+        quantity: registrationData.quantity,
+        originalAmount: validation.pricing.originalPrice * registrationData.quantity,
+        discountAmount: validation.pricing.discountAmount * registrationData.quantity,
+        totalAmount: validation.pricing.currentPrice * registrationData.quantity,
+        currency: 'PHP', // Default currency
+        pricing: validation.pricing,
+        paymentStatus: paymentStatus as any,
+        attendanceStatus: 'pending' as any,
+        feedbackSubmitted: false,
+        certificateIssued: false,
+        qrCode,
+        registrationDate: serverTimestamp() as any,
+        updatedAt: serverTimestamp() as any
+      };
+
+      // Add custom form responses if provided
+      if (registrationData.customResponses) {
+        (registration as any).customResponses = registrationData.customResponses;
+      }
+
+      // Clean up undefined values before saving to Firestore
+      const cleanRegistration = Object.fromEntries(
+        Object.entries(registration).filter(([_, value]) => value !== undefined)
+      );
+
+      // Save pending registration
+      console.log('Saving registration with data:', cleanRegistration);
+      await setDoc(registrationRef, cleanRegistration);
+      console.log('Registration saved successfully with ID:', registrationId);
+
+      // Don't update event attendee count yet - wait for payment confirmation
+
+      return {
+        registrationId,
+        pricing: validation.pricing,
+        qrCode,
+        requiresPayment
+      };
+    } catch (error) {
+      console.error('Error creating pending registration:', error);
+      throw new Error('Failed to create registration');
+    }
+  }
+
+  /**
+   * Complete registration after payment verification
+   */
+  static async completeRegistration(registrationId: string): Promise<void> {
+    try {
+      const registrationRef = doc(db, this.REGISTRATIONS_COLLECTION, registrationId);
+      
+      // Update registration status to confirmed
+      await updateDoc(registrationRef, {
+        attendanceStatus: 'registered',
+        paymentStatus: 'paid',
+        updatedAt: serverTimestamp()
+      });
+
+      // Get registration data to update event attendee count
+      const registrationDoc = await getDoc(registrationRef);
+      if (registrationDoc.exists()) {
+        const registrationData = registrationDoc.data() as Registration;
+        
+        // Update event attendee count
+        const eventRef = doc(db, this.EVENTS_COLLECTION, registrationData.eventId);
+        await updateDoc(eventRef, {
+          currentAttendees: increment(registrationData.quantity),
+          updatedAt: serverTimestamp()
+        });
+
+        // Send confirmation email via Firebase Function
+        try {
+          const sendConfirmationEmail = httpsCallable(functions, 'sendConfirmationEmail');
+          await sendConfirmationEmail({
+            registrationId,
+            eventId: registrationData.eventId,
+            userEmail: registrationData.userDetails.email,
+            userName: registrationData.userDetails.name
+          });
+        } catch (emailError) {
+          console.error('Error sending confirmation email:', emailError);
+          // Don't throw - email failure shouldn't break the flow
+        }
+      }
+    } catch (error) {
+      console.error('Error completing registration:', error);
+      throw new Error('Failed to complete registration');
+    }
+  }
+
+  /**
+   * Register for an event (legacy method - now calls createPendingRegistration)
+   */
+  static async registerForEvent(registrationData: RegistrationData): Promise<{
+    registrationId: string;
+    pricing: TicketPricing;
+    qrCode: string;
+    requiresPayment: boolean;
+  }> {
+    try {
+      // Validate event and get pricing locally (bypassing functions for now)
+      const validation = await this.validateRegistrationLocally(registrationData);
+      
+      if (!validation.isValid) {
+        throw new Error(validation.message || validation.errors?.join(', ') || 'Registration validation failed');
+      }
+
+      // Generate registration ID
+      const registrationRef = doc(collection(db, this.REGISTRATIONS_COLLECTION));
+      const registrationId = registrationRef.id;
+
+      // Generate QR code
+      const qrCode = this.generateQRCode(registrationId);
+
+      // Determine payment status - force pending for manual approval flow
+      const requiresPayment = validation.pricing.currentPrice > 0;
+      const paymentStatus = 'pending';
 
       // Create registration document
       const registration: Omit<Registration, 'id'> = {
@@ -102,8 +218,8 @@ export class RegistrationService {
         discountAmount: validation.pricing.discountAmount * registrationData.quantity,
         totalAmount: validation.pricing.currentPrice * registrationData.quantity,
         currency: 'PHP', // Default currency
-        promoCode: registrationData.promoCode,
-        promoCodeId: validation.pricing.promoCode ? registrationData.promoCode : undefined,
+        ...(registrationData.promoCode ? { promoCode: registrationData.promoCode } : {}),
+        ...(validation.pricing.promoCode ? { promoCodeId: registrationData.promoCode } : {}),
         pricing: validation.pricing,
         paymentStatus: paymentStatus as any,
         attendanceStatus: 'registered',
@@ -182,16 +298,19 @@ export class RegistrationService {
    */
   static async getRegistrationById(registrationId: string): Promise<Registration | null> {
     try {
+      console.log('Fetching registration with ID:', registrationId);
       const registrationRef = doc(db, this.REGISTRATIONS_COLLECTION, registrationId);
       const registrationSnap = await getDoc(registrationRef);
       
       if (registrationSnap.exists()) {
+        console.log('Registration found:', registrationSnap.data());
         return {
           id: registrationSnap.id,
           ...registrationSnap.data()
         } as Registration;
       }
       
+      console.log('Registration not found');
       return null;
     } catch (error) {
       console.error('Error fetching registration:', error);
@@ -660,6 +779,116 @@ export class RegistrationService {
     } catch (error) {
       console.error('Error exporting registrations:', error);
       throw new Error('Failed to export registrations');
+    }
+  }
+
+  /**
+   * Local validation method to replace Firebase Function call
+   */
+  private static async validateRegistrationLocally(registrationData: RegistrationData): Promise<{
+    isValid: boolean;
+    pricing: TicketPricing;
+    errors?: string[];
+    message?: string;
+  }> {
+    try {
+      // Get event data
+      const eventRef = doc(db, 'events', registrationData.eventId);
+      const eventSnap = await getDoc(eventRef);
+      
+      if (!eventSnap.exists()) {
+        return {
+          isValid: false,
+          pricing: {} as TicketPricing,
+          message: 'Event not found'
+        };
+      }
+      
+      const eventData = eventSnap.data();
+      
+      // Check if event is published
+      if (!eventData.isPublished) {
+        return {
+          isValid: false,
+          pricing: {} as TicketPricing,
+          message: 'Event is not published'
+        };
+      }
+      
+      // Check if event is full
+      const currentAttendees = eventData.currentAttendees || 0;
+      const maxAttendees = eventData.maxAttendees;
+      
+      if (maxAttendees && currentAttendees >= maxAttendees) {
+        return {
+          isValid: false,
+          pricing: {} as TicketPricing,
+          message: 'Event is full'
+        };
+      }
+      
+      // Find ticket type
+      const ticketTypes = eventData.ticketTypes || [];
+      const ticketType = ticketTypes.find((tt: any) => tt.id === registrationData.ticketTypeId);
+      
+      if (!ticketType) {
+        return {
+          isValid: false,
+          pricing: {} as TicketPricing,
+          message: 'Ticket type not found'
+        };
+      }
+      
+      // Calculate pricing
+      const originalPrice = ticketType.price || 0;
+      let discountAmount = 0;
+      let promoCode = null;
+      
+      // Check promo code if provided
+      if (registrationData.promoCode) {
+        const promoCodes = eventData.promoCodes || [];
+        const validPromoCode = promoCodes.find((pc: any) => 
+          pc.code === registrationData.promoCode && 
+          pc.isActive &&
+          (!pc.usageLimit || pc.usedCount < pc.usageLimit)
+        );
+        
+        if (validPromoCode) {
+          promoCode = validPromoCode as any;
+          if (validPromoCode.discountType === 'percentage') {
+            discountAmount = (originalPrice * validPromoCode.discountValue) / 100;
+          } else {
+            discountAmount = validPromoCode.discountValue;
+          }
+        }
+      }
+      
+      const currentPrice = Math.max(0, originalPrice - discountAmount);
+      
+      const pricing: TicketPricing = {
+        ticketTypeId: registrationData.ticketTypeId,
+        originalPrice,
+        currentPrice,
+        discountAmount,
+        isEarlyBird: false,
+        ...(promoCode ? { 
+          discountType: 'promo_code' as const,
+          promoCode: (promoCode as any).code 
+        } : {})
+      };
+      
+      return {
+        isValid: true,
+        pricing
+      };
+      
+    } catch (error) {
+      console.error('Error validating registration locally:', error);
+      return {
+        isValid: false,
+        pricing: {} as TicketPricing,
+        message: 'Validation failed'
+      };
     }
   }
 } 

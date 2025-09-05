@@ -24,7 +24,9 @@ import {
   TicketIcon,
   TagIcon,
   ArrowLeftIcon,
-  UserIcon
+  UserIcon,
+  ShareIcon,
+  ClipboardDocumentIcon
 } from '@heroicons/react/24/outline';
 import { FormBuilder, FormField } from '../../components/shared/FormBuilder';
 import { TicketType, PromoCode } from '../../types';
@@ -260,6 +262,20 @@ const CreateEventPage: React.FC = () => {
     }
   };
 
+  const handleShareEvent = (eventId: string, eventTitle: string) => {
+    const shareUrl = `${window.location.origin}/events/${eventId}/register`;
+    
+    // Copy link to clipboard
+    navigator.clipboard.writeText(shareUrl).then(() => {
+      toast.success(`Registration link for "${eventTitle}" copied to clipboard!`, {
+        duration: 4000,
+        icon: '🔗'
+      });
+    }).catch(() => {
+      toast.error('Failed to copy link to clipboard');
+    });
+  };
+
   const handleSaveEvent = async (publish: boolean = false) => {
     // Wait for auth to be fully initialized
     if (authLoading) {
@@ -336,23 +352,32 @@ const CreateEventPage: React.FC = () => {
 
       let savedEventId: string;
 
+      // Create or update event first (without base64 image data)
+      const eventDataWithoutBase64Image = {
+        ...formData,
+        // Remove base64 image data to prevent Firestore size limit error
+        imageUrl: formData.imageUrl && formData.imageUrl.startsWith('data:') ? undefined : formData.imageUrl
+      };
+
       if (isEditMode && eventId) {
         // Update existing event
-        await EventService.updateEvent(eventId, formData);
+        await EventService.updateEvent(eventId, eventDataWithoutBase64Image);
         savedEventId = eventId;
       } else {
         // Create new event
-        savedEventId = await EventService.createEvent(formData, currentUser.uid);
+        savedEventId = await EventService.createEvent(eventDataWithoutBase64Image, currentUser.uid);
         setEventId(savedEventId);
       }
 
-      // Upload event image if provided
+      // Upload event image if provided (after event is created)
       if (formData.imageUrl && formData.imageUrl.startsWith('data:')) {
         try {
           // Convert data URL to blob and then to file
           const response = await fetch(formData.imageUrl);
           const blob = await response.blob();
           const file = new File([blob], 'event-image.jpg', { type: 'image/jpeg' });
+          
+          // Upload image to Firebase Storage (this will also update the event with the image URL)
           await EventService.uploadEventImage(savedEventId, file);
         } catch (error) {
           console.error('Error uploading event image:', error);
@@ -505,7 +530,7 @@ const CreateEventPage: React.FC = () => {
               qrCodeUrl: e.target?.result as string
             }
           };
-        });1
+        });
       };
       reader.readAsDataURL(file);
     }
@@ -1502,8 +1527,8 @@ const CreateEventPage: React.FC = () => {
                       onChange={(e) => updateTicketType(index, {
                         isEarlyBird: e.target.checked,
                         earlyBirdPrice: e.target.checked ? ticket.price * 0.8 : undefined,
-                        earlyBirdDeadline: e.target.checked ?
-                          { toDate: () => new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) } as any : undefined
+                        // Store as Date locally; service will convert to Timestamp
+                        earlyBirdDeadline: e.target.checked ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) as any : undefined
                       })}
                       className="rounded border-gray-300 text-orange-600 focus:ring-orange-500"
                     />
@@ -1536,12 +1561,15 @@ const CreateEventPage: React.FC = () => {
                         <input
                           type="datetime-local"
                           value={ticket.earlyBirdDeadline ?
-                            new Date(ticket.earlyBirdDeadline.toDate()).toISOString().slice(0, 16) :
-                            ''
+                            (
+                              typeof (ticket.earlyBirdDeadline as any).toDate === 'function'
+                                ? new Date((ticket.earlyBirdDeadline as any).toDate()).toISOString().slice(0, 16)
+                                : new Date(ticket.earlyBirdDeadline as any).toISOString().slice(0, 16)
+                            ) : ''
                           }
                           onChange={(e) => updateTicketType(index, {
-                            earlyBirdDeadline: e.target.value ?
-                              { toDate: () => new Date(e.target.value) } as any : undefined
+                            // Store as Date locally; service will convert to Timestamp
+                            earlyBirdDeadline: e.target.value ? new Date(e.target.value) as any : undefined
                           })}
                           className="w-full px-3 py-2 border border-orange-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                         />
@@ -2344,6 +2372,17 @@ const CreateEventPage: React.FC = () => {
             >
               {authLoading ? 'Authenticating...' : loading ? 'Publishing...' : 'Publish Event'}
             </button>
+            {eventId && (
+              <button
+                type="button"
+                onClick={() => handleShareEvent(eventId, formData.title)}
+                className="inline-flex items-center px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                title="Share Registration Link"
+              >
+                <ShareIcon className="w-4 h-4 mr-2" />
+                Share
+              </button>
+            )}
           </div>
         </div>
 

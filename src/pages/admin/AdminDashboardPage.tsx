@@ -200,6 +200,8 @@ const AdminDashboardPage: React.FC = () => {
   const [recentEvents, setRecentEvents] = useState<any[]>([]);
   const [pendingAttendees, setPendingAttendees] = useState<any[]>([]);
   const [previousPendingCount, setPreviousPendingCount] = useState(0);
+  const [reminderDismissed, setReminderDismissed] = useState(false);
+  const [reminderTime, setReminderTime] = useState<Date | null>(null);
   const { currentUser, userProfile } = useAuth();
 
   // Helper function to handle different timestamp formats
@@ -215,6 +217,69 @@ const AdminDashboardPage: React.FC = () => {
     console.warn('Invalid timestamp format:', timestamp);
     return new Date();
   }, []);
+
+  // Reminder management functions
+  const REMINDER_STORAGE_KEY = 'admin_pending_reminder';
+  const REMINDER_DURATION_HOURS = 2; // Remind again after 2 hours
+
+  const saveReminderState = useCallback((dismissed: boolean, reminderTime: Date | null) => {
+    try {
+      const reminderData = {
+        dismissed,
+        reminderTime: reminderTime?.toISOString() || null,
+        timestamp: new Date().toISOString()
+      };
+      localStorage.setItem(REMINDER_STORAGE_KEY, JSON.stringify(reminderData));
+    } catch (error) {
+      console.warn('Failed to save reminder state:', error);
+    }
+  }, []);
+
+  const loadReminderState = useCallback(() => {
+    try {
+      const saved = localStorage.getItem(REMINDER_STORAGE_KEY);
+      if (saved) {
+        const reminderData = JSON.parse(saved);
+        const savedReminderTime = reminderData.reminderTime ? new Date(reminderData.reminderTime) : null;
+        
+        // Check if reminder time has passed
+        if (savedReminderTime && new Date() >= savedReminderTime) {
+          // Reminder time has passed, reset the state
+          localStorage.removeItem(REMINDER_STORAGE_KEY);
+          return { dismissed: false, reminderTime: null };
+        }
+        
+        return {
+          dismissed: reminderData.dismissed || false,
+          reminderTime: savedReminderTime
+        };
+      }
+    } catch (error) {
+      console.warn('Failed to load reminder state:', error);
+    }
+    return { dismissed: false, reminderTime: null };
+  }, []);
+
+  const handleRemindMeLater = useCallback(() => {
+    const reminderTime = new Date();
+    reminderTime.setHours(reminderTime.getHours() + REMINDER_DURATION_HOURS);
+    
+    setReminderDismissed(true);
+    setReminderTime(reminderTime);
+    saveReminderState(true, reminderTime);
+    
+    toast.success(`Reminder set for ${reminderTime.toLocaleTimeString()}`, {
+      duration: 3000,
+      icon: '⏰'
+    });
+  }, [saveReminderState]);
+
+  const shouldShowReminder = useCallback(() => {
+    if (!stats.pendingApprovals || stats.pendingApprovals === 0) return false;
+    
+    const reminderState = loadReminderState();
+    return !reminderState.dismissed;
+  }, [stats.pendingApprovals, loadReminderState]);
 
   // Create notifications for new pending attendees
   const createNotificationsForNewAttendees = useCallback(async (newPendingRegistrations: any[]) => {
@@ -274,6 +339,13 @@ const AdminDashboardPage: React.FC = () => {
       console.error('Error creating high priority notification:', error);
     }
   }, [currentUser?.uid, userProfile?.role]);
+
+  // Load reminder state on component mount
+  useEffect(() => {
+    const reminderState = loadReminderState();
+    setReminderDismissed(reminderState.dismissed);
+    setReminderTime(reminderState.reminderTime);
+  }, [loadReminderState]);
 
   // Load dashboard data with optimistic UI and notifications
   useEffect(() => {
@@ -390,7 +462,7 @@ const AdminDashboardPage: React.FC = () => {
     >
       <div className="space-y-6">
         {/* Priority Actions Section */}
-        {stats.pendingApprovals > 0 && (
+        {stats.pendingApprovals > 0 && shouldShowReminder() && (
           <div className="bg-gradient-to-r from-orange-50 to-red-50 border border-orange-200 rounded-xl p-6">
             <div className="flex items-start space-x-4">
               <div className="flex-shrink-0">
@@ -410,10 +482,30 @@ const AdminDashboardPage: React.FC = () => {
                   >
                     Review Now
                   </Link>
-                  <button className="inline-flex items-center px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors">
+                  <button 
+                    onClick={handleRemindMeLater}
+                    className="inline-flex items-center px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+                  >
                     Remind Me Later
                   </button>
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Reminder Status Indicator */}
+        {stats.pendingApprovals > 0 && reminderDismissed && reminderTime && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <div className="flex items-center space-x-3">
+              <ClockIcon className="w-5 h-5 text-blue-500" />
+              <div className="flex-1">
+                <p className="text-sm text-blue-800">
+                  Reminder set for <span className="font-medium">{reminderTime.toLocaleTimeString()}</span>
+                </p>
+                <p className="text-xs text-blue-600 mt-1">
+                  The notification will reappear after the reminder time
+                </p>
               </div>
             </div>
           </div>

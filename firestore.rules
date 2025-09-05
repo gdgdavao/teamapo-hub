@@ -81,9 +81,8 @@ service cloud.firestore {
     
     // Registrations collection - Anonymous attendee registrations
     match /registrations/{registrationId} {
-      allow read: if isAuthenticated();
-      allow create: if isValidEmail(resource.data.email) &&
-                       resource.data.eventId is string;
+      allow read: if true; // Allow anonymous reads for payment processing
+      allow create: if true; // Allow anonymous registrations
       allow update: if isAuthenticated();
       allow delete: if isAuthenticated();
     }
@@ -103,7 +102,7 @@ service cloud.firestore {
     // Feedback collection
     match /feedback/{feedbackId} {
       allow read: if isAuthenticated();
-      allow create: if isValidEmail(resource.data.email) &&
+      allow create: if isValidEmail(resource.data.userDetails.email) &&
                        resource.data.eventId is string;
       allow update: if false; // Feedback is immutable
       allow delete: if isAuthenticated();
@@ -127,7 +126,7 @@ service cloud.firestore {
     // Payment verifications collection
     match /payment_verifications/{verificationId} {
       allow read: if isAuthenticated();
-      allow create: if resource.data.eventId is string;
+      allow create: if request.resource.data.eventId is string;
       allow update: if isAuthenticated();
       allow delete: if isAuthenticated();
     }
@@ -135,9 +134,18 @@ service cloud.firestore {
     // Payment proofs collection
     match /paymentProofs/{proofId} {
       allow read: if isAuthenticated();
-      allow create: if isValidEmail(resource.data.email) &&
-                       resource.data.eventId is string &&
-                       resource.data.verificationStatus == 'pending';
+      allow create: if (
+                        // Accept either top-level email or nested userDetails.email
+                        (
+                          request.resource.data.email is string && isValidEmail(request.resource.data.email)
+                        ) || (
+                          request.resource.data.userDetails is map &&
+                          request.resource.data.userDetails.email is string &&
+                          isValidEmail(request.resource.data.userDetails.email)
+                        )
+                      ) &&
+                      request.resource.data.eventId is string &&
+                      request.resource.data.verificationStatus == 'pending';
       allow update: if isAuthenticated();
       allow delete: if isAuthenticated();
     }

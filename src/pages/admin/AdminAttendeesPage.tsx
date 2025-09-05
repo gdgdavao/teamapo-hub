@@ -40,6 +40,27 @@ const formatDate = (dateString: string): string => {
   });
 };
 
+// Safely convert Firestore Timestamp, plain object with seconds, Date, or string to ISO string
+const toISOStringSafe = (value: any): string => {
+  try {
+    if (!value) return new Date().toISOString();
+    if (typeof value?.toDate === 'function') {
+      const d = value.toDate();
+      return d instanceof Date ? d.toISOString() : new Date(d).toISOString();
+    }
+    if (value instanceof Date) return value.toISOString();
+    if (typeof value?.seconds === 'number') return new Date(value.seconds * 1000).toISOString();
+    if (typeof value === 'string') {
+      const d = new Date(value);
+      return isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+    }
+    // Fallback to now
+    return new Date().toISOString();
+  } catch {
+    return new Date().toISOString();
+  }
+};
+
 interface Registration {
   id: string;
   attendee: {
@@ -96,6 +117,7 @@ const AdminAttendeesPage: React.FC = () => {
   const [events, setEvents] = useState<Event[]>([]);
   const [currentEvent, setCurrentEvent] = useState<Event | null>(null);
   const [viewMode, setViewMode] = useState<'management'>('management');
+  const [loadingProof, setLoadingProof] = useState(false);
 
   // Load registrations from API
   useEffect(() => {
@@ -189,7 +211,7 @@ const AdminAttendeesPage: React.FC = () => {
             event: {
               id: event.id,
               title: event.title,
-              date: event.startDate.toDate().toISOString(),
+              date: toISOStringSafe((event as any)?.startDate ?? (event as any)?.startDateTime ?? (event as any)?.date),
               venue: event.venue?.name || event.venue?.address || 'TBA',
               ticketPrice: reg.totalAmount || 0
             },
@@ -229,6 +251,40 @@ const AdminAttendeesPage: React.FC = () => {
 
     fetchRegistrations();
   }, []);
+
+  // When opening the details modal, fetch latest payment proof if not already present
+  useEffect(() => {
+    const fetchLatestProof = async () => {
+      if (!viewingRegistration || viewingRegistration.paymentProof) return;
+      try {
+        setLoadingProof(true);
+        const proof = await PaymentService.getLatestPaymentProofByRegistrationId(viewingRegistration.id);
+        if (proof) {
+          setViewingRegistration(prev => prev ? {
+            ...prev,
+            paymentProof: {
+              id: proof.id,
+              registrationId: proof.registrationId,
+              proofImageUrl: proof.proofImageUrl,
+              transactionId: proof.transactionId,
+              submittedAt: proof.submittedAt,
+              verificationStatus: proof.verificationStatus,
+              verifiedAt: proof.verifiedAt,
+              verifiedBy: proof.verifiedBy,
+              notes: proof.notes
+            }
+          } : prev);
+        }
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn('Failed to load latest payment proof', e);
+      } finally {
+        setLoadingProof(false);
+      }
+    };
+
+    fetchLatestProof();
+  }, [viewingRegistration?.id]);
 
   const handleStatusChange = (registrationId: string, newStatus: Registration['status'], notes?: string) => {
     // Only handle admin status changes (approved/rejected)
@@ -285,40 +341,59 @@ const AdminAttendeesPage: React.FC = () => {
 
   const handlePaymentVerification = async (registrationId: string, action: 'approved' | 'rejected') => {
     try {
-      // Find the registration to get the payment proof data
+      // Find the registration
       const registration = registrations.find(r => r.id === registrationId);
-      if (!registration?.paymentProof) {
-        throw new Error('No payment proof found for this registration');
+
+      // Ensure we have a payment proof; if missing, try to fetch the latest
+      let proofId: string | null = registration?.paymentProof?.id || null;
+      if (!proofId) {
+        const latestProof = await PaymentService.getLatestPaymentProofByRegistrationId(registrationId);
+        if (!latestProof) {
+          throw new Error('No payment proof found for this registration');
+        }
+        proofId = latestProof.id;
       }
 
-      // Update the registration document directly with payment verification status
-      const registrationRef = doc(db, 'registrations', registrationId);
-      await updateDoc(registrationRef, {
-        paymentStatus: action === 'approved' ? 'paid' : 'failed',
-        'paymentProof.verificationStatus': action,
-        'paymentProof.verifiedAt': serverTimestamp(),
-        'paymentProof.verifiedBy': userProfile?.uid || 'admin',
-        updatedAt: serverTimestamp()
+      // Delegate verification to PaymentService which updates proof and registration
+      const verifierUid = userProfile?.uid || 'system';
+      const verifierName = (userProfile as any)?.displayName || (userProfile as any)?.email || 'Admin';
+      await PaymentService.verifyPaymentProof(proofId, action, verifierUid, verifierName);
+
+      // Update local state optimistically
+      setRegistrations(prev => prev.map(reg => {
+        if (reg.id !== registrationId) return reg;
+        const updatedPaymentStatus = action === 'approved' ? 'paid' : 'failed';
+        const existingProof = reg.paymentProof || undefined;
+        const updatedProof = existingProof ? {
+          ...existingProof,
+          verificationStatus: action,
+          verifiedAt: new Date().toISOString(),
+          verifiedBy: verifierName
+        } : existingProof;
+        return {
+          ...reg,
+          paymentStatus: updatedPaymentStatus,
+          paymentProof: updatedProof
+        };
+      }));
+
+      // If the modal is open for this registration, update it too
+      setViewingRegistration(prev => {
+        if (!prev || prev.id !== registrationId) return prev;
+        const updatedPaymentStatus = action === 'approved' ? 'paid' : 'failed';
+        const updatedProof = prev.paymentProof ? {
+          ...prev.paymentProof,
+          verificationStatus: action,
+          verifiedAt: new Date().toISOString(),
+          verifiedBy: verifierName
+        } : prev.paymentProof;
+        return {
+          ...prev,
+          paymentStatus: updatedPaymentStatus,
+          paymentProof: updatedProof
+        };
       });
-      
-      // Update local state
-      setRegistrations(prev => 
-        prev.map(reg => 
-          reg.id === registrationId 
-            ? { 
-                ...reg, 
-                paymentStatus: action === 'approved' ? 'paid' : 'failed',
-                paymentProof: reg.paymentProof ? {
-                  ...reg.paymentProof,
-                  verificationStatus: action,
-                  verifiedAt: new Date().toISOString(),
-                  verifiedBy: userProfile?.uid || 'admin'
-                } : reg.paymentProof
-              }
-            : reg
-        )
-      );
-      
+
       console.log(`Payment ${action} for registration ${registrationId}`);
     } catch (error) {
       console.error('Failed to update payment status:', error);
@@ -510,7 +585,7 @@ const AdminAttendeesPage: React.FC = () => {
               <div className="ml-4">
                 <p className="text-sm text-gray-600">Paid</p>
                 <p className="text-2xl font-bold text-gray-900">
-                  {filteredRegistrations.filter(r => r.status === 'paid').length}
+                  {filteredRegistrations.filter(r => r.paymentStatus === 'paid').length}
                 </p>
               </div>
             </div>
@@ -841,7 +916,7 @@ const AdminAttendeesPage: React.FC = () => {
                     </div>
 
                     {/* Payment Proof */}
-                    {viewingRegistration.paymentProof && (
+                    {(viewingRegistration.paymentProof || loadingProof) && (
                       <div className="lg:col-span-1">
                         <div className="bg-white border border-gray-200 rounded-lg p-5">
                           <div className="flex items-center space-x-3 mb-4">
@@ -852,30 +927,37 @@ const AdminAttendeesPage: React.FC = () => {
                           </div>
                           
                           <div className="space-y-4">
+                            {loadingProof && !viewingRegistration.paymentProof && (
+                              <div className="text-sm text-gray-500">Loading payment proof...</div>
+                            )}
                             <div>
                               <label className="text-sm font-medium text-gray-700">Status</label>
-                              <div className={`inline-flex px-3 py-1 text-sm font-medium rounded-full ${
-                                viewingRegistration.paymentProof.verificationStatus === 'approved' 
-                                  ? 'bg-green-100 text-green-800'
-                                  : viewingRegistration.paymentProof.verificationStatus === 'rejected'
-                                  ? 'bg-red-100 text-red-800'
-                                  : 'bg-yellow-100 text-yellow-800'
-                              }`}>
-                                {viewingRegistration.paymentProof.verificationStatus.charAt(0).toUpperCase() + viewingRegistration.paymentProof.verificationStatus.slice(1)}
-                              </div>
+                              {viewingRegistration.paymentProof && (
+                                <div className={`inline-flex px-3 py-1 text-sm font-medium rounded-full ${
+                                  viewingRegistration.paymentProof.verificationStatus === 'approved' 
+                                    ? 'bg-green-100 text-green-800'
+                                    : viewingRegistration.paymentProof.verificationStatus === 'rejected'
+                                    ? 'bg-red-100 text-red-800'
+                                    : 'bg-yellow-100 text-yellow-800'
+                                }`}>
+                                  {viewingRegistration.paymentProof.verificationStatus.charAt(0).toUpperCase() + viewingRegistration.paymentProof.verificationStatus.slice(1)}
+                                </div>
+                              )}
                             </div>
                             
-                            {viewingRegistration.paymentProof.transactionId && (
+                            {viewingRegistration.paymentProof?.transactionId && (
                               <div>
                                 <label className="text-sm font-medium text-gray-700">Transaction ID</label>
                                 <p className="text-gray-900 font-mono text-sm">{viewingRegistration.paymentProof.transactionId}</p>
                               </div>
                             )}
                             
+                            {viewingRegistration.paymentProof && (
                             <div>
                               <label className="text-sm font-medium text-gray-700">Submitted</label>
                               <p className="text-gray-900">{formatDate(viewingRegistration.paymentProof.submittedAt)}</p>
                             </div>
+                            )}
                           </div>
                         </div>
                       </div>
