@@ -9,8 +9,6 @@ interface ImportMetaEnv {
   readonly VITE_FIREBASE_APP_ID: string
   readonly VITE_FIREBASE_MEASUREMENT_ID: string
   readonly VITE_USE_FIREBASE_EMULATORS: string
-  readonly VITE_PAYMONGO_PUBLIC_KEY: string
-  readonly VITE_PAYMONGO_SECRET_KEY: string
   readonly VITE_APP_URL: string
   readonly VITE_APP_NAME: string
   readonly VITE_ORGANIZATION: string

@@ -29,7 +29,7 @@
     {
       "source": "functions",
       "codebase": "default",
-      "region": "asia-southeast1",
+  "region": "us-central1",
       "ignore": [
         "venv",
         ".git",
