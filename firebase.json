@@ -1,6 +1,6 @@
 {
   "projects": {
-    "default": "apohub-gdgdvo"
+    "default": "apohub-gdgdavao"
   },
   "firestore": {
     "database": "(default)",
@@ -9,7 +9,7 @@
     "indexes": "firestore.indexes.json"
   },
   "storage": {
-    "rules": "storage.rules.dev"
+    "rules": "storage.rules"
   },
   "hosting": {
     "public": "dist",
