@@ -15,6 +15,7 @@ import {
 import AdminLayout from '../../components/admin/AdminLayout';
 import OrganizerLayout from '../../components/organizer/OrganizerLayout';
 import { useAuth } from '../../contexts/AuthContext';
+import FormService from '../../services/formService';
 
 interface FormField {
   id: string;
@@ -69,10 +70,8 @@ const AdminFormsPage: React.FC = () => {
   useEffect(() => {
     const fetchEvents = async () => {
       try {
-        // TODO: Implement actual API call
-        // const eventsData = await EventService.getAllEvents();
-        // setEvents(eventsData);
-        setEvents([]);
+  const eventsData = await FormService.getAllEvents();
+  setEvents(eventsData);
       } catch (error) {
         console.error('Error fetching events:', error);
         setEvents([]);
@@ -83,10 +82,8 @@ const AdminFormsPage: React.FC = () => {
 
     const fetchForms = async () => {
       try {
-        // TODO: Implement actual API call
-        // const formsData = await FormService.getAllForms();
-        // setForms(formsData);
-        setForms([]);
+  const formsData = await FormService.getAllForms();
+  setForms(formsData as any);
       } catch (error) {
         console.error('Error fetching forms:', error);
         setForms([]);
@@ -95,6 +92,15 @@ const AdminFormsPage: React.FC = () => {
 
     fetchForms();
   }, []);
+
+  const refreshForms = async () => {
+    try {
+      const formsData = await FormService.getAllForms();
+      setForms(formsData as any);
+    } catch (error) {
+      console.error('Error refreshing forms:', error);
+    }
+  };
 
   const fieldTypes = [
     { type: 'text', label: 'Text Input', icon: '📝' },
@@ -184,29 +190,33 @@ const AdminFormsPage: React.FC = () => {
     setFormFields(templates[formType]);
   };
 
-  const saveForm = () => {
+  const saveForm = async () => {
     if (!formName.trim() || formFields.length === 0) {
       alert('Please provide a form name and add at least one field.');
       return;
     }
 
-    const newForm: CustomForm = {
-      id: editingForm?.id || Date.now().toString(),
+    const basePayload = {
       name: formName,
       type: formType,
       description: formDescription,
       fields: formFields,
       isActive: true,
-      createdAt: editingForm?.createdAt || new Date().toISOString(),
-      usageCount: editingForm?.usageCount || 0,
       eventId: selectedEvent || undefined,
       eventTitle: selectedEvent ? events.find(e => e.id === selectedEvent)?.title : undefined
-    };
+    } as const;
 
-    if (editingForm) {
-      setForms(forms => forms.map(form => form.id === editingForm.id ? newForm : form));
-    } else {
-      setForms(forms => [newForm, ...forms]);
+    try {
+      if (editingForm?.id) {
+        await FormService.updateForm(editingForm.id, basePayload as any);
+      } else {
+        await FormService.createForm(basePayload as any);
+      }
+      await refreshForms();
+    } catch (err) {
+      console.error('Failed to save form:', err);
+      alert('Failed to save form. Please try again.');
+      return;
     }
 
     // Reset form
@@ -229,17 +239,31 @@ const AdminFormsPage: React.FC = () => {
     setActiveTab('builder');
   };
 
-  const toggleFormStatus = (formId: string) => {
-    setForms(forms => 
-      forms.map(form => 
-        form.id === formId ? { ...form, isActive: !form.isActive } : form
-      )
-    );
+  const toggleFormStatus = async (formId: string) => {
+    const target = forms.find(f => f.id === formId);
+    if (!target) return;
+    const next = !target.isActive;
+    setForms(prev => prev.map(f => f.id === formId ? { ...f, isActive: next } : f));
+    try {
+      await FormService.updateForm(formId, { isActive: next } as any);
+    } catch (err) {
+      console.error('Failed to update status:', err);
+      // revert on failure
+      setForms(prev => prev.map(f => f.id === formId ? { ...f, isActive: !next } : f));
+      alert('Failed to update form status.');
+    }
   };
 
-  const deleteForm = (formId: string) => {
-    if (confirm('Are you sure you want to delete this form?')) {
-      setForms(forms => forms.filter(form => form.id !== formId));
+  const deleteForm = async (formId: string) => {
+    if (!confirm('Are you sure you want to delete this form?')) return;
+    const prev = forms;
+    setForms(prev.filter(f => f.id !== formId));
+    try {
+      await FormService.deleteForm(formId);
+    } catch (err) {
+      console.error('Failed to delete form:', err);
+      alert('Failed to delete form.');
+      setForms(prev);
     }
   };
 

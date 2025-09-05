@@ -211,14 +211,19 @@ export class EventService {
     try {
       // Validate required fields client-side first
       this.validateEventData(eventData);
-
-      // TODO: Re-enable Firebase Function validation once function issues are resolved
-      console.log('Skipping Firebase function validation temporarily');
       
-      // Use local validation for now
-      const validation = this.validateEventDataLocal(eventData);
-      if (!validation.isValid) {
-        throw new Error(`Validation failed: ${validation.errors.join(', ')}`);
+      // Remote validation via Cloud Function (with graceful fallback)
+      try {
+        const remoteValidation = await this.validateEventDataRemote(eventData);
+        if (!remoteValidation.isValid) {
+          throw new Error(`Validation failed: ${remoteValidation.errors.join(', ')}`);
+        }
+      } catch (e) {
+        // Fallback to local validation if function fails
+        const validation = this.validateEventDataLocal(eventData);
+        if (!validation.isValid) {
+          throw new Error(`Validation failed: ${validation.errors.join(', ')}`);
+        }
       }
 
       // Generate a new event ID
@@ -306,8 +311,8 @@ export class EventService {
       // Note: Base64 image uploads are now handled in the UI layer before calling createEvent
       // This prevents Firestore size limit errors from large base64 strings
 
-      // Create registration and feedback forms as subcollections
-      await this.createEventForms(eventId, eventData);
+  // Create registration and feedback forms as subcollections (initial)
+  await this.createEventForms(eventId, eventData);
 
       // Create payment configuration if needed
       if (eventData.paymentConfig) {
@@ -316,13 +321,19 @@ export class EventService {
         await this.createPaymentConfiguration(eventId, this.removeUndefinedValues(paymentConfigWithoutFile));
       }
 
-      // TODO: Re-enable Firebase Function initialization once function issues are resolved
-      console.log('Skipping Firebase function initialization temporarily');
-      
-      // Event created successfully without function initialization
-      console.log(`Event ${eventId} created successfully (without function initialization)`);
-      
-      // TODO: Move this initialization logic to client-side or fix function calls later
+      // Initialize event via Cloud Function (analytics, defaults). If it overwrites default forms,
+      // update forms again immediately after.
+      try {
+        const initializeEvent = httpsCallable(functions, 'initialize_event');
+        await initializeEvent({ eventId });
+        // Ensure our provided forms remain in place
+        await this.updateEventForms(eventId, {
+          registrationForm: eventData.registrationForm,
+          feedbackForm: eventData.feedbackForm
+        });
+      } catch (initErr) {
+        console.warn('Event initialization function failed; continuing without it:', initErr);
+      }
 
       return eventId;
     } catch (error) {
@@ -509,19 +520,25 @@ export class EventService {
    */
   static async publishEvent(eventId: string): Promise<void> {
     try {
-      // TODO: Re-enable Firebase Function publishing once function issues are resolved
-      console.log('Publishing event locally instead of using Firebase function');
-      
-      // Update event status directly in Firestore for now
-      const eventRef = doc(db, this.EVENTS_COLLECTION, eventId);
-      await updateDoc(eventRef, {
-        status: 'published',
-        isPublished: true,
-        publishedAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      });
-      
-      console.log(`Event ${eventId} published successfully (without function)`);
+      // Try Cloud Function first
+      try {
+        const publishEventFn = httpsCallable(functions, 'publish_event');
+        const result = await publishEventFn({ eventId });
+        const data = result.data as { success?: boolean; message?: string };
+        if (!data?.success) {
+          throw new Error(data?.message || 'Publish function returned failure');
+        }
+      } catch (fnErr) {
+        console.warn('Publish function failed; falling back to direct Firestore update:', fnErr);
+        // Fallback to direct Firestore update
+        const eventRef = doc(db, this.EVENTS_COLLECTION, eventId);
+        await updateDoc(eventRef, {
+          status: 'published',
+          isPublished: true,
+          publishedAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+      }
     } catch (error) {
       console.error('Error publishing event:', error);
       throw new Error('Failed to publish event');
@@ -1012,11 +1029,15 @@ export class EventService {
    */
   static async duplicateEvent(eventId: string, newTitle?: string): Promise<string> {
     try {
-      const duplicateEvent = httpsCallable(functions, 'duplicateEvent');
-      const result = await duplicateEvent({ 
-        eventId, 
-        newTitle: newTitle || `Event Copy` 
-      });
+      // Prefer snake_case per backend, fallback to camelCase for compatibility
+      let result: any;
+      try {
+        const fn = httpsCallable(functions, 'duplicate_event');
+        result = await fn({ eventId, newTitle: newTitle || `Event Copy` });
+      } catch (_e) {
+        const fnCompat = httpsCallable(functions, 'duplicateEvent');
+        result = await fnCompat({ eventId, newTitle: newTitle || `Event Copy` });
+      }
       
       const response = result.data as { success: boolean; newEventId: string; message?: string };
       if (!response.success) {

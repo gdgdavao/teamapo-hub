@@ -309,11 +309,21 @@ const CreateEventPage: React.FC = () => {
         return;
       }
 
-      // TODO: Re-enable Firebase function validation once CORS is resolved
-      // For now, skip server-side validation to test core functionality
-      console.log('Skipping server-side validation temporarily');
+      // Server-side validation via callable function with fallback to client-side checks
+      try {
+        const validateEventData = httpsCallable(functions, 'validate_event_data');
+        const validation: any = await validateEventData({ eventData: formData });
+        if (!validation?.data?.isValid) {
+          const errs = validation?.data?.errors || ['Validation failed'];
+          toast.error(errs.join(', '));
+          setLoading(false);
+          return;
+        }
+      } catch (_fnErr) {
+        // fall back to simple local checks below
+      }
       
-      // Basic client-side validation (keeping it simple for now)
+      // Basic client-side validation (keeping it simple for now as a fallback)
       if (!formData.title.trim()) {
         toast.error('Event title is required');
         setLoading(false);
@@ -412,9 +422,14 @@ const CreateEventPage: React.FC = () => {
         }
       }
 
-      // TODO: Re-enable statistics call once function issues are resolved
-      if (isEditMode) {
-        console.log('Skipping statistics call temporarily due to function issues');
+      // Fetch statistics post-save when editing to update any dashboards (non-blocking)
+      if (isEditMode && savedEventId) {
+        try {
+          const getEventStatistics = httpsCallable(functions, 'get_event_statistics');
+          await getEventStatistics({ eventId: savedEventId });
+        } catch (statsErr) {
+          console.warn('Statistics function failed (non-blocking):', statsErr);
+        }
       }
 
       // Show a single final success toast
