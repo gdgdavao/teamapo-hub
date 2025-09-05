@@ -1,0 +1,173 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+    
+    function isAdmin() {
+      return request.auth != null && 
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    
+    function isOrganizer() {
+      return request.auth != null && 
+             (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'organizer' || 
+              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin');
+    }
+    
+    function isAdminOrOrganizer() {
+      return request.auth != null &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'organizer');
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches('.*@.*[.].*');
+    }
+    
+    // Users collection - Admin and Organizer accounts only
+    match /users/{userId} {
+      allow read: if isAuthenticated() && 
+                     (isAdmin() || isOwner(userId) || request.auth.uid == userId);
+      allow list: if isAuthenticated() && isAdmin();
+      allow write: if isAuthenticated() && isAdmin();
+      allow create: if isAuthenticated() && isAdmin() &&
+                       isValidEmail(resource.data.email) &&
+                       resource.data.role in ['admin', 'organizer'];
+      allow update: if isAuthenticated() && (isAdmin() || isOwner(userId));
+      allow delete: if isAuthenticated() && isAdmin();
+    }
+    
+    // Events collection
+    match /events/{eventId} {
+      allow read: if true; // Public events are readable by anyone
+      allow create: if isAuthenticated() && 
+                       (isAdmin() || 
+                        (isOrganizer() && resource.data.organizer.uid == request.auth.uid));
+      allow update: if isAuthenticated() && 
+                       (isAdmin() || 
+                        (isOrganizer() && resource.data.organizer.uid == request.auth.uid));
+      allow delete: if isAuthenticated() && 
+                       (isAdmin() || 
+                        (isOrganizer() && resource.data.organizer.uid == request.auth.uid));
+      
+      // Event forms subcollection
+      match /forms/{formId} {
+        allow read: if true; // Forms are public for registration
+        allow write: if isAuthenticated() && 
+                        (isAdmin() || 
+                         (isOrganizer() && get(/databases/$(database)/documents/events/$(eventId)).data.organizer.uid == request.auth.uid));
+      }
+      
+      // Event config subcollection
+      match /config/{configId} {
+        allow read: if isAuthenticated() && 
+                       (isAdmin() || 
+                        (isOrganizer() && get(/databases/$(database)/documents/events/$(eventId)).data.organizer.uid == request.auth.uid));
+        allow write: if isAuthenticated() && 
+                        (isAdmin() || 
+                         (isOrganizer() && get(/databases/$(database)/documents/events/$(eventId)).data.organizer.uid == request.auth.uid));
+      }
+    }
+    
+    // Registrations collection - Anonymous attendee registrations
+    match /registrations/{registrationId} {
+      allow read: if true; // Allow anonymous reads for payment processing
+      allow create: if true; // Allow anonymous registrations
+      allow update: if isAuthenticated();
+      allow delete: if isAuthenticated();
+    }
+    
+    // Certificate templates collection
+    match /certificateTemplates/{templateId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrOrganizer();
+    }
+    
+    // Certificates collection
+    match /certificates/{certificateId} {
+      allow read: if true; // Certificates are publicly verifiable
+      allow write: if isAuthenticated();
+    }
+    
+    // Feedback collection
+    match /feedback/{feedbackId} {
+      allow read: if isAuthenticated();
+      allow create: if isValidEmail(resource.data.userDetails.email) &&
+                       resource.data.eventId is string;
+      allow update: if false; // Feedback is immutable
+      allow delete: if isAuthenticated();
+    }
+    
+    // Activity logs collection
+    match /activity_logs/{logId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && 
+                       resource.data.type is string;
+      allow update: if false; // Logs are immutable
+      allow delete: if isAuthenticated();
+    }
+    
+    // Event analytics collection
+    match /event_analytics/{analyticsId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+    
+    // Payment verifications collection
+    match /payment_verifications/{verificationId} {
+      allow read: if isAuthenticated();
+      allow create: if request.resource.data.eventId is string;
+      allow update: if isAuthenticated();
+      allow delete: if isAuthenticated();
+    }
+    
+    // Payment proofs collection
+    match /paymentProofs/{proofId} {
+      allow read: if isAuthenticated();
+      allow create: if (
+                        // Accept either top-level email or nested userDetails.email
+                        (
+                          request.resource.data.email is string && isValidEmail(request.resource.data.email)
+                        ) || (
+                          request.resource.data.userDetails is map &&
+                          request.resource.data.userDetails.email is string &&
+                          isValidEmail(request.resource.data.userDetails.email)
+                        )
+                      ) &&
+                      request.resource.data.eventId is string &&
+                      request.resource.data.verificationStatus == 'pending';
+      allow update: if isAuthenticated();
+      allow delete: if isAuthenticated();
+    }
+
+    // Notifications collection
+    match /notifications/{notificationId} {
+      allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
+      allow list: if isAuthenticated() && request.auth.uid == resource.data.userId;
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && request.auth.uid == resource.data.userId;
+      allow delete: if isAuthenticated() && request.auth.uid == resource.data.userId;
+    }
+    
+    // System collection - Configuration and settings
+    match /system/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+    
+    // Deny all other operations
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -12,6 +12,10 @@ import {
   CheckIcon,
   SparklesIcon
 } from '@heroicons/react/24/outline';
+import AdminLayout from '../../components/admin/AdminLayout';
+import OrganizerLayout from '../../components/organizer/OrganizerLayout';
+import { useAuth } from '../../contexts/AuthContext';
+import FormService from '../../services/formService';
 
 interface FormField {
   id: string;
@@ -45,6 +49,10 @@ interface CustomForm {
 }
 
 const AdminFormsPage: React.FC = () => {
+  const { userProfile } = useAuth();
+  const isAdmin = userProfile?.role === 'admin';
+  const LayoutComponent = isAdmin ? AdminLayout : OrganizerLayout;
+  
   const [activeTab, setActiveTab] = useState<'forms' | 'builder'>('forms');
   const [editingForm, setEditingForm] = useState<CustomForm | null>(null);
   const [previewMode, setPreviewMode] = useState(false);
@@ -58,57 +66,41 @@ const AdminFormsPage: React.FC = () => {
   const [selectedEvent, setSelectedEvent] = useState('');
   const [formFields, setFormFields] = useState<FormField[]>([]);
 
-  // Load mock data
+  // Load events from API
   useEffect(() => {
-    setEvents([
-      { id: '1', title: 'Web Development Workshop', date: '2025-02-15' },
-      { id: '2', title: 'AI/ML Fundamentals', date: '2025-02-20' },
-      { id: '3', title: 'Mobile App Development', date: '2025-02-25' }
-    ]);
-
-    setForms([
-      {
-        id: '1',
-        name: 'Advanced Registration Form',
-        type: 'registration',
-        description: 'Comprehensive registration form with additional fields for workshops',
-        isActive: true,
-        createdAt: '2025-01-10T10:00:00Z',
-        usageCount: 45,
-        eventId: '1',
-        eventTitle: 'Web Development Workshop',
-        fields: [
-          { id: '1', type: 'text', label: 'Full Name', required: true, gridSize: 'full' },
-          { id: '2', type: 'email', label: 'Email Address', required: true, gridSize: 'half' },
-          { id: '3', type: 'phone', label: 'Phone Number', required: true, gridSize: 'half' },
-          { id: '4', type: 'text', label: 'Organization', required: false, gridSize: 'full' },
-          { id: '5', type: 'select', label: 'Experience Level', required: true, options: ['Beginner', 'Intermediate', 'Advanced'], gridSize: 'half' },
-          { id: '6', type: 'multiselect', label: 'Interests', required: false, options: ['Frontend', 'Backend', 'DevOps', 'Mobile'], gridSize: 'half' },
-          { id: '7', type: 'textarea', label: 'Additional Comments', required: false, gridSize: 'full' }
-        ]
-      },
-      {
-        id: '2',
-        name: 'Event Feedback Form',
-        type: 'feedback',
-        description: 'Comprehensive feedback collection form for post-event evaluation',
-        isActive: true,
-        createdAt: '2025-01-12T14:00:00Z',
-        usageCount: 78,
-        eventId: '1',
-        eventTitle: 'Web Development Workshop',
-        fields: [
-          { id: '1', type: 'rating', label: 'Overall Event Rating', required: true, gridSize: 'full' },
-          { id: '2', type: 'rating', label: 'Speaker Quality', required: true, gridSize: 'half' },
-          { id: '3', type: 'rating', label: 'Content Quality', required: true, gridSize: 'half' },
-          { id: '4', type: 'select', label: 'Would you recommend this event?', required: true, options: ['Definitely', 'Probably', 'Maybe', 'Probably Not', 'Definitely Not'], gridSize: 'full' },
-          { id: '5', type: 'textarea', label: 'What did you like most?', required: false, gridSize: 'full' },
-          { id: '6', type: 'textarea', label: 'Areas for improvement', required: false, gridSize: 'full' },
-          { id: '7', type: 'checkbox', label: 'I would like to attend future events', required: false, gridSize: 'full' }
-        ]
+    const fetchEvents = async () => {
+      try {
+  const eventsData = await FormService.getAllEvents();
+  setEvents(eventsData);
+      } catch (error) {
+        console.error('Error fetching events:', error);
+        setEvents([]);
       }
-    ]);
+    };
+
+    fetchEvents();
+
+    const fetchForms = async () => {
+      try {
+  const formsData = await FormService.getAllForms();
+  setForms(formsData as any);
+      } catch (error) {
+        console.error('Error fetching forms:', error);
+        setForms([]);
+      }
+    };
+
+    fetchForms();
   }, []);
+
+  const refreshForms = async () => {
+    try {
+      const formsData = await FormService.getAllForms();
+      setForms(formsData as any);
+    } catch (error) {
+      console.error('Error refreshing forms:', error);
+    }
+  };
 
   const fieldTypes = [
     { type: 'text', label: 'Text Input', icon: '📝' },
@@ -198,29 +190,33 @@ const AdminFormsPage: React.FC = () => {
     setFormFields(templates[formType]);
   };
 
-  const saveForm = () => {
+  const saveForm = async () => {
     if (!formName.trim() || formFields.length === 0) {
       alert('Please provide a form name and add at least one field.');
       return;
     }
 
-    const newForm: CustomForm = {
-      id: editingForm?.id || Date.now().toString(),
+    const basePayload = {
       name: formName,
       type: formType,
       description: formDescription,
       fields: formFields,
       isActive: true,
-      createdAt: editingForm?.createdAt || new Date().toISOString(),
-      usageCount: editingForm?.usageCount || 0,
       eventId: selectedEvent || undefined,
       eventTitle: selectedEvent ? events.find(e => e.id === selectedEvent)?.title : undefined
-    };
+    } as const;
 
-    if (editingForm) {
-      setForms(forms => forms.map(form => form.id === editingForm.id ? newForm : form));
-    } else {
-      setForms(forms => [newForm, ...forms]);
+    try {
+      if (editingForm?.id) {
+        await FormService.updateForm(editingForm.id, basePayload as any);
+      } else {
+        await FormService.createForm(basePayload as any);
+      }
+      await refreshForms();
+    } catch (err) {
+      console.error('Failed to save form:', err);
+      alert('Failed to save form. Please try again.');
+      return;
     }
 
     // Reset form
@@ -243,17 +239,31 @@ const AdminFormsPage: React.FC = () => {
     setActiveTab('builder');
   };
 
-  const toggleFormStatus = (formId: string) => {
-    setForms(forms => 
-      forms.map(form => 
-        form.id === formId ? { ...form, isActive: !form.isActive } : form
-      )
-    );
+  const toggleFormStatus = async (formId: string) => {
+    const target = forms.find(f => f.id === formId);
+    if (!target) return;
+    const next = !target.isActive;
+    setForms(prev => prev.map(f => f.id === formId ? { ...f, isActive: next } : f));
+    try {
+      await FormService.updateForm(formId, { isActive: next } as any);
+    } catch (err) {
+      console.error('Failed to update status:', err);
+      // revert on failure
+      setForms(prev => prev.map(f => f.id === formId ? { ...f, isActive: !next } : f));
+      alert('Failed to update form status.');
+    }
   };
 
-  const deleteForm = (formId: string) => {
-    if (confirm('Are you sure you want to delete this form?')) {
-      setForms(forms => forms.filter(form => form.id !== formId));
+  const deleteForm = async (formId: string) => {
+    if (!confirm('Are you sure you want to delete this form?')) return;
+    const prev = forms;
+    setForms(prev.filter(f => f.id !== formId));
+    try {
+      await FormService.deleteForm(formId);
+    } catch (err) {
+      console.error('Failed to delete form:', err);
+      alert('Failed to delete form.');
+      setForms(prev);
     }
   };
 
@@ -346,14 +356,30 @@ const AdminFormsPage: React.FC = () => {
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900">Form Builder</h1>
-        <p className="text-gray-600 mt-2">
-          Create and manage custom registration and feedback forms
-        </p>
-      </div>
+    <LayoutComponent 
+      title="Form Builder" 
+      subtitle="Create and manage custom registration and feedback forms"
+      actions={
+        activeTab === 'forms' ? (
+          <button
+            onClick={() => setActiveTab('builder')}
+            className="btn-primary flex items-center space-x-2"
+          >
+            <PlusIcon className="h-4 w-4" />
+            <span>Create New Form</span>
+          </button>
+        ) : (
+          <button
+            onClick={saveForm}
+            disabled={!formName.trim() || formFields.length === 0}
+            className="btn-primary disabled:opacity-50 flex items-center space-x-2"
+          >
+            <CheckIcon className="h-4 w-4" />
+            <span>Save Form</span>
+          </button>
+        )
+      }
+    >
 
       {/* Tabs */}
       <div className="border-b border-gray-200 mb-8">
@@ -383,13 +409,6 @@ const AdminFormsPage: React.FC = () => {
         <div className="space-y-6">
           <div className="flex items-center justify-between">
             <h2 className="text-xl font-semibold text-gray-900">My Forms</h2>
-            <button
-              onClick={() => setActiveTab('builder')}
-              className="btn-primary flex items-center space-x-2"
-            >
-              <PlusIcon className="h-4 w-4" />
-              <span>Create New Form</span>
-            </button>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -585,14 +604,6 @@ const AdminFormsPage: React.FC = () => {
                     <EyeIcon className="h-4 w-4 inline mr-1" />
                     Preview
                   </button>
-                  <button
-                    onClick={saveForm}
-                    disabled={!formName.trim() || formFields.length === 0}
-                    className="btn-primary disabled:opacity-50"
-                  >
-                    <CheckIcon className="h-4 w-4 inline mr-1" />
-                    Save Form
-                  </button>
                 </div>
               </div>
 
@@ -772,7 +783,7 @@ const AdminFormsPage: React.FC = () => {
           </div>
         </div>
       )}
-    </div>
+    </LayoutComponent>
   );
 };
 

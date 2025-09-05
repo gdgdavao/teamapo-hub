@@ -1,22 +1,4 @@
-// TODO: Uncomment when Firebase is ready
-// import { Timestamp } from 'firebase/firestore';
-
-// Mock Timestamp for development without Firebase
-interface MockTimestamp {
-  seconds: number;
-  nanoseconds: number;
-  toDate(): Date;
-}
-
-// Create a mock timestamp that behaves like Firebase Timestamp
-const createMockTimestamp = (date: Date = new Date()): MockTimestamp => ({
-  seconds: Math.floor(date.getTime() / 1000),
-  nanoseconds: (date.getTime() % 1000) * 1000000,
-  toDate: () => date,
-});
-
-// Use MockTimestamp instead of Firebase Timestamp for now
-type Timestamp = MockTimestamp;
+import { Timestamp } from 'firebase/firestore';
 
 // User Types
 export interface User {
@@ -24,7 +6,7 @@ export interface User {
   email: string;
   displayName: string;
   photoURL?: string;
-  role: 'attendee' | 'organizer' | 'admin';
+  role: 'organizer' | 'admin'; // Removed 'attendee' since attendees are anonymous
   phoneNumber?: string;
   organization?: string;
   bio?: string;
@@ -58,6 +40,7 @@ export interface Event {
   timezone: string;
   venue: Venue;
   ticketTypes: TicketType[];
+  promoCodes?: PromoCode[];
   tags: string[];
   category: EventCategory;
   status: EventStatus;
@@ -66,13 +49,6 @@ export interface Event {
   isPublished: boolean;
   registrationDeadline?: Timestamp;
   requirements?: string[];
-  agenda?: AgendaItem[];
-  sponsors?: Sponsor[];
-  socialLinks?: {
-    website?: string;
-    discord?: string;
-    telegram?: string;
-  };
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -124,25 +100,43 @@ export interface TicketType {
   earlyBirdPrice?: number;
   earlyBirdDeadline?: Timestamp;
   benefits?: string[];
+  sortOrder: number;
+  isEarlyBird: boolean;
+  discountPercentage?: number;
+  validFrom?: Timestamp;
+  validUntil?: Timestamp;
 }
 
-export interface AgendaItem {
+export interface PromoCode {
   id: string;
-  title: string;
-  description?: string;
-  startTime: string; // HH:mm format
-  endTime: string;
-  speaker?: string;
-  type: 'presentation' | 'workshop' | 'break' | 'networking' | 'panel';
-}
-
-export interface Sponsor {
-  id: string;
+  code: string;
   name: string;
-  logoUrl: string;
-  website?: string;
-  tier: 'platinum' | 'gold' | 'silver' | 'bronze' | 'community';
   description?: string;
+  discountType: 'percentage' | 'fixed';
+  discountValue: number;
+  currency?: string;
+  maxUses?: number;
+  currentUses: number;
+  isActive: boolean;
+  validFrom: Timestamp;
+  validUntil: Timestamp;
+  applicableTicketTypes?: string[]; // If empty, applies to all
+  minOrderAmount?: number;
+  maxDiscountAmount?: number;
+  createdBy: string;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+export interface TicketPricing {
+  ticketTypeId: string;
+  originalPrice: number;
+  currentPrice: number;
+  discountAmount: number;
+  discountType?: 'early_bird' | 'promo_code' | 'bulk';
+  promoCode?: string;
+  isEarlyBird: boolean;
+  timeRemaining?: number; // in milliseconds for early bird
 }
 
 // Registration Types
@@ -164,10 +158,16 @@ export interface Registration {
   };
   ticketTypeId: string;
   quantity: number;
+  originalAmount: number;
+  discountAmount: number;
   totalAmount: number;
   currency: string;
+  promoCode?: string;
+  promoCodeId?: string;
+  pricing: TicketPricing;
   paymentStatus: PaymentStatus;
   paymentDetails?: PaymentDetails;
+  paymentProof?: PaymentProof;
   attendanceStatus: AttendanceStatus;
   checkInTime?: Timestamp;
   feedbackSubmitted: boolean;
@@ -382,7 +382,12 @@ export type NotificationType =
   | 'feedback_request'
   | 'certificate_ready'
   | 'event_cancelled'
-  | 'refund_processed';
+  | 'refund_processed'
+  | 'admin_pending_attendee'
+  | 'admin_high_pending_count'
+  | 'admin_event_created'
+  | 'admin_check_in'
+  | 'admin_payment_verified';
 
 // API Response Types
 export interface ApiResponse<T> {
@@ -411,8 +416,6 @@ export interface EventFormData {
   maxAttendees?: number;
   registrationDeadline?: Date;
   requirements?: string[];
-  agenda?: Omit<AgendaItem, 'id'>[];
-  sponsors?: Omit<Sponsor, 'id'>[];
 }
 
 export interface RegistrationFormData {

@@ -1,6 +1,4 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-// TODO: Uncomment Firebase imports when ready to use Firebase
-/*
 import {
   User as FirebaseUser,
   signInWithEmailAndPassword,
@@ -12,60 +10,15 @@ import {
   signInWithPopup,
   sendPasswordResetEmail,
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
-*/
 import { User } from '../types';
 import toast from 'react-hot-toast';
-
-// Mock Firebase User type for development
-interface MockFirebaseUser {
-  uid: string;
-  email: string | null;
-  displayName: string | null;
-  photoURL: string | null;
-}
-
-// Sample users for development/testing
-const SAMPLE_USERS: User[] = [
-  {
-    uid: 'admin-001',
-    email: 'admin@gdgdavao.org',
-    displayName: 'Admin User',
-    role: 'admin',
-    photoURL: undefined,
-    createdAt: new Date('2024-01-01') as any,
-    updatedAt: new Date() as any,
-  },
-  {
-    uid: 'organizer-001',
-    email: 'organizer@gdgdavao.org',
-    displayName: 'Event Organizer',
-    role: 'organizer',
-    photoURL: undefined,
-    createdAt: new Date('2024-01-15') as any,
-    updatedAt: new Date() as any,
-  },
-  {
-    uid: 'attendee-001',
-    email: 'attendee@example.com',
-    displayName: 'John Attendee',
-    role: 'attendee',
-    photoURL: undefined,
-    createdAt: new Date('2024-02-01') as any,
-    updatedAt: new Date() as any,
-  },
-];
-
-// Mock credentials (password is always "password123" for all users)
-const MOCK_CREDENTIALS = [
-  { email: 'admin@gdgdavao.org', password: 'password123' },
-  { email: 'organizer@gdgdavao.org', password: 'password123' },
-  { email: 'attendee@example.com', password: 'password123' },
-];
+import { initializeApp } from 'firebase/app';
+import { getAuth } from 'firebase/auth';
 
 interface AuthContextType {
-  currentUser: MockFirebaseUser | null;
+  currentUser: FirebaseUser | null;
   userProfile: User | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
@@ -74,6 +27,9 @@ interface AuthContextType {
   logout: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   updateUserProfile: (data: Partial<User>) => Promise<void>;
+  refreshUserProfile: () => Promise<void>;
+  updateAnyUserProfile: (userId: string, data: Partial<User>) => Promise<void>;
+  createUser: (email: string, password: string, displayName: string, role: 'organizer' | 'admin') => Promise<User>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -87,12 +43,10 @@ export const useAuth = () => {
 };
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [currentUser, setCurrentUser] = useState<MockFirebaseUser | null>(null);
+  const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
   const [userProfile, setUserProfile] = useState<User | null>(null);
-  const [loading, setLoading] = useState(false); // Changed to false since we're not using Firebase
+  const [loading, setLoading] = useState(true);
 
-  // TODO: Uncomment and implement when Firebase is ready
-  /*
   const createUserProfile = async (user: FirebaseUser, additionalData?: any) => {
     if (!user) return;
 
@@ -101,11 +55,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     if (!userSnap.exists()) {
       const { displayName, email, photoURL } = user;
+      
+      // Default role is organizer for authenticated users
+      // Attendees are anonymous and don't have accounts
+      const role: 'organizer' | 'admin' = 'organizer';
+
       const newUser: Omit<User, 'uid'> = {
         email: email!,
         displayName: displayName || email!.split('@')[0],
         photoURL: photoURL || undefined,
-        role: 'attendee',
+        role,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         ...additionalData,
@@ -127,43 +86,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return fullUser;
     }
   };
-  */
 
-  // Mock implementations for development
   const signIn = async (email: string, password: string) => {
     try {
       setLoading(true);
-      
-      // Check if credentials match our sample users
-      const credentialMatch = MOCK_CREDENTIALS.find(
-        cred => cred.email === email && cred.password === password
-      );
-      
-      if (!credentialMatch) {
-        throw new Error('Invalid credentials');
-      }
-      
-      // Find the corresponding user profile
-      const userProfile = SAMPLE_USERS.find(user => user.email === email);
-      
-      if (!userProfile) {
-        throw new Error('User profile not found');
-      }
-      
-      // Mock successful sign in
-      const mockUser: MockFirebaseUser = {
-        uid: userProfile.uid,
-        email: userProfile.email,
-        displayName: userProfile.displayName,
-        photoURL: userProfile.photoURL || null,
-      };
-      
-      setCurrentUser(mockUser);
-      setUserProfile(userProfile);
-      
-      toast.success(`Welcome back, ${userProfile.displayName}! (${userProfile.role})`);
+      const result = await signInWithEmailAndPassword(auth, email, password);
+      await createUserProfile(result.user);
+      toast.success(`Welcome back, ${result.user.displayName || email}!`);
     } catch (error: any) {
-      toast.error(error.message || 'Login failed');
+      console.error('Sign in error:', error);
+      toast.error(error.message || 'Sign in failed');
       throw error;
     } finally {
       setLoading(false);
@@ -173,44 +105,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signUp = async (email: string, password: string, displayName: string) => {
     try {
       setLoading(true);
+      const result = await createUserWithEmailAndPassword(auth, email, password);
       
-      // Check if user already exists
-      const existingUser = SAMPLE_USERS.find(user => user.email === email);
-      if (existingUser) {
-        throw new Error('User already exists');
-      }
+      // Update the user's display name
+      await updateProfile(result.user, { displayName });
       
-      // Create new user
-      const newUserId = 'user-' + Date.now();
-      const mockUser: MockFirebaseUser = {
-        uid: newUserId,
-        email,
-        displayName,
-        photoURL: null,
-      };
+      // Create user profile in Firestore
+      await createUserProfile(result.user);
       
-      // Determine role based on email domain (for demo purposes)
-      let role: 'admin' | 'organizer' | 'attendee' = 'attendee';
-      if (email.includes('@gdgdavao.org')) {
-        role = email.includes('admin') ? 'admin' : 'organizer';
-      }
-      
-      const mockProfile: User = {
-        uid: mockUser.uid,
-        email: mockUser.email!,
-        displayName: mockUser.displayName!,
-        role,
-        photoURL: undefined,
-        createdAt: new Date() as any,
-        updatedAt: new Date() as any,
-      };
-      
-      setCurrentUser(mockUser);
-      setUserProfile(mockProfile);
-      
-      toast.success(`Account created successfully! Role: ${role}`);
+      toast.success('Account created successfully!');
     } catch (error: any) {
-      toast.error(error.message || 'Signup failed');
+      console.error('Sign up error:', error);
+      toast.error(error.message || 'Sign up failed');
       throw error;
     } finally {
       setLoading(false);
@@ -220,28 +126,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signInWithGoogle = async () => {
     try {
       setLoading(true);
-      // Mock Google sign in
-      const mockUser: MockFirebaseUser = {
-        uid: 'mock-google-user-id',
-        email: 'mock@gmail.com',
-        displayName: 'Mock Google User',
-        photoURL: null,
-      };
-      setCurrentUser(mockUser);
-      
-      const mockProfile: User = {
-        uid: mockUser.uid,
-        email: mockUser.email!,
-        displayName: mockUser.displayName!,
-        role: 'attendee',
-        createdAt: new Date() as any,
-        updatedAt: new Date() as any,
-      };
-      setUserProfile(mockProfile);
-      
-      toast.success('Signed in with Google! (Mock)');
+      const provider = new GoogleAuthProvider();
+      const result = await signInWithPopup(auth, provider);
+      await createUserProfile(result.user);
+      toast.success(`Welcome, ${result.user.displayName}!`);
     } catch (error: any) {
-      toast.error('Mock Google sign in failed');
+      console.error('Google sign in error:', error);
+      toast.error(error.message || 'Google sign in failed');
       throw error;
     } finally {
       setLoading(false);
@@ -250,20 +141,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = async () => {
     try {
-      setCurrentUser(null);
+      await signOut(auth);
       setUserProfile(null);
-      toast.success('Signed out successfully (Mock)');
+      toast.success('Signed out successfully');
     } catch (error: any) {
-      toast.error('Mock sign out failed');
+      console.error('Sign out error:', error);
+      toast.error('Sign out failed');
       throw error;
     }
   };
 
   const resetPassword = async (email: string) => {
     try {
-      toast.success('Password reset email sent! (Mock)');
+      await sendPasswordResetEmail(auth, email);
+      toast.success('Password reset email sent!');
     } catch (error: any) {
-      toast.error('Mock password reset failed');
+      console.error('Password reset error:', error);
+      toast.error(error.message || 'Password reset failed');
       throw error;
     }
   };
@@ -272,22 +166,166 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!currentUser) throw new Error('No user logged in');
 
     try {
-      // Mock profile update
+      const userRef = doc(db, 'users', currentUser.uid);
+      const updateData = {
+        ...data,
+        updatedAt: serverTimestamp(),
+      };
+      
+      await updateDoc(userRef, updateData);
+      
+      // Update local state
       if (userProfile) {
         setUserProfile({ ...userProfile, ...data } as User);
       }
       
-      toast.success('Profile updated successfully! (Mock)');
+      toast.success('Profile updated successfully!');
     } catch (error: any) {
-      toast.error('Mock profile update failed');
+      console.error('Profile update error:', error);
+      toast.error('Profile update failed');
       throw error;
     }
   };
 
-  // Mock auth state change effect
+  const refreshUserProfile = async () => {
+    if (!currentUser) return;
+
+    try {
+      const userRef = doc(db, 'users', currentUser.uid);
+      const userSnap = await getDoc(userRef);
+      
+      if (userSnap.exists()) {
+        const userData = userSnap.data() as Omit<User, 'uid'>;
+        const fullUser: User = { uid: currentUser.uid, ...userData };
+        setUserProfile(fullUser);
+      }
+    } catch (error) {
+      console.error('Error refreshing user profile:', error);
+    }
+  };
+
+  const updateAnyUserProfile = async (userId: string, data: Partial<User>) => {
+    if (!currentUser) throw new Error('No user logged in');
+    if (!userProfile || userProfile.role !== 'admin') {
+      throw new Error('Only admins can update other users');
+    }
+
+    try {
+      const userRef = doc(db, 'users', userId);
+      const updateData = {
+        ...data,
+        updatedAt: serverTimestamp(),
+      };
+      
+      await updateDoc(userRef, updateData);
+      toast.success('User profile updated successfully!');
+    } catch (error: any) {
+      console.error('User profile update error:', error);
+      toast.error('User profile update failed');
+      throw error;
+    }
+  };
+
+  const createUser = async (email: string, password: string, displayName: string, role: 'organizer' | 'admin'): Promise<User> => {
+    if (!currentUser) throw new Error('No user logged in');
+    if (!userProfile || userProfile.role !== 'admin') {
+      throw new Error('Only admins can create users');
+    }
+
+    try {
+      // Create a secondary Firebase app instance for user creation
+      const firebaseConfig = {
+        apiKey: (import.meta as any).env.VITE_FIREBASE_API_KEY,
+        authDomain: (import.meta as any).env.VITE_FIREBASE_AUTH_DOMAIN,
+        projectId: (import.meta as any).env.VITE_FIREBASE_PROJECT_ID,
+        storageBucket: (import.meta as any).env.VITE_FIREBASE_STORAGE_BUCKET,
+        messagingSenderId: (import.meta as any).env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+        appId: (import.meta as any).env.VITE_FIREBASE_APP_ID,
+        measurementId: (import.meta as any).env.VITE_FIREBASE_MEASUREMENT_ID
+      };
+
+      const secondaryApp = initializeApp(firebaseConfig, 'secondary');
+      const secondaryAuth = getAuth(secondaryApp);
+      
+      // Create user with secondary auth instance
+      const userCredential = await createUserWithEmailAndPassword(secondaryAuth, email, password);
+      const newUser = userCredential.user;
+      
+      // Update display name in Firebase Auth
+      await updateProfile(newUser, { displayName });
+      
+      // Create user profile in Firestore
+      const userRef = doc(db, 'users', newUser.uid);
+      const newUserProfile: Omit<User, 'uid'> = {
+        email: email,
+        displayName: displayName,
+        photoURL: newUser.photoURL || '',
+        role: role,
+        phoneNumber: '',
+        organization: '',
+        bio: '',
+        skills: [],
+        socialLinks: {
+          linkedin: '',
+          twitter: '',
+          github: '',
+          website: ''
+        },
+        createdAt: serverTimestamp() as any,
+        updatedAt: serverTimestamp() as any,
+      };
+      
+      await setDoc(userRef, newUserProfile);
+      
+      // Send password reset email so the user can set their own password
+      await sendPasswordResetEmail(secondaryAuth, email);
+      
+      // Sign out the newly created user (this doesn't affect the admin session)
+      await signOut(secondaryAuth);
+      
+      // Clean up secondary app
+      try {
+        (secondaryApp as any).delete?.();
+      } catch (cleanupError) {
+        console.warn('Failed to clean up secondary app:', cleanupError);
+      }
+      
+      const fullUser: User = { uid: newUser.uid, ...newUserProfile } as User;
+      toast.success(`User ${displayName} created successfully! Password reset email sent.`);
+      
+      return fullUser;
+      
+    } catch (error: any) {
+      console.error('User creation error:', error);
+      
+      // Handle specific Firebase Auth errors
+      if (error.code === 'auth/email-already-in-use') {
+        toast.error('Email is already in use');
+      } else if (error.code === 'auth/weak-password') {
+        toast.error('Password is too weak');
+      } else if (error.code === 'auth/invalid-email') {
+        toast.error('Invalid email address');
+      } else {
+        toast.error('Failed to create user');
+      }
+      
+      throw error;
+    }
+  };
+
   useEffect(() => {
-    setLoading(false);
-    // No Firebase auth state listener in mock mode
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        setCurrentUser(user);
+        await createUserProfile(user);
+      } else {
+        setCurrentUser(null);
+        setUserProfile(null);
+      }
+      setLoading(false);
+    });
+
+    return unsubscribe;
   }, []);
 
   const value: AuthContextType = {
@@ -300,6 +338,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     logout,
     resetPassword,
     updateUserProfile,
+    refreshUserProfile,
+    updateAnyUserProfile,
+    createUser,
   };
 
   return (
@@ -307,4 +348,4 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       {children}
     </AuthContext.Provider>
   );
-}; 
+};

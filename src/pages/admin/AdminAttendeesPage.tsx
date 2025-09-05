@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useParams } from 'react-router-dom';
 import { 
   MagnifyingGlassIcon, 
   CheckIcon,
@@ -13,10 +14,19 @@ import {
   BellIcon,
   DocumentTextIcon,
   FunnelIcon,
-  UserGroupIcon
+  UserGroupIcon,
+  CameraIcon
 } from '@heroicons/react/24/outline';
 import { CheckCircleIcon, XCircleIcon, ClockIcon, CurrencyDollarIcon } from '@heroicons/react/20/solid';
-import AdminLayout from '../../components/AdminLayout';
+import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { db } from '../../config/firebase';
+import AdminLayout from '../../components/admin/AdminLayout';
+import OrganizerLayout from '../../components/organizer/OrganizerLayout';
+import { useAuth } from '../../contexts/AuthContext';
+import { RegistrationService } from '../../services/registrationService';
+import { EventService } from '../../services/eventService';
+import { PaymentService } from '../../services/paymentService';
+import { Registration as FirestoreRegistration, Event } from '../../types';
 
 // Utility function to format dates
 const formatDate = (dateString: string): string => {
@@ -28,6 +38,27 @@ const formatDate = (dateString: string): string => {
     hour: '2-digit',
     minute: '2-digit'
   });
+};
+
+// Safely convert Firestore Timestamp, plain object with seconds, Date, or string to ISO string
+const toISOStringSafe = (value: any): string => {
+  try {
+    if (!value) return new Date().toISOString();
+    if (typeof value?.toDate === 'function') {
+      const d = value.toDate();
+      return d instanceof Date ? d.toISOString() : new Date(d).toISOString();
+    }
+    if (value instanceof Date) return value.toISOString();
+    if (typeof value?.seconds === 'number') return new Date(value.seconds * 1000).toISOString();
+    if (typeof value === 'string') {
+      const d = new Date(value);
+      return isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+    }
+    // Fallback to now
+    return new Date().toISOString();
+  } catch {
+    return new Date().toISOString();
+  }
 };
 
 interface Registration {
@@ -53,6 +84,17 @@ interface Registration {
   status: 'pending' | 'approved' | 'rejected' | 'paid' | 'attended' | 'cancelled';
   registrationDate: string;
   paymentStatus?: 'pending' | 'paid' | 'failed' | 'refunded';
+  paymentProof?: {
+    id: string;
+    registrationId: string;
+    proofImageUrl?: string;
+    transactionId?: string;
+    submittedAt: string;
+    verificationStatus: 'pending' | 'approved' | 'rejected';
+    verifiedAt?: string;
+    verifiedBy?: string;
+    notes?: string;
+  };
   notes?: string;
   requirements?: string[];
   formSubmission?: Record<string, any>;
@@ -60,226 +102,350 @@ interface Registration {
 }
 
 const AdminAttendeesPage: React.FC = () => {
+  const { userProfile } = useAuth();
+  const { eventId } = useParams<{ eventId?: string }>();
+  const isAdmin = userProfile?.role === 'admin';
+  const LayoutComponent = isAdmin ? AdminLayout : OrganizerLayout;
+  
   const [registrations, setRegistrations] = useState<Registration[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('pending');
-  const [eventFilter, setEventFilter] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [eventFilter, setEventFilter] = useState<string>(eventId || 'all');
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
-  const [selectedRegistrations, setSelectedRegistrations] = useState<string[]>([]);
   const [viewingRegistration, setViewingRegistration] = useState<Registration | null>(null);
+  const [events, setEvents] = useState<Event[]>([]);
+  const [currentEvent, setCurrentEvent] = useState<Event | null>(null);
+  const [viewMode, setViewMode] = useState<'management'>('management');
+  const [loadingProof, setLoadingProof] = useState(false);
 
-  // Mock data
+  // Load registrations from API
   useEffect(() => {
-    setTimeout(() => {
-      setRegistrations([
-        {
-          id: '1',
-          attendee: {
-            id: 'user1',
-            name: 'John Doe',
-            email: 'john.doe@email.com',
-            phone: '+63 912 345 6789',
-            organization: 'Tech Solutions Inc.',
-            experience: 'Intermediate',
-            interests: ['Frontend Development', 'React', 'TypeScript'],
-            bio: 'Full-stack developer with 3 years of experience in web development.'
-          },
-          event: {
-            id: 'event1',
-            title: 'Web Development Workshop',
-            date: '2025-01-25T09:00:00Z',
-            venue: 'GDG Davao Hub',
-            ticketPrice: 500
-          },
-          status: 'pending',
-          registrationDate: '2025-01-15T14:30:00Z',
-          priority: 'high',
-          formSubmission: {
-            'Why do you want to attend?': 'To improve my React skills and learn TypeScript',
-            'Current skill level': 'Intermediate',
-            'What do you hope to learn?': 'Advanced React patterns and TypeScript best practices'
-          }
-        },
-        {
-          id: '2',
-          attendee: {
-            id: 'user2',
-            name: 'Jane Smith',
-            email: 'jane.smith@company.com',
-            phone: '+63 918 765 4321',
-            organization: 'Digital Innovations',
-            experience: 'Advanced',
-            interests: ['Backend Development', 'Node.js', 'Databases'],
-            bio: 'Senior backend developer with expertise in Node.js and cloud architecture.'
-          },
-          event: {
-            id: 'event2',
-            title: 'AI/ML Fundamentals',
-            date: '2025-02-10T14:00:00Z',
-            venue: 'Online',
-            ticketPrice: 0
-          },
-          status: 'pending',
-          registrationDate: '2025-01-16T09:15:00Z',
-          priority: 'medium',
-          formSubmission: {
-            'Previous AI/ML experience': 'None, but interested in learning',
-            'Programming languages': 'JavaScript, Python',
-            'Expected outcomes': 'Understanding ML concepts and practical applications'
-          }
-        },
-        {
-          id: '3',
-          attendee: {
-            id: 'user3',
-            name: 'Mike Johnson',
-            email: 'mike.j@startup.ph',
-            phone: '+63 920 123 4567',
-            organization: 'StartupPH',
-            experience: 'Beginner',
-            interests: ['Mobile Development', 'Flutter', 'UI/UX'],
-            bio: 'Aspiring mobile developer transitioning from design to development.'
-          },
-          event: {
-            id: 'event3',
-            title: 'Mobile App Development',
-            date: '2025-02-15T10:00:00Z',
-            venue: 'Innovation Hub',
-            ticketPrice: 750
-          },
-          status: 'approved',
-          registrationDate: '2025-01-17T11:45:00Z',
-          paymentStatus: 'pending',
-          priority: 'medium'
-        },
-        {
-          id: '4',
-          attendee: {
-            id: 'user4',
-            name: 'Sarah Wilson',
-            email: 'sarah.wilson@freelance.com',
-            organization: 'Freelancer',
-            experience: 'Advanced',
-            interests: ['DevOps', 'Cloud Computing', 'Docker'],
-            bio: 'DevOps engineer specializing in cloud infrastructure and automation.'
-          },
-          event: {
-            id: 'event1',
-            title: 'Web Development Workshop',
-            date: '2025-01-25T09:00:00Z',
-            venue: 'GDG Davao Hub',
-            ticketPrice: 500
-          },
-          status: 'rejected',
-          registrationDate: '2025-01-18T16:45:00Z',
-          notes: 'Workshop focus doesn\'t match attendee background',
-          priority: 'low'
-        },
-        {
-          id: '5',
-          attendee: {
-            id: 'user5',
-            name: 'David Lee',
-            email: 'david.lee@student.edu',
-            organization: 'University of Davao',
-            experience: 'Beginner',
-            interests: ['Full Stack', 'Python', 'Web Development'],
-            bio: 'Computer Science student eager to learn industry practices.'
-          },
-          event: {
-            id: 'event4',
-            title: 'DevOps Essentials',
-            date: '2025-02-20T08:00:00Z',
-            venue: 'Innovation Center',
-            ticketPrice: 1000
-          },
-          status: 'paid',
-          registrationDate: '2025-01-19T11:30:00Z',
-          paymentStatus: 'paid',
-          priority: 'high'
-        },
-        {
-          id: '6',
-          attendee: {
-            id: 'user6',
-            name: 'Lisa Chen',
-            email: 'lisa.chen@techcorp.com',
-            phone: '+63 917 888 9999',
-            organization: 'TechCorp Solutions',
-            experience: 'Intermediate',
-            interests: ['Frontend', 'Vue.js', 'Progressive Web Apps'],
-            bio: 'Frontend developer specializing in Vue.js and modern web technologies.'
-          },
-          event: {
-            id: 'event1',
-            title: 'Web Development Workshop',
-            date: '2025-01-25T09:00:00Z',
-            venue: 'GDG Davao Hub',
-            ticketPrice: 500
-          },
-          status: 'pending',
-          registrationDate: '2025-01-20T08:20:00Z',
-          priority: 'high',
-          formSubmission: {
-            'Current role': 'Frontend Developer',
-            'Years of experience': '2 years',
-            'Specific topics of interest': 'React hooks, state management, testing'
-          }
+    const fetchRegistrations = async () => {
+      if (!userProfile?.uid) return;
+      
+      try {
+        setLoading(true);
+        
+        let firestoreRegistrations;
+        let organizerEvents: Event[] = [];
+        
+        if (isAdmin) {
+          // Admin can see all registrations
+          firestoreRegistrations = await RegistrationService.getAllRegistrations();
+          // Fetch all events for filtering
+          organizerEvents = await EventService.getAllEvents();
+        } else if (userProfile.role === 'organizer') {
+          // Organizers can now see all events and their registrations (updated business rule)
+          organizerEvents = await EventService.getAllEvents();
+          firestoreRegistrations = await RegistrationService.getAllRegistrations();
+        } else {
+          // Other users see nothing
+          organizerEvents = [];
+          firestoreRegistrations = [];
         }
-      ]);
-      setLoading(false);
-    }, 1000);
+        
+        setEvents(organizerEvents);
+        
+        // If viewing a specific event, set the current event and filter registrations
+        if (eventId) {
+          const specificEvent = organizerEvents.find(event => event.id === eventId);
+          setCurrentEvent(specificEvent || null);
+        }
+        
+        // Transform data to match expected interface
+        const transformedRegistrations: Registration[] = [];
+        
+        // Create a map from the events we already fetched
+        const eventsCache = new Map<string, Event>();
+        organizerEvents.forEach(event => {
+          eventsCache.set(event.id, event);
+        });
+        
+        for (const reg of firestoreRegistrations) {
+          // Get event data from cache
+          const event = eventsCache.get(reg.eventId);
+          if (!event) continue; // Skip if event not found (shouldn't happen for organizers)
+          
+          // Map status from Firestore to expected format
+          const getDisplayStatus = (fsReg: FirestoreRegistration): Registration['status'] => {
+            // First check registrationStatus if it exists
+            if ((fsReg as any).registrationStatus) {
+              const regStatus = (fsReg as any).registrationStatus;
+              if (regStatus === 'approved') return 'approved';
+              if (regStatus === 'rejected') return 'rejected';
+              if (regStatus === 'pending') return 'pending';
+            }
+            
+            // Fall back to other status fields
+            if (fsReg.attendanceStatus === 'checked-in') return 'attended';
+            if (fsReg.attendanceStatus === 'cancelled') return 'cancelled';
+            if (fsReg.paymentStatus === 'paid') return 'paid';
+            if (fsReg.paymentStatus === 'pending') return 'pending';
+            
+            return 'pending'; // Default status
+          };
+
+          // Map PaymentStatus to expected format
+          const mapPaymentStatus = (status: any): Registration['paymentStatus'] => {
+            if (status === 'paid') return 'paid';
+            if (status === 'pending' || status === 'processing') return 'pending';
+            if (status === 'failed') return 'failed';
+            if (status === 'refunded') return 'refunded';
+            return 'pending'; // Default for any other status including 'cancelled'
+          };
+
+          const transformedReg: Registration = {
+            id: reg.id,
+            attendee: {
+              id: reg.userId || reg.id,
+              name: reg.userDetails.name,
+              email: reg.userDetails.email,
+              phone: reg.userDetails.phoneNumber,
+              organization: reg.userDetails.organization,
+              profilePicture: undefined, // Not available in current structure
+              experience: undefined,
+              interests: [],
+              bio: undefined
+            },
+            event: {
+              id: event.id,
+              title: event.title,
+              date: toISOStringSafe((event as any)?.startDate ?? (event as any)?.startDateTime ?? (event as any)?.date),
+              venue: event.venue?.name || event.venue?.address || 'TBA',
+              ticketPrice: reg.totalAmount || 0
+            },
+            status: getDisplayStatus(reg),
+            registrationDate: reg.registrationDate.toDate().toISOString(),
+            paymentStatus: mapPaymentStatus(reg.paymentStatus),
+            paymentProof: reg.paymentProof ? {
+              id: reg.paymentProof.id,
+              registrationId: reg.paymentProof.registrationId,
+              proofImageUrl: reg.paymentProof.proofImageUrl,
+              transactionId: reg.paymentProof.transactionId,
+              submittedAt: reg.paymentProof.submittedAt.toDate().toISOString(),
+              verificationStatus: reg.paymentProof.verificationStatus,
+              verifiedAt: reg.paymentProof.verifiedAt ? reg.paymentProof.verifiedAt.toDate().toISOString() : undefined,
+              verifiedBy: reg.paymentProof.verifiedBy,
+              notes: reg.paymentProof.notes
+            } : undefined,
+            notes: (reg as any).adminNotes || undefined,
+            requirements: undefined,
+            formSubmission: (reg as any).customResponses || undefined,
+            priority: 'medium' // Default priority
+          };
+          
+          transformedRegistrations.push(transformedReg);
+        }
+        
+        setRegistrations(transformedRegistrations);
+        setEvents(Array.from(eventsCache.values()));
+        setLoading(false);
+      } catch (error) {
+        console.error('Error fetching registrations:', error);
+        setRegistrations([]);
+        setEvents([]);
+        setLoading(false);
+      }
+    };
+
+    fetchRegistrations();
   }, []);
 
-  const handleStatusChange = (registrationId: string, newStatus: Registration['status'], notes?: string) => {
-    setRegistrations(prev => 
-      prev.map(reg => 
-        reg.id === registrationId 
-          ? { ...reg, status: newStatus, notes: notes || reg.notes }
-          : reg
-      )
-    );
+  // When opening the details modal, fetch latest payment proof if not already present
+  useEffect(() => {
+    const fetchLatestProof = async () => {
+      if (!viewingRegistration || viewingRegistration.paymentProof) return;
+      try {
+        setLoadingProof(true);
+        const proof = await PaymentService.getLatestPaymentProofByRegistrationId(viewingRegistration.id);
+        if (proof) {
+          setViewingRegistration(prev => prev ? {
+            ...prev,
+            paymentProof: {
+              id: proof.id,
+              registrationId: proof.registrationId,
+              proofImageUrl: proof.proofImageUrl,
+              transactionId: proof.transactionId,
+              submittedAt: proof.submittedAt,
+              verificationStatus: proof.verificationStatus,
+              verifiedAt: proof.verifiedAt,
+              verifiedBy: proof.verifiedBy,
+              notes: proof.notes
+            }
+          } : prev);
+        }
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn('Failed to load latest payment proof', e);
+      } finally {
+        setLoadingProof(false);
+      }
+    };
 
-    // Simulate email notification
-    const registration = registrations.find(r => r.id === registrationId);
-    if (registration) {
-      console.log(`Email notification sent to ${registration.attendee.email} - Status: ${newStatus}`);
+    fetchLatestProof();
+  }, [viewingRegistration?.id]);
+
+  const handleStatusChange = (registrationId: string, newStatus: Registration['status'], notes?: string) => {
+    // Only handle admin status changes (approved/rejected)
+    if (newStatus === 'approved' || newStatus === 'rejected') {
+      const updateStatus = async () => {
+        try {
+          await RegistrationService.updateRegistrationStatus(
+            registrationId, 
+            newStatus as 'approved' | 'rejected',
+            notes
+          );
+          
+          // Update local state after successful update
+          setRegistrations(prev => 
+            prev.map(reg => 
+              reg.id === registrationId 
+                ? { ...reg, status: newStatus, notes: notes || reg.notes }
+                : reg
+            )
+          );
+
+          // Simulate email notification
+          const registration = registrations.find(r => r.id === registrationId);
+          if (registration) {
+            console.log(`Email notification sent to ${registration.attendee.email} - Status: ${newStatus}`);
+          }
+        } catch (error) {
+          console.error('Failed to update registration status:', error);
+          // You might want to show a toast notification here
+          alert('Failed to update registration status. Please try again.');
+        }
+      };
+      
+      updateStatus();
+    } else {
+      // For other status changes, just update locally for now
+      setRegistrations(prev => 
+        prev.map(reg => 
+          reg.id === registrationId 
+            ? { ...reg, status: newStatus, notes: notes || reg.notes }
+            : reg
+        )
+      );
+
+      // Simulate email notification
+      const registration = registrations.find(r => r.id === registrationId);
+      if (registration) {
+        console.log(`Email notification sent to ${registration.attendee.email} - Status: ${newStatus}`);
+      }
     }
   };
 
-  const handleBulkAction = (action: 'approve' | 'reject') => {
-    if (selectedRegistrations.length === 0) return;
 
-    const newStatus = action === 'approve' ? 'approved' : 'rejected';
 
-    setRegistrations(prev => 
-      prev.map(reg => 
-        selectedRegistrations.includes(reg.id)
-          ? { ...reg, status: newStatus as Registration['status'] }
-          : reg
-      )
-    );
+  const handlePaymentVerification = async (registrationId: string, action: 'approved' | 'rejected') => {
+    try {
+      // Find the registration
+      const registration = registrations.find(r => r.id === registrationId);
 
-    setSelectedRegistrations([]);
+      // Ensure we have a payment proof; if missing, try to fetch the latest
+      let proofId: string | null = registration?.paymentProof?.id || null;
+      if (!proofId) {
+        const latestProof = await PaymentService.getLatestPaymentProofByRegistrationId(registrationId);
+        if (!latestProof) {
+          throw new Error('No payment proof found for this registration');
+        }
+        proofId = latestProof.id;
+      }
+
+      // Delegate verification to PaymentService which updates proof and registration
+      const verifierUid = userProfile?.uid || 'system';
+      const verifierName = (userProfile as any)?.displayName || (userProfile as any)?.email || 'Admin';
+      await PaymentService.verifyPaymentProof(proofId, action, verifierUid, verifierName);
+
+      // Update local state optimistically
+      setRegistrations(prev => prev.map(reg => {
+        if (reg.id !== registrationId) return reg;
+        const updatedPaymentStatus = action === 'approved' ? 'paid' : 'failed';
+        const existingProof = reg.paymentProof || undefined;
+        const updatedProof = existingProof ? {
+          ...existingProof,
+          verificationStatus: action,
+          verifiedAt: new Date().toISOString(),
+          verifiedBy: verifierName
+        } : existingProof;
+        return {
+          ...reg,
+          paymentStatus: updatedPaymentStatus,
+          paymentProof: updatedProof
+        };
+      }));
+
+      // If the modal is open for this registration, update it too
+      setViewingRegistration(prev => {
+        if (!prev || prev.id !== registrationId) return prev;
+        const updatedPaymentStatus = action === 'approved' ? 'paid' : 'failed';
+        const updatedProof = prev.paymentProof ? {
+          ...prev.paymentProof,
+          verificationStatus: action,
+          verifiedAt: new Date().toISOString(),
+          verifiedBy: verifierName
+        } : prev.paymentProof;
+        return {
+          ...prev,
+          paymentStatus: updatedPaymentStatus,
+          paymentProof: updatedProof
+        };
+      });
+
+      console.log(`Payment ${action} for registration ${registrationId}`);
+    } catch (error) {
+      console.error('Failed to update payment status:', error);
+      alert(`Failed to ${action} payment. Please try again.`);
+    }
   };
 
-  const toggleRegistrationSelection = (registrationId: string) => {
-    setSelectedRegistrations(prev => 
-      prev.includes(registrationId)
-        ? prev.filter(id => id !== registrationId)
-        : [...prev, registrationId]
-    );
+  const exportToCSV = () => {
+    // Define CSV headers
+    const headers = [
+      'Attendee Name',
+      'Email',
+      'Phone',
+      'Organization'
+    ];
+
+    // Convert registrations to CSV rows
+    const csvRows = [headers.join(',')];
+    
+    filteredRegistrations.forEach(registration => {
+      const row = [
+        `"${registration.attendee.name}"`,
+        `"${registration.attendee.email}"`,
+        `"${registration.attendee.phone || ''}"`,
+        `"${registration.attendee.organization || ''}"`
+      ];
+      csvRows.push(row.join(','));
+    });
+
+    // Create and download CSV file
+    const csvContent = csvRows.join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    
+    if (link.download !== undefined) {
+      const url = URL.createObjectURL(blob);
+      link.setAttribute('href', url);
+      
+      // Get event name for filename (use first event if multiple)
+      const eventName = filteredRegistrations.length > 0 
+        ? filteredRegistrations[0].event.title.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()
+        : 'event';
+      
+      link.setAttribute('download', `${eventName}_attendees_export.csv`);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } 
   };
 
-  const selectAllVisible = () => {
-    const visibleIds = filteredRegistrations.map(reg => reg.id);
-    setSelectedRegistrations(visibleIds);
-  };
 
-  const clearSelection = () => {
-    setSelectedRegistrations([]);
-  };
 
   const filteredRegistrations = registrations.filter(registration => {
     const matchesSearch = 
@@ -288,8 +454,10 @@ const AdminAttendeesPage: React.FC = () => {
       registration.event.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
       registration.attendee.organization?.toLowerCase().includes(searchTerm.toLowerCase());
     
+
     const matchesStatus = statusFilter === 'all' || registration.status === statusFilter;
-    const matchesEvent = eventFilter === 'all' || registration.event.id === eventFilter;
+    // If viewing a specific event, only show registrations for that event
+    const matchesEvent = eventId ? registration.event.id === eventId : (eventFilter === 'all' || registration.event.id === eventFilter);
     const matchesPriority = priorityFilter === 'all' || registration.priority === priorityFilter;
     
     return matchesSearch && matchesStatus && matchesEvent && matchesPriority;
@@ -342,7 +510,7 @@ const AdminAttendeesPage: React.FC = () => {
 
   if (loading) {
     return (
-      <AdminLayout title="Attendees" subtitle="Loading attendee registrations...">
+      <LayoutComponent title="Attendees" subtitle="Loading attendee registrations...">
         <div className="animate-pulse space-y-6">
           <div className="h-20 bg-gray-200 rounded-xl"></div>
           <div className="space-y-4">
@@ -351,17 +519,16 @@ const AdminAttendeesPage: React.FC = () => {
             ))}
           </div>
         </div>
-      </AdminLayout>
+      </LayoutComponent>
     );
   }
 
   const headerActions = (
     <div className="flex items-center space-x-3">
-      <button className="inline-flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium">
-        <CheckIcon className="w-4 h-4 mr-2" />
-        Bulk Approve
-      </button>
-      <button className="inline-flex items-center px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors">
+      <button 
+        onClick={exportToCSV}
+        className="inline-flex items-center px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+      >
         <FunnelIcon className="w-4 h-4 mr-2" />
         Export Data
       </button>
@@ -369,12 +536,17 @@ const AdminAttendeesPage: React.FC = () => {
   );
 
   return (
-    <AdminLayout 
-      title="Attendee Management" 
-      subtitle="Review and approve event registrations efficiently."
+    <LayoutComponent 
+      title={currentEvent ? `${currentEvent.title} - Attendees` : "Attendee Management"} 
+      subtitle={currentEvent 
+        ? `Manage registrations and payments for ${currentEvent.title}`
+        : "Review and manage event registrations and payments efficiently."
+      }
       actions={headerActions}
     >
       <div className="space-y-6">
+
+
         {/* Quick Stats */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
           <div className="bg-white rounded-xl border border-gray-200 p-6">
@@ -385,7 +557,7 @@ const AdminAttendeesPage: React.FC = () => {
               <div className="ml-4">
                 <p className="text-sm text-gray-600">Pending</p>
                 <p className="text-2xl font-bold text-gray-900">
-                  {registrations.filter(r => r.status === 'pending').length}
+                  {filteredRegistrations.filter(r => r.status === 'pending').length}
                 </p>
               </div>
             </div>
@@ -399,7 +571,7 @@ const AdminAttendeesPage: React.FC = () => {
               <div className="ml-4">
                 <p className="text-sm text-gray-600">Approved</p>
                 <p className="text-2xl font-bold text-gray-900">
-                  {registrations.filter(r => r.status === 'approved').length}
+                  {filteredRegistrations.filter(r => r.status === 'approved').length}
                 </p>
               </div>
             </div>
@@ -413,7 +585,7 @@ const AdminAttendeesPage: React.FC = () => {
               <div className="ml-4">
                 <p className="text-sm text-gray-600">Paid</p>
                 <p className="text-2xl font-bold text-gray-900">
-                  {registrations.filter(r => r.status === 'paid').length}
+                  {filteredRegistrations.filter(r => r.paymentStatus === 'paid').length}
                 </p>
               </div>
             </div>
@@ -426,7 +598,7 @@ const AdminAttendeesPage: React.FC = () => {
               </div>
               <div className="ml-4">
                 <p className="text-sm text-gray-600">Total</p>
-                <p className="text-2xl font-bold text-gray-900">{registrations.length}</p>
+                <p className="text-2xl font-bold text-gray-900">{filteredRegistrations.length}</p>
               </div>
             </div>
           </div>
@@ -452,25 +624,34 @@ const AdminAttendeesPage: React.FC = () => {
                 onChange={(e) => setStatusFilter(e.target.value)}
                 className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               >
-                <option value="pending">Pending Review</option>
                 <option value="all">All Status</option>
+                <option value="pending">Pending Review</option>
                 <option value="approved">Approved</option>
                 <option value="rejected">Rejected</option>
                 <option value="paid">Paid</option>
                 <option value="attended">Attended</option>
               </select>
 
-              <select
-                value={eventFilter}
-                onChange={(e) => setEventFilter(e.target.value)}
-                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              >
-                <option value="all">All Events</option>
-                <option value="event1">Web Development Workshop</option>
-                <option value="event2">AI/ML Fundamentals</option>
-                <option value="event3">Flutter Development</option>
-                <option value="event4">DevOps Essentials</option>
-              </select>
+              {!eventId && (
+                <select
+                  value={eventFilter}
+                  onChange={(e) => setEventFilter(e.target.value)}
+                  className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                  <option value="all">All Events</option>
+                  {events.map(event => (
+                    <option key={event.id} value={event.id}>
+                      {event.title}
+                    </option>
+                  ))}
+                </select>
+              )}
+              
+              {eventId && currentEvent && (
+                <div className="px-3 py-2 bg-blue-100 text-blue-800 rounded-lg border border-blue-200">
+                  Event: {currentEvent.title}
+                </div>
+              )}
             </div>
 
             <div className="text-sm text-gray-600">
@@ -479,52 +660,8 @@ const AdminAttendeesPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Bulk Actions */}
-        {selectedRegistrations.length > 0 && (
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-3">
-                <span className="text-sm font-medium text-blue-900">
-                  {selectedRegistrations.length} registration{selectedRegistrations.length !== 1 ? 's' : ''} selected
-                </span>
-                <button
-                  onClick={clearSelection}
-                  className="text-sm text-blue-600 hover:text-blue-800 underline"
-                >
-                  Clear Selection
-                </button>
-              </div>
-              <div className="flex items-center space-x-2">
-                <button
-                  onClick={() => handleBulkAction('approve')}
-                  className="inline-flex items-center px-3 py-1.5 bg-green-600 text-white text-sm rounded-md hover:bg-green-700 transition-colors"
-                >
-                  <CheckIcon className="w-4 h-4 mr-1" />
-                  Approve All
-                </button>
-                <button
-                  onClick={() => handleBulkAction('reject')}
-                  className="inline-flex items-center px-3 py-1.5 bg-red-600 text-white text-sm rounded-md hover:bg-red-700 transition-colors"
-                >
-                  <XMarkIcon className="w-4 h-4 mr-1" />
-                  Reject All
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* Quick Actions */}
-        <div className="mb-6 flex items-center justify-between">
-          <div className="flex space-x-2">
-            <button
-              onClick={selectAllVisible}
-              className="text-sm text-blue-600 hover:text-blue-700 font-medium"
-            >
-              Select All Visible ({filteredRegistrations.length})
-            </button>
-          </div>
-          
+        <div className="mb-6 flex items-center justify-end">
           <div className="text-sm text-gray-500">
             Showing {filteredRegistrations.length} of {registrations.length} registrations
           </div>
@@ -548,15 +685,6 @@ const AdminAttendeesPage: React.FC = () => {
               {filteredRegistrations.map((registration) => (
                 <div key={registration.id} className="p-6 hover:bg-gray-50 transition-colors">
                   <div className="flex items-start space-x-4">
-                    {/* Selection Checkbox */}
-                    <div className="flex items-center pt-1">
-                      <input
-                        type="checkbox"
-                        checked={selectedRegistrations.includes(registration.id)}
-                        onChange={() => toggleRegistrationSelection(registration.id)}
-                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                      />
-                    </div>
 
                     {/* Avatar */}
                     <div className="flex-shrink-0">
@@ -583,6 +711,20 @@ const AdminAttendeesPage: React.FC = () => {
                           <span className={`px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(registration.status)}`}>
                             {registration.status}
                           </span>
+                          {registration.paymentStatus && (
+                            <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                              registration.paymentStatus === 'paid' ? 'bg-green-100 text-green-800' :
+                              registration.paymentStatus === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                              'bg-red-100 text-red-800'
+                            }`}>
+                              Payment: {registration.paymentStatus}
+                            </span>
+                          )}
+                          {registration.paymentStatus === 'pending' && registration.paymentProof && (
+                            <span className="px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-800">
+                              📄 Proof Submitted
+                            </span>
+                          )}
                         </div>
                       </div>
                       
@@ -626,163 +768,321 @@ const AdminAttendeesPage: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Action Buttons for Pending */}
-                  {registration.status === 'pending' && (
-                    <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-100">
-                      <div className="flex items-center space-x-2 ml-4">
-                        <button
-                          onClick={() => handleStatusChange(registration.id, 'approved')}
-                          className="btn-primary text-sm px-4 py-2"
-                        >
-                          Approve
-                        </button>
-                        <button
-                          onClick={() => handleStatusChange(registration.id, 'rejected')}
-                          className="btn-danger text-sm px-4 py-2"
-                        >
-                          Reject
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                  {/* Action Button - Only View Details */}
+                  <div className="flex items-center justify-end mt-4 pt-4 border-t border-gray-100">
+                    <button
+                      onClick={() => setViewingRegistration(registration)}
+                      className="btn-outline text-sm px-4 py-2"
+                    >
+                      View Details
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
           )}
         </div>
 
+
         {/* Registration Details Modal */}
         {viewingRegistration && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-lg shadow-lg w-full max-w-3xl">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-75">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[95vh] overflow-hidden flex flex-col mx-4">
               {/* Header */}
-              <div className="flex items-center justify-between p-4 border-b">
-                <h2 className="text-lg font-semibold text-gray-900">
-                  Registration Details
-                </h2>
+              <div className="flex items-center justify-between p-6 border-b border-gray-200 bg-gray-50">
+                <div>
+                  <h2 className="text-xl font-semibold text-gray-900">
+                    Registration Details
+                  </h2>
+                  <p className="text-sm text-gray-600 mt-1">
+                    {viewingRegistration.attendee.name} • {viewingRegistration.event.title}
+                  </p>
+                </div>
                 <button
                   onClick={() => setViewingRegistration(null)}
-                  className="text-gray-500 hover:text-gray-700"
+                  className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
                 >
                   <XMarkIcon className="h-6 w-6" />
                 </button>
               </div>
               
               {/* Content */}
-              <div className="p-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Attendee Info */}
-                  <div className="space-y-4">
-                    <div>
-                      <span className="text-sm font-medium text-gray-700">Name</span>
-                      <div className="text-lg font-semibold text-gray-900">
-                        {viewingRegistration.attendee.name}
+              <div className="flex-1 overflow-y-auto p-6">
+                <div className="space-y-8">
+                  {/* Status Overview */}
+                  <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-4 border border-blue-100">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-4">
+                        <div className="flex items-center space-x-2">
+                          {getStatusIcon(viewingRegistration.status)}
+                          <span className={`px-3 py-1 text-sm font-medium rounded-full ${getStatusColor(viewingRegistration.status)}`}>
+                            {viewingRegistration.status.charAt(0).toUpperCase() + viewingRegistration.status.slice(1)}
+                          </span>
+                        </div>
+                        {viewingRegistration.paymentStatus && (
+                          <div className="flex items-center space-x-2">
+                            <CurrencyDollarIcon className="h-5 w-5 text-gray-500" />
+                            <span className={`px-3 py-1 text-sm font-medium rounded-full ${
+                              viewingRegistration.paymentStatus === 'paid' ? 'bg-green-100 text-green-800' :
+                              viewingRegistration.paymentStatus === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                              'bg-red-100 text-red-800'
+                            }`}>
+                              Payment: {viewingRegistration.paymentStatus.charAt(0).toUpperCase() + viewingRegistration.paymentStatus.slice(1)}
+                            </span>
+                          </div>
+                        )}
                       </div>
-                    </div>
-                    <div>
-                      <span className="text-sm font-medium text-gray-700">Email</span>
-                      <div className="text-gray-900">
-                        {viewingRegistration.attendee.email}
-                      </div>
-                    </div>
-                    <div>
-                      <span className="text-sm font-medium text-gray-700">Phone</span>
-                      <div className="text-gray-900">
-                        {viewingRegistration.attendee.phone || 'N/A'}
-                      </div>
-                    </div>
-                    <div>
-                      <span className="text-sm font-medium text-gray-700">Organization</span>
-                      <div className="text-gray-900">
-                        {viewingRegistration.attendee.organization || 'N/A'}
-                      </div>
-                    </div>
-                    <div>
-                      <span className="text-sm font-medium text-gray-700">Status</span>
-                      <div className={`px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(viewingRegistration.status)}`}>
-                        {viewingRegistration.status}
-                      </div>
-                    </div>
-                    <div>
-                      <span className="text-sm font-medium text-gray-700">Priority</span>
-                      <div className={`px-2 py-1 text-xs font-medium rounded-full ${getPriorityColor(viewingRegistration.priority || 'low')}`}>
-                        {viewingRegistration.priority || 'low'}
+                      <div className="text-right">
+                        <div className="text-2xl font-bold text-gray-900">
+                          ₱{viewingRegistration.event.ticketPrice.toLocaleString()}
+                        </div>
+                        <div className="text-sm text-gray-600">Ticket Price</div>
                       </div>
                     </div>
                   </div>
-                  
-                  {/* Event Info */}
-                  <div className="space-y-4">
-                    <div>
-                      <span className="text-sm font-medium text-gray-700">Event Title</span>
-                      <div className="text-lg font-semibold text-gray-900">
-                        {viewingRegistration.event.title}
+
+                  {/* Main Content Grid */}
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    {/* Attendee Information */}
+                    <div className="lg:col-span-1">
+                      <div className="bg-white border border-gray-200 rounded-lg p-5">
+                        <div className="flex items-center space-x-3 mb-4">
+                          <div className="p-2 bg-blue-100 rounded-lg">
+                            <UserIcon className="h-5 w-5 text-blue-600" />
+                          </div>
+                          <h3 className="text-lg font-semibold text-gray-900">Attendee</h3>
+                        </div>
+                        
+                        <div className="space-y-4">
+                          <div>
+                            <label className="text-sm font-medium text-gray-700">Name</label>
+                            <p className="text-gray-900 font-medium">{viewingRegistration.attendee.name}</p>
+                          </div>
+                          
+                          <div>
+                            <label className="text-sm font-medium text-gray-700">Email</label>
+                            <p className="text-gray-900">{viewingRegistration.attendee.email}</p>
+                          </div>
+                          
+                          {viewingRegistration.attendee.phone && (
+                            <div>
+                              <label className="text-sm font-medium text-gray-700">Phone</label>
+                              <p className="text-gray-900">{viewingRegistration.attendee.phone}</p>
+                            </div>
+                          )}
+                          
+                          {viewingRegistration.attendee.organization && (
+                            <div>
+                              <label className="text-sm font-medium text-gray-700">Organization</label>
+                              <p className="text-gray-900">{viewingRegistration.attendee.organization}</p>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
-                    <div>
-                      <span className="text-sm font-medium text-gray-700">Date & Time</span>
-                      <div className="text-gray-900">
-                        {formatDate(viewingRegistration.event.date)}
+
+                    {/* Event Information */}
+                    <div className="lg:col-span-1">
+                      <div className="bg-white border border-gray-200 rounded-lg p-5">
+                        <div className="flex items-center space-x-3 mb-4">
+                          <div className="p-2 bg-green-100 rounded-lg">
+                            <CalendarDaysIcon className="h-5 w-5 text-green-600" />
+                          </div>
+                          <h3 className="text-lg font-semibold text-gray-900">Event</h3>
+                        </div>
+                        
+                        <div className="space-y-4">
+                          <div>
+                            <label className="text-sm font-medium text-gray-700">Title</label>
+                            <p className="text-gray-900 font-medium">{viewingRegistration.event.title}</p>
+                          </div>
+                          
+                          <div>
+                            <label className="text-sm font-medium text-gray-700">Date & Time</label>
+                            <p className="text-gray-900">{formatDate(viewingRegistration.event.date)}</p>
+                          </div>
+                          
+                          <div>
+                            <label className="text-sm font-medium text-gray-700">Venue</label>
+                            <p className="text-gray-900">{viewingRegistration.event.venue}</p>
+                          </div>
+                          
+                          <div>
+                            <label className="text-sm font-medium text-gray-700">Registration Date</label>
+                            <p className="text-gray-900">{formatDate(viewingRegistration.registrationDate)}</p>
+                          </div>
+                        </div>
                       </div>
                     </div>
-                    <div>
-                      <span className="text-sm font-medium text-gray-700">Venue</span>
-                      <div className="text-gray-900">
-                        {viewingRegistration.event.venue}
+
+                    {/* Payment Proof */}
+                    {(viewingRegistration.paymentProof || loadingProof) && (
+                      <div className="lg:col-span-1">
+                        <div className="bg-white border border-gray-200 rounded-lg p-5">
+                          <div className="flex items-center space-x-3 mb-4">
+                            <div className="p-2 bg-purple-100 rounded-lg">
+                              <DocumentTextIcon className="h-5 w-5 text-purple-600" />
+                            </div>
+                            <h3 className="text-lg font-semibold text-gray-900">Payment Proof</h3>
+                          </div>
+                          
+                          <div className="space-y-4">
+                            {loadingProof && !viewingRegistration.paymentProof && (
+                              <div className="text-sm text-gray-500">Loading payment proof...</div>
+                            )}
+                            <div>
+                              <label className="text-sm font-medium text-gray-700">Status</label>
+                              {viewingRegistration.paymentProof && (
+                                <div className={`inline-flex px-3 py-1 text-sm font-medium rounded-full ${
+                                  viewingRegistration.paymentProof.verificationStatus === 'approved' 
+                                    ? 'bg-green-100 text-green-800'
+                                    : viewingRegistration.paymentProof.verificationStatus === 'rejected'
+                                    ? 'bg-red-100 text-red-800'
+                                    : 'bg-yellow-100 text-yellow-800'
+                                }`}>
+                                  {viewingRegistration.paymentProof.verificationStatus.charAt(0).toUpperCase() + viewingRegistration.paymentProof.verificationStatus.slice(1)}
+                                </div>
+                              )}
+                            </div>
+                            
+                            {viewingRegistration.paymentProof?.transactionId && (
+                              <div>
+                                <label className="text-sm font-medium text-gray-700">Transaction ID</label>
+                                <p className="text-gray-900 font-mono text-sm">{viewingRegistration.paymentProof.transactionId}</p>
+                              </div>
+                            )}
+                            
+                            {viewingRegistration.paymentProof && (
+                            <div>
+                              <label className="text-sm font-medium text-gray-700">Submitted</label>
+                              <p className="text-gray-900">{formatDate(viewingRegistration.paymentProof.submittedAt)}</p>
+                            </div>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                    <div>
-                      <span className="text-sm font-medium text-gray-700">Ticket Price</span>
-                      <div className="text-gray-900">
-                        ₱{viewingRegistration.event.ticketPrice.toLocaleString()}
-                      </div>
-                    </div>
-                    <div>
-                      <span className="text-sm font-medium text-gray-700">Registration Date</span>
-                      <div className="text-gray-900">
-                        {formatDate(viewingRegistration.registrationDate)}
-                      </div>
-                    </div>
+                    )}
                   </div>
-                </div>
-                
-                {/* Notes and Requirements */}
-                <div className="mt-4">
-                  {viewingRegistration.notes && (
-                    <div className="mb-4 p-3 bg-gray-100 rounded-md">
-                      <p className="text-sm text-gray-700">
-                        <strong>Notes:</strong> {viewingRegistration.notes}
-                      </p>
+
+                  {/* Payment Screenshot */}
+                  {viewingRegistration.paymentProof?.proofImageUrl && (
+                    <div className="bg-white border border-gray-200 rounded-lg p-5">
+                      <div className="flex items-center space-x-3 mb-4">
+                        <div className="p-2 bg-orange-100 rounded-lg">
+                          <EyeIcon className="h-5 w-5 text-orange-600" />
+                        </div>
+                        <h3 className="text-lg font-semibold text-gray-900">Payment Screenshot</h3>
+                      </div>
+                      
+                      <div className="flex justify-center">
+                        <div className="relative group cursor-pointer" onClick={() => window.open(viewingRegistration.paymentProof!.proofImageUrl!, '_blank')}>
+                          <img 
+                            src={viewingRegistration.paymentProof.proofImageUrl} 
+                            alt="Payment proof"
+                            className="max-w-full h-auto max-h-96 rounded-lg border border-gray-200 transition-transform group-hover:scale-105"
+                          />
+                          <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-0 transition-all rounded-lg flex items-center justify-center">
+                            <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-white bg-opacity-95 px-4 py-2 rounded-lg text-sm font-medium shadow-lg">
+                              <EyeIcon className="h-4 w-4 inline mr-2" />
+                              Click to enlarge
+                            </div>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   )}
-                  
-                  {viewingRegistration.requirements && viewingRegistration.requirements.length > 0 && (
-                    <div>
-                      <p className="text-sm font-medium text-gray-700 mb-1">Requirements:</p>
-                      <ul className="text-sm text-gray-600 list-disc list-inside">
-                        {viewingRegistration.requirements.map((req, index) => (
-                          <li key={index}>{req}</li>
-                        ))}
-                      </ul>
+
+                  {/* Notes */}
+                  {viewingRegistration.notes && (
+                    <div className="bg-white border border-gray-200 rounded-lg p-5">
+                      <div className="flex items-center space-x-3 mb-4">
+                        <div className="p-2 bg-yellow-100 rounded-lg">
+                          <ChatBubbleLeftRightIcon className="h-5 w-5 text-yellow-600" />
+                        </div>
+                        <h3 className="text-lg font-semibold text-gray-900">Notes</h3>
+                      </div>
+                      <p className="text-gray-700">{viewingRegistration.notes}</p>
                     </div>
                   )}
                 </div>
               </div>
               
-              {/* Footer */}
-              <div className="flex justify-end p-4 border-t">
-                <button
-                  onClick={() => setViewingRegistration(null)}
-                  className="btn-secondary"
-                >
-                  Close
-                </button>
+              {/* Action Buttons */}
+              <div className="border-t border-gray-200 bg-gray-50 p-6">
+                <div className="flex flex-wrap gap-3 justify-center">
+                  {/* Primary Actions */}
+                  {viewingRegistration.status === 'pending' && (
+                    <button
+                      onClick={async () => {
+                        // Approve registration and payment if proof exists
+                        await handleStatusChange(viewingRegistration.id, 'approved');
+                        if (viewingRegistration.paymentProof && viewingRegistration.paymentProof.verificationStatus === 'pending') {
+                          await handlePaymentVerification(viewingRegistration.id, 'approved');
+                        }
+                        setViewingRegistration(null);
+                      }}
+                      className="inline-flex items-center px-6 py-3 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition-colors shadow-sm"
+                    >
+                      <CheckIcon className="h-5 w-5 mr-2" />
+                      Approve Registration & Payment
+                    </button>
+                  )}
+                  
+                  {/* Payment-only Actions (when registration is already approved) */}
+                  {viewingRegistration.status === 'approved' && viewingRegistration.paymentProof && viewingRegistration.paymentProof.verificationStatus === 'pending' && (
+                    <>
+                      <button
+                        onClick={() => {
+                          handlePaymentVerification(viewingRegistration.id, 'approved');
+                          setViewingRegistration(null);
+                        }}
+                        className="inline-flex items-center px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
+                      >
+                        <CheckIcon className="h-5 w-5 mr-2" />
+                        Approve Payment
+                      </button>
+                      <button
+                        onClick={() => {
+                          handlePaymentVerification(viewingRegistration.id, 'rejected');
+                          setViewingRegistration(null);
+                        }}
+                        className="inline-flex items-center px-6 py-3 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition-colors shadow-sm"
+                      >
+                        <XMarkIcon className="h-5 w-5 mr-2" />
+                        Reject Payment
+                      </button>
+                    </>
+                  )}
+                  
+
+                  
+                  {/* Reject/Cancel Action - for any non-approved status */}
+                  {viewingRegistration.status !== 'rejected' && viewingRegistration.status !== 'cancelled' && (
+                    <button
+                      onClick={() => {
+                        handleStatusChange(viewingRegistration.id, 'rejected');
+                        setViewingRegistration(null);
+                      }}
+                      className="inline-flex items-center px-6 py-3 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition-colors shadow-sm"
+                    >
+                      <XMarkIcon className="h-5 w-5 mr-2" />
+                      Reject Registration
+                    </button>
+                  )}
+                  
+                  <button
+                    onClick={() => setViewingRegistration(null)}
+                    className="inline-flex items-center px-6 py-3 bg-white border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors shadow-sm"
+                  >
+                    Close
+                  </button>
+                </div>
               </div>
             </div>
           </div>
         )}
       </div>
-    </AdminLayout>
+    </LayoutComponent>
   );
 };
 

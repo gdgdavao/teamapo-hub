@@ -8,102 +8,67 @@ import {
   DocumentTextIcon,
   CurrencyDollarIcon
 } from '@heroicons/react/24/outline';
-
-interface PaymentProof {
-  id: string;
-  registrationId: string;
-  attendeeName: string;
-  attendeeEmail: string;
-  eventTitle: string;
-  eventDate: string;
-  ticketPrice: number;
-  proofImageUrl?: string;
-  transactionId?: string;
-  submittedAt: string;
-  verificationStatus: 'pending' | 'approved' | 'rejected';
-  verifiedAt?: string;
-  verifiedBy?: string;
-  notes?: string;
-}
+import { PaymentService, PaymentVerificationData } from '../../services/paymentService';
+import { useAuth } from '../../contexts/AuthContext';
+import AdminLayout from '../../components/admin/AdminLayout';
+import toast from 'react-hot-toast';
 
 const AdminPaymentVerificationPage: React.FC = () => {
-  const [paymentProofs, setPaymentProofs] = useState<PaymentProof[]>([]);
+  const { currentUser } = useAuth();
+  const [paymentProofs, setPaymentProofs] = useState<PaymentVerificationData[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('pending');
-  const [selectedProof, setSelectedProof] = useState<PaymentProof | null>(null);
+  const [selectedProof, setSelectedProof] = useState<PaymentVerificationData | null>(null);
   const [verificationNotes, setVerificationNotes] = useState('');
 
-  // Mock data
+  // Load payment proofs from API
   useEffect(() => {
-    setTimeout(() => {
-      setPaymentProofs([
-        {
-          id: '1',
-          registrationId: 'reg_001',
-          attendeeName: 'John Doe',
-          attendeeEmail: 'john@example.com',
-          eventTitle: 'Web Development Workshop',
-          eventDate: '2025-02-15',
-          ticketPrice: 750,
-          proofImageUrl: 'https://via.placeholder.com/400x600',
-          transactionId: 'GC123456789',
-          submittedAt: '2025-01-10T14:30:00Z',
-          verificationStatus: 'pending'
-        },
-        {
-          id: '2',
-          registrationId: 'reg_002',
-          attendeeName: 'Jane Smith',
-          attendeeEmail: 'jane@example.com',
-          eventTitle: 'Web Development Workshop',
-          eventDate: '2025-02-15',
-          ticketPrice: 750,
-          proofImageUrl: 'https://via.placeholder.com/400x600',
-          transactionId: 'BP987654321',
-          submittedAt: '2025-01-10T15:45:00Z',
-          verificationStatus: 'approved',
-          verifiedAt: '2025-01-10T16:00:00Z',
-          verifiedBy: 'Admin User'
-        },
-        {
-          id: '3',
-          registrationId: 'reg_003',
-          attendeeName: 'Bob Johnson',
-          attendeeEmail: 'bob@example.com',
-          eventTitle: 'AI/ML Fundamentals',
-          eventDate: '2025-01-25',
-          ticketPrice: 500,
-          proofImageUrl: 'https://via.placeholder.com/400x600',
-          submittedAt: '2025-01-11T09:15:00Z',
-          verificationStatus: 'pending'
-        }
-      ]);
-      setLoading(false);
-    }, 1000);
+    const fetchPaymentProofs = async () => {
+      try {
+        setLoading(true);
+        const proofsData = await PaymentService.getAllPaymentProofs();
+        setPaymentProofs(proofsData);
+      } catch (error) {
+        console.error('Error fetching payment proofs:', error);
+        toast.error('Failed to load payment proofs');
+        setPaymentProofs([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchPaymentProofs();
   }, []);
 
   const handleVerification = async (proofId: string, status: 'approved' | 'rejected') => {
+    if (!currentUser) {
+      toast.error('You must be logged in to verify payments');
+      return;
+    }
+
     const proof = paymentProofs.find(p => p.id === proofId);
     if (!proof) return;
 
-    // Update the payment proof status
-    setPaymentProofs(prev => prev.map(p => 
-      p.id === proofId 
-        ? {
-            ...p,
-            verificationStatus: status,
-            verifiedAt: new Date().toISOString(),
-            verifiedBy: 'Admin User',
-            notes: verificationNotes
-          }
-        : p
-    ));
+    try {
+      await PaymentService.verifyPaymentProof(
+        proofId,
+        status,
+        currentUser.uid,
+        currentUser.displayName || 'Admin User',
+        verificationNotes
+      );
 
-    // Send notification to attendee
-    console.log(`Payment ${status} for ${proof.attendeeName}`);
-    
-    setSelectedProof(null);
-    setVerificationNotes('');
+      // Refresh payment proofs list
+      const updatedProofs = await PaymentService.getAllPaymentProofs();
+      setPaymentProofs(updatedProofs);
+      
+      toast.success(`Payment ${status} successfully`);
+      setSelectedProof(null);
+      setVerificationNotes('');
+    } catch (error) {
+      console.error('Error verifying payment:', error);
+      toast.error('Failed to verify payment');
+    }
   };
 
   const filteredProofs = paymentProofs.filter(proof => {
