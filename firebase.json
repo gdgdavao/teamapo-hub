@@ -1,35 +1,14 @@
 {
-  "projects": {
-    "default": "apohub-gdgdavao"
-  },
   "firestore": {
     "database": "(default)",
-    "location": "asia-southeast1",
+    "location": "asia-southeast2",
     "rules": "firestore.rules",
     "indexes": "firestore.indexes.json"
-  },
-  "storage": {
-    "rules": "storage.rules"
-  },
-  "hosting": {
-    "public": "dist",
-    "ignore": [
-      "firebase.json",
-      "**/.*",
-      "**/node_modules/**"
-    ],
-    "rewrites": [
-      {
-        "source": "**",
-        "destination": "/index.html"
-      }
-    ]
   },
   "functions": [
     {
       "source": "functions",
       "codebase": "default",
-  "region": "us-central1",
       "ignore": [
         "venv",
         ".git",
@@ -37,33 +16,36 @@
         "firebase-debug.*.log",
         "*.local"
       ],
-      "predeploy": [],
       "runtime": "python313"
     }
   ],
+  "hosting": {
+    "public": "public",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ]
+  },
+  "storage": {
+    "rules": "storage.rules"
+  },
   "emulators": {
     "auth": {
       "port": 9099
     },
-    "firestore": {
-      "port": 8080
-    },
     "functions": {
       "port": 5001
+    },
+    "firestore": {
+      "port": 8080
     },
     "storage": {
       "port": 9199
     },
     "ui": {
-      "enabled": true,
-      "port": 4000
+      "enabled": true
     },
-    "singleProjectMode": true,
-    "database": {
-      "port": 9000
-    },
-    "hosting": {
-      "port": 5000
-    }
+    "singleProjectMode": true
   }
 }

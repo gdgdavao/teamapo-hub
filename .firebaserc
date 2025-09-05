@@ -1,9 +1,5 @@
-
 {
   "projects": {
-    "default": "apohub-gdgdavao",
-    "dev": "apohub-gdgdavao"
-  },
-  "targets": {},
-  "etags": {}
+    "default": "project-iris-gdgdavao"
+  }
 }
