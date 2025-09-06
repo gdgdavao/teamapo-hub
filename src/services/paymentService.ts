@@ -53,8 +53,22 @@ export class PaymentService {
     try {
       const timestamp = Date.now();
       const imageRef = ref(storage, `${this.PAYMENT_PROOFS_PATH}/${registrationId}/proof-${timestamp}.jpg`);
-      const snapshot = await uploadBytes(imageRef, imageFile);
-      return await getDownloadURL(snapshot.ref);
+      const normalizedType = imageFile.type && imageFile.type.startsWith('image/')
+        ? imageFile.type
+        : 'image/jpeg';
+      const snapshot = await uploadBytes(imageRef, imageFile, { contentType: normalizedType });
+
+      // Try to obtain a download URL if permitted; otherwise return storage path
+      try {
+        const { auth } = await import('../config/firebase');
+        if (auth.currentUser) {
+          return await getDownloadURL(snapshot.ref);
+        }
+      } catch (_e) {
+        // ignore and fallback to path
+      }
+      // Fallback for anonymous/public uploads where read is restricted by rules
+      return snapshot.ref.fullPath;
     } catch (error) {
       console.error('Error uploading payment proof:', error);
       throw new Error('Failed to upload payment proof');

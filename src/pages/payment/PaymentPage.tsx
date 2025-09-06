@@ -131,7 +131,7 @@ const PaymentPage: React.FC = () => {
       
       // Do NOT auto-complete registration. Keep status pending for manual verification.
       toast.success('Payment proof submitted. Your registration is pending manual verification.');
-      navigate('/');
+      navigate('/payment/success');
       
     } catch (error: any) {
       console.error('Error submitting payment proof:', error);

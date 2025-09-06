@@ -34,12 +34,13 @@ service firebase.storage {
     }
     
     function isValidImageType() {
-      return (request.resource != null ? request.resource.contentType : resource.contentType).matches('image/.*');
+      let ct = (request.resource != null ? request.resource.contentType : resource.contentType);
+      return ct != null && ct.matches('image/.*');
     }
     
     function isValidDocumentType() {
       let ct = (request.resource != null ? request.resource.contentType : resource.contentType);
-      return ct in ['application/pdf', 'image/jpeg', 'image/png'];
+      return ct != null && (ct in ['application/pdf', 'image/jpeg', 'image/png']);
     }
     
     // Event images - banners, logos, etc.
@@ -57,7 +58,7 @@ service firebase.storage {
     match /events/{eventId}/documents/{docId} {
       allow read: if true; // Event documents are public
       allow write: if isOrganizer() && 
-                      resource.size < 10 * 1024 * 1024 && // 10MB limit
+                      (request.resource != null ? request.resource.size : resource.size) < 10 * 1024 * 1024 && // 10MB limit
                       isValidDocumentType();
       allow delete: if isAdmin() || 
                        (isAuthenticated() && 
@@ -118,7 +119,7 @@ service firebase.storage {
       allow write: if isAdmin() || 
                       (isAuthenticated() && 
                        isValidDocumentType() && 
-                       resource.size < 2 * 1024 * 1024); // 2MB limit
+                       (request.resource != null ? request.resource.size : resource.size) < 2 * 1024 * 1024); // 2MB limit
       allow delete: if isAdmin();
     }
     
@@ -128,7 +129,7 @@ service firebase.storage {
                      (isAuthenticated() && 
                       firestore.get(/databases/(default)/documents/registrations/$(registrationId)).data.eventId != null &&
                       firestore.get(/databases/(default)/documents/events/$(firestore.get(/databases/(default)/documents/registrations/$(registrationId)).data.eventId)).data.organizer.uid == request.auth.uid);
-      allow write: if resource.size < 5 * 1024 * 1024 && // 5MB limit
+      allow write: if (request.resource != null ? request.resource.size : resource.size) < 5 * 1024 * 1024 && // 5MB limit
                       isValidDocumentType();
       allow delete: if isAdmin();
     }
@@ -139,8 +140,13 @@ service firebase.storage {
                      (isAuthenticated() && 
                       firestore.get(/databases/(default)/documents/registrations/$(registrationId)).data.eventId != null &&
                       firestore.get(/databases/(default)/documents/events/$(firestore.get(/databases/(default)/documents/registrations/$(registrationId)).data.eventId)).data.organizer.uid == request.auth.uid);
-      allow write: if resource.size < 5 * 1024 * 1024 && // 5MB limit
-                      isValidImageType();
+      allow write: if (request.resource != null ? request.resource.size : resource.size) < 5 * 1024 * 1024 && // 5MB limit
+                      (
+                        // Prefer content type when provided
+                        isValidImageType() ||
+                        // Fallback: accept by filename extension when Safari omits contentType
+                        proofId.matches(".*\\.(jpg|jpeg|png|gif|webp|heic|heif)$")
+                      );
       allow delete: if isAdmin();
     }
     

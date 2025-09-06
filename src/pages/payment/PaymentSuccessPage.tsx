@@ -38,7 +38,7 @@ const PaymentSuccessPage: React.FC = () => {
             </div>
             <div>
               <h3 className="text-lg font-semibold text-gray-900">Manual Review</h3>
-              <p className="text-gray-600">An admin will review your payment proof shortly.</p>
+              <p className="text-gray-600">The organizers will review your payment proof shortly.</p>
             </div>
           </div>
 
@@ -82,28 +82,12 @@ const PaymentSuccessPage: React.FC = () => {
         </ul>
       </div>
 
-      {/* Action Buttons */}
-      <div className="flex flex-col sm:flex-row gap-4 justify-center">
-        <button
-          onClick={() => navigate('/')}
-          className="px-6 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors font-semibold"
-        >
-          Back to Home
-        </button>
-        <button
-          onClick={() => navigate('/events')}
-          className="px-6 py-3 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-colors font-semibold"
-        >
-          Browse More Events
-        </button>
-      </div>
-
       {/* Support Information */}
       <div className="mt-12 text-center">
         <p className="text-gray-500 text-sm">
           Need help? Contact our support team at{' '}
-          <a href="mailto:support@apohub.com" className="text-blue-600 hover:text-blue-700">
-            support@apohub.com
+          <a href="mailto:support@gdgdavao.org" className="text-blue-600 hover:text-blue-700">
+            support@gdgdavao.org
           </a>
         </p>
       </div>
