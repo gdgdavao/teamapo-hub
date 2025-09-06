@@ -44,7 +44,7 @@ let app;
 try {
   // For emulator, use the actual project ID
   app = initializeApp({
-    projectId: 'apohub-gdgdvo' // Use the actual project ID
+    projectId: 'project-iris-gdgdavao' // Use the actual project ID
   });
   console.log('✅ Connected to Firebase Emulator');
 } catch (error) {

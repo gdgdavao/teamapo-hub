@@ -14,11 +14,13 @@ service cloud.firestore {
     
     function isAdmin() {
       return request.auth != null && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
     
     function isOrganizer() {
       return request.auth != null && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
              (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'organizer' || 
               get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin');
     }

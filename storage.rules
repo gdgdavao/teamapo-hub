@@ -10,25 +10,36 @@ service firebase.storage {
     
     function isAdmin() {
       return request.auth != null && 
+             firestore.exists(/databases/(default)/documents/users/$(request.auth.uid)) &&
              firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
     
     function isOrganizer() {
       return request.auth != null && 
+             firestore.exists(/databases/(default)/documents/users/$(request.auth.uid)) &&
              (firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'organizer' || 
               firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin');
     }
     
+    function isAdminOrOrganizer() {
+      return request.auth != null && 
+             firestore.exists(/databases/(default)/documents/users/$(request.auth.uid)) &&
+             (firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin' || 
+              firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'organizer');
+    }
+    
     function isValidImageSize() {
-      return resource.size < 5 * 1024 * 1024; // 5MB limit
+      // Use request.resource when writing; resource is null on create
+      return (request.resource != null ? request.resource.size : resource.size) < 5 * 1024 * 1024; // 5MB limit
     }
     
     function isValidImageType() {
-      return resource.contentType.matches('image/.*');
+      return (request.resource != null ? request.resource.contentType : resource.contentType).matches('image/.*');
     }
     
     function isValidDocumentType() {
-      return resource.contentType in ['application/pdf', 'image/jpeg', 'image/png'];
+      let ct = (request.resource != null ? request.resource.contentType : resource.contentType);
+      return ct in ['application/pdf', 'image/jpeg', 'image/png'];
     }
     
     // Event images - banners, logos, etc.
@@ -56,22 +67,48 @@ service firebase.storage {
     // Legacy event-images path (for backward compatibility)
     match /event-images/{eventId}/{imageId} {
       allow read: if true; // Event images are public
-      allow write: if isOrganizer() && 
+      allow write: if (isAdminOrOrganizer() || 
+                      (isAuthenticated() && 
+                       firestore.exists(/databases/(default)/documents/events/$(eventId)) &&
+                       firestore.get(/databases/(default)/documents/events/$(eventId)).data.organizer.uid == request.auth.uid)) && 
                       isValidImageSize() && 
                       isValidImageType();
       allow delete: if isAdmin() || 
                        (isAuthenticated() && 
+                        firestore.exists(/databases/(default)/documents/events/$(eventId)) &&
+                        firestore.get(/databases/(default)/documents/events/$(eventId)).data.organizer.uid == request.auth.uid);
+    }
+    
+    // Allow folder-level operations for event images (for deletion)
+    match /event-images/{eventId} {
+      allow read: if true; // Event images are public
+      allow delete: if isAdmin() || 
+                       (isAuthenticated() && 
+                        firestore.exists(/databases/(default)/documents/events/$(eventId)) &&
                         firestore.get(/databases/(default)/documents/events/$(eventId)).data.organizer.uid == request.auth.uid);
     }
     
     // Payment QR codes (legacy path)
     match /payment-qr/{eventId}/{qrId} {
       allow read: if true; // Payment QR codes are public
-      allow write: if isOrganizer() && 
+      allow write: if (isAdminOrOrganizer() || 
+                      (isAuthenticated() && 
+                       firestore.exists(/databases/(default)/documents/events/$(eventId)) &&
+                       firestore.get(/databases/(default)/documents/events/$(eventId)).data.organizer.uid == request.auth.uid)) && 
                       isValidImageSize() && 
                       isValidImageType();
       allow delete: if isAdmin() || 
                        (isAuthenticated() && 
+                        firestore.exists(/databases/(default)/documents/events/$(eventId)) &&
+                        firestore.get(/databases/(default)/documents/events/$(eventId)).data.organizer.uid == request.auth.uid);
+    }
+    
+    // Allow folder-level operations for payment QR codes (for deletion)
+    match /payment-qr/{eventId} {
+      allow read: if true; // Payment QR codes are public
+      allow delete: if isAdmin() || 
+                       (isAuthenticated() && 
+                        firestore.exists(/databases/(default)/documents/events/$(eventId)) &&
                         firestore.get(/databases/(default)/documents/events/$(eventId)).data.organizer.uid == request.auth.uid);
     }
     

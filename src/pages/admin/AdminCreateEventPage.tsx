@@ -301,7 +301,20 @@ const CreateEventPage: React.FC = () => {
 
       // Ensure auth token is fresh before making function calls
       try {
-        await currentUser.getIdToken(true); // Force token refresh
+        const token = await currentUser.getIdToken(true); // Force token refresh
+        console.log('Auth token refreshed successfully:', token ? 'Token exists' : 'No token');
+        console.log('Current user:', currentUser.uid, currentUser.email);
+        console.log('User profile:', userProfile);
+        
+        // Check if user document exists in Firestore
+        if (userProfile) {
+          console.log('User profile exists with role:', userProfile.role);
+        } else {
+          console.error('User profile is null - this will cause storage rule failures');
+          toast.error('User profile not found. Please sign out and sign in again.');
+          setLoading(false);
+          return;
+        }
       } catch (authError) {
         console.error('Auth token refresh failed:', authError);
         toast.error('Authentication expired. Please sign in again.');
@@ -542,6 +555,7 @@ const CreateEventPage: React.FC = () => {
               requiresTransactionId: existing.requiresTransactionId ?? false,
               paymentFields: existing.paymentFields ?? createDefaultPaymentFields(),
               qrCodeImage: file,
+              // Use data URL for local preview; service strips base64 before saving
               qrCodeUrl: e.target?.result as string
             }
           };
@@ -863,23 +877,6 @@ const CreateEventPage: React.FC = () => {
 
     return (
       <div className="space-y-6">
-        {/* Step-specific guidance box */}
-        <div className="bg-blue-50 border-l-4 border-blue-400 p-4 rounded-r-lg">
-          <div className="flex items-center">
-            <div className="flex-shrink-0">
-              <UserIcon className="h-5 w-5 text-blue-400" />
-            </div>
-            <div className="ml-3">
-              <h3 className="text-sm font-medium text-blue-800">
-                Add Speaker Profiles
-              </h3>
-              <div className="mt-1 text-sm text-blue-700">
-                <p>Showcase the speakers at your event. Include their name, title, company, and a short bio as specified in the PRD.</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-lg font-semibold text-gray-900">Speaker Profiles</h3>

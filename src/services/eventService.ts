@@ -324,8 +324,10 @@ export class EventService {
       // Initialize event via Cloud Function (analytics, defaults). If it overwrites default forms,
       // update forms again immediately after.
       try {
+        console.log('Calling initialize_event function for eventId:', eventId);
         const initializeEvent = httpsCallable(functions, 'initialize_event');
-        await initializeEvent({ eventId });
+        const result = await initializeEvent({ eventId });
+        console.log('initialize_event result:', result);
         // Ensure our provided forms remain in place
         await this.updateEventForms(eventId, {
           registrationForm: eventData.registrationForm,
@@ -522,8 +524,10 @@ export class EventService {
     try {
       // Try Cloud Function first
       try {
+        console.log('Calling publish_event function for eventId:', eventId);
         const publishEventFn = httpsCallable(functions, 'publish_event');
         const result = await publishEventFn({ eventId });
+        console.log('publish_event result:', result);
         const data = result.data as { success?: boolean; message?: string };
         if (!data?.success) {
           throw new Error(data?.message || 'Publish function returned failure');
@@ -550,11 +554,16 @@ export class EventService {
    */
   static async deleteEvent(eventId: string, forceDelete: boolean = false): Promise<void> {
     try {
+      console.log('Starting delete event for eventId:', eventId, 'forceDelete:', forceDelete);
+      
       const eventRef = doc(db, this.EVENTS_COLLECTION, eventId);
+      console.log('Deleting event document from Firestore');
       await deleteDoc(eventRef);
+      console.log('Successfully deleted event document');
 
       // Delete associated subcollections and files
       await this.deleteEventData(eventId, forceDelete);
+      console.log('Event deletion completed successfully');
     } catch (error) {
       console.error('Error deleting event:', error);
       throw new Error('Failed to delete event');
@@ -566,8 +575,16 @@ export class EventService {
    */
   static async uploadEventImage(eventId: string, imageFile: File): Promise<string> {
     try {
+      console.log('Uploading event image for eventId:', eventId, 'fileName:', imageFile.name);
       const imageRef = ref(storage, `${this.EVENT_IMAGES_PATH}/${eventId}/${imageFile.name}`);
-      const snapshot = await uploadBytes(imageRef, imageFile);
+      console.log('Storage path:', `${this.EVENT_IMAGES_PATH}/${eventId}/${imageFile.name}`);
+      
+      // Check current auth state before upload
+      const { auth } = await import('../config/firebase');
+      const currentUser = auth.currentUser;
+      console.log('Current user during upload:', currentUser?.uid, currentUser?.email);
+      
+      const snapshot = await uploadBytes(imageRef, imageFile, { contentType: imageFile.type || 'image/jpeg' });
       const downloadURL = await getDownloadURL(snapshot.ref);
 
       // Update event with image URL
@@ -643,9 +660,16 @@ export class EventService {
    */
   private static async createPaymentConfiguration(eventId: string, paymentConfig: any): Promise<void> {
     try {
+      // Remove qrCodeUrl if it's a base64 string (too large for Firestore)
+      const cleanedConfig = { ...paymentConfig };
+      if (cleanedConfig.qrCodeUrl && cleanedConfig.qrCodeUrl.startsWith('data:image/')) {
+        console.log('Removing base64 qrCodeUrl from payment config (too large for Firestore)');
+        delete cleanedConfig.qrCodeUrl;
+      }
+      
       const paymentRef = doc(db, `${this.EVENTS_COLLECTION}/${eventId}/config/payment`);
       await setDoc(paymentRef, {
-        ...paymentConfig,
+        ...cleanedConfig,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       });
@@ -660,9 +684,16 @@ export class EventService {
    */
   private static async updatePaymentConfiguration(eventId: string, paymentConfig: any): Promise<void> {
     try {
+      // Remove qrCodeUrl if it's a base64 string (too large for Firestore)
+      const cleanedConfig = { ...paymentConfig };
+      if (cleanedConfig.qrCodeUrl && cleanedConfig.qrCodeUrl.startsWith('data:image/')) {
+        console.log('Removing base64 qrCodeUrl from payment config update (too large for Firestore)');
+        delete cleanedConfig.qrCodeUrl;
+      }
+      
       const paymentRef = doc(db, `${this.EVENTS_COLLECTION}/${eventId}/config/payment`);
       await updateDoc(paymentRef, {
-        ...paymentConfig,
+        ...cleanedConfig,
         updatedAt: serverTimestamp()
       });
     } catch (error) {
@@ -676,17 +707,24 @@ export class EventService {
    */
   private static async deleteEventData(eventId: string, forceDelete: boolean = false): Promise<void> {
     try {
+      console.log('Deleting event data for eventId:', eventId, 'forceDelete:', forceDelete);
+      
       // Delete event images from storage
       const imagesRef = ref(storage, `${this.EVENT_IMAGES_PATH}/${eventId}`);
+      console.log('Deleting storage folder:', `${this.EVENT_IMAGES_PATH}/${eventId}`);
       try {
         await deleteObject(imagesRef);
+        console.log('Successfully deleted event images folder');
       } catch (error) {
+        console.log('Error deleting event images folder (may not exist):', error);
         // Ignore if files don't exist
       }
 
       // Call cloud function to delete subcollections
+      console.log('Calling deleteEventData Cloud Function');
       const deleteEventData = httpsCallable(functions, 'deleteEventData');
-      await deleteEventData({ eventId, forceDelete });
+      const result = await deleteEventData({ eventId, forceDelete });
+      console.log('deleteEventData result:', result);
     } catch (error) {
       console.error('Error deleting event data:', error);
       // Don't throw error here as main event is already deleted
@@ -770,7 +808,7 @@ export class EventService {
       const imageRef = ref(storage, `${this.EVENT_IMAGES_PATH}/${eventId}/event-image-${timestamp}.jpg`);
       
       // Upload the blob
-      const snapshot = await uploadBytes(imageRef, blob);
+      const snapshot = await uploadBytes(imageRef, blob, { contentType: (blob as any).type || 'image/jpeg' });
       const downloadURL = await getDownloadURL(snapshot.ref);
 
       // Update event with image URL
@@ -805,7 +843,15 @@ export class EventService {
       const fileExtension = qrFile.name.split('.').pop() || 'jpg';
       const qrRef = ref(storage, `${this.PAYMENT_QR_PATH}/${eventId}/payment-qr-${timestamp}.${fileExtension}`);
       
-      const snapshot = await uploadBytes(qrRef, qrFile);
+      console.log('Uploading payment QR for eventId:', eventId, 'fileName:', qrFile.name);
+      console.log('Storage path:', `${this.PAYMENT_QR_PATH}/${eventId}/payment-qr-${timestamp}.${fileExtension}`);
+      
+      // Check current auth state before upload
+      const { auth } = await import('../config/firebase');
+      const currentUser = auth.currentUser;
+      console.log('Current user during QR upload:', currentUser?.uid, currentUser?.email);
+      
+      const snapshot = await uploadBytes(qrRef, qrFile, { contentType: qrFile.type || 'image/jpeg' });
       const downloadURL = await getDownloadURL(snapshot.ref);
 
       // Update payment configuration with QR URL
@@ -1076,8 +1122,10 @@ export class EventService {
    */
   static async validateEventDataRemote(eventData: EventFormData): Promise<{ isValid: boolean; errors: string[] }> {
     try {
-      const validateEventData = httpsCallable(functions, 'validateEventData');
+      console.log('Calling validate_event_data Cloud Function');
+      const validateEventData = httpsCallable(functions, 'validate_event_data');
       const result = await validateEventData({ eventData });
+      console.log('validate_event_data result:', result);
       
       return result.data as { isValid: boolean; errors: string[] };
     } catch (error) {

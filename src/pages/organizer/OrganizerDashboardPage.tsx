@@ -16,6 +16,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import EventService from '../../services/eventService';
 import { Event } from '../../types';
 import LoadingSpinner from '../../components/shared/UI/LoadingSpinner';
+import usePageTitle from '../../hooks/usePageTitle';
 
 // Utility function to safely convert various date formats to Date object
 const getDateFromTimestamp = (timestamp: any): Date => {
@@ -33,6 +34,9 @@ const OrganizerDashboardPage: React.FC = () => {
   const { userProfile } = useAuth();
   const [events, setEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Set page title
+  usePageTitle();
 
   useEffect(() => {
     const fetchOrganizerEvents = async () => {

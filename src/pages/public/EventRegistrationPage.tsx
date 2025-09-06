@@ -13,6 +13,7 @@ import { EventService } from '../../services/eventService';
 import RegistrationModal from '../../components/public/RegistrationModal';
 import { Event, FormField } from '../../types';
 import toast from 'react-hot-toast';
+import usePageTitle from '../../hooks/usePageTitle';
 
 const EventRegistrationPage: React.FC = () => {
   const { eventId } = useParams<{ eventId: string }>();
@@ -23,6 +24,9 @@ const EventRegistrationPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [registrationForm, setRegistrationForm] = useState<FormField[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
+
+  // Set page title
+  usePageTitle();
 
   // Load event data
   useEffect(() => {

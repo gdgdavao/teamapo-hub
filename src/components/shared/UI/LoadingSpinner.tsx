@@ -18,7 +18,7 @@ const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({
   };
 
   return (
-    <div className={`flex flex-col items-center justify-center ${className}`}>
+    <div className={`flex flex-col items-center justify-center min-h-screen ${className}`}>
       <div 
         className={`loading-spinner ${sizeClasses[size]}`}
         role="status"

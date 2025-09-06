@@ -18,6 +18,7 @@ import AdminLayout from '../../components/admin/AdminLayout';
 import { AnalyticsService, DashboardStats } from '../../services/analyticsService';
 import { EventService } from '../../services/eventService';
 import { RegistrationService } from '../../services/registrationService';
+import usePageTitle from '../../hooks/usePageTitle';
 import { NotificationService } from '../../services/notificationService';
 import { useAuth } from '../../contexts/AuthContext';
 import toast from 'react-hot-toast';
@@ -203,6 +204,9 @@ const AdminDashboardPage: React.FC = () => {
   const [reminderDismissed, setReminderDismissed] = useState(false);
   const [reminderTime, setReminderTime] = useState<Date | null>(null);
   const { currentUser, userProfile } = useAuth();
+
+  // Set page title
+  usePageTitle();
 
   // Helper function to handle different timestamp formats
   const getDateFromTimestamp = useCallback((timestamp: any): Date => {

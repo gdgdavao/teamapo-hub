@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline';
-import LoginHelper from '../../components/LoginHelper';
+import usePageTitle from '../../hooks/usePageTitle';
+
 
 const LoginPage: React.FC = () => {
   const { signIn, signInWithGoogle } = useAuth();
@@ -11,6 +12,9 @@ const LoginPage: React.FC = () => {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  // Set page title
+  usePageTitle();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -41,7 +45,7 @@ const LoginPage: React.FC = () => {
     <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
         <div className="flex justify-center">
-          <img src="/apohub-title.svg" alt="APOHUB" className="h-12 sm:h-16" />
+          <img src="/src/assets/apohub-title.svg" alt="APOHUB" className="h-12 sm:h-16" />
         </div>
       </div>
 

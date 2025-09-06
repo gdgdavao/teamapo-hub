@@ -37,7 +37,7 @@ interface DeleteModalState {
 
 const ManageEventsPage: React.FC = () => {
   const navigate = useNavigate();
-  const { userProfile, loading: authLoading } = useAuth();
+  const { userProfile, loading: authLoading, currentUser } = useAuth();
 
   // This page is now admin-only
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
@@ -292,6 +292,19 @@ const ManageEventsPage: React.FC = () => {
     setDeleteModal(prev => ({ ...prev, isLoading: true }));
     
     try {
+      // Ensure auth token is fresh before making function calls
+      if (currentUser) {
+        try {
+          await currentUser.getIdToken(true); // Force token refresh
+          console.log('Auth token refreshed for delete operation');
+        } catch (authError) {
+          console.error('Auth token refresh failed:', authError);
+          toast.error('Authentication expired. Please sign in again.');
+          setDeleteModal(prev => ({ ...prev, isLoading: false }));
+          return;
+        }
+      }
+      
       // First try to delete without force
       await EventService.deleteEvent(deleteModal.eventId, false);
       setEvents(events.filter(e => e.id !== deleteModal.eventId));
@@ -323,6 +336,19 @@ const ManageEventsPage: React.FC = () => {
     setDeleteModal(prev => ({ ...prev, isLoading: true }));
     
     try {
+      // Ensure auth token is fresh before making function calls
+      if (currentUser) {
+        try {
+          await currentUser.getIdToken(true); // Force token refresh
+          console.log('Auth token refreshed for force delete operation');
+        } catch (authError) {
+          console.error('Auth token refresh failed:', authError);
+          toast.error('Authentication expired. Please sign in again.');
+          setDeleteModal(prev => ({ ...prev, isLoading: false }));
+          return;
+        }
+      }
+      
       await EventService.deleteEvent(deleteModal.eventId, true);
       setEvents(events.filter(e => e.id !== deleteModal.eventId));
       toast.success('Event deleted successfully');

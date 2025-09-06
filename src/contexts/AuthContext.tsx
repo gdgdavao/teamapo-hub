@@ -50,10 +50,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const createUserProfile = async (user: FirebaseUser, additionalData?: any) => {
     if (!user) return;
 
+    console.log('Creating user profile for:', user.uid, user.email);
     const userRef = doc(db, 'users', user.uid);
     const userSnap = await getDoc(userRef);
 
     if (!userSnap.exists()) {
+      console.log('User document does not exist, creating new one');
       const { displayName, email, photoURL } = user;
       
       // Default role is organizer for authenticated users
@@ -71,18 +73,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
 
       try {
+        console.log('Saving user document to Firestore:', newUser);
         await setDoc(userRef, newUser);
         const fullUser: User = { uid: user.uid, ...newUser } as User;
         setUserProfile(fullUser);
+        console.log('User profile created successfully:', fullUser);
         return fullUser;
       } catch (error) {
         console.error('Error creating user profile:', error);
         throw error;
       }
     } else {
+      console.log('User document exists, loading profile');
       const userData = userSnap.data() as Omit<User, 'uid'>;
       const fullUser: User = { uid: user.uid, ...userData };
       setUserProfile(fullUser);
+      console.log('User profile loaded:', fullUser);
       return fullUser;
     }
   };
@@ -315,9 +321,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      console.log('Auth state changed:', user ? `User: ${user.uid} (${user.email})` : 'No user');
       if (user) {
         setCurrentUser(user);
-        await createUserProfile(user);
+        try {
+          await createUserProfile(user);
+        } catch (error) {
+          console.error('Failed to create/load user profile:', error);
+        }
       } else {
         setCurrentUser(null);
         setUserProfile(null);

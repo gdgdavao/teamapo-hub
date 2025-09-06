@@ -5,6 +5,7 @@ import AdminLayout from './components/admin/AdminLayout';
 import LoadingSpinner from './components/shared/UI/LoadingSpinner';
 import { FirebaseConnectionStatus } from './components/shared/FirebaseConnectionStatus';
 import RoleBasedDashboard from './components/shared/RoleBasedDashboard';
+import usePageTitle from './hooks/usePageTitle';
 
 // Auth Pages
 import LoginPage from './pages/auth/LoginPage';
@@ -80,6 +81,9 @@ const PublicRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
 const AppContent: React.FC = () => {
   const { loading } = useAuth();
+
+  // Set context-aware page title for all routes
+  usePageTitle();
 
   if (loading) {
     return <LoadingSpinner />;
