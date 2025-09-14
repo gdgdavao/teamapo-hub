@@ -311,10 +311,13 @@ export class EventService {
   await this.createEventForms(eventId, eventData);
 
       // Create payment configuration if needed
-      if (eventData.paymentConfig) {
-        // Remove File objects from payment config before saving to Firestore
-        const { qrCodeImage, ...paymentConfigWithoutFile } = eventData.paymentConfig;
-        await this.createPaymentConfiguration(eventId, this.removeUndefinedValues(paymentConfigWithoutFile));
+      if (eventData.paymentConfigs && eventData.paymentConfigs.length > 0) {
+        // Remove File objects from payment configs before saving to Firestore
+        const paymentConfigsWithoutFiles = eventData.paymentConfigs.map(config => {
+          const { qrCodeImage, ...configWithoutFile } = config;
+          return configWithoutFile;
+        });
+        await this.createPaymentConfiguration(eventId, this.removeUndefinedValues(paymentConfigsWithoutFiles[0]));
       }
 
       // Initialize event via Cloud Function (analytics, defaults). If it overwrites default forms,
@@ -387,10 +390,13 @@ export class EventService {
       }
 
       // Update payment configuration if provided
-      if (eventData.paymentConfig) {
-        // Remove File objects from payment config before saving to Firestore
-        const { qrCodeImage, ...paymentConfigWithoutFile } = eventData.paymentConfig;
-        await this.updatePaymentConfiguration(eventId, this.removeUndefinedValues(paymentConfigWithoutFile));
+      if (eventData.paymentConfigs && eventData.paymentConfigs.length > 0) {
+        // Remove File objects from payment configs before saving to Firestore
+        const paymentConfigsWithoutFiles = eventData.paymentConfigs.map(config => {
+          const { qrCodeImage, ...configWithoutFile } = config;
+          return configWithoutFile;
+        });
+        await this.updatePaymentConfiguration(eventId, this.removeUndefinedValues(paymentConfigsWithoutFiles[0]));
       }
     } catch (error) {
       console.error('Error updating event:', error);

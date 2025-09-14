@@ -489,7 +489,7 @@ const CreateEventPage: React.FC = () => {
         
         // Update event with all payment configs
         await EventService.updateEvent(savedEventId, {
-          paymentConfig: updatedPaymentConfigs[0] // For now, use first config for backward compatibility
+          paymentConfigs: updatedPaymentConfigs // Use all payment configs
         });
       }
 
