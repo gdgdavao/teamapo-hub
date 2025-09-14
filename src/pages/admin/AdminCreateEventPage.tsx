@@ -7,7 +7,6 @@ import { functions } from '../../config/firebase';
 import EventService from '../../services/eventService';
 import {
   CalendarDaysIcon,
-  MapPinIcon,
   UserGroupIcon,
   CurrencyDollarIcon,
   DocumentTextIcon,
@@ -17,22 +16,20 @@ import {
   ArrowUpIcon,
   ArrowDownIcon,
   PhotoIcon,
-  QrCodeIcon,
-  BanknotesIcon,
   CheckCircleIcon,
-  XCircleIcon,
   TicketIcon,
   TagIcon,
   ArrowLeftIcon,
   UserIcon,
   ShareIcon,
-  ClipboardDocumentIcon
 } from '@heroicons/react/24/outline';
 import { FormBuilder, FormField } from '../../components/shared/FormBuilder';
 import { TicketType, PromoCode } from '../../types';
 import PromoCodeManager from '../../components/public/PromoCodeManager';
 
 interface PaymentConfig {
+  id: string;
+  name: string;
   qrCodeImage?: File;
   qrCodeUrl?: string;
   bankDetails: {
@@ -45,6 +42,7 @@ interface PaymentConfig {
   requiresProof: boolean;
   requiresTransactionId: boolean;
   paymentFields?: FormField[]; // Additional form fields for payment verification
+  isActive: boolean;
 }
 
 interface EventFormData {
@@ -92,7 +90,7 @@ interface EventFormData {
   feedbackForm: FormField[];
 
   // Payment (for paid events)
-  paymentConfig?: PaymentConfig;
+  paymentConfigs?: PaymentConfig[];
 
   // Settings
   category: string;
@@ -165,10 +163,61 @@ const CreateEventPage: React.FC = () => {
     ],
     category: 'workshop',
     tags: [],
-    requirements: []
+    requirements: [],
+    paymentConfigs: []
   });
 
   const [activeFormType, setActiveFormType] = useState<'registration' | 'feedback'>('registration');
+
+  // Helper function to create a default payment configuration
+  const createDefaultPaymentConfig = (name: string = 'Payment Method'): PaymentConfig => ({
+    id: `payment_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    name,
+    bankDetails: { bankName: '', accountName: '', accountNumber: '' },
+    instructions: 'Please follow the payment instructions below and upload your payment proof.',
+    requiresProof: true,
+    requiresTransactionId: true,
+    paymentFields: createDefaultPaymentFields(),
+    isActive: true
+  });
+
+  // Helper functions for managing multiple payment configurations
+  const updatePaymentConfig = (index: number, updates: Partial<PaymentConfig>) => {
+    setFormData(prev => ({
+      ...prev,
+      paymentConfigs: prev.paymentConfigs?.map((config, i) => 
+        i === index ? { ...config, ...updates } : config
+      ) || []
+    }));
+  };
+
+  const removePaymentConfig = (index: number) => {
+    setFormData(prev => ({
+      ...prev,
+      paymentConfigs: prev.paymentConfigs?.filter((_, i) => i !== index) || []
+    }));
+  };
+
+  const addPaymentConfig = () => {
+    setFormData(prev => ({
+      ...prev,
+      paymentConfigs: [...(prev.paymentConfigs || []), createDefaultPaymentConfig(`Payment Method ${(prev.paymentConfigs?.length || 0) + 1}`)]
+    }));
+  };
+
+  const handleQRCodeUploadForConfig = (e: React.ChangeEvent<HTMLInputElement>, configIndex: number) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        updatePaymentConfig(configIndex, {
+          qrCodeImage: file,
+          qrCodeUrl: event.target?.result as string
+        });
+      };
+      reader.readAsDataURL(file);
+    }
+  };
 
   // Load event data if editing
   useEffect(() => {
@@ -179,6 +228,26 @@ const CreateEventPage: React.FC = () => {
       }
     }
   }, [isEditMode, location.pathname]);
+
+  // Automatically update isPaid flag when ticket types have prices
+  useEffect(() => {
+    const hasPaidTickets = formData.ticketTypes.some(ticket => ticket.price > 0);
+    if (hasPaidTickets && !formData.isPaid) {
+      setFormData(prev => ({
+        ...prev,
+        isPaid: true,
+        paymentConfigs: prev.paymentConfigs && prev.paymentConfigs.length > 0 
+          ? prev.paymentConfigs 
+          : [createDefaultPaymentConfig('Primary Payment Method')]
+      }));
+    } else if (!hasPaidTickets && formData.isPaid) {
+      setFormData(prev => ({
+        ...prev,
+        isPaid: false,
+        paymentConfigs: []
+      }));
+    }
+  }, [formData.ticketTypes]);
 
   // Helper function to safely convert Firestore timestamps to Date objects
   const convertTimestampToDate = (timestamp: any): Date => {
@@ -255,7 +324,6 @@ const CreateEventPage: React.FC = () => {
         setFormData(eventFormData);
       }
     } catch (error) {
-      console.error('Error loading event data:', error);
       toast.error('Failed to load event data');
     } finally {
       setLoading(false);
@@ -301,22 +369,15 @@ const CreateEventPage: React.FC = () => {
 
       // Ensure auth token is fresh before making function calls
       try {
-        const token = await currentUser.getIdToken(true); // Force token refresh
-        console.log('Auth token refreshed successfully:', token ? 'Token exists' : 'No token');
-        console.log('Current user:', currentUser.uid, currentUser.email);
-        console.log('User profile:', userProfile);
+        await currentUser.getIdToken(true); // Force token refresh
         
         // Check if user document exists in Firestore
-        if (userProfile) {
-          console.log('User profile exists with role:', userProfile.role);
-        } else {
-          console.error('User profile is null - this will cause storage rule failures');
+        if (!userProfile) {
           toast.error('User profile not found. Please sign out and sign in again.');
           setLoading(false);
           return;
         }
       } catch (authError) {
-        console.error('Auth token refresh failed:', authError);
         toast.error('Authentication expired. Please sign in again.');
         setLoading(false);
         return;
@@ -403,26 +464,33 @@ const CreateEventPage: React.FC = () => {
           // Upload image to Firebase Storage (this will also update the event with the image URL)
           await EventService.uploadEventImage(savedEventId, file);
         } catch (error) {
-          console.error('Error uploading event image:', error);
           warnings.push('Event image upload failed');
         }
       }
 
-      // Upload payment QR code if provided
-      if (formData.paymentConfig?.qrCodeImage) {
-        try {
-          const qrCodeUrl = await EventService.uploadPaymentQR(savedEventId, formData.paymentConfig.qrCodeImage);
-          // Update payment config with QR code URL
-          await EventService.updateEvent(savedEventId, {
-            paymentConfig: {
-              ...formData.paymentConfig,
-              qrCodeUrl
+      // Upload payment QR codes if provided
+      if (formData.paymentConfigs && formData.paymentConfigs.length > 0) {
+        const updatedPaymentConfigs = [...formData.paymentConfigs];
+        
+        for (let i = 0; i < updatedPaymentConfigs.length; i++) {
+          const config = updatedPaymentConfigs[i];
+          if (config.qrCodeImage) {
+            try {
+              const qrCodeUrl = await EventService.uploadPaymentQR(savedEventId, config.qrCodeImage);
+              updatedPaymentConfigs[i] = {
+                ...config,
+                qrCodeUrl
+              };
+            } catch (error) {
+              warnings.push(`Payment QR upload failed for ${config.name}`);
             }
-          });
-        } catch (error) {
-          console.error('Error uploading payment QR code:', error);
-          warnings.push('Payment QR upload failed');
+          }
         }
+        
+        // Update event with all payment configs
+        await EventService.updateEvent(savedEventId, {
+          paymentConfig: updatedPaymentConfigs[0] // For now, use first config for backward compatibility
+        });
       }
 
       // Publish event if requested
@@ -430,7 +498,6 @@ const CreateEventPage: React.FC = () => {
         try {
           await EventService.publishEvent(savedEventId);
         } catch (error) {
-          console.error('Error publishing event:', error);
           warnings.push('Publishing failed');
         }
       }
@@ -441,7 +508,7 @@ const CreateEventPage: React.FC = () => {
           const getEventStatistics = httpsCallable(functions, 'get_event_statistics');
           await getEventStatistics({ eventId: savedEventId });
         } catch (statsErr) {
-          console.warn('Statistics function failed (non-blocking):', statsErr);
+          // Statistics function failed (non-blocking)
         }
       }
 
@@ -462,7 +529,6 @@ const CreateEventPage: React.FC = () => {
       }, 1500); // 1.5 second delay to show success message
 
     } catch (error) {
-      console.error('Error saving event:', error);
       if (error instanceof Error) {
         if (toastId) {
           toast.error(`Failed to save event: ${error.message}`, { id: toastId });
@@ -509,10 +575,10 @@ const CreateEventPage: React.FC = () => {
       id: 'transaction_id',
       type: 'text',
       label: 'Transaction ID / Reference Number',
-      required: false,
+      required: true,
       gridSize: 'full',
-      placeholder: 'Enter transaction reference number (optional)',
-      description: 'Provide the transaction ID if available for faster verification'
+      placeholder: 'Enter transaction reference number',
+      description: 'Provide the transaction ID for payment verification'
     }
   ];
 
@@ -527,43 +593,6 @@ const CreateEventPage: React.FC = () => {
     { id: 7, title: 'Review & Publish', icon: CheckCircleIcon }
   ];
 
-  const handleQRCodeUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        setFormData(prev => {
-          const defaultPayment = {
-            bankDetails: { bankName: '', accountName: '', accountNumber: '' },
-            instructions: 'Please follow the payment instructions below and upload your payment proof.',
-            requiresProof: true,
-            requiresTransactionId: false,
-            paymentFields: createDefaultPaymentFields()
-          };
-
-          // Ensure we never spread undefined and always keep required sub-objects
-          const existing = prev.paymentConfig ?? defaultPayment;
-          const safeBankDetails = existing.bankDetails ?? { bankName: '', accountName: '', accountNumber: '' };
-
-          return {
-            ...prev,
-            paymentConfig: {
-              ...existing,
-              bankDetails: safeBankDetails,
-              instructions: existing.instructions ?? defaultPayment.instructions,
-              requiresProof: existing.requiresProof ?? true,
-              requiresTransactionId: existing.requiresTransactionId ?? false,
-              paymentFields: existing.paymentFields ?? createDefaultPaymentFields(),
-              qrCodeImage: file,
-              // Use data URL for local preview; service strips base64 before saving
-              qrCodeUrl: e.target?.result as string
-            }
-          };
-        });
-      };
-      reader.readAsDataURL(file);
-    }
-  };
 
   const renderStepContent = () => {
     switch (currentStep) {
@@ -986,346 +1015,6 @@ const CreateEventPage: React.FC = () => {
     );
   };
 
-  const renderPricingPaymentStep = () => (
-    <div className="space-y-6">
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-4">Event Pricing</label>
-        <div className="grid grid-cols-2 gap-4">
-          <button
-            type="button"
-            onClick={() => setFormData(prev => ({ ...prev, isPaid: false, paymentConfig: undefined }))}
-            className={`p-4 border-2 rounded-lg text-center ${!formData.isPaid
-              ? 'border-green-500 bg-green-50 text-green-700'
-              : 'border-gray-300 hover:border-gray-400'
-              }`}
-          >
-            <div className="font-medium">Free Event</div>
-            <div className="text-sm text-gray-500">No payment required</div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setFormData(prev => ({
-              ...prev,
-              isPaid: true,
-              paymentConfig: {
-                bankDetails: { bankName: '', accountName: '', accountNumber: '' },
-                instructions: 'Please follow the payment instructions below and upload your payment proof.',
-                requiresProof: true,
-                requiresTransactionId: false,
-                paymentFields: createDefaultPaymentFields()
-              }
-            }))}
-            className={`p-4 border-2 rounded-lg text-center ${formData.isPaid
-              ? 'border-blue-500 bg-blue-50 text-blue-700'
-              : 'border-gray-300 hover:border-gray-400'
-              }`}
-          >
-            <div className="font-medium">Paid Event</div>
-            <div className="text-sm text-gray-500">Requires payment</div>
-          </button>
-        </div>
-      </div>
-
-      {formData.isPaid && (
-        <div className="space-y-6 p-6 bg-gray-50 rounded-lg">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Ticket Price</label>
-              <div className="relative">
-                <span className="absolute left-3 top-2 text-gray-500">₱</span>
-                <input
-                  type="number"
-                  value={formData.ticketPrice}
-                  onChange={(e) => setFormData(prev => ({ ...prev, ticketPrice: parseFloat(e.target.value) || 0 }))}
-                  className="w-full pl-8 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="0.00"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Currency</label>
-              <select
-                value={formData.currency}
-                onChange={(e) => setFormData(prev => ({ ...prev, currency: e.target.value }))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              >
-                <option value="PHP">PHP (Philippine Peso)</option>
-                <option value="USD">USD (US Dollar)</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Payment Configuration */}
-          <div className="border-t pt-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-              <QrCodeIcon className="w-5 h-5 mr-2" />
-              Payment Configuration
-            </h3>
-
-            {/* QR Code Upload */}
-            <div className="mb-6">
-              <label className="block text-sm font-medium text-gray-700 mb-2">Payment QR Code</label>
-              <div className="flex items-center space-x-4">
-                <label className="flex-1 flex flex-col items-center justify-center w-32 h-32 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer hover:bg-gray-50">
-                  {formData.paymentConfig?.qrCodeUrl ? (
-                    <img
-                      src={formData.paymentConfig.qrCodeUrl}
-                      alt="Payment QR Code"
-                      className="w-full h-full object-cover rounded-lg"
-                    />
-                  ) : (
-                    <>
-                      <QrCodeIcon className="w-8 h-8 text-gray-400" />
-                      <span className="mt-2 text-sm text-gray-500">Upload QR</span>
-                    </>
-                  )}
-                  <input
-                    type="file"
-                    className="hidden"
-                    accept="image/*"
-                    onChange={handleQRCodeUpload}
-                  />
-                </label>
-                <div className="flex-1">
-                  <p className="text-sm text-gray-600">
-                    Upload your GCash, PayMongo, or bank QR code for payments.
-                    This will be shown to attendees during registration.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Bank Details */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Bank Name</label>
-                <input
-                  type="text"
-                  value={formData.paymentConfig?.bankDetails?.bankName || ''}
-                  onChange={(e) => setFormData(prev => {
-                    const defaultPayment = {
-                      bankDetails: { bankName: '', accountName: '', accountNumber: '' },
-                      instructions: 'Please follow the payment instructions below and upload your payment proof.',
-                      requiresProof: true,
-                      requiresTransactionId: false,
-                      paymentFields: createDefaultPaymentFields()
-                    };
-                    const existing = prev.paymentConfig ?? defaultPayment;
-                    const safeBank = existing.bankDetails ?? { bankName: '', accountName: '', accountNumber: '' };
-                    return {
-                      ...prev,
-                      paymentConfig: {
-                        ...existing,
-                        bankDetails: { ...safeBank, bankName: e.target.value }
-                      }
-                    };
-                  })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="e.g., BPI, BDO, GCash"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Account Name</label>
-                <input
-                  type="text"
-                  value={formData.paymentConfig?.bankDetails?.accountName || ''}
-                  onChange={(e) => setFormData(prev => {
-                    const defaultPayment = {
-                      bankDetails: { bankName: '', accountName: '', accountNumber: '' },
-                      instructions: 'Please follow the payment instructions below and upload your payment proof.',
-                      requiresProof: true,
-                      requiresTransactionId: false,
-                      paymentFields: createDefaultPaymentFields()
-                    };
-                    const existing = prev.paymentConfig ?? defaultPayment;
-                    const safeBank = existing.bankDetails ?? { bankName: '', accountName: '', accountNumber: '' };
-                    return {
-                      ...prev,
-                      paymentConfig: {
-                        ...existing,
-                        bankDetails: { ...safeBank, accountName: e.target.value }
-                      }
-                    };
-                  })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="Account holder name"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Account Number</label>
-                <input
-                  type="text"
-                  value={formData.paymentConfig?.bankDetails?.accountNumber || ''}
-                  onChange={(e) => setFormData(prev => {
-                    const defaultPayment = {
-                      bankDetails: { bankName: '', accountName: '', accountNumber: '' },
-                      instructions: 'Please follow the payment instructions below and upload your payment proof.',
-                      requiresProof: true,
-                      requiresTransactionId: false,
-                      paymentFields: createDefaultPaymentFields()
-                    };
-                    const existing = prev.paymentConfig ?? defaultPayment;
-                    const safeBank = existing.bankDetails ?? { bankName: '', accountName: '', accountNumber: '' };
-                    return {
-                      ...prev,
-                      paymentConfig: {
-                        ...existing,
-                        bankDetails: { ...safeBank, accountNumber: e.target.value }
-                      }
-                    };
-                  })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="Account or mobile number"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">SWIFT Code (Optional)</label>
-                <input
-                  type="text"
-                  value={formData.paymentConfig?.bankDetails?.swiftCode || ''}
-                  onChange={(e) => setFormData(prev => {
-                    const defaultPayment = {
-                      bankDetails: { bankName: '', accountName: '', accountNumber: '' },
-                      instructions: 'Please follow the payment instructions below and upload your payment proof.',
-                      requiresProof: true,
-                      requiresTransactionId: false,
-                      paymentFields: createDefaultPaymentFields()
-                    };
-                    const existing = prev.paymentConfig ?? defaultPayment;
-                    const safeBank = existing.bankDetails ?? { bankName: '', accountName: '', accountNumber: '' };
-                    return {
-                      ...prev,
-                      paymentConfig: {
-                        ...existing,
-                        bankDetails: { ...safeBank, swiftCode: e.target.value }
-                      }
-                    };
-                  })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="For international transfers"
-                />
-              </div>
-            </div>
-
-            {/* Payment Instructions */}
-            <div className="mb-6">
-              <label className="block text-sm font-medium text-gray-700 mb-2">Payment Instructions</label>
-              <textarea
-                value={formData.paymentConfig?.instructions || ''}
-                onChange={(e) => setFormData(prev => ({
-                  ...prev,
-                  paymentConfig: {
-                    ...prev.paymentConfig!,
-                    instructions: e.target.value
-                  }
-                }))}
-                rows={4}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="Enter specific payment instructions for attendees..."
-              />
-            </div>
-
-            {/* Payment Verification Options */}
-            <div className="space-y-4">
-              <h4 className="font-medium text-gray-900">Payment Verification Settings</h4>
-
-              <div className="flex items-center">
-                <input
-                  type="checkbox"
-                  id="requiresProof"
-                  checked={formData.paymentConfig?.requiresProof || false}
-                  onChange={(e) => {
-                    const requiresProof = e.target.checked;
-                    setFormData(prev => ({
-                      ...prev,
-                      paymentConfig: {
-                        ...prev.paymentConfig!,
-                        requiresProof,
-                        paymentFields: requiresProof ?
-                          (prev.paymentConfig?.paymentFields || createDefaultPaymentFields()) :
-                          []
-                      }
-                    }));
-                  }}
-                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                />
-                <label htmlFor="requiresProof" className="ml-2 text-sm text-gray-700">
-                  Require payment proof screenshot
-                </label>
-              </div>
-
-              <div className="flex items-center">
-                <input
-                  type="checkbox"
-                  id="requiresTransactionId"
-                  checked={formData.paymentConfig?.requiresTransactionId || false}
-                  onChange={(e) => {
-                    const requiresTransactionId = e.target.checked;
-                    setFormData(prev => {
-                      const currentFields = prev.paymentConfig?.paymentFields || [];
-                      let updatedFields = [...currentFields];
-
-                      // Update transaction ID field requirement
-                      const transactionFieldIndex = updatedFields.findIndex(f => f.id === 'transaction_id');
-                      if (transactionFieldIndex >= 0) {
-                        updatedFields[transactionFieldIndex] = {
-                          ...updatedFields[transactionFieldIndex],
-                          required: requiresTransactionId
-                        };
-                      }
-
-                      return {
-                        ...prev,
-                        paymentConfig: {
-                          ...prev.paymentConfig!,
-                          requiresTransactionId,
-                          paymentFields: updatedFields
-                        }
-                      };
-                    });
-                  }}
-                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                />
-                <label htmlFor="requiresTransactionId" className="ml-2 text-sm text-gray-700">
-                  Require transaction ID/reference number
-                </label>
-              </div>
-            </div>
-
-            {/* Payment Form Fields Configuration */}
-            {formData.paymentConfig?.requiresProof && (
-              <div className="border-t pt-6">
-                <h4 className="font-medium text-gray-900 mb-4">Payment Verification Form</h4>
-                <div className="bg-gray-50 p-4 rounded-lg">
-                  <p className="text-sm text-gray-600 mb-4">
-                    These fields will be added to the registration form for attendees to submit payment verification.
-                  </p>
-                  <FormBuilder
-                    fields={formData.paymentConfig?.paymentFields || []}
-                    onChange={(fields) => setFormData(prev => ({
-                      ...prev,
-                      paymentConfig: {
-                        ...prev.paymentConfig!,
-                        paymentFields: fields
-                      }
-                    }))}
-                    title="Payment Verification Fields"
-                    description="Customize the payment verification form"
-                    showPreview={false}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
 
   const renderTicketManagementStep = () => {
     const addTicketType = () => {
@@ -1339,8 +1028,7 @@ const CreateEventPage: React.FC = () => {
         currentSold: 0,
         isActive: true,
         benefits: [],
-        sortOrder: formData.ticketTypes.length,
-        isEarlyBird: false
+        sortOrder: formData.ticketTypes.length
       };
       setFormData(prev => ({
         ...prev,
@@ -1383,23 +1071,6 @@ const CreateEventPage: React.FC = () => {
 
     return (
       <div className="space-y-6">
-        {/* Step-specific guidance box */}
-        <div className="bg-green-50 border-l-4 border-green-400 p-4 rounded-r-lg">
-          <div className="flex items-center">
-            <div className="flex-shrink-0">
-              <TicketIcon className="h-5 w-5 text-green-400" />
-            </div>
-            <div className="ml-3">
-              <h3 className="text-sm font-medium text-green-800">
-                Design your ticketing strategy
-              </h3>
-              <div className="mt-1 text-sm text-green-700">
-                <p>Create ticket types that match your audience. Free events get more registrations, but paid events often have higher engagement!</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-lg font-semibold text-gray-900">Ticket Types</h3>
@@ -1529,66 +1200,6 @@ const CreateEventPage: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Early Bird Settings */}
-                <div className="mt-6 p-4 bg-orange-50 border border-orange-200 rounded-lg">
-                  <div className="flex items-center mb-3">
-                    <input
-                      type="checkbox"
-                      id={`earlybird_${ticket.id}`}
-                      checked={ticket.isEarlyBird}
-                      onChange={(e) => updateTicketType(index, {
-                        isEarlyBird: e.target.checked,
-                        earlyBirdPrice: e.target.checked ? ticket.price * 0.8 : undefined,
-                        // Store as Date locally; service will convert to Timestamp
-                        earlyBirdDeadline: e.target.checked ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) as any : undefined
-                      })}
-                      className="rounded border-gray-300 text-orange-600 focus:ring-orange-500"
-                    />
-                    <label htmlFor={`earlybird_${ticket.id}`} className="ml-2 text-sm font-medium text-orange-800">
-                      Enable Early Bird Pricing
-                    </label>
-                  </div>
-
-                  {ticket.isEarlyBird && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-sm font-medium text-orange-700 mb-1">Early Bird Price (₱)</label>
-                        <input
-                          type="number"
-                          value={ticket.earlyBirdPrice ?? ''}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            updateTicketType(index, {
-                              earlyBirdPrice: (val === '' ? (undefined as any) : parseFloat(val))
-                            });
-                          }}
-                          className="w-full px-3 py-2 border border-orange-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                          min="0"
-                          step="0.01"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-medium text-orange-700 mb-1">Early Bird Deadline</label>
-                        <input
-                          type="datetime-local"
-                          value={ticket.earlyBirdDeadline ?
-                            (
-                              typeof (ticket.earlyBirdDeadline as any).toDate === 'function'
-                                ? new Date((ticket.earlyBirdDeadline as any).toDate()).toISOString().slice(0, 16)
-                                : new Date(ticket.earlyBirdDeadline as any).toISOString().slice(0, 16)
-                            ) : ''
-                          }
-                          onChange={(e) => updateTicketType(index, {
-                            // Store as Date locally; service will convert to Timestamp
-                            earlyBirdDeadline: e.target.value ? new Date(e.target.value) as any : undefined
-                          })}
-                          className="w-full px-3 py-2 border border-orange-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
 
                 {/* Benefits */}
                 <div className="mt-4">
@@ -1608,349 +1219,286 @@ const CreateEventPage: React.FC = () => {
           </div>
         )}
 
-        {/* Payment Configuration Section */}
-        {(formData.ticketTypes.some(ticket => ticket.price > 0) || formData.isPaid) && (
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-              <QrCodeIcon className="w-5 h-5 mr-2" />
-              Payment Configuration
-            </h3>
 
-            {/* QR Code Upload */}
-            <div className="mb-6">
-              <label className="block text-sm font-medium text-gray-700 mb-2">Payment QR Code</label>
-              <div className="flex items-center space-x-4">
-                <label className="flex-1 flex flex-col items-center justify-center w-32 h-32 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer hover:bg-gray-50">
-                  {formData.paymentConfig?.qrCodeUrl ? (
-                    <img
-                      src={formData.paymentConfig.qrCodeUrl}
-                      alt="Payment QR Code"
-                      className="w-full h-full object-cover rounded-lg"
-                    />
-                  ) : (
-                    <>
-                      <QrCodeIcon className="w-8 h-8 text-gray-400" />
-                      <span className="mt-2 text-sm text-gray-500">Upload QR</span>
-                    </>
-                  )}
-                  <input
-                    type="file"
-                    className="hidden"
-                    accept="image/*"
-                    onChange={handleQRCodeUpload}
-                  />
-                </label>
-                <div className="flex-1">
-                  <p className="text-sm text-gray-600">
-                    Upload your GCash, PayMongo, or bank QR code for payments.
-                    This will be shown to attendees during registration.
-                  </p>
+
+        {/* Payment Configuration Section */}
+      {(formData.isPaid || formData.ticketTypes.some(ticket => ticket.price > 0)) && (
+        <div className="border-t pt-6 mt-6">
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+            <div className="flex items-center">
+              <div className="flex-shrink-0">
+                <svg className="w-5 h-5 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                </svg>
+              </div>
+              <div className="ml-3">
+                <h4 className="text-sm font-medium text-blue-900">Payment Required Event</h4>
+                <p className="text-sm text-blue-700 mt-1">
+                  Configure payment methods for attendees to complete their registration.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            {/* Only show pricing toggle if no tickets have prices */}
+            {!formData.ticketTypes.some(ticket => ticket.price > 0) && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-4">Event Pricing</label>
+                <div className="grid grid-cols-2 gap-4">
+                  <button
+                    type="button"
+                    onClick={() => setFormData(prev => ({ ...prev, isPaid: false, paymentConfigs: [] }))}
+                    className={`p-4 border-2 rounded-lg text-center ${!formData.isPaid
+                      ? 'border-green-500 bg-green-50 text-green-700'
+                      : 'border-gray-300 hover:border-gray-400'
+                      }`}
+                  >
+                    <div className="font-medium">Free Event</div>
+                    <div className="text-sm text-gray-500">No payment required</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setFormData(prev => ({
+                      ...prev,
+                      isPaid: true,
+                      paymentConfigs: prev.paymentConfigs && prev.paymentConfigs.length > 0 
+                        ? prev.paymentConfigs 
+                        : [createDefaultPaymentConfig('Primary Payment Method')]
+                    }))}
+                    className={`p-4 border-2 rounded-lg text-center ${formData.isPaid
+                      ? 'border-blue-500 bg-blue-50 text-blue-700'
+                      : 'border-gray-300 hover:border-gray-400'
+                      }`}
+                  >
+                    <div className="font-medium">Paid Event</div>
+                    <div className="text-sm text-gray-500">Requires payment</div>
+                  </button>
                 </div>
               </div>
-            </div>
+            )}
+            
 
-            {/* Bank Details */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+            {(formData.isPaid || formData.ticketTypes.some(ticket => ticket.price > 0)) && (
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Bank Name</label>
-                <input
-                  type="text"
-                  value={formData.paymentConfig?.bankDetails.bankName || ''}
-                  onChange={(e) => {
-                    if (!formData.paymentConfig) {
-                      setFormData(prev => ({
-                        ...prev,
-                        paymentConfig: {
-                          bankDetails: { bankName: e.target.value, accountName: '', accountNumber: '' },
-                          instructions: 'Please follow the payment instructions below and upload your payment proof.',
-                          requiresProof: true,
-                          requiresTransactionId: false,
-                          paymentFields: createDefaultPaymentFields()
-                        }
-                      }));
-                    } else {
-                      setFormData(prev => ({
-                        ...prev,
-                        paymentConfig: {
-                          ...prev.paymentConfig!,
-                          bankDetails: { ...prev.paymentConfig!.bankDetails, bankName: e.target.value }
-                        }
-                      }));
-                    }
-                  }}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="e.g., BPI, BDO, GCash"
-                />
+                <div className="flex items-center justify-between mb-4">
+                  <h4 className="text-lg font-medium text-gray-900">Currency</h4>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Event Currency</label>
+                    <select
+                      value={formData.currency}
+                      onChange={(e) => setFormData(prev => ({ ...prev, currency: e.target.value }))}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="PHP">PHP (Philippine Peso)</option>
+                      <option value="USD">USD (US Dollar)</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Payment Configurations */}
+                <div className="border-t pt-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-semibold text-gray-900 flex items-center">
+                      <CurrencyDollarIcon className="w-5 h-5 mr-2" />
+                      Payment Configurations
+                    </h3>
+                    <button
+                      type="button"
+                      onClick={addPaymentConfig}
+                      className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                      </svg>
+                      <span>Add Payment Method</span>
+                    </button>
+                  </div>
+
+                  {(!formData.paymentConfigs || formData.paymentConfigs.length === 0) ? (
+                    <div className="text-center py-8 bg-white border-2 border-dashed border-gray-300 rounded-lg">
+                      <svg className="w-12 h-12 text-gray-400 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M12 12h4.01M12 12h4.01M12 12h4.01M12 12h4.01M12 12h4.01M12 12h4.01M12 12h4.01M12 12h4.01M12 12h4.01M12 12h4.01M12 12h4.01M12 12h4.01" />
+                      </svg>
+                      <h4 className="text-lg font-medium text-gray-900 mb-2">No payment methods configured</h4>
+                      <p className="text-gray-600 mb-4">Add payment methods to accept payments from attendees</p>
+                      <button
+                        type="button"
+                        onClick={addPaymentConfig}
+                        className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                      >
+                        <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                        </svg>
+                        Add Your First Payment Method
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {formData.paymentConfigs.map((config, index) => (
+                        <div key={config.id} className="bg-white border border-gray-200 rounded-lg p-6">
+                          <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center space-x-3">
+                              <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
+                                <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                                </svg>
+                              </div>
+                              <div>
+                                <h4 className="font-medium text-gray-900">{config.name}</h4>
+                                <p className="text-sm text-gray-500">Payment Method #{index + 1}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <button
+                                type="button"
+                                onClick={() => removePaymentConfig(index)}
+                                className="p-2 text-red-600 hover:bg-red-50 rounded-lg"
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-4 mb-4">
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-2">Payment Method Name</label>
+                              <input
+                                type="text"
+                                value={config.name}
+                                onChange={(e) => updatePaymentConfig(index, { name: e.target.value })}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                placeholder="e.g., GCash, Bank Transfer"
+                              />
+                            </div>
+                          </div>
+
+                          {/* Bank Details */}
+                          <div className="mb-6">
+                            <h4 className="font-medium text-gray-900 mb-3">Bank/Payment Details</h4>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                              <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Bank/Service Name</label>
+                                <input
+                                  type="text"
+                                  value={config.bankDetails.bankName}
+                                  onChange={(e) => updatePaymentConfig(index, {
+                                    bankDetails: { ...config.bankDetails, bankName: e.target.value }
+                                  })}
+                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                  placeholder="e.g., BDO, GCash, PayPal"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Account Name</label>
+                                <input
+                                  type="text"
+                                  value={config.bankDetails.accountName}
+                                  onChange={(e) => updatePaymentConfig(index, {
+                                    bankDetails: { ...config.bankDetails, accountName: e.target.value }
+                                  })}
+                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                  placeholder="Account holder name"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Account Number</label>
+                                <input
+                                  type="text"
+                                  value={config.bankDetails.accountNumber}
+                                  onChange={(e) => updatePaymentConfig(index, {
+                                    bankDetails: { ...config.bankDetails, accountNumber: e.target.value }
+                                  })}
+                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                  placeholder="Account/phone number"
+                                />
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Payment Instructions */}
+                          <div className="mb-6">
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Payment Instructions</label>
+                            <textarea
+                              value={config.instructions}
+                              onChange={(e) => updatePaymentConfig(index, { instructions: e.target.value })}
+                              rows={3}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                              placeholder="Provide detailed instructions for this payment method..."
+                            />
+                          </div>
+
+                          {/* QR Code Upload */}
+                          <div className="mb-6">
+                            <label className="block text-sm font-medium text-gray-700 mb-2">QR Code (Optional)</label>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) {
+                                  updatePaymentConfig(index, { qrCodeImage: file });
+                                }
+                              }}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            />
+                            {config.qrCodeUrl && (
+                              <div className="mt-3">
+                                <h6 className="font-medium text-gray-700 mb-2">Current QR Code</h6>
+                                <img
+                                  src={config.qrCodeUrl}
+                                  alt="Payment QR Code"
+                                  className="w-24 h-24 object-cover border border-gray-200 rounded"
+                                />
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Payment Options */}
+                          <div className="border-t pt-4">
+                            <h4 className="font-medium text-gray-900 mb-3">Payment Verification Options</h4>
+                            <div className="space-y-3">
+                              <div className="flex items-center">
+                                <input
+                                  id={`requireProof_${index}`}
+                                  type="checkbox"
+                                  checked={true}
+                                  disabled={true}
+                                  className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 opacity-50 cursor-not-allowed"
+                                />
+                                <label htmlFor={`requireProof_${index}`} className="ml-2 text-sm text-gray-700">
+                                  Require payment proof upload <span className="text-blue-600 font-medium">(Always Required)</span>
+                                </label>
+                              </div>
+                              <div className="flex items-center">
+                                <input
+                                  id={`requireTransactionId_${index}`}
+                                  type="checkbox"
+                                  checked={true}
+                                  disabled={true}
+                                  className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 opacity-50 cursor-not-allowed"
+                                />
+                                <label htmlFor={`requireTransactionId_${index}`} className="ml-2 text-sm text-gray-700">
+                                  Require transaction ID/reference number <span className="text-blue-600 font-medium">(Always Required)</span>
+                                </label>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Account Name</label>
-                <input
-                  type="text"
-                  value={formData.paymentConfig?.bankDetails.accountName || ''}
-                  onChange={(e) => {
-                    if (!formData.paymentConfig) {
-                      setFormData(prev => ({
-                        ...prev,
-                        paymentConfig: {
-                          bankDetails: { bankName: '', accountName: e.target.value, accountNumber: '' },
-                          instructions: 'Please follow the payment instructions below and upload your payment proof.',
-                          requiresProof: true,
-                          requiresTransactionId: false,
-                          paymentFields: createDefaultPaymentFields()
-                        }
-                      }));
-                    } else {
-                      setFormData(prev => ({
-                        ...prev,
-                        paymentConfig: {
-                          ...prev.paymentConfig!,
-                          bankDetails: { ...prev.paymentConfig!.bankDetails, accountName: e.target.value }
-                        }
-                      }));
-                    }
-                  }}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="Account holder name"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Account Number</label>
-                <input
-                  type="text"
-                  value={formData.paymentConfig?.bankDetails.accountNumber || ''}
-                  onChange={(e) => {
-                    if (!formData.paymentConfig) {
-                      setFormData(prev => ({
-                        ...prev,
-                        paymentConfig: {
-                          bankDetails: { bankName: '', accountName: '', accountNumber: e.target.value },
-                          instructions: 'Please follow the payment instructions below and upload your payment proof.',
-                          requiresProof: true,
-                          requiresTransactionId: false,
-                          paymentFields: createDefaultPaymentFields()
-                        }
-                      }));
-                    } else {
-                      setFormData(prev => ({
-                        ...prev,
-                        paymentConfig: {
-                          ...prev.paymentConfig!,
-                          bankDetails: { ...prev.paymentConfig!.bankDetails, accountNumber: e.target.value }
-                        }
-                      }));
-                    }
-                  }}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="Account or mobile number"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">SWIFT Code (Optional)</label>
-                <input
-                  type="text"
-                  value={formData.paymentConfig?.bankDetails.swiftCode || ''}
-                  onChange={(e) => {
-                    if (!formData.paymentConfig) {
-                      setFormData(prev => ({
-                        ...prev,
-                        paymentConfig: {
-                          bankDetails: { bankName: '', accountName: '', accountNumber: '', swiftCode: e.target.value },
-                          instructions: 'Please follow the payment instructions below and upload your payment proof.',
-                          requiresProof: true,
-                          requiresTransactionId: false,
-                          paymentFields: createDefaultPaymentFields()
-                        }
-                      }));
-                    } else {
-                      setFormData(prev => ({
-                        ...prev,
-                        paymentConfig: {
-                          ...prev.paymentConfig!,
-                          bankDetails: { ...prev.paymentConfig!.bankDetails, swiftCode: e.target.value }
-                        }
-                      }));
-                    }
-                  }}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="For international transfers"
-                />
-              </div>
-            </div>
-
-            {/* Payment Instructions */}
-            <div className="mb-6">
-              <label className="block text-sm font-medium text-gray-700 mb-2">Payment Instructions</label>
-              <textarea
-                value={formData.paymentConfig?.instructions || ''}
-                onChange={(e) => {
-                  if (!formData.paymentConfig) {
-                    setFormData(prev => ({
-                      ...prev,
-                      paymentConfig: {
-                        bankDetails: { bankName: '', accountName: '', accountNumber: '' },
-                        instructions: e.target.value,
-                        requiresProof: true,
-                        requiresTransactionId: false,
-                        paymentFields: createDefaultPaymentFields()
-                      }
-                    }));
-                  } else {
-                    setFormData(prev => ({
-                      ...prev,
-                      paymentConfig: {
-                        ...prev.paymentConfig!,
-                        instructions: e.target.value
-                      }
-                    }));
-                  }
-                }}
-                rows={4}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="Enter specific payment instructions for attendees..."
-              />
-            </div>
-
-            {/* Payment Verification Options */}
-            <div className="space-y-4">
-              <h4 className="font-medium text-gray-900">Payment Verification Settings</h4>
-
-              <div className="flex items-center">
-                <input
-                  type="checkbox"
-                  id="requiresProof"
-                  checked={formData.paymentConfig?.requiresProof || false}
-                  onChange={(e) => {
-                    const requiresProof = e.target.checked;
-                    if (!formData.paymentConfig) {
-                      setFormData(prev => ({
-                        ...prev,
-                        paymentConfig: {
-                          bankDetails: { bankName: '', accountName: '', accountNumber: '' },
-                          instructions: 'Please follow the payment instructions below and upload your payment proof.',
-                          requiresProof,
-                          requiresTransactionId: false,
-                          paymentFields: requiresProof ? createDefaultPaymentFields() : []
-                        }
-                      }));
-                    } else {
-                      setFormData(prev => ({
-                        ...prev,
-                        paymentConfig: {
-                          ...prev.paymentConfig!,
-                          requiresProof,
-                          paymentFields: requiresProof ?
-                            (prev.paymentConfig?.paymentFields || createDefaultPaymentFields()) :
-                            []
-                        }
-                      }));
-                    }
-                  }}
-                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                />
-                <label htmlFor="requiresProof" className="ml-2 text-sm text-gray-700">
-                  Require payment proof screenshot
-                </label>
-              </div>
-
-              <div className="flex items-center">
-                <input
-                  type="checkbox"
-                  id="requiresTransactionId"
-                  checked={formData.paymentConfig?.requiresTransactionId || false}
-                  onChange={(e) => {
-                    const requiresTransactionId = e.target.checked;
-                    if (!formData.paymentConfig) {
-                      setFormData(prev => ({
-                        ...prev,
-                        paymentConfig: {
-                          bankDetails: { bankName: '', accountName: '', accountNumber: '' },
-                          instructions: 'Please follow the payment instructions below and upload your payment proof.',
-                          requiresProof: true,
-                          requiresTransactionId,
-                          paymentFields: createDefaultPaymentFields().map(field =>
-                            field.id === 'transaction_id' ? { ...field, required: requiresTransactionId } : field
-                          )
-                        }
-                      }));
-                    } else {
-                      setFormData(prev => {
-                        const currentFields = prev.paymentConfig?.paymentFields || [];
-                        let updatedFields = [...currentFields];
-
-                        // Update transaction ID field requirement
-                        const transactionFieldIndex = updatedFields.findIndex(f => f.id === 'transaction_id');
-                        if (transactionFieldIndex >= 0) {
-                          updatedFields[transactionFieldIndex] = {
-                            ...updatedFields[transactionFieldIndex],
-                            required: requiresTransactionId
-                          };
-                        }
-
-                        return {
-                          ...prev,
-                          paymentConfig: {
-                            ...prev.paymentConfig!,
-                            requiresTransactionId,
-                            paymentFields: updatedFields
-                          }
-                        };
-                      });
-                    }
-                  }}
-                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                />
-                <label htmlFor="requiresTransactionId" className="ml-2 text-sm text-gray-700">
-                  Require transaction ID/reference number
-                </label>
-              </div>
-            </div>
-
-            <div className="mt-4 p-3 bg-blue-100 border border-blue-300 rounded-lg">
-              <p className="text-sm text-blue-800">
-                💡 <strong>Payment Configuration:</strong> This setup will be used for all paid ticket types. Attendees will see the QR code and bank details during checkout, and can upload payment proof for verification.
-              </p>
-            </div>
+            )}
           </div>
-        )}
-
-        {/* Migration from Legacy Pricing */}
-        {formData.isPaid && formData.ticketTypes.length === 0 && (
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <h4 className="font-medium text-blue-900 mb-2">Migrate from Simple Pricing</h4>
-            <p className="text-blue-700 text-sm mb-3">
-              You have a simple paid event setup. Convert it to a ticket type to use advanced features.
-            </p>
-            <button
-              type="button"
-              onClick={() => {
-                const legacyTicket: TicketType = {
-                  id: `ticket_${Date.now()}`,
-                  name: 'General Admission',
-                  description: 'Standard event ticket',
-                  price: formData.ticketPrice,
-                  currency: formData.currency,
-                  maxQuantity: formData.maxAttendees,
-                  currentSold: 0,
-                  isActive: true,
-                  benefits: [],
-                  sortOrder: 0,
-                  isEarlyBird: false
-                };
-                setFormData(prev => ({
-                  ...prev,
-                  ticketTypes: [legacyTicket],
-                  isPaid: false // Disable legacy mode
-                }));
-              }}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
-            >
-              Convert to Ticket Type
-            </button>
-          </div>
-        )}
+        </div>
+      )}
       </div>
     );
   };
@@ -2086,7 +1634,7 @@ const CreateEventPage: React.FC = () => {
                 <li>• Keep required fields minimal to increase registration rates</li>
                 <li>• Consider adding fields specific to your event (e.g., dietary restrictions, t-shirt size)</li>
                 <li>• Use conditional fields to gather relevant information without overwhelming users</li>
-                {formData.isPaid && <li>• Payment verification fields will be automatically added during registration</li>}
+                {(formData.isPaid || formData.ticketTypes.some(ticket => ticket.price > 0)) && <li>• Payment verification fields will be automatically added during registration</li>}
               </>
             ) : (
               <>
@@ -2100,7 +1648,7 @@ const CreateEventPage: React.FC = () => {
         </div>
 
         {/* Workflow Preview for Paid Events */}
-        {formType === 'registration' && formData.isPaid && formData.paymentConfig && (
+        {formType === 'registration' && (formData.isPaid || formData.ticketTypes.some(ticket => ticket.price > 0)) && formData.paymentConfigs && formData.paymentConfigs.length > 0 && (
           <div className="bg-green-50 border border-green-200 rounded-lg p-4">
             <h4 className="font-medium text-green-900 mb-3">
               🔄 Registration Workflow for Paid Events
@@ -2196,11 +1744,6 @@ const CreateEventPage: React.FC = () => {
                   <h5 className="font-medium text-gray-900">{ticket.name}</h5>
                   <div className="flex items-center space-x-4 text-sm">
                     <span className="font-medium text-gray-900">₱{ticket.price.toLocaleString()}</span>
-                    {ticket.isEarlyBird && ticket.earlyBirdPrice && (
-                      <span className="text-orange-600 font-medium">
-                        Early Bird: ₱{ticket.earlyBirdPrice.toLocaleString()}
-                      </span>
-                    )}
                   </div>
                 </div>
                 {ticket.description && (
@@ -2300,56 +1843,49 @@ const CreateEventPage: React.FC = () => {
       </div>
 
       {/* Payment Configuration Summary */}
-      {formData.isPaid && formData.paymentConfig && (
+      {(formData.isPaid || formData.ticketTypes.some(ticket => ticket.price > 0)) && formData.paymentConfigs && formData.paymentConfigs.length > 0 && (
         <div className="bg-white border border-gray-200 rounded-lg p-6">
-          <h4 className="font-semibold text-gray-900 mb-4">Payment Configuration</h4>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
-              <h5 className="font-medium text-gray-700 mb-2">Bank Details</h5>
-              <div className="space-y-1 text-sm text-gray-600">
-                <div>Bank: {formData.paymentConfig?.bankDetails?.bankName || '-'}</div>
-                <div>Account: {formData.paymentConfig?.bankDetails?.accountName || '-'}</div>
-                <div>Number: {formData.paymentConfig?.bankDetails?.accountNumber || '-'}</div>
-              </div>
-            </div>
-            <div>
-              <h5 className="font-medium text-gray-700 mb-2">Verification Settings</h5>
-              <div className="space-y-1 text-sm text-gray-600">
-                <div>Screenshot Required: {formData.paymentConfig?.requiresProof ? 'Yes' : 'No'}</div>
-                <div>Transaction ID: {formData.paymentConfig?.requiresTransactionId ? 'Required' : 'Optional'}</div>
-                <div>Additional Fields: {formData.paymentConfig?.paymentFields?.length || 0}</div>
-              </div>
-            </div>
-          </div>
-
-          {/* Payment Form Fields Summary */}
-          {formData.paymentConfig?.paymentFields && formData.paymentConfig.paymentFields.length > 0 && (
-            <div className="mt-4">
-              <h5 className="font-medium text-gray-700 mb-2">Payment Verification Fields</h5>
-              <div className="space-y-1">
-                {formData.paymentConfig.paymentFields.map((field, index) => (
-                  <div key={field.id} className="flex items-center text-sm text-gray-600">
-                    <span className="w-4 h-4 rounded-full bg-orange-100 text-orange-600 text-xs flex items-center justify-center mr-2">
-                      {index + 1}
-                    </span>
-                    <span>{field.label}</span>
-                    {field.required && <span className="text-red-500 ml-1">*</span>}
+          <h4 className="font-semibold text-gray-900 mb-4">Payment Configurations ({formData.paymentConfigs.length})</h4>
+          <div className="space-y-4">
+            {formData.paymentConfigs.map((config, index) => (
+              <div key={config.id} className="border border-gray-200 rounded-lg p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <h5 className="font-medium text-gray-900">{config.name}</h5>
+                  <span className={`px-2 py-1 text-xs rounded-full ${config.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
+                    {config.isActive ? 'Active' : 'Inactive'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <h6 className="font-medium text-gray-700 mb-2">Bank Details</h6>
+                    <div className="space-y-1 text-sm text-gray-600">
+                      <div>Bank: {config.bankDetails.bankName || '-'}</div>
+                      <div>Account: {config.bankDetails.accountName || '-'}</div>
+                      <div>Number: {config.bankDetails.accountNumber || '-'}</div>
+                    </div>
                   </div>
-                ))}
+                  <div>
+                    <h6 className="font-medium text-gray-700 mb-2">Verification Settings</h6>
+                    <div className="space-y-1 text-sm text-gray-600">
+                      <div>Screenshot Required: {config.requiresProof ? 'Yes' : 'No'}</div>
+                      <div>Transaction ID: {config.requiresTransactionId ? 'Required' : 'Optional'}</div>
+                      <div>Additional Fields: {config.paymentFields?.length || 0}</div>
+                    </div>
+                  </div>
+                </div>
+                {config.qrCodeUrl && (
+                  <div className="mt-3">
+                    <h6 className="font-medium text-gray-700 mb-2">QR Code</h6>
+                    <img
+                      src={config.qrCodeUrl}
+                      alt="Payment QR Code"
+                      className="w-24 h-24 object-cover border border-gray-200 rounded"
+                    />
+                  </div>
+                )}
               </div>
-            </div>
-          )}
-
-          {formData.paymentConfig?.qrCodeUrl && (
-            <div className="mt-4">
-              <h5 className="font-medium text-gray-700 mb-2">QR Code</h5>
-              <img
-                src={formData.paymentConfig.qrCodeUrl}
-                alt="Payment QR Code"
-                className="w-32 h-32 object-cover border border-gray-200 rounded"
-              />
-            </div>
-          )}
+            ))}
+          </div>
         </div>
       )}
 
@@ -2361,7 +1897,7 @@ const CreateEventPage: React.FC = () => {
             <p className="text-gray-600 mt-1">
               Your event will be published and visible to attendees immediately.
             </p>
-            {formData.isPaid && (
+            {(formData.isPaid || formData.ticketTypes.some(ticket => ticket.price > 0)) && (
               <p className="text-sm text-blue-600 mt-2 font-medium">
                 📋 Registration will require payment verification before confirmation
               </p>
@@ -2399,7 +1935,7 @@ const CreateEventPage: React.FC = () => {
         </div>
 
         {/* Final Workflow Summary */}
-        {formData.isPaid && (
+        {(formData.isPaid || formData.ticketTypes.some(ticket => ticket.price > 0)) && (
           <div className="mt-4 pt-4 border-t border-blue-200">
             <h5 className="font-medium text-gray-900 mb-2">Event Registration Flow</h5>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs text-gray-600">
@@ -2409,7 +1945,7 @@ const CreateEventPage: React.FC = () => {
               </div>
               <div className="flex items-center space-x-2">
                 <span className="w-4 h-4 bg-orange-500 text-white rounded-full flex items-center justify-center text-xs">2</span>
-                <span>Payment & Verification ({formData.paymentConfig?.paymentFields?.length || 0} fields)</span>
+                <span>Payment & Verification ({formData.paymentConfigs?.reduce((total, config) => total + (config.paymentFields?.length || 0), 0) || 0} fields)</span>
               </div>
               <div className="flex items-center space-x-2">
                 <span className="w-4 h-4 bg-green-500 text-white rounded-full flex items-center justify-center text-xs">3</span>
@@ -2517,31 +2053,13 @@ const CreateEventPage: React.FC = () => {
           <div className="lg:col-span-9 mt-8 lg:mt-0">
             <div className="bg-white rounded-lg shadow">
               <div className="px-6 py-4 border-b border-gray-200">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h2 className="text-xl font-semibold text-gray-900">
-                      {steps[currentStep].title}
-                    </h2>
-                    <p className="text-gray-600 mt-1">
-                      Step {currentStep + 1} of {steps.length}
-                    </p>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <button
-                      onClick={() => setCurrentStep(Math.max(0, currentStep - 1))}
-                      disabled={currentStep === 0}
-                      className="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      Previous
-                    </button>
-                    <button
-                      onClick={() => setCurrentStep(Math.min(steps.length - 1, currentStep + 1))}
-                      disabled={currentStep === steps.length - 1}
-                      className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      Next
-                    </button>
-                  </div>
+                <div>
+                  <h2 className="text-xl font-semibold text-gray-900">
+                    {steps[currentStep].title}
+                  </h2>
+                  <p className="text-gray-600 mt-1">
+                    Step {currentStep + 1} of {steps.length}
+                  </p>
                 </div>
               </div>
 
@@ -2554,6 +2072,26 @@ const CreateEventPage: React.FC = () => {
                 )}
                 
                 {!loading && renderStepContent()}
+              </div>
+
+              {/* Navigation Buttons */}
+              <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
+                <div className="flex items-center justify-between">
+                  <button
+                    onClick={() => setCurrentStep(Math.max(0, currentStep - 1))}
+                    disabled={currentStep === 0}
+                    className="px-6 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    Previous
+                  </button>
+                  <button
+                    onClick={() => setCurrentStep(Math.min(steps.length - 1, currentStep + 1))}
+                    disabled={currentStep === steps.length - 1}
+                    className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    Next
+                  </button>
+                </div>
               </div>
             </div>
           </div>

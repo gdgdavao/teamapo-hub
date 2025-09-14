@@ -870,7 +870,6 @@ export class RegistrationService {
         originalPrice,
         currentPrice,
         discountAmount,
-        isEarlyBird: false,
         ...(promoCode ? { 
           discountType: 'promo_code' as const,
           promoCode: (promoCode as any).code 

@@ -45,7 +45,7 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
   const [promoCodeError, setPromoCodeError] = useState<string>('');
   const [ticketPricings, setTicketPricings] = useState<Record<string, TicketPricing>>({});
 
-  // Update pricing when component mounts and every minute for early bird countdown
+  // Update pricing when component mounts and every minute for time-limited discounts
   useEffect(() => {
     updatePricings();
     const interval = setInterval(updatePricings, 60000); // Update every minute
@@ -149,12 +149,6 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
         }`}
         onClick={() => isAvailable && setSelectedTicketType(ticketType.id)}
       >
-        {/* Early Bird Badge */}
-        {pricing?.isEarlyBird && (
-          <div className="absolute top-3 right-3 bg-orange-500 text-white text-xs px-2 py-1 rounded-full font-medium">
-            Early Bird
-          </div>
-        )}
 
         {/* Ticket Type Header */}
         <div className="flex items-start justify-between mb-4">
@@ -187,15 +181,6 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
             )}
           </div>
           
-          {/* Early Bird Countdown */}
-          {pricing?.isEarlyBird && pricing.timeRemaining && (
-            <div className="flex items-center space-x-1 mt-2 text-orange-600">
-              <ClockIcon className="w-4 h-4" />
-              <span className="text-sm font-medium">
-                {formatTimeRemaining(pricing.timeRemaining)}
-              </span>
-            </div>
-          )}
         </div>
 
         {/* Benefits */}
@@ -308,12 +293,6 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
               <span>₱{((ticketPricings[selectedTicketType]?.originalPrice || 0) * quantity).toLocaleString()}</span>
             </div>
             
-            {ticketPricings[selectedTicketType]?.isEarlyBird && (
-              <div className="flex justify-between text-orange-600">
-                <span>Early Bird Discount</span>
-                <span>-₱{((ticketPricings[selectedTicketType]?.originalPrice - ticketPricings[selectedTicketType]?.currentPrice) * quantity).toLocaleString()}</span>
-              </div>
-            )}
             
             {promoCodeValid && promoCode && (
               <div className="flex justify-between text-green-600">

@@ -68,7 +68,7 @@ export interface EventFormData {
   feedbackForm: FormField[];
 
   // Payment (for paid events)
-  paymentConfig?: PaymentConfig;
+  paymentConfigs?: PaymentConfig[];
 
   // Settings
   category: string;
@@ -172,11 +172,7 @@ export class EventService {
       sanitized.price = typeof t.price === 'number' ? t.price : 0;
       sanitized.currentSold = typeof t.currentSold === 'number' ? t.currentSold : 0;
       sanitized.isActive = !!t.isActive;
-      sanitized.isEarlyBird = !!t.isEarlyBird;
-
       // Convert date-like fields
-      const ebd = this.toFirestoreTimestamp(t.earlyBirdDeadline as any);
-      if (ebd) sanitized.earlyBirdDeadline = ebd; else delete sanitized.earlyBirdDeadline;
 
       const vf = this.toFirestoreTimestamp((t as any).validFrom);
       if (vf) sanitized.validFrom = vf; else delete sanitized.validFrom;

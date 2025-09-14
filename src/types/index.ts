@@ -41,6 +41,7 @@ export interface Event {
   venue: Venue;
   ticketTypes: TicketType[];
   promoCodes?: PromoCode[];
+  paymentConfigs?: PaymentConfig[];
   tags: string[];
   category: EventCategory;
   status: EventStatus;
@@ -97,11 +98,8 @@ export interface TicketType {
   maxQuantity?: number;
   currentSold: number;
   isActive: boolean;
-  earlyBirdPrice?: number;
-  earlyBirdDeadline?: Timestamp;
   benefits?: string[];
   sortOrder: number;
-  isEarlyBird: boolean;
   discountPercentage?: number;
   validFrom?: Timestamp;
   validUntil?: Timestamp;
@@ -133,10 +131,9 @@ export interface TicketPricing {
   originalPrice: number;
   currentPrice: number;
   discountAmount: number;
-  discountType?: 'early_bird' | 'promo_code' | 'bulk';
+  discountType?: 'promo_code' | 'bulk';
   promoCode?: string;
-  isEarlyBird: boolean;
-  timeRemaining?: number; // in milliseconds for early bird
+  timeRemaining?: number; // in milliseconds for time-limited discounts
 }
 
 // Registration Types
@@ -400,23 +397,7 @@ export interface ApiResponse<T> {
   timestamp: number;
 }
 
-// Form Types
-export interface EventFormData {
-  title: string;
-  description: string;
-  shortDescription: string;
-  startDate: Date;
-  endDate: Date;
-  timezone: string;
-  venue: Venue;
-  ticketTypes: Omit<TicketType, 'id' | 'currentSold'>[];
-  speakers: Omit<Speaker, 'id'>[];
-  tags: string[];
-  category: EventCategory;
-  maxAttendees?: number;
-  registrationDeadline?: Date;
-  requirements?: string[];
-}
+// Form Types (legacy - use EventFormData below for new code)
 
 export interface RegistrationFormData {
   userDetails: {
@@ -471,6 +452,8 @@ export interface CustomForm {
 }
 
 export interface PaymentConfig {
+  id: string;
+  name: string;
   qrCodeImage?: File;
   qrCodeUrl?: string;
   bankDetails: {
@@ -482,6 +465,8 @@ export interface PaymentConfig {
   instructions: string;
   requiresProof: boolean;
   requiresTransactionId: boolean;
+  paymentFields?: FormField[];
+  isActive: boolean;
 }
 
 // Enhanced Event Form Data interface
@@ -516,7 +501,7 @@ export interface EventFormData {
   feedbackForm: FormField[];
   
   // Payment (for paid events)
-  paymentConfig?: PaymentConfig;
+  paymentConfigs?: PaymentConfig[];
   
   // Settings
   categoryString: EventCategory;

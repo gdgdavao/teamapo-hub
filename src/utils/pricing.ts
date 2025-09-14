@@ -40,37 +40,22 @@ export interface PricingCalculationResult {
   currentPrice: number;
   discountAmount: number;
   totalAmount: number;
-  isEarlyBird: boolean;
   promoApplied: boolean;
   errors: string[];
 }
 
 /**
- * Calculate the pricing for a ticket including early bird and promo code discounts
+ * Calculate the pricing for a ticket including promo code discounts
  */
 export function calculateTicketPricing(input: PricingCalculationInput): PricingCalculationResult {
   const { ticketType, quantity, promoCode, currentDate = new Date() } = input;
   const errors: string[] = [];
 
   // Start with base price
-  let unitPrice = ticketType.price;
-  let discountAmount = 0;
-  let isEarlyBird = false;
-  let promoApplied = false;
-
-  // Check early bird pricing
-  if (ticketType.earlyBirdPrice && ticketType.earlyBirdDeadline) {
-    const deadline = toDateSafe(ticketType.earlyBirdDeadline);
-    if (deadline && currentDate <= deadline) {
-      isEarlyBird = true;
-      const earlyBirdDiscount = unitPrice - ticketType.earlyBirdPrice;
-      discountAmount += earlyBirdDiscount;
-      unitPrice = ticketType.earlyBirdPrice;
-    }
-  }
-
   const originalPrice = ticketType.price;
-  let currentPrice = unitPrice;
+  let currentPrice = ticketType.price;
+  let discountAmount = 0;
+  let promoApplied = false;
 
   // Apply promo code if provided
   if (promoCode) {
@@ -103,7 +88,6 @@ export function calculateTicketPricing(input: PricingCalculationInput): PricingC
     currentPrice: currentPrice,
     discountAmount: totalDiscountAmount,
     totalAmount: totalAmount,
-    isEarlyBird,
     promoApplied,
     errors
   };
@@ -159,28 +143,19 @@ export function validatePromoCode(
  */
 export function getCurrentTicketPricing(ticketType: TicketType, currentDate: Date = new Date()): TicketPricing {
   const calculation = calculateTicketPricing({ ticketType, quantity: 1, currentDate });
-  
-  let timeRemaining: number | undefined;
-  if (ticketType.earlyBirdDeadline && calculation.isEarlyBird) {
-    const deadline = toDateSafe(ticketType.earlyBirdDeadline);
-    if (deadline) {
-      timeRemaining = deadline.getTime() - currentDate.getTime();
-    }
-  }
 
   return {
     ticketTypeId: ticketType.id,
     originalPrice: calculation.originalPrice,
     currentPrice: calculation.currentPrice,
     discountAmount: calculation.discountAmount,
-    discountType: calculation.isEarlyBird ? 'early_bird' : undefined,
-    isEarlyBird: calculation.isEarlyBird,
-    timeRemaining
+    discountType: calculation.promoApplied ? 'promo_code' : undefined,
+    timeRemaining: undefined
   };
 }
 
 /**
- * Format time remaining for early bird pricing
+ * Format time remaining for time-limited discounts
  */
 export function formatTimeRemaining(milliseconds: number): string {
   if (milliseconds <= 0) return 'Expired';
