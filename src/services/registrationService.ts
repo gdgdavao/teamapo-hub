@@ -63,6 +63,7 @@ export class RegistrationService {
     pricing: TicketPricing;
     qrCode: string;
     requiresPayment: boolean;
+    paymentLinkToken?: string;
   }> {
     try {
       // Validate event and get pricing locally (bypassing functions for now)
@@ -83,6 +84,19 @@ export class RegistrationService {
       const requiresPayment = validation.pricing.currentPrice > 0;
       const paymentStatus = 'pending';
 
+      // Generate one-time payment link token and expiry (24h)
+      const token = (() => {
+        try {
+          const arr = new Uint8Array(16);
+          // @ts-ignore - crypto is available in browser
+          (globalThis.crypto || (window as any).crypto).getRandomValues(arr);
+          return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+        } catch {
+          return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+        }
+      })();
+      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
       // Create pending registration document
       const registration: Omit<Registration, 'id'> = {
         eventId: registrationData.eventId,
@@ -101,7 +115,11 @@ export class RegistrationService {
         certificateIssued: false,
         qrCode,
         registrationDate: serverTimestamp() as any,
-        updatedAt: serverTimestamp() as any
+  updatedAt: serverTimestamp() as any,
+  // Payment link metadata
+  paymentLinkToken: token as any,
+  paymentLinkExpiresAt: expiresAt as any,
+  paymentLinkStatus: 'active' as any
       };
 
       // Add custom form responses if provided
@@ -125,7 +143,8 @@ export class RegistrationService {
         registrationId,
         pricing: validation.pricing,
         qrCode,
-        requiresPayment
+        requiresPayment,
+        paymentLinkToken: token
       };
     } catch (error) {
       console.error('Error creating pending registration:', error);

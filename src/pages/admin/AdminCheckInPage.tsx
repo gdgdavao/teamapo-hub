@@ -59,37 +59,69 @@ const AdminCheckInPage: React.FC = () => {
 
   const fetchRegistrations = async () => {
     try {
-      const registrationsQuery = query(
-        collection(db, 'registrations'),
-        where('status', 'in', ['approved', 'paid'])
-      );
+      // Get all registrations and filter client-side for better debugging
+      const registrationsQuery = query(collection(db, 'registrations'));
       
       const snapshot = await getDocs(registrationsQuery);
       const regs: Registration[] = [];
       
       for (const doc of snapshot.docs) {
         const data = doc.data() as FirestoreRegistration;
+        
+        console.log('Raw registration data:', { docId: doc.id, data }); // Debug log
+        
+        // Map paymentStatus to match local interface
+        const mapPaymentStatus = (status: any): Registration['paymentStatus'] => {
+          if (status === 'paid') return 'paid';
+          if (status === 'pending' || status === 'processing') return 'pending';
+          if (status === 'failed') return 'failed';
+          if (status === 'refunded') return 'refunded';
+          return 'pending'; // Default for any other status including 'cancelled'
+        };
+        
+        // Check registration status - could be in registrationStatus or attendanceStatus
+        const registrationStatus = (data as any).registrationStatus;
+        const rawPaymentStatus = data.paymentStatus as string; // Get raw string value
+        const attendanceStatus = data.attendanceStatus;
+        
+        // Determine if registration is eligible for check-in
+        let mappedStatus: Registration['status'] = 'pending';
+        
+        if (attendanceStatus === 'checked-in') {
+          mappedStatus = 'attended';
+        } else if (registrationStatus === 'approved' || rawPaymentStatus === 'paid') {
+          mappedStatus = 'approved';
+        }
+        
+        console.log('Mapped status:', { registrationStatus, rawPaymentStatus, attendanceStatus, mappedStatus }); // Debug log
+        
         // Map Firestore data to local interface
         regs.push({
           id: doc.id,
           attendee: {
-            id: data.attendeeId,
-            name: data.attendeeName || 'Unknown',
-            email: data.attendeeEmail || 'Unknown',
-            phone: data.attendeePhone,
-            organization: data.attendeeOrganization,
-            profilePicture: data.attendeeProfilePicture
+            id: data.userId || doc.id,
+            name: data.userDetails?.name || 'Unknown',
+            email: data.userDetails?.email || 'Unknown',
+            phone: data.userDetails?.phoneNumber,
+            organization: data.userDetails?.organization,
+            profilePicture: undefined // Not available in current schema
           },
           event: {
             id: data.eventId,
-            title: data.eventTitle || 'Unknown Event',
-            date: data.eventDate || 'Unknown Date',
-            venue: data.eventVenue || 'Unknown Venue'
+            title: 'Event Title', // Will be populated from event data
+            date: 'Event Date', // Will be populated from event data
+            venue: 'Event Venue' // Will be populated from event data
           },
-          status: data.registrationStatus || 'pending',
-          paymentStatus: data.paymentStatus
+          status: mappedStatus,
+          paymentStatus: mapPaymentStatus(data.paymentStatus)
         });
       }
+      
+      console.log('Total registrations loaded:', regs.length); // Debug log
+      console.log('Registrations by status:', regs.reduce((acc, r) => {
+        acc[r.status] = (acc[r.status] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>)); // Debug log
       
       setRegistrations(regs);
     } catch (error) {
@@ -119,6 +151,53 @@ const AdminCheckInPage: React.FC = () => {
       }
     } catch (error) {
       console.error('Error fetching events:', error);
+    }
+  };
+
+  // Helper function to format event date
+  const formatEventDate = (timestamp: any) => {
+    if (!timestamp) return 'No Date';
+    
+    try {
+      let date;
+      
+      // Handle different date formats
+      if (timestamp?.toDate) {
+        // Firestore Timestamp object
+        date = timestamp.toDate();
+      } else if (timestamp instanceof Date) {
+        // Regular Date object
+        date = timestamp;
+      } else if (typeof timestamp === 'string') {
+        // Date string
+        date = new Date(timestamp);
+      } else if (typeof timestamp === 'number') {
+        // Unix timestamp
+        date = new Date(timestamp);
+      } else if (timestamp?.seconds && typeof timestamp.seconds === 'number') {
+        // Firestore timestamp as plain object (from Firestore emulator or client)
+        date = new Date(timestamp.seconds * 1000);
+      } else {
+        // Try to create a Date object
+        date = new Date(timestamp);
+      }
+      
+      // Check if the date is valid
+      if (isNaN(date.getTime())) {
+        console.warn('Invalid date:', timestamp);
+        return 'Invalid Date';
+      }
+      
+      return date.toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (error) {
+      console.error('Error formatting date:', error);
+      return 'Date Error';
     }
   };
 
@@ -277,9 +356,12 @@ const AdminCheckInPage: React.FC = () => {
     ? registrations.filter(r => r.event.id === currentEvent.id)
     : registrations;
 
-  const readyForCheckin = eventRegistrations.filter(r => 
-    r.status === 'approved' && r.paymentStatus === 'paid'
-  );
+  const readyForCheckin = eventRegistrations.filter(r => {
+    // Ready if status is 'approved' OR paymentStatus is 'paid', but not yet attended
+    const isReadyStatus = r.status === 'approved' || r.status === 'paid' || r.paymentStatus === 'paid';
+    const notAttended = r.status !== 'attended';
+    return isReadyStatus && notAttended;
+  });
   
   const checkedIn = eventRegistrations.filter(r => r.status === 'attended');
 
@@ -319,7 +401,7 @@ const AdminCheckInPage: React.FC = () => {
           >
             {events.map(event => (
               <option key={event.id} value={event.id}>
-                {event.title} - {new Date(event.date).toLocaleDateString()}
+                {event.title} - {formatEventDate(event.startDate)}
               </option>
             ))}
           </select>

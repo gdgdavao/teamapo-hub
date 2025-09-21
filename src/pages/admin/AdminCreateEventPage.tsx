@@ -438,11 +438,14 @@ const CreateEventPage: React.FC = () => {
 
       let savedEventId: string;
 
-      // Create or update event first (without base64 image data)
+      // Create or update event first (without base64 image data or base64 speaker photoUrl previews)
       const eventDataWithoutBase64Image = {
         ...formData,
-        // Remove base64 image data to prevent Firestore size limit error
-        imageUrl: formData.imageUrl && formData.imageUrl.startsWith('data:') ? undefined : formData.imageUrl
+        imageUrl: formData.imageUrl && formData.imageUrl.startsWith('data:') ? undefined : formData.imageUrl,
+        speakers: (formData.speakers || []).map((s) => ({
+          ...s,
+          photoUrl: s.photoUrl && s.photoUrl.startsWith('data:') ? undefined : s.photoUrl
+        }))
       };
 
       if (isEditMode && eventId) {

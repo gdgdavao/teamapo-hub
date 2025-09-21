@@ -133,6 +133,37 @@ export class EventService {
   }
 
   /**
+   * Sanitize speakers to ensure Firestore-serializable values only
+   * - Keep whitelisted fields
+   * - Drop preview data URLs (base64) to avoid oversized/invalid values
+   * - Trim strings and remove empty optional fields
+   */
+  private static sanitizeSpeakers(speakers: any[] = []): any[] {
+    return (speakers || []).map((s) => {
+      const safe: any = {
+        id: String(s.id ?? '').trim(),
+        name: typeof s.name === 'string' ? s.name.trim() : '',
+        title: typeof s.title === 'string' ? s.title.trim() : '',
+        bio: typeof s.bio === 'string' ? s.bio.trim() : ''
+      };
+
+      if (s.company && typeof s.company === 'string' && s.company.trim()) {
+        safe.company = s.company.trim();
+      }
+
+      // Only persist hosted URLs for photoUrl; ignore base64 data URLs
+      if (s.photoUrl && typeof s.photoUrl === 'string') {
+        const url = s.photoUrl.trim();
+        if (url && !url.startsWith('data:')) {
+          safe.photoUrl = url;
+        }
+      }
+
+      return this.removeUndefinedValues(safe);
+    });
+  }
+
+  /**
    * Convert various date-like inputs to Firestore Timestamp
    */
   private static toFirestoreTimestamp(value: any): Timestamp | undefined {
@@ -264,7 +295,7 @@ export class EventService {
           name: organizerInfo.name,
           email: organizerInfo.email
         },
-        speakers: eventData.speakers || [],
+  speakers: this.sanitizeSpeakers(eventData.speakers || []),
         startDate: this.combineDateAndTime(eventData.startDate, eventData.startTime),
         endDate: this.combineDateAndTime(eventData.endDate, eventData.endTime),
         timezone: eventData.timezone,
@@ -370,6 +401,9 @@ export class EventService {
       }
       if (eventData.promoCodes) {
         updateData.promoCodes = this.sanitizePromoCodes(eventData.promoCodes as PromoCode[]);
+      }
+      if (eventData.speakers) {
+        updateData.speakers = this.sanitizeSpeakers(eventData.speakers as any[]);
       }
 
       // Handle date/time updates

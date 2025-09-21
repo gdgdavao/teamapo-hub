@@ -101,8 +101,14 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
       
       toast.success('Registration details saved! Please proceed to payment.');
       
-      // Always navigate to payment page first
-      navigate(`/payment/${registration.registrationId}`);
+      // Navigate to payment page (token-based when available)
+      // If backend starts returning a signed token, append as query param for expiry validation
+      const token = (registration as any).paymentLinkToken;
+      if (token) {
+        navigate(`/payment/${registration.registrationId}?t=${encodeURIComponent(token)}`);
+      } else {
+        navigate(`/payment/${registration.registrationId}`);
+      }
     } catch (err: any) {
       console.error('Registration error:', err);
       toast.error(err.message || 'Registration failed. Please try again.');

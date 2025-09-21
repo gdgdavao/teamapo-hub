@@ -18,6 +18,7 @@ import { CheckCircleIcon, XCircleIcon, ClockIcon } from '@heroicons/react/20/sol
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { EventService } from '../../services/eventService';
+import { RegistrationService } from '../../services/registrationService';
 import { Event } from '../../types';
 import toast from 'react-hot-toast';
 import AdminLayout from '../../components/admin/AdminLayout';
@@ -81,7 +82,30 @@ const ManageEventsPage: React.FC = () => {
         setLoading(true);
         // Admin can see all events
         const eventsData = await EventService.getAllEvents();
-        setEvents(eventsData);
+        
+        // Calculate real attendee counts from approved registrations
+        const eventsWithRealCounts = await Promise.all(
+          eventsData.map(async (event) => {
+            try {
+              // Get registrations for this event
+              const registrations = await RegistrationService.getEventRegistrations(event.id);
+              // Count approved registrations only
+              const approvedAttendees = registrations
+                .filter(reg => (reg as any).registrationStatus === 'approved')
+                .reduce((sum, reg) => sum + (reg.quantity || 1), 0);
+              
+              return {
+                ...event,
+                currentAttendees: approvedAttendees
+              };
+            } catch (error) {
+              console.warn(`Failed to get attendee count for event ${event.id}:`, error);
+              return event; // Return original event if count fails
+            }
+          })
+        );
+        
+        setEvents(eventsWithRealCounts);
       } catch (error) {
         console.error('Error fetching events:', error);
         toast.error('Failed to load events');

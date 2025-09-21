@@ -173,13 +173,14 @@ export class PaymentService {
 
       await setDoc(proofRef, cleanProofData);
 
-      // Update registration status
+    // Update registration status
       try {
         const registrationRef = doc(db, this.REGISTRATIONS_COLLECTION, data.registrationId);
         await updateDoc(registrationRef, {
           paymentStatus: 'processing',
           paymentProofId: proofId,
-          updatedAt: serverTimestamp()
+      updatedAt: serverTimestamp(),
+      paymentLinkStatus: 'consumed'
         });
       } catch (e) {
         // Likely unauthenticated update; ignore and proceed

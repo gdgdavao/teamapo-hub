@@ -165,6 +165,10 @@ export interface Registration {
   paymentStatus: PaymentStatus;
   paymentDetails?: PaymentDetails;
   paymentProof?: PaymentProof;
+  // One-time payment link metadata (optional)
+  paymentLinkToken?: string;
+  paymentLinkExpiresAt?: Timestamp; // Expiry timestamp
+  paymentLinkStatus?: 'active' | 'consumed' | 'expired';
   attendanceStatus: AttendanceStatus;
   checkInTime?: Timestamp;
   feedbackSubmitted: boolean;
