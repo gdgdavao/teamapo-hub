@@ -96,6 +96,7 @@ interface PaymentConfig {
 export class EventService {
   private static readonly EVENTS_COLLECTION = 'events';
   private static readonly EVENT_IMAGES_PATH = 'event-images';
+  private static readonly SPEAKER_PHOTOS_PATH = 'speaker-photos';
   private static readonly PAYMENT_QR_PATH = 'payment-qr';
 
   /**
@@ -600,6 +601,31 @@ export class EventService {
     } catch (error) {
       console.error('Error uploading event image:', error);
       throw new Error('Failed to upload event image');
+    }
+  }
+
+  /**
+   * Upload speaker photo
+   */
+  static async uploadSpeakerPhoto(eventId: string, speakerId: string, imageFile: File): Promise<string> {
+    try {
+      console.log('Uploading speaker photo for eventId:', eventId, 'speakerId:', speakerId, 'fileName:', imageFile.name);
+      const timestamp = Date.now();
+      const imageRef = ref(storage, `${this.SPEAKER_PHOTOS_PATH}/${eventId}/${speakerId}/photo-${timestamp}.jpg`);
+      console.log('Storage path:', `${this.SPEAKER_PHOTOS_PATH}/${eventId}/${speakerId}/photo-${timestamp}.jpg`);
+      
+      // Check current auth state before upload
+      const { auth } = await import('../config/firebase');
+      const currentUser = auth.currentUser;
+      console.log('Current user during speaker photo upload:', currentUser?.uid, currentUser?.email);
+      
+      const snapshot = await uploadBytes(imageRef, imageFile, { contentType: imageFile.type || 'image/jpeg' });
+      const downloadURL = await getDownloadURL(snapshot.ref);
+
+      return downloadURL;
+    } catch (error) {
+      console.error('Error uploading speaker photo:', error);
+      throw new Error('Failed to upload speaker photo');
     }
   }
 

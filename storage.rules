@@ -170,6 +170,30 @@ service firebase.storage {
                        (request.auth.uid == userId || isAdmin());
     }
     
+    // Speaker photos
+    match /speaker-photos/{eventId}/{speakerId}/{photoId} {
+      allow read: if true; // Speaker photos are public
+      allow write: if (isAdminOrOrganizer() || 
+                      (isAuthenticated() && 
+                       firestore.exists(/databases/(default)/documents/events/$(eventId)) &&
+                       firestore.get(/databases/(default)/documents/events/$(eventId)).data.organizer.uid == request.auth.uid)) && 
+                      isValidImageSize() && 
+                      isValidImageType();
+      allow delete: if isAdmin() || 
+                       (isAuthenticated() && 
+                        firestore.exists(/databases/(default)/documents/events/$(eventId)) &&
+                        firestore.get(/databases/(default)/documents/events/$(eventId)).data.organizer.uid == request.auth.uid);
+    }
+    
+    // Allow folder-level operations for speaker photos (for deletion)
+    match /speaker-photos/{eventId}/{speakerId} {
+      allow read: if true; // Speaker photos are public
+      allow delete: if isAdmin() || 
+                       (isAuthenticated() && 
+                        firestore.exists(/databases/(default)/documents/events/$(eventId)) &&
+                        firestore.get(/databases/(default)/documents/events/$(eventId)).data.organizer.uid == request.auth.uid);
+    }
+    
     // System files - App assets, templates, etc.
     match /system/{allPaths=**} {
       allow read: if true; // System files are public

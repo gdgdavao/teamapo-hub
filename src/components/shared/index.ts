@@ -7,6 +7,7 @@ export { FirebaseConnectionStatus } from './FirebaseConnectionStatus';
 export { default as DevCredentialsInfo } from './DevCredentialsInfo';
 export { default as RoleBasedDashboard } from './RoleBasedDashboard';
 export { default as UserCreator } from './UserCreator';
+export { default as PhotoUpload } from './PhotoUpload';
 
 // Form Components
 export { FormBuilder } from './FormBuilder';
