@@ -9,8 +9,6 @@ import {
   XCircleIcon,
   ClockIcon,
   ArrowLeftIcon,
-  ArrowTrendingUpIcon,
-  ArrowTrendingDownIcon,
   EyeIcon,
   DocumentChartBarIcon,
   AdjustmentsHorizontalIcon
@@ -90,9 +88,23 @@ const AdminAnalyticsPage: React.FC<AnalyticsPageProps> = ({ isEventSpecific = fa
   const [dashboard, setDashboard] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedTimeRange, setSelectedTimeRange] = useState('3m');
-  const [selectedMetric, setSelectedMetric] = useState('all');
   const [registrationsByDate, setRegistrationsByDate] = useState<Array<{ date: string; count: number }>>([]);
   const [revenueByDate, setRevenueByDate] = useState<Array<{ date: string; amount: number }>>([]);
+
+  const getDaysFromTimeRange = (timeRange: string): number => {
+    switch (timeRange) {
+      case '1m':
+        return 30;
+      case '3m':
+        return 90;
+      case '6m':
+        return 180;
+      case '1y':
+        return 365;
+      default:
+        return 30;
+    }
+  };
 
   const buildDateBuckets = (days: number): string[] => {
     const arr: string[] = [];
@@ -151,8 +163,9 @@ const AdminAnalyticsPage: React.FC<AnalyticsPageProps> = ({ isEventSpecific = fa
             setDashboard(dashboardStats);
             const allRegs = await RegistrationService.getAllRegistrations();
             setRegistrations(allRegs);
-            bucketRegistrations(allRegs, 30);
-            bucketRevenue(allRegs, 30);
+            const days = getDaysFromTimeRange(selectedTimeRange);
+            bucketRegistrations(allRegs, days);
+            bucketRevenue(allRegs, days);
           } catch (error) {
             console.error('Error loading dashboard stats:', error);
           }
@@ -167,6 +180,15 @@ const AdminAnalyticsPage: React.FC<AnalyticsPageProps> = ({ isEventSpecific = fa
 
     loadAnalytics();
   }, [eventId, isEventSpecific]);
+
+  // Re-bucket data when time range changes
+  useEffect(() => {
+    if (registrations.length > 0 && !isEventSpecific && !eventId) {
+      const days = getDaysFromTimeRange(selectedTimeRange);
+      bucketRegistrations(registrations, days);
+      bucketRevenue(registrations, days);
+    }
+  }, [selectedTimeRange, registrations, isEventSpecific, eventId]);
 
   const formatDate = (timestamp: any) => {
     if (!timestamp) return 'N/A';
@@ -212,14 +234,6 @@ const AdminAnalyticsPage: React.FC<AnalyticsPageProps> = ({ isEventSpecific = fa
       style: 'currency',
       currency: 'PHP'
     }).format(amount);
-  };
-
-  const getGrowthIcon = (value: number) => {
-    return value >= 0 ? (
-      <ArrowTrendingUpIcon className="h-4 w-4 text-green-500" />
-    ) : (
-      <ArrowTrendingDownIcon className="h-4 w-4 text-red-500" />
-    );
   };
 
   const getStatusBadge = (attendanceStatus: string) => {
@@ -307,17 +321,6 @@ const AdminAnalyticsPage: React.FC<AnalyticsPageProps> = ({ isEventSpecific = fa
               <option value="6m">Last 6 Months</option>
               <option value="1y">Last Year</option>
             </select>
-            
-            <select
-              value={selectedMetric}
-              onChange={(e) => setSelectedMetric(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
-            >
-              <option value="all">All Metrics</option>
-              <option value="revenue">Revenue</option>
-              <option value="attendance">Attendance</option>
-              <option value="satisfaction">Satisfaction</option>
-            </select>
           </div>
         </div>
 
@@ -333,12 +336,6 @@ const AdminAnalyticsPage: React.FC<AnalyticsPageProps> = ({ isEventSpecific = fa
                 <p className="text-2xl font-bold text-gray-900">{dashboard?.totalEvents ?? 0}</p>
               </div>
             </div>
-            {dashboard && dashboard.totalEvents > 0 && (
-              <div className="mt-4 flex items-center">
-                {getGrowthIcon(dashboard.monthlyGrowth.events)}
-                <span className="ml-2 text-sm text-green-600">{dashboard.monthlyGrowth.events >= 0 ? '+' : ''}{dashboard.monthlyGrowth.events}% from last month</span>
-              </div>
-            )}
           </div>
 
           <div className="bg-white rounded-lg shadow p-6">
@@ -351,12 +348,6 @@ const AdminAnalyticsPage: React.FC<AnalyticsPageProps> = ({ isEventSpecific = fa
                 <p className="text-2xl font-bold text-gray-900">{dashboard?.totalRegistrations ?? 0}</p>
               </div>
             </div>
-            {dashboard && dashboard.totalRegistrations > 0 && (
-              <div className="mt-4 flex items-center">
-                {getGrowthIcon(dashboard.monthlyGrowth.registrations)}
-                <span className="ml-2 text-sm text-green-600">{dashboard.monthlyGrowth.registrations >= 0 ? '+' : ''}{dashboard.monthlyGrowth.registrations}% from last month</span>
-              </div>
-            )}
           </div>
 
           <div className="bg-white rounded-lg shadow p-6">
@@ -382,20 +373,14 @@ const AdminAnalyticsPage: React.FC<AnalyticsPageProps> = ({ isEventSpecific = fa
                 <p className="text-2xl font-bold text-gray-900">{dashboard?.certificatesIssued ?? 0}</p>
               </div>
             </div>
-            {dashboard && dashboard.certificatesIssued > 0 && (
-              <div className="mt-4 flex items-center">
-                {getGrowthIcon(dashboard.monthlyGrowth.certificates)}
-                <span className="ml-2 text-sm text-green-600">{dashboard.monthlyGrowth.certificates >= 0 ? '+' : ''}{dashboard.monthlyGrowth.certificates}% from last month</span>
-              </div>
-            )}
           </div>
         </div>
 
         {/* Data Analytics Charts */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-          <div className="bg-white rounded-lg shadow p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900">Registrations Over Time</h3>
+        <div className="space-y-8 mb-8">
+          <div className="bg-white rounded-lg shadow p-8">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xl font-semibold text-gray-900">Registrations Over Time</h3>
               <div className="relative group">
                 <button className="p-1 rounded hover:bg-gray-100" aria-label="Chart settings" title="Chart settings">
                   <AdjustmentsHorizontalIcon className="h-5 w-5 text-gray-500" />
@@ -408,11 +393,11 @@ const AdminAnalyticsPage: React.FC<AnalyticsPageProps> = ({ isEventSpecific = fa
                 </div>
               </div>
             </div>
-            <SimpleBarChart data={registrationsByDate} xKey="date" yKey="count" color="#3b82f6" height={200} />
+            <SimpleBarChart data={registrationsByDate} xKey="date" yKey="count" color="#3b82f6" height={500} />
           </div>
-          <div className="bg-white rounded-lg shadow p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900">Revenue Over Time</h3>
+          <div className="bg-white rounded-lg shadow p-8">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xl font-semibold text-gray-900">Revenue Over Time</h3>
               <div className="relative group">
                 <button className="p-1 rounded hover:bg-gray-100" aria-label="Chart settings" title="Chart settings">
                   <AdjustmentsHorizontalIcon className="h-5 w-5 text-gray-500" />
@@ -425,41 +410,7 @@ const AdminAnalyticsPage: React.FC<AnalyticsPageProps> = ({ isEventSpecific = fa
                 </div>
               </div>
             </div>
-            <SimpleBarChart data={revenueByDate} xKey="date" yKey="amount" color="#f59e0b" height={200} formatYAxis={(v)=>formatCurrency(v)} />
-          </div>
-        </div>
-
-        {/* Recent Activity */}
-        <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Recent Activity</h3>
-          <div className="space-y-3">
-            <div className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
-              <div className="p-2 bg-green-100 rounded-full">
-                <CheckCircleIcon className="h-4 w-4 text-green-600" />
-              </div>
-              <div className="flex-1">
-                <p className="text-sm font-medium text-gray-900">New registration for React Workshop</p>
-                <p className="text-xs text-gray-500">2 hours ago</p>
-              </div>
-            </div>
-            <div className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
-              <div className="p-2 bg-blue-100 rounded-full">
-                <CalendarDaysIcon className="h-4 w-4 text-blue-600" />
-              </div>
-              <div className="flex-1">
-                <p className="text-sm font-medium text-gray-900">Google I/O Extended event published</p>
-                <p className="text-xs text-gray-500">1 day ago</p>
-              </div>
-            </div>
-            <div className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
-              <div className="p-2 bg-yellow-100 rounded-full">
-                <CurrencyDollarIcon className="h-4 w-4 text-yellow-600" />
-              </div>
-              <div className="flex-1">
-                <p className="text-sm font-medium text-gray-900">Payment received for Node.js Bootcamp</p>
-                <p className="text-xs text-gray-500">2 days ago</p>
-              </div>
-            </div>
+            <SimpleBarChart data={revenueByDate} xKey="date" yKey="amount" color="#f59e0b" height={500} formatYAxis={(v)=>formatCurrency(v)} />
           </div>
         </div>
       </AdminLayout>
