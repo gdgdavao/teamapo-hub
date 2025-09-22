@@ -266,7 +266,7 @@ export class RegistrationService {
 
       // Send confirmation email via Firebase Function
       try {
-        const sendRegistrationEmail = httpsCallable(functions, 'sendRegistrationConfirmation');
+        const sendRegistrationEmail = httpsCallable(functions, 'sendConfirmationEmail');
         await sendRegistrationEmail({
           registrationId,
           eventId: registrationData.eventId,
