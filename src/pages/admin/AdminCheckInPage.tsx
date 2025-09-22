@@ -7,12 +7,13 @@ import {
   CheckIcon,
   XMarkIcon
 } from '@heroicons/react/24/outline';
-import { CheckCircleIcon as CheckCircleSolidIcon, XCircleIcon as XCircleSolidIcon } from '@heroicons/react/20/solid';
+import { CheckCircleIcon as CheckCircleSolidIcon, XCircleIcon as XCircleSolidIcon, ExclamationTriangleIcon, InformationCircleIcon } from '@heroicons/react/20/solid';
 import { doc, updateDoc, serverTimestamp, query, collection, where, getDocs } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import AdminLayout from '../../components/admin/AdminLayout';
 import { useAuth } from '../../contexts/AuthContext';
 import { Registration as FirestoreRegistration, Event } from '../../types';
+import { ForceCheckInModal } from '../../components/shared/UI';
 
 interface Registration {
   id: string;
@@ -34,6 +35,188 @@ interface Registration {
   paymentStatus?: 'pending' | 'paid' | 'failed' | 'refunded';
 }
 
+// Date awareness helper functions
+const getEventDateStatus = (event: Event | null) => {
+  if (!event || !event.startDate) return null;
+  
+  try {
+    const now = new Date();
+    let eventStartDate: Date;
+    let eventEndDate: Date;
+    
+    // Debug logging
+    console.log('Processing event dates:', { 
+      startDate: event.startDate, 
+      endDate: event.endDate,
+      startDateType: typeof event.startDate,
+      hasToDate: !!(event.startDate as any)?.toDate
+    });
+    
+    // Handle different date formats for startDate with more robust checking
+    if (event.startDate && (event.startDate as any).toDate && typeof (event.startDate as any).toDate === 'function') {
+      // Firestore Timestamp object
+      console.log('Using toDate() method for startDate');
+      eventStartDate = (event.startDate as any).toDate();
+    } else if (event.startDate instanceof Date) {
+      // Regular Date object
+      console.log('startDate is already a Date object');
+      eventStartDate = event.startDate;
+    } else if (typeof event.startDate === 'string') {
+      // Date string
+      console.log('Parsing startDate as string');
+      eventStartDate = new Date(event.startDate);
+    } else if (typeof event.startDate === 'number') {
+      // Unix timestamp
+      console.log('Parsing startDate as number');
+      eventStartDate = new Date(event.startDate);
+    } else if ((event.startDate as any)?.seconds && typeof (event.startDate as any).seconds === 'number') {
+      // Firestore timestamp as plain object
+      console.log('Using seconds property for startDate');
+      eventStartDate = new Date((event.startDate as any).seconds * 1000);
+    } else {
+      // Last resort - try to parse as any
+      console.log('Fallback parsing for startDate');
+      eventStartDate = new Date(event.startDate as any);
+    }
+    
+    // Handle different date formats for endDate
+    if (event.endDate && (event.endDate as any).toDate && typeof (event.endDate as any).toDate === 'function') {
+      eventEndDate = (event.endDate as any).toDate();
+    } else if (event.endDate instanceof Date) {
+      eventEndDate = event.endDate;
+    } else if (typeof event.endDate === 'string') {
+      eventEndDate = new Date(event.endDate);
+    } else if (typeof event.endDate === 'number') {
+      eventEndDate = new Date(event.endDate);
+    } else if ((event.endDate as any)?.seconds && typeof (event.endDate as any).seconds === 'number') {
+      eventEndDate = new Date((event.endDate as any).seconds * 1000);
+    } else if (event.endDate) {
+      eventEndDate = new Date(event.endDate as any);
+    } else {
+      // Use startDate as endDate if endDate is not available
+      eventEndDate = eventStartDate;
+    }
+    
+    // Check if dates are valid
+    if (isNaN(eventStartDate.getTime()) || isNaN(eventEndDate.getTime())) {
+      console.warn('Invalid event dates after parsing:', { 
+        eventStartDate, 
+        eventEndDate,
+        originalStartDate: event.startDate,
+        originalEndDate: event.endDate
+      });
+      return null;
+    }
+    
+    console.log('Successfully parsed dates:', { eventStartDate, eventEndDate });
+    
+    // Calculate time differences
+    const timeDiffStart = eventStartDate.getTime() - now.getTime();
+    const timeDiffEnd = eventEndDate.getTime() - now.getTime();
+    const daysDiffStart = Math.ceil(timeDiffStart / (1000 * 3600 * 24));
+    const daysDiffEnd = Math.ceil(timeDiffEnd / (1000 * 3600 * 24));
+    
+    // Event is in the past
+    if (timeDiffEnd < 0) {
+      const daysAgo = Math.abs(daysDiffEnd);
+      return {
+        type: 'past' as const,
+        severity: daysAgo > 7 ? 'high' : daysAgo > 1 ? 'medium' : 'low',
+        message: daysAgo === 0 ? 'This event ended today' :
+                 daysAgo === 1 ? 'This event ended yesterday' :
+                 `This event ended ${daysAgo} days ago`,
+        daysAgo,
+        canCheckIn: daysAgo <= 1 // Allow check-in up to 1 day after event
+      };
+    }
+    
+    // Event is happening now
+    if (timeDiffStart <= 0 && timeDiffEnd >= 0) {
+      return {
+        type: 'current' as const,
+        severity: 'none' as const,
+        message: 'Event is happening now',
+        canCheckIn: true
+      };
+    }
+    
+    // Event is in the future
+    if (timeDiffStart > 0) {
+      return {
+        type: 'future' as const,
+        severity: daysDiffStart > 7 ? 'high' : daysDiffStart > 1 ? 'medium' : 'low',
+        message: daysDiffStart === 0 ? 'This event starts today' :
+                 daysDiffStart === 1 ? 'This event starts tomorrow' :
+                 `This event starts in ${daysDiffStart} days`,
+        daysUntil: daysDiffStart,
+        canCheckIn: daysDiffStart <= 1 // Allow check-in starting 1 day before event
+      };
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Error in getEventDateStatus:', error, { event });
+    // Return null to gracefully degrade if date parsing fails
+    return null;
+  }
+};
+
+// Alert component for date warnings
+interface DateWarningAlertProps {
+  event: Event | null;
+  className?: string;
+}
+
+const DateWarningAlert: React.FC<DateWarningAlertProps> = ({ event, className = '' }) => {
+  const dateStatus = getEventDateStatus(event);
+  
+  if (!dateStatus || dateStatus.type === 'current') return null;
+  
+  const getAlertStyle = () => {
+    if (dateStatus.type === 'past') {
+      return dateStatus.severity === 'high' 
+        ? 'bg-red-50 border-red-200 text-red-800'
+        : 'bg-orange-50 border-orange-200 text-orange-800';
+    }
+    
+    if (dateStatus.type === 'future') {
+      return dateStatus.severity === 'high'
+        ? 'bg-blue-50 border-blue-200 text-blue-800'
+        : 'bg-yellow-50 border-yellow-200 text-yellow-800';
+    }
+    
+    return 'bg-gray-50 border-gray-200 text-gray-800';
+  };
+  
+  const getIcon = () => {
+    if (dateStatus.type === 'past' && dateStatus.severity === 'high') {
+      return <ExclamationTriangleIcon className="w-5 h-5 text-red-500" />;
+    }
+    if (dateStatus.type === 'past') {
+      return <ExclamationTriangleIcon className="w-5 h-5 text-orange-500" />;
+    }
+    return <InformationCircleIcon className="w-5 h-5 text-blue-500" />;
+  };
+  
+  return (
+    <div className={`rounded-lg border p-3 ${getAlertStyle()} ${className}`}>
+      <div className="flex items-center space-x-2">
+        {getIcon()}
+        <div className="flex-1">
+          <p className="text-sm font-medium">
+            {dateStatus.message}
+          </p>
+          {!dateStatus.canCheckIn && (
+            <p className="text-xs mt-1 opacity-80">
+              Check-in may not be appropriate for this event date.
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const AdminCheckInPage: React.FC = () => {
   const { userProfile } = useAuth();
   const [registrations, setRegistrations] = useState<Registration[]>([]);
@@ -47,6 +230,23 @@ const AdminCheckInPage: React.FC = () => {
   } | null>(null);
   const [currentEvent, setCurrentEvent] = useState<Event | null>(null);
   const [events, setEvents] = useState<Event[]>([]);
+  
+  // Force check-in modal state
+  const [forceCheckInModal, setForceCheckInModal] = useState<{
+    isOpen: boolean;
+    registrationId: string;
+    attendeeName: string;
+    eventTitle: string;
+    dateWarning: string;
+    severity: 'low' | 'medium' | 'high';
+  }>({
+    isOpen: false,
+    registrationId: '',
+    attendeeName: '',
+    eventTitle: '',
+    dateWarning: '',
+    severity: 'low'
+  });
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -161,10 +361,10 @@ const AdminCheckInPage: React.FC = () => {
     try {
       let date;
       
-      // Handle different date formats
-      if (timestamp?.toDate) {
+      // Handle different date formats with robust checking
+      if (timestamp && typeof (timestamp as any).toDate === 'function') {
         // Firestore Timestamp object
-        date = timestamp.toDate();
+        date = (timestamp as any).toDate();
       } else if (timestamp instanceof Date) {
         // Regular Date object
         date = timestamp;
@@ -174,9 +374,9 @@ const AdminCheckInPage: React.FC = () => {
       } else if (typeof timestamp === 'number') {
         // Unix timestamp
         date = new Date(timestamp);
-      } else if (timestamp?.seconds && typeof timestamp.seconds === 'number') {
+      } else if ((timestamp as any)?.seconds && typeof (timestamp as any).seconds === 'number') {
         // Firestore timestamp as plain object (from Firestore emulator or client)
-        date = new Date(timestamp.seconds * 1000);
+        date = new Date((timestamp as any).seconds * 1000);
       } else {
         // Try to create a Date object
         date = new Date(timestamp);
@@ -272,6 +472,14 @@ const AdminCheckInPage: React.FC = () => {
         return;
       }
 
+      // Check event date status and add warning message if necessary
+      const dateStatus = getEventDateStatus(currentEvent);
+      let successMessage = `${registration.attendee.name} has been checked in successfully!`;
+      
+      if (dateStatus && !dateStatus.canCheckIn) {
+        successMessage += ` ⚠️ Note: ${dateStatus.message.toLowerCase()}`;
+      }
+
       // Update registration status to attended
       const registrationRef = doc(db, 'registrations', registration.id);
       await updateDoc(registrationRef, {
@@ -287,7 +495,7 @@ const AdminCheckInPage: React.FC = () => {
 
       setCheckinResult({
         success: true,
-        message: `${registration.attendee.name} has been checked in successfully!`,
+        message: successMessage,
         registration
       });
 
@@ -321,6 +529,46 @@ const AdminCheckInPage: React.FC = () => {
         return;
       }
 
+      // Check event date status and show modal if necessary
+      const dateStatus = getEventDateStatus(currentEvent);
+      if (dateStatus && !dateStatus.canCheckIn) {
+        // Show custom modal instead of browser confirm
+        setForceCheckInModal({
+          isOpen: true,
+          registrationId: registration.id,
+          attendeeName: registration.attendee.name,
+          eventTitle: currentEvent?.title || 'Event',
+          dateWarning: dateStatus.message,
+          severity: dateStatus.severity as 'low' | 'medium' | 'high'
+        });
+        return;
+      }
+
+      // Proceed with normal check-in if no date issues
+      await performCheckIn(registrationId);
+
+    } catch (error) {
+      console.error('Error during manual check-in:', error);
+      setCheckinResult({
+        success: false,
+        message: 'Failed to check in attendee. Please try again.'
+      });
+    }
+  };
+
+  // Separate function to perform the actual check-in
+  const performCheckIn = async (registrationId: string) => {
+    try {
+      const registration = registrations.find(r => r.id === registrationId);
+      if (!registration) return;
+
+      // Check event date status for success message
+      const dateStatus = getEventDateStatus(currentEvent);
+      let successMessage = `${registration.attendee.name} has been checked in successfully!`;
+      if (dateStatus && !dateStatus.canCheckIn) {
+        successMessage += ` ⚠️ Note: ${dateStatus.message.toLowerCase()}`;
+      }
+
       const registrationRef = doc(db, 'registrations', registration.id);
       await updateDoc(registrationRef, {
         status: 'attended',
@@ -335,7 +583,7 @@ const AdminCheckInPage: React.FC = () => {
 
       setCheckinResult({
         success: true,
-        message: `${registration.attendee.name} has been checked in successfully!`,
+        message: successMessage,
         registration
       });
 
@@ -343,12 +591,22 @@ const AdminCheckInPage: React.FC = () => {
       setTimeout(() => setCheckinResult(null), 3000);
 
     } catch (error) {
-      console.error('Error during manual check-in:', error);
+      console.error('Error during check-in:', error);
       setCheckinResult({
         success: false,
         message: 'Failed to check in attendee. Please try again.'
       });
     }
+  };
+
+  // Modal handlers
+  const handleForceCheckInConfirm = async () => {
+    setForceCheckInModal(prev => ({ ...prev, isOpen: false }));
+    await performCheckIn(forceCheckInModal.registrationId);
+  };
+
+  const handleForceCheckInCancel = () => {
+    setForceCheckInModal(prev => ({ ...prev, isOpen: false }));
   };
 
   // Filter registrations for current event
@@ -406,6 +664,9 @@ const AdminCheckInPage: React.FC = () => {
             ))}
           </select>
         </div>
+
+        {/* Date Warning Alert */}
+        <DateWarningAlert event={currentEvent} />
 
         {/* Quick Stats */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -558,7 +819,21 @@ const AdminCheckInPage: React.FC = () => {
         {/* Attendees Ready for Check-in */}
         <div className="bg-white rounded-xl border border-gray-200 p-6">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold text-gray-900">Attendees Ready for Check-in</h3>
+            <div className="flex-1">
+              <h3 className="text-lg font-semibold text-gray-900">Attendees Ready for Check-in</h3>
+              {(() => {
+                const dateStatus = getEventDateStatus(currentEvent);
+                if (dateStatus && !dateStatus.canCheckIn) {
+                  return (
+                    <p className="text-sm text-amber-600 mt-1 flex items-center">
+                      <ExclamationTriangleIcon className="w-4 h-4 mr-1" />
+                      {dateStatus.message} - Check-ins should be verified
+                    </p>
+                  );
+                }
+                return null;
+              })()}
+            </div>
             <span className="text-sm text-gray-500">{readyForCheckin.length} ready</span>
           </div>
           
@@ -620,6 +895,17 @@ const AdminCheckInPage: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Force Check-In Modal */}
+      <ForceCheckInModal
+        isOpen={forceCheckInModal.isOpen}
+        onClose={handleForceCheckInCancel}
+        onConfirm={handleForceCheckInConfirm}
+        attendeeName={forceCheckInModal.attendeeName}
+        eventTitle={forceCheckInModal.eventTitle}
+        dateWarning={forceCheckInModal.dateWarning}
+        severity={forceCheckInModal.severity}
+      />
     </AdminLayout>
   );
 };
