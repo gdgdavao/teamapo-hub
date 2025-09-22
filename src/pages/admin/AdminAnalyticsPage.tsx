@@ -170,7 +170,36 @@ const AdminAnalyticsPage: React.FC<AnalyticsPageProps> = ({ isEventSpecific = fa
 
   const formatDate = (timestamp: any) => {
     if (!timestamp) return 'N/A';
-    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+    
+    let date;
+    
+    // Handle different date formats
+    if (timestamp?.toDate) {
+      // Firestore Timestamp object
+      date = timestamp.toDate();
+    } else if (timestamp instanceof Date) {
+      // Regular Date object
+      date = timestamp;
+    } else if (typeof timestamp === 'string') {
+      // Date string
+      date = new Date(timestamp);
+    } else if (typeof timestamp === 'number') {
+      // Unix timestamp
+      date = new Date(timestamp);
+    } else if (timestamp?.seconds && typeof timestamp.seconds === 'number') {
+      // Firestore timestamp as plain object (from Firestore emulator or client)
+      date = new Date(timestamp.seconds * 1000);
+    } else {
+      // Try to create a Date object
+      date = new Date(timestamp);
+    }
+    
+    // Check if the date is valid
+    if (isNaN(date.getTime())) {
+      console.warn('Invalid date:', timestamp);
+      return 'Invalid Date';
+    }
+    
     return date.toLocaleDateString('en-US', {
       year: 'numeric',
       month: 'long',
@@ -191,6 +220,39 @@ const AdminAnalyticsPage: React.FC<AnalyticsPageProps> = ({ isEventSpecific = fa
     ) : (
       <ArrowTrendingDownIcon className="h-4 w-4 text-red-500" />
     );
+  };
+
+  const getStatusBadge = (attendanceStatus: string) => {
+    switch (attendanceStatus) {
+      case 'checked-in':
+        return 'bg-green-100 text-green-800';
+      case 'no-show':
+        return 'bg-red-100 text-red-800';
+      case 'cancelled':
+        return 'bg-gray-100 text-gray-800';
+      case 'confirmed':
+        return 'bg-blue-100 text-blue-800';
+      case 'registered':
+      default:
+        return 'bg-yellow-100 text-yellow-800';
+    }
+  };
+
+  const formatStatusText = (attendanceStatus: string) => {
+    switch (attendanceStatus) {
+      case 'checked-in':
+        return 'Checked In';
+      case 'no-show':
+        return 'No Show';
+      case 'cancelled':
+        return 'Cancelled';
+      case 'confirmed':
+        return 'Confirmed';
+      case 'registered':
+        return 'Registered';
+      default:
+        return attendanceStatus || 'Unknown';
+    }
   };
 
   // AI features removed
@@ -516,6 +578,205 @@ const AdminAnalyticsPage: React.FC<AnalyticsPageProps> = ({ isEventSpecific = fa
           </div>
         </div>
 
+        {/* Promo Code Usage */}
+        {stats?.promoCodeStats && (
+          <div className="bg-white rounded-lg shadow mb-8">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-900">Promo Code Usage</h3>
+            </div>
+            <div className="p-6">
+              {stats.promoCodeStats.totalUsed > 0 ? (
+                <>
+                  {/* Promo Code Summary Cards */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                    <div className="bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg p-4">
+                      <div className="flex items-center">
+                        <div className="p-2 bg-purple-100 rounded-lg">
+                          <svg className="h-6 w-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+                          </svg>
+                        </div>
+                        <div className="ml-4">
+                          <p className="text-sm font-medium text-gray-600">Codes Used</p>
+                          <p className="text-2xl font-bold text-gray-900">{stats.promoCodeStats.totalUsed}</p>
+                          <p className="text-xs text-gray-500">
+                            {stats.promoCodeStats.allCodes.filter(c => c.usageCount > 0).length} / {stats.promoCodeStats.allCodes.length} codes
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg p-4">
+                      <div className="flex items-center">
+                        <div className="p-2 bg-green-100 rounded-lg">
+                          <CurrencyDollarIcon className="h-6 w-6 text-green-600" />
+                        </div>
+                        <div className="ml-4">
+                          <p className="text-sm font-medium text-gray-600">Total Discount</p>
+                          <p className="text-2xl font-bold text-gray-900">{formatCurrency(stats.promoCodeStats.totalDiscount)}</p>
+                          <p className="text-xs text-gray-500">
+                            Avg: {stats.promoCodeStats.totalUsed > 0 ? formatCurrency(stats.promoCodeStats.totalDiscount / stats.promoCodeStats.totalUsed) : '₱0'} per use
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-4">
+                      <div className="flex items-center">
+                        <div className="p-2 bg-blue-100 rounded-lg">
+                          <ChartBarIcon className="h-6 w-6 text-blue-600" />
+                        </div>
+                        <div className="ml-4">
+                          <p className="text-sm font-medium text-gray-600">Revenue Impact</p>
+                          <p className="text-2xl font-bold text-gray-900">{formatCurrency(stats.promoCodeStats.revenueWithPromo)}</p>
+                          <p className="text-xs text-gray-500">
+                            {((stats.promoCodeStats.revenueWithPromo / (stats?.revenue || 1)) * 100).toFixed(1)}% of total revenue
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-gradient-to-r from-orange-50 to-yellow-50 rounded-lg p-4">
+                      <div className="flex items-center">
+                        <div className="p-2 bg-orange-100 rounded-lg">
+                          <svg className="h-6 w-6 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                        </div>
+                        <div className="ml-4">
+                          <p className="text-sm font-medium text-gray-600">Active Codes</p>
+                          <p className="text-2xl font-bold text-gray-900">
+                            {stats.promoCodeStats.allCodes.filter(c => c.isActive && !c.isExpired).length}
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            {stats.promoCodeStats.allCodes.filter(c => c.isExpired).length} expired
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* All Promo Codes Table */}
+                  {stats.promoCodeStats.allCodes.length > 0 && (
+                    <div>
+                      <h4 className="text-md font-medium text-gray-900 mb-4">All Promo Codes</h4>
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full divide-y divide-gray-200">
+                          <thead className="bg-gray-50">
+                            <tr>
+                              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Code
+                              </th>
+                              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Name & Description
+                              </th>
+                              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Discount
+                              </th>
+                              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Usage
+                              </th>
+                              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Status
+                              </th>
+                              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Revenue Impact
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody className="bg-white divide-y divide-gray-200">
+                            {stats.promoCodeStats.allCodes.map((promoCode, index) => (
+                              <tr key={promoCode.code} className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                                <td className="px-6 py-4 whitespace-nowrap">
+                                  <div className="flex items-center">
+                                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800">
+                                      {promoCode.code}
+                                    </span>
+                                  </div>
+                                </td>
+                                <td className="px-6 py-4">
+                                  <div className="text-sm font-medium text-gray-900">{promoCode.name}</div>
+                                  {promoCode.description && (
+                                    <div className="text-sm text-gray-500 max-w-xs truncate">{promoCode.description}</div>
+                                  )}
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                  <div>
+                                    {promoCode.discountType === 'percentage' 
+                                      ? `${promoCode.discountValue}%` 
+                                      : `${formatCurrency(promoCode.discountValue)}`
+                                    }
+                                  </div>
+                                  <div className="text-xs text-gray-500">
+                                    Total saved: {formatCurrency(promoCode.totalDiscount)}
+                                  </div>
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                  <div className="flex items-center">
+                                    <span className="font-medium">{promoCode.usageCount}</span>
+                                    <span className="ml-1 text-gray-400">used</span>
+                                  </div>
+                                  {promoCode.maxUses && (
+                                    <div className="text-xs text-gray-500">
+                                      {promoCode.remainingUses} / {promoCode.maxUses} remaining
+                                    </div>
+                                  )}
+                                  {!promoCode.maxUses && (
+                                    <div className="text-xs text-green-600">Unlimited</div>
+                                  )}
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap">
+                                  <div className="flex flex-col space-y-1">
+                                    <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                                      promoCode.isExpired
+                                        ? 'bg-red-100 text-red-800'
+                                        : promoCode.isActive
+                                        ? 'bg-green-100 text-green-800'
+                                        : 'bg-gray-100 text-gray-800'
+                                    }`}>
+                                      {promoCode.isExpired ? 'Expired' : promoCode.isActive ? 'Active' : 'Inactive'}
+                                    </span>
+                                    {promoCode.validUntil && (
+                                      <div className="text-xs text-gray-500">
+                                        Until: {formatDate(promoCode.validUntil)}
+                                      </div>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                                  <div>
+                                    {formatCurrency(promoCode.revenue)}
+                                  </div>
+                                  {promoCode.usageCount > 0 && (
+                                    <div className="text-xs text-gray-500">
+                                      Avg: {formatCurrency(promoCode.revenue / promoCode.usageCount)} per use
+                                    </div>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                /* No Promo Codes Used State */
+                <div className="text-center py-8">
+                  <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+                  </svg>
+                  <h3 className="mt-2 text-sm font-medium text-gray-900">No Promo Codes Used</h3>
+                  <p className="mt-1 text-sm text-gray-500">
+                    No attendees have used promo codes for this event yet.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Recent Registrations */}
         <div className="bg-white rounded-lg shadow">
           <div className="px-6 py-4 border-b border-gray-200">
@@ -559,12 +820,8 @@ const AdminAnalyticsPage: React.FC<AnalyticsPageProps> = ({ isEventSpecific = fa
                       {registration.userDetails?.organization || 'N/A'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                        registration.attendanceStatus === 'checked-in' 
-                          ? 'bg-green-100 text-green-800'
-                          : 'bg-yellow-100 text-yellow-800'
-                      }`}>
-                        {registration.attendanceStatus}
+                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusBadge(registration.attendanceStatus)}`}>
+                        {formatStatusText(registration.attendanceStatus)}
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">

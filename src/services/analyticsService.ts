@@ -31,6 +31,24 @@ export interface DashboardStats {
   pendingPayments: number;
 }
 
+export interface PromoCodeUsage {
+  code: string;
+  name: string;
+  description?: string;
+  discountType: 'percentage' | 'fixed';
+  discountValue: number;
+  maxUses?: number;
+  currentUses: number;
+  usageCount: number; // From registrations
+  remainingUses?: number;
+  totalDiscount: number; // From registrations
+  revenue: number; // From registrations
+  isActive: boolean;
+  validFrom: any;
+  validUntil: any;
+  isExpired: boolean;
+}
+
 export interface EventStats {
   registrations: number;
   checkedIn: number;
@@ -39,6 +57,14 @@ export interface EventStats {
   feedbackResponses: number;
   averageRating: number;
   certificatesIssued: number;
+  promoCodeStats: {
+    totalUsed: number;
+    totalDiscount: number;
+    topCodes: PromoCodeUsage[];
+    allCodes: PromoCodeUsage[]; // All promo codes with details
+    revenueWithPromo: number;
+    revenueWithoutPromo: number;
+  };
 }
 
 export interface AnalyticsTimeRange {
@@ -209,11 +235,13 @@ export class AnalyticsService {
   static async getEventStats(eventId: string): Promise<EventStats> {
     try {
       const [
+        eventSnapshot,
         registrationsSnapshot,
         checkedInSnapshot,
         feedbackSnapshot,
         certificatesSnapshot
       ] = await Promise.all([
+        getDoc(doc(db, this.EVENTS_COLLECTION, eventId)),
         getDocs(query(
           collection(db, this.REGISTRATIONS_COLLECTION),
           where('eventId', '==', eventId)
@@ -233,6 +261,13 @@ export class AnalyticsService {
         ))
       ]);
 
+      if (!eventSnapshot.exists()) {
+        throw new Error('Event not found');
+      }
+
+      const eventData = eventSnapshot.data();
+      const eventPromoCodes = eventData.promoCodes || [];
+
       // Helper function to filter out placeholder documents
       const filterPlaceholderDocs = (docs: any[]) => {
         return docs.filter(doc => {
@@ -249,13 +284,149 @@ export class AnalyticsService {
       const realFeedback = filterPlaceholderDocs(feedbackSnapshot.docs);
       const realCertificates = filterPlaceholderDocs(certificatesSnapshot.docs);
 
-      // Calculate revenue for this event
+      // Calculate revenue and promo code statistics
       let revenue = 0;
+      let revenueWithPromo = 0;
+      let revenueWithoutPromo = 0;
+      let totalDiscount = 0;
+      const promoCodeMap = new Map<string, { count: number; discount: number; revenue: number }>();
+
       realRegistrations.forEach(doc => {
         const data = doc.data();
+        
         if (data.paymentStatus === 'paid') {
-          revenue += data.totalAmount || 0;
+          const amount = data.totalAmount || 0;
+          revenue += amount;
+          
+          // Check both promoCode and promoCodeId fields
+          const hasDiscount = data.discountAmount && data.discountAmount > 0;
+          
+          if (hasDiscount) {
+            revenueWithPromo += amount;
+            const discount = data.discountAmount || 0;
+            totalDiscount += discount;
+            
+            // Try to find the actual promo code from the event's promo codes
+            let codeKey = data.promoCode; // Direct promo code string
+            let matchingPromo = null;
+            
+            // If no direct code, try to find it by promoCodeId
+            if (!codeKey && data.promoCodeId) {
+              matchingPromo = eventPromoCodes.find((pc: any) => pc.id === data.promoCodeId);
+              if (matchingPromo) {
+                codeKey = matchingPromo.code;
+              } else {
+                codeKey = String(data.promoCodeId);
+              }
+            }
+            
+            // If still no code but has discount, try to reverse-engineer from discount amount
+            if (!codeKey) {
+              // Try to find a promo code that could have produced this discount
+              const originalAmount = amount + discount; // Reverse calculate original amount
+              
+              for (const promo of eventPromoCodes) {
+                let expectedDiscount = 0;
+                if (promo.discountType === 'percentage') {
+                  expectedDiscount = (originalAmount * promo.discountValue) / 100;
+                } else if (promo.discountType === 'fixed') {
+                  expectedDiscount = promo.discountValue;
+                }
+                
+                // Check if the expected discount matches (with some tolerance for rounding)
+                if (Math.abs(expectedDiscount - discount) < 0.01) {
+                  matchingPromo = promo;
+                  codeKey = promo.code;
+                  break;
+                }
+              }
+              
+              // If still no match, use a descriptive fallback
+              if (!codeKey) {
+                codeKey = `UNKNOWN_DISCOUNT_${discount}`;
+              }
+            }
+            
+            const existing = promoCodeMap.get(codeKey) || { count: 0, discount: 0, revenue: 0 };
+            promoCodeMap.set(codeKey, {
+              count: existing.count + 1,
+              discount: existing.discount + discount,
+              revenue: existing.revenue + amount
+            });
+          } else {
+            revenueWithoutPromo += amount;
+          }
         }
+      });
+
+      // Create comprehensive promo code usage data
+      const now = new Date();
+      const promoCodeUsageMap = new Map<string, PromoCodeUsage>();
+      
+      // First, add all event promo codes (even if unused)
+      eventPromoCodes.forEach((promoCode: any) => {
+        const validUntilDate = promoCode.validUntil?.toDate ? promoCode.validUntil.toDate() : new Date(promoCode.validUntil);
+        const validFromDate = promoCode.validFrom?.toDate ? promoCode.validFrom.toDate() : new Date(promoCode.validFrom);
+        const isExpired = validUntilDate < now;
+        const usageStats = promoCodeMap.get(promoCode.code) || { count: 0, discount: 0, revenue: 0 };
+        
+        promoCodeUsageMap.set(promoCode.code, {
+          code: promoCode.code,
+          name: promoCode.name || promoCode.code,
+          description: promoCode.description,
+          discountType: promoCode.discountType,
+          discountValue: promoCode.discountValue,
+          maxUses: promoCode.maxUses,
+          currentUses: usageStats.count, // Use actual usage from registrations
+          usageCount: usageStats.count,
+          remainingUses: promoCode.maxUses ? Math.max(0, promoCode.maxUses - usageStats.count) : undefined,
+          totalDiscount: usageStats.discount,
+          revenue: usageStats.revenue,
+          isActive: promoCode.isActive,
+          validFrom: promoCode.validFrom,
+          validUntil: promoCode.validUntil,
+          isExpired
+        });
+      });
+
+      // Add any promo codes found in registrations that might not be in the event's promo codes
+      Array.from(promoCodeMap.entries()).forEach(([code, stats]) => {
+        if (!promoCodeUsageMap.has(code)) {
+          promoCodeUsageMap.set(code, {
+            code,
+            name: code,
+            description: 'Used promo code (details not available)',
+            discountType: 'fixed' as const,
+            discountValue: 0,
+            currentUses: stats.count,
+            usageCount: stats.count,
+            totalDiscount: stats.discount,
+            revenue: stats.revenue,
+            isActive: false,
+            validFrom: null,
+            validUntil: null,
+            isExpired: true
+          });
+        }
+      });
+
+      // Convert to array and sort
+      const allPromoCodes = Array.from(promoCodeUsageMap.values())
+        .sort((a, b) => {
+          // Sort by usage count (descending), then by name
+          if (b.usageCount !== a.usageCount) {
+            return b.usageCount - a.usageCount;
+          }
+          return a.name.localeCompare(b.name);
+        });
+
+      // Take top 5 used codes for the summary, but keep all for the detailed view
+      const topCodes = allPromoCodes.slice(0, 5);
+
+      // Calculate no-shows properly - only count those explicitly marked as no-show
+      const noShowRegistrations = realRegistrations.filter(doc => {
+        const data = doc.data();
+        return data.attendanceStatus === 'no-show';
       });
 
       // Calculate average rating
@@ -274,11 +445,19 @@ export class AnalyticsService {
       return {
         registrations: realRegistrations.length,
         checkedIn: realCheckedIn.length,
-        noShows: realRegistrations.length - realCheckedIn.length,
+        noShows: noShowRegistrations.length, // Only count explicit no-shows
         revenue,
         feedbackResponses: realFeedback.length,
         averageRating: Math.round(averageRating * 10) / 10,
-        certificatesIssued: realCertificates.length
+        certificatesIssued: realCertificates.length,
+        promoCodeStats: {
+          totalUsed: promoCodeMap.size > 0 ? Array.from(promoCodeMap.values()).reduce((sum, stats) => sum + stats.count, 0) : 0,
+          totalDiscount,
+          topCodes,
+          allCodes: allPromoCodes,
+          revenueWithPromo,
+          revenueWithoutPromo
+        }
       };
     } catch (error) {
       console.error('Error fetching event stats:', error);

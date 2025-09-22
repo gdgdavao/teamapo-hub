@@ -133,6 +133,7 @@ export interface TicketPricing {
   discountAmount: number;
   discountType?: 'promo_code' | 'bulk';
   promoCode?: string;
+  promoCodeId?: string;
   timeRemaining?: number; // in milliseconds for time-limited discounts
 }
 

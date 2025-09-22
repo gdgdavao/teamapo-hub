@@ -108,6 +108,9 @@ export class RegistrationService {
         discountAmount: validation.pricing.discountAmount * registrationData.quantity,
         totalAmount: validation.pricing.currentPrice * registrationData.quantity,
         currency: 'PHP', // Default currency
+        // Save promo code information from validation
+        ...(validation.pricing.promoCode ? { promoCode: validation.pricing.promoCode } : {}),
+        ...(validation.pricing.promoCodeId ? { promoCodeId: validation.pricing.promoCodeId } : {}),
         pricing: validation.pricing,
         paymentStatus: paymentStatus as any,
         attendanceStatus: 'pending' as any,
@@ -115,11 +118,11 @@ export class RegistrationService {
         certificateIssued: false,
         qrCode,
         registrationDate: serverTimestamp() as any,
-  updatedAt: serverTimestamp() as any,
-  // Payment link metadata
-  paymentLinkToken: token as any,
-  paymentLinkExpiresAt: expiresAt as any,
-  paymentLinkStatus: 'active' as any
+        updatedAt: serverTimestamp() as any,
+        // Payment link metadata
+        paymentLinkToken: token as any,
+        paymentLinkExpiresAt: expiresAt as any,
+        paymentLinkStatus: 'active' as any
       };
 
       // Add custom form responses if provided
@@ -266,8 +269,9 @@ export class RegistrationService {
         discountAmount: validation.pricing.discountAmount * registrationData.quantity,
         totalAmount: validation.pricing.currentPrice * registrationData.quantity,
         currency: 'PHP', // Default currency
-        ...(registrationData.promoCode ? { promoCode: registrationData.promoCode } : {}),
-        ...(validation.pricing.promoCode ? { promoCodeId: validation.pricing.promoCode } : {}),
+        // Save promo code information from both sources
+        ...(validation.pricing.promoCode ? { promoCode: validation.pricing.promoCode } : {}),
+        ...(validation.pricing.promoCodeId ? { promoCodeId: validation.pricing.promoCodeId } : {}),
         pricing: validation.pricing,
         paymentStatus: paymentStatus as any,
         attendanceStatus: 'registered',
@@ -909,6 +913,9 @@ export class RegistrationService {
           } else {
             discountAmount = validPromoCode.discountValue;
           }
+        } else {
+          // Invalid promo code - reset it
+          console.warn('Invalid promo code provided:', registrationData.promoCode);
         }
       }
       
@@ -921,7 +928,8 @@ export class RegistrationService {
         discountAmount,
         ...(promoCode ? { 
           discountType: 'promo_code' as const,
-          promoCode: (promoCode as any).code 
+          promoCode: (promoCode as any).code,
+          promoCodeId: (promoCode as any).id  // Add the promo code ID
         } : {})
       };
       
