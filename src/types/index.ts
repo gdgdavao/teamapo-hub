@@ -240,13 +240,38 @@ export interface Certificate {
   verificationCount: number;
 }
 
+export interface TemplateElement {
+  id: string;
+  type: 'text' | 'qrcode';
+  position: {
+    x: number; // Percentage from left
+    y: number; // Percentage from top
+    width?: number; // For QR codes
+    height?: number; // For QR codes
+  };
+  content: string; // Template string or static content
+  style: {
+    fontSize?: number;
+    fontFamily?: string;
+    color?: string;
+    align?: 'left' | 'center' | 'right';
+    fontWeight?: 'normal' | 'bold';
+    fontStyle?: 'normal' | 'italic';
+  };
+}
+
 export interface CertificateTemplate {
   id: string;
   name: string;
   description: string;
   eventId?: string; // If linked to specific event
   templateImageUrl: string; // PNG template file URL
-  textPositions: {
+  dimensions: {
+    width: number;
+    height: number;
+  };
+  // Legacy text positions (for backward compatibility)
+  textPositions?: {
     recipientName: {
       x: number; // Percentage from left
       y: number; // Percentage from top
@@ -254,6 +279,8 @@ export interface CertificateTemplate {
       fontFamily: string;
       color: string;
       align: 'left' | 'center' | 'right';
+      fontWeight?: 'normal' | 'bold';
+      fontStyle?: 'normal' | 'italic';
     };
     verificationCode: {
       x: number;
@@ -262,6 +289,8 @@ export interface CertificateTemplate {
       fontFamily: string;
       color: string;
       align: 'left' | 'center' | 'right';
+      fontWeight?: 'normal' | 'bold';
+      fontStyle?: 'normal' | 'italic';
     };
     qrCode: {
       x: number;
@@ -275,6 +304,8 @@ export interface CertificateTemplate {
       fontFamily: string;
       color: string;
       align: 'left' | 'center' | 'right';
+      fontWeight?: 'normal' | 'bold';
+      fontStyle?: 'normal' | 'italic';
     };
     eventDate?: {
       x: number;
@@ -283,8 +314,14 @@ export interface CertificateTemplate {
       fontFamily: string;
       color: string;
       align: 'left' | 'center' | 'right';
+      fontWeight?: 'normal' | 'bold';
+      fontStyle?: 'normal' | 'italic';
     };
   };
+  // Enhanced elements (new approach)
+  elements?: TemplateElement[];
+  // Template mode to distinguish creation method
+  templateMode?: 'legacy' | 'enhanced';
   isActive: boolean;
   createdBy: string;
   createdAt: Timestamp;

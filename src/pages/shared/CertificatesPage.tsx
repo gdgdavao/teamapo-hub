@@ -13,12 +13,13 @@ import {
   QrCodeIcon,
   DocumentTextIcon,
   ArrowDownTrayIcon,
-  MapPinIcon
+  MapPinIcon,
+  SparklesIcon
 } from '@heroicons/react/24/outline';
 import AdminLayout from '../../components/admin/AdminLayout';
 import OrganizerLayout from '../../components/organizer/OrganizerLayout';
 import { useAuth } from '../../contexts/AuthContext';
-import { CertificateTemplate, Certificate } from '../../types';
+import { CertificateTemplate, Certificate, TemplateElement } from '../../types';
 import { CertificateGenerationService } from '../../utils/certificateGeneration';
 import { CertificateService, IssuedCertificate } from '../../services/certificateService';
 import { EventService } from '../../services/eventService';
@@ -29,7 +30,7 @@ const CertificatesPage: React.FC = () => {
   const isAdmin = userProfile?.role === 'admin';
   const LayoutComponent = isAdmin ? AdminLayout : OrganizerLayout;
   
-  const [activeTab, setActiveTab] = useState<'templates' | 'issued' | 'upload'>('templates');
+  const [activeTab, setActiveTab] = useState<'templates' | 'issued' | 'builder'>('templates');
   const [templates, setTemplates] = useState<CertificateTemplate[]>([]);
   const [issuedCertificates, setIssuedCertificates] = useState<IssuedCertificate[]>([]);
   const [events, setEvents] = useState<any[]>([]);
@@ -38,22 +39,58 @@ const CertificatesPage: React.FC = () => {
   const [selectedEvent, setSelectedEvent] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // Upload template state
+  // Unified template builder state
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
   const [templateName, setTemplateName] = useState('');
   const [templateDescription, setTemplateDescription] = useState('');
   const [templateEventId, setTemplateEventId] = useState('');
-  const [positioningMode, setPositioningMode] = useState(false);
-  const [currentPositioning, setCurrentPositioning] = useState<'name' | 'code' | 'qr' | null>(null);
+  const [templateDimensions, setTemplateDimensions] = useState({ width: 1200, height: 800 });
   
-  // Text positions (percentage based)
-  const [namePosition, setNamePosition] = useState({ 
-    x: 50, y: 50, fontSize: 24, fontFamily: 'Arial', color: '#000000', align: 'center' as const 
-  });
-  const [codePosition, setCodePosition] = useState({ 
-    x: 80, y: 85, fontSize: 12, fontFamily: 'Arial', color: '#666666', align: 'right' as const 
-  });
-  const [qrPosition, setQrPosition] = useState({ x: 85, y: 75, size: 80 });
+  // Enhanced elements-based approach
+  const [elements, setElements] = useState<TemplateElement[]>([
+    {
+      id: 'recipient-name',
+      type: 'text',
+      position: { x: 50, y: 50 },
+      content: '{{ recipientName }}',
+      style: {
+        fontSize: 24,
+        fontFamily: 'Arial',
+        color: '#000000',
+        align: 'center',
+        fontWeight: 'normal',
+        fontStyle: 'normal'
+      }
+    },
+    {
+      id: 'verification-code',
+      type: 'text',
+      position: { x: 80, y: 85 },
+      content: '{{ verificationCode }}',
+      style: {
+        fontSize: 12,
+        fontFamily: 'Arial',
+        color: '#666666',
+        align: 'right',
+        fontWeight: 'normal',
+        fontStyle: 'normal'
+      }
+    },
+    {
+      id: 'qr-code',
+      type: 'qrcode',
+      position: { x: 85, y: 75, width: 80, height: 80 },
+      content: '{{ verificationUrl }}',
+      style: {}
+    }
+  ]);
+  
+  // UI state
+  const [selectedElement, setSelectedElement] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const [hoveredElement, setHoveredElement] = useState<string | null>(null);
+  
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -94,27 +131,315 @@ const CertificatesPage: React.FC = () => {
     if (file && file.type.startsWith('image/')) {
       const reader = new FileReader();
       reader.onload = (e) => {
-        setUploadedImage(e.target?.result as string);
+        const imageDataUrl = e.target?.result as string;
+        setUploadedImage(imageDataUrl);
+        
+        // Get actual image dimensions
+        const img = new Image();
+        img.onload = () => {
+          setTemplateDimensions({
+            width: img.width,
+            height: img.height
+          });
+        };
+        img.src = imageDataUrl;
       };
       reader.readAsDataURL(file);
     }
   };
 
-  const handleCanvasClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!positioningMode || !currentPositioning || !canvasRef.current) return;
+  // Reset form function
+  const resetForm = () => {
+    setUploadedImage(null);
+    setTemplateName('');
+    setTemplateDescription('');
+    setTemplateEventId('');
+    setTemplateDimensions({ width: 1200, height: 800 });
+    setElements([
+      {
+        id: 'recipient-name',
+        type: 'text',
+        position: { x: 50, y: 50 },
+        content: '{{ recipientName }}',
+        style: {
+          fontSize: 24,
+          fontFamily: 'Arial',
+          color: '#000000',
+          align: 'center',
+          fontWeight: 'normal',
+          fontStyle: 'normal'
+        }
+      },
+      {
+        id: 'verification-code',
+        type: 'text',
+        position: { x: 80, y: 85 },
+        content: '{{ verificationCode }}',
+        style: {
+          fontSize: 12,
+          fontFamily: 'Arial',
+          color: '#666666',
+          align: 'right',
+          fontWeight: 'normal',
+          fontStyle: 'normal'
+        }
+      },
+      {
+        id: 'qr-code',
+        type: 'qrcode',
+        position: { x: 85, y: 75, width: 80, height: 80 },
+        content: '{{ verificationUrl }}',
+        style: {}
+      }
+    ]);
+    setSelectedElement(null);
+    setActiveTab('templates');
+  };
+
+  // Handle preview template
+  const handlePreviewTemplate = (template: CertificateTemplate) => {
+    // Load template data into the builder
+    setTemplateName(template.name);
+    setTemplateDescription(template.description || '');
+    setTemplateEventId(template.eventId || '');
+    
+    // Set template dimensions
+    if (template.dimensions) {
+      setTemplateDimensions(template.dimensions);
+    }
+    
+    // Load template image if available
+    if (template.templateImageUrl) {
+      setUploadedImage(template.templateImageUrl);
+    }
+    
+    // Load elements if it's an enhanced template
+    if (template.templateMode === 'enhanced' && template.elements) {
+      setElements(template.elements);
+    } else if (template.textPositions) {
+      // Convert legacy template to elements format
+      const convertedElements: TemplateElement[] = [];
+      
+      if (template.textPositions.recipientName) {
+        convertedElements.push({
+          id: 'recipient-name',
+          type: 'text',
+          position: template.textPositions.recipientName,
+          content: '{{ recipientName }}',
+          style: {
+            fontSize: 24,
+            fontFamily: 'Arial',
+            color: '#000000',
+            align: 'center',
+            fontWeight: 'normal',
+            fontStyle: 'normal'
+          }
+        });
+      }
+      
+      if (template.textPositions.verificationCode) {
+        convertedElements.push({
+          id: 'verification-code',
+          type: 'text',
+          position: template.textPositions.verificationCode,
+          content: '{{ verificationCode }}',
+          style: {
+            fontSize: 12,
+            fontFamily: 'Arial',
+            color: '#666666',
+            align: 'right',
+            fontWeight: 'normal',
+            fontStyle: 'normal'
+          }
+        });
+      }
+      
+      if (template.textPositions.qrCode) {
+        convertedElements.push({
+          id: 'qr-code',
+          type: 'qrcode',
+          position: {
+            x: template.textPositions.qrCode.x,
+            y: template.textPositions.qrCode.y,
+            width: 80,
+            height: 80
+          },
+          content: '{{ verificationUrl }}',
+          style: {}
+        });
+      }
+      
+      setElements(convertedElements);
+    }
+    
+    // Set editing template and switch to builder
+    setEditingTemplate(template);
+    setActiveTab('builder');
+  };
+
+  // Element management functions
+  const addElement = (type: TemplateElement['type']) => {
+    const newElement: TemplateElement = {
+      id: `element-${Date.now()}`,
+      type,
+      position: { x: 50, y: 50 },
+      content: type === 'text' ? 'Sample Text' : '{{ verificationUrl }}',
+      style: {
+        fontSize: 24,
+        fontFamily: 'Arial',
+        color: '#000000',
+        align: 'center',
+        fontWeight: 'normal',
+        fontStyle: 'normal'
+      }
+    };
+    
+    if (type === 'qrcode') {
+      newElement.position.width = 100;
+      newElement.position.height = 100;
+    }
+    
+    setElements([...elements, newElement]);
+    setSelectedElement(newElement.id);
+  };
+
+  const updateElement = (elementId: string, updates: Partial<TemplateElement>) => {
+    setElements(elements.map(el => 
+      el.id === elementId ? { ...el, ...updates } : el
+    ));
+  };
+
+  const deleteElement = (elementId: string) => {
+    setElements(elements.filter(el => el.id !== elementId));
+    setSelectedElement(null);
+  };
+
+  // Helper function to get mouse position relative to canvas
+  const getMousePosition = (event: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!canvasRef.current) return { x: 0, y: 0 };
 
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
-    const x = ((event.clientX - rect.left) / rect.width) * 100;
-    const y = ((event.clientY - rect.top) / rect.height) * 100;
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    
+    return {
+      x: (event.clientX - rect.left) * scaleX,
+      y: (event.clientY - rect.top) * scaleY
+    };
+  };
 
-    if (currentPositioning === 'name') {
-      setNamePosition(prev => ({ ...prev, x, y }));
-    } else if (currentPositioning === 'code') {
-      setCodePosition(prev => ({ ...prev, x, y }));
-    } else if (currentPositioning === 'qr') {
-      setQrPosition(prev => ({ ...prev, x, y }));
+  // Helper function to check if mouse is over element
+  const getElementAtPosition = (mouseX: number, mouseY: number) => {
+    return elements.find(element => {
+      const elementX = (element.position.x / 100) * templateDimensions.width;
+      const elementY = (element.position.y / 100) * templateDimensions.height;
+      
+      if (element.type === 'text') {
+        // Create a temporary canvas context to measure text
+        const tempCanvas = document.createElement('canvas');
+        const tempCtx = tempCanvas.getContext('2d');
+        if (!tempCtx) return false;
+        
+        const fontSize = element.style.fontSize || 16;
+        const fontFamily = element.style.fontFamily || 'Arial';
+        const fontWeight = element.style.fontWeight || 'normal';
+        const fontStyle = element.style.fontStyle || 'normal';
+        
+        tempCtx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
+        
+        let sampleText = element.content;
+        if (element.content.includes('{{')) {
+          sampleText = element.content
+            .replace(/\{\{\s*recipientName\s*\}\}/g, 'John Doe')
+            .replace(/\{\{\s*verificationCode\s*\}\}/g, 'CERT-123456')
+            .replace(/\{\{[^}]+\}\}/g, 'Sample Text');
+        }
+        
+        const textMetrics = tempCtx.measureText(sampleText);
+        const textWidth = textMetrics.width;
+        const textHeight = fontSize;
+        
+        // Adjust bounds based on text alignment
+        let textX = elementX;
+        const textY = elementY - textHeight;
+        
+        if (element.style.align === 'center') {
+          textX = elementX - textWidth / 2;
+        } else if (element.style.align === 'right') {
+          textX = elementX - textWidth;
+        }
+        
+        return mouseX >= textX && mouseX <= textX + textWidth && 
+               mouseY >= textY && mouseY <= textY + textHeight;
+               
+      } else if (element.type === 'qrcode') {
+        const size = element.position.width || 100;
+        const qrX = elementX - size/2;
+        const qrY = elementY - size/2;
+        
+        return mouseX >= qrX && mouseX <= qrX + size && 
+               mouseY >= qrY && mouseY <= qrY + size;
+      }
+      
+      return false;
+    });
+  };
+
+  const handleMouseDown = (event: React.MouseEvent<HTMLCanvasElement>) => {
+    const mousePos = getMousePosition(event);
+    const elementAtPosition = getElementAtPosition(mousePos.x, mousePos.y);
+    
+    if (elementAtPosition) {
+      setSelectedElement(elementAtPosition.id);
+      setIsDragging(true);
+      
+      // Calculate offset from element center to mouse position
+      const elementX = (elementAtPosition.position.x / 100) * templateDimensions.width;
+      const elementY = (elementAtPosition.position.y / 100) * templateDimensions.height;
+      
+      setDragOffset({
+        x: mousePos.x - elementX,
+        y: mousePos.y - elementY
+      });
+    } else {
+      setSelectedElement(null);
     }
+  };
+
+  const handleMouseMove = (event: React.MouseEvent<HTMLCanvasElement>) => {
+    const mousePos = getMousePosition(event);
+    
+    if (isDragging && selectedElement) {
+      // Calculate new element position accounting for drag offset
+      const newX = mousePos.x - dragOffset.x;
+      const newY = mousePos.y - dragOffset.y;
+      
+      // Convert to percentage
+      const percentX = (newX / templateDimensions.width) * 100;
+      const percentY = (newY / templateDimensions.height) * 100;
+      
+      // Clamp to canvas bounds
+      const clampedX = Math.max(0, Math.min(100, percentX));
+      const clampedY = Math.max(0, Math.min(100, percentY));
+      
+      updateElement(selectedElement, {
+        position: { 
+          ...elements.find(e => e.id === selectedElement)!.position, 
+          x: clampedX, 
+          y: clampedY 
+        }
+      });
+    } else {
+      // Update hover state when not dragging
+      const elementAtPosition = getElementAtPosition(mousePos.x, mousePos.y);
+      setHoveredElement(elementAtPosition?.id || null);
+    }
+  };
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
+    setDragOffset({ x: 0, y: 0 });
   };
 
   const createTemplate = async () => {
@@ -126,17 +451,15 @@ const CertificatesPage: React.FC = () => {
     try {
       setLoading(true);
       
-      // Create the template object with correct structure
+      // Create the template object with enhanced elements approach
       const templateData: Omit<CertificateTemplate, 'id' | 'createdAt' | 'updatedAt' | 'usageCount'> = {
         name: templateName,
         description: templateDescription,
         eventId: templateEventId || undefined,
-        templateImageUrl: uploadedImage, // This will be processed by the service
-        textPositions: {
-          recipientName: namePosition,
-          verificationCode: codePosition,
-          qrCode: qrPosition
-        },
+        templateImageUrl: uploadedImage,
+        dimensions: templateDimensions,
+        elements: elements,
+        templateMode: 'enhanced',
         isActive: true,
         createdBy: userProfile?.uid || 'unknown'
       };
@@ -147,13 +470,7 @@ const CertificatesPage: React.FC = () => {
       toast.success('Certificate template created successfully');
       
       // Reset form
-      setUploadedImage(null);
-      setTemplateName('');
-      setTemplateDescription('');
-      setTemplateEventId('');
-      setNamePosition({ x: 50, y: 50, fontSize: 24, fontFamily: 'Arial', color: '#000000', align: 'center' });
-      setCodePosition({ x: 80, y: 85, fontSize: 12, fontFamily: 'Arial', color: '#666666', align: 'right' });
-      setQrPosition({ x: 85, y: 75, size: 80 });
+      resetForm();
       
       // Refresh templates
       const updatedTemplates = await CertificateService.getAllTemplates();
@@ -165,6 +482,52 @@ const CertificatesPage: React.FC = () => {
     } catch (error) {
       console.error('Error creating template:', error);
       toast.error('Failed to create certificate template');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const updateTemplate = async () => {
+    if (!editingTemplate || !uploadedImage || !templateName.trim()) {
+      toast.error('Please provide a template name and upload an image');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      
+      // Create the updated template object
+      const updatedTemplateData: Omit<CertificateTemplate, 'id' | 'createdAt' | 'updatedAt' | 'usageCount'> = {
+        name: templateName,
+        description: templateDescription,
+        eventId: templateEventId || undefined,
+        templateImageUrl: uploadedImage,
+        dimensions: templateDimensions,
+        elements: elements,
+        templateMode: 'enhanced',
+        isActive: true,
+        createdBy: editingTemplate.createdBy
+      };
+
+      // Update the template
+      await CertificateService.updateTemplate(editingTemplate.id, updatedTemplateData);
+      
+      toast.success('Certificate template updated successfully');
+      
+      // Reset form and editing state
+      setEditingTemplate(null);
+      resetForm();
+      
+      // Refresh templates
+      const updatedTemplates = await CertificateService.getAllTemplates();
+      setTemplates(updatedTemplates);
+      
+      // Switch to templates tab
+      setActiveTab('templates');
+      
+    } catch (error) {
+      console.error('Error updating template:', error);
+      toast.error('Failed to update certificate template');
     } finally {
       setLoading(false);
     }
@@ -182,6 +545,7 @@ const CertificatesPage: React.FC = () => {
       toast.error('Failed to delete template');
     }
   };
+
 
   const generateCertificate = async (templateId: string, recipientData: {
     recipientName: string;
@@ -248,10 +612,10 @@ const CertificatesPage: React.FC = () => {
           ))}
         </select>
         <button
-          onClick={() => setActiveTab('upload')}
+          onClick={() => setActiveTab('builder')}
           className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors inline-flex items-center gap-2"
         >
-          <PlusIcon className="w-5 h-5" />
+          <SparklesIcon className="w-5 h-5" />
           Create Template
         </button>
       </div>
@@ -267,7 +631,7 @@ const CertificatesPage: React.FC = () => {
           <h3 className="text-lg font-medium text-gray-900 mb-2">No templates found</h3>
           <p className="text-gray-500 mb-4">Create your first certificate template to get started.</p>
           <button
-            onClick={() => setActiveTab('upload')}
+            onClick={() => setActiveTab('builder')}
             className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
           >
             Create Template
@@ -311,7 +675,7 @@ const CertificatesPage: React.FC = () => {
                 
                 <div className="flex gap-2">
                   <button
-                    onClick={() => setEditingTemplate(template)}
+                    onClick={() => handlePreviewTemplate(template)}
                     className="flex-1 px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors inline-flex items-center justify-center gap-1"
                   >
                     <EyeIcon className="w-4 h-4" />
@@ -447,13 +811,20 @@ const CertificatesPage: React.FC = () => {
     </div>
   );
 
-  const renderUploadTab = () => (
-    <div className="max-w-4xl mx-auto">
+  const renderBuilderTab = () => {
+    const selectedElementData = selectedElement ? elements.find(el => el.id === selectedElement) : null;
+    
+    return (
+    <div className="max-w-7xl mx-auto">
       <div className="bg-white rounded-lg shadow-md border border-gray-200 p-6">
-        <h2 className="text-xl font-semibold text-gray-900 mb-6">Create Certificate Template</h2>
+        <h2 className="text-xl font-semibold text-gray-900 mb-6">
+          {editingTemplate ? 'Edit Certificate Template' : 'Create Certificate Template'}
+        </h2>
         
+        <div className="space-y-8">
+          {/* Template Information Section */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Form Section */}
+            {/* Basic Info */}
           <div className="space-y-6">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -523,186 +894,279 @@ const CertificatesPage: React.FC = () => {
               />
             </div>
 
-            {/* Position Controls */}
-            {uploadedImage && (
-              <div className="border-t pt-6">
-                <h3 className="text-lg font-medium text-gray-900 mb-4">Position Elements</h3>
-                
-                <div className="space-y-4">
-                  <div className="flex items-center gap-2">
+            {/* Template Dimensions */}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Width (px)</label>
+                <input
+                  type="number"
+                  value={templateDimensions.width}
+                  readOnly
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-600"
+                  placeholder="Upload image to auto-detect"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Height (px)</label>
+                <input
+                  type="number"
+                  value={templateDimensions.height}
+                  readOnly
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-600"
+                  placeholder="Upload image to auto-detect"
+                />
+              </div>
+            </div>
+            </div>
+
+            {/* Template Elements Section */}
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-medium text-gray-900">Template Elements</h3>
+                <div className="flex gap-2">
                     <button
-                      onClick={() => {
-                        setPositioningMode(true);
-                        setCurrentPositioning('name');
-                      }}
-                      className={`px-3 py-2 text-sm rounded-lg border ${
-                        currentPositioning === 'name' 
-                          ? 'bg-blue-100 border-blue-300 text-blue-700' 
-                          : 'bg-gray-100 border-gray-300 text-gray-700'
-                      }`}
-                    >
-                      <MapPinIcon className="w-4 h-4 inline mr-1" />
-                      Position Name
+                    onClick={() => addElement('text')}
+                    className="px-3 py-1 text-sm bg-blue-100 text-blue-700 rounded hover:bg-blue-200 transition-colors flex items-center gap-1"
+                  >
+                    <DocumentTextIcon className="w-4 h-4" />
+                    Add Text
                     </button>
-                    <span className="text-sm text-gray-500">
-                      Current: {namePosition.x.toFixed(1)}%, {namePosition.y.toFixed(1)}%
-                    </span>
+                    <button
+                    onClick={() => addElement('qrcode')}
+                    className="px-3 py-1 text-sm bg-green-100 text-green-700 rounded hover:bg-green-200 transition-colors flex items-center gap-1"
+                  >
+                    <QrCodeIcon className="w-4 h-4" />
+                    Add QR Code
+                    </button>
+                </div>
                   </div>
 
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {elements.map(element => (
+                  <div
+                    key={element.id}
+                    className={`p-3 border rounded-lg cursor-pointer transition-colors ${
+                      selectedElement === element.id
+                        ? 'border-blue-500 bg-blue-50'
+                        : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                    onClick={() => setSelectedElement(element.id)}
+                  >
+                    <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
+                        {element.type === 'text' && <DocumentTextIcon className="w-4 h-4 text-blue-500" />}
+                        {element.type === 'qrcode' && <QrCodeIcon className="w-4 h-4 text-green-500" />}
+                        <span className="text-sm font-medium capitalize">{element.type}</span>
+                      </div>
                     <button
-                      onClick={() => {
-                        setPositioningMode(true);
-                        setCurrentPositioning('code');
-                      }}
-                      className={`px-3 py-2 text-sm rounded-lg border ${
-                        currentPositioning === 'code' 
-                          ? 'bg-blue-100 border-blue-300 text-blue-700' 
-                          : 'bg-gray-100 border-gray-300 text-gray-700'
-                      }`}
-                    >
-                      <DocumentTextIcon className="w-4 h-4 inline mr-1" />
-                      Position Code
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteElement(element.id);
+                        }}
+                        className="p-1 text-red-500 hover:bg-red-100 rounded"
+                      >
+                        <TrashIcon className="w-4 h-4" />
                     </button>
-                    <span className="text-sm text-gray-500">
-                      Current: {codePosition.x.toFixed(1)}%, {codePosition.y.toFixed(1)}%
-                    </span>
                   </div>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => {
-                        setPositioningMode(true);
-                        setCurrentPositioning('qr');
-                      }}
-                      className={`px-3 py-2 text-sm rounded-lg border ${
-                        currentPositioning === 'qr' 
-                          ? 'bg-blue-100 border-blue-300 text-blue-700' 
-                          : 'bg-gray-100 border-gray-300 text-gray-700'
-                      }`}
-                    >
-                      <QrCodeIcon className="w-4 h-4 inline mr-1" />
-                      Position QR Code
-                    </button>
-                    <span className="text-sm text-gray-500">
-                      Current: {qrPosition.x.toFixed(1)}%, {qrPosition.y.toFixed(1)}%
-                    </span>
+                    <p className="text-xs text-gray-500 mt-1 truncate">
+                      {element.content || `${element.type} element`}
+                    </p>
                   </div>
+                ))}
                 </div>
 
-                {positioningMode && (
-                  <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                    <p className="text-sm text-blue-700">
-                      Click on the template preview to position the {currentPositioning} element.
-                    </p>
-                    <button
-                      onClick={() => {
-                        setPositioningMode(false);
-                        setCurrentPositioning(null);
-                      }}
-                      className="mt-2 px-3 py-1 text-sm bg-blue-100 text-blue-700 rounded border border-blue-300 hover:bg-blue-200"
-                    >
-                      Done Positioning
-                    </button>
+              {/* Element Properties */}
+              {selectedElementData && (
+                <div className="border-t pt-4">
+                  <h4 className="font-medium text-gray-900 mb-3">Element Properties</h4>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Content</label>
+                      <textarea
+                        value={selectedElementData.content}
+                        onChange={(e) => updateElement(selectedElement!, { content: e.target.value })}
+                        rows={2}
+                        className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-transparent"
+                        placeholder="Enter content or template variables like {{ recipientName }}"
+                      />
                   </div>
-                )}
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">X Position (%)</label>
+                        <input
+                          type="number"
+                          value={selectedElementData.position.x}
+                          onChange={(e) => updateElement(selectedElement!, { 
+                            position: { ...selectedElementData.position, x: parseFloat(e.target.value) || 0 }
+                          })}
+                          className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-transparent"
+                        />
+              </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">Y Position (%)</label>
+                        <input
+                          type="number"
+                          value={selectedElementData.position.y}
+                          onChange={(e) => updateElement(selectedElement!, { 
+                            position: { ...selectedElementData.position, y: parseFloat(e.target.value) || 0 }
+                          })}
+                          className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-transparent"
+                        />
+                      </div>
+                    </div>
+
+                    {selectedElementData.type === 'text' && (
+                      <>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="block text-xs font-medium text-gray-700 mb-1">Font Size</label>
+                            <input
+                              type="number"
+                              value={selectedElementData.style.fontSize || 16}
+                              onChange={(e) => updateElement(selectedElement!, { 
+                                style: { ...selectedElementData.style, fontSize: parseInt(e.target.value) || 16 }
+                              })}
+                              className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-transparent"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-gray-700 mb-1">Color</label>
+                            <input
+                              type="color"
+                              value={selectedElementData.style.color || '#000000'}
+                              onChange={(e) => updateElement(selectedElement!, { 
+                                style: { ...selectedElementData.style, color: e.target.value }
+                              })}
+                              className="w-full h-8 border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-transparent"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">Font Family</label>
+                          <select
+                            value={selectedElementData.style.fontFamily || 'Arial'}
+                            onChange={(e) => updateElement(selectedElement!, { 
+                              style: { ...selectedElementData.style, fontFamily: e.target.value }
+                            })}
+                            className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-transparent"
+                          >
+                            <option value="Arial">Arial</option>
+                            <option value="Times New Roman">Times New Roman</option>
+                            <option value="Helvetica">Helvetica</option>
+                            <option value="Georgia">Georgia</option>
+                            <option value="Verdana">Verdana</option>
+                          </select>
+                  </div>
+
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">Text Align</label>
+                          <select
+                            value={selectedElementData.style.align || 'left'}
+                            onChange={(e) => updateElement(selectedElement!, { 
+                              style: { ...selectedElementData.style, align: e.target.value as 'left' | 'center' | 'right' }
+                            })}
+                            className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-transparent"
+                          >
+                            <option value="left">Left</option>
+                            <option value="center">Center</option>
+                            <option value="right">Right</option>
+                          </select>
+                        </div>
+                      </>
+                    )}
+
+                    {selectedElementData.type === 'qrcode' && (
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">Size (px)</label>
+                        <input
+                          type="number"
+                          value={selectedElementData.position.width || 100}
+                          onChange={(e) => {
+                            const size = parseInt(e.target.value) || 100;
+                            updateElement(selectedElement!, { 
+                              position: { ...selectedElementData.position, width: size, height: size }
+                            });
+                          }}
+                          className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-transparent"
+                        />
               </div>
             )}
-
-            {/* Create Button */}
-            <div className="flex gap-3">
-              <button
-                onClick={createTemplate}
-                disabled={loading || !uploadedImage || !templateName.trim()}
-                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
-              >
-                {loading ? 'Creating...' : 'Create Template'}
-              </button>
-              <button
-                onClick={() => setActiveTab('templates')}
-                className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-
-          {/* Preview Section */}
-          <div>
-            <h3 className="text-lg font-medium text-gray-900 mb-4">Preview</h3>
-            <div className="border border-gray-300 rounded-lg p-4 bg-gray-50">
-              {uploadedImage ? (
-                <div className="relative">
-                  <canvas
-                    ref={canvasRef}
-                    onClick={handleCanvasClick}
-                    className={`w-full border border-gray-200 rounded bg-white ${
-                      positioningMode ? 'cursor-crosshair' : 'cursor-default'
-                    }`}
-                    style={{ aspectRatio: '4/3' }}
-                  />
-                  
-                  {/* Overlay elements for positioning */}
-                  <div className="absolute inset-0">
-                    {/* Name position indicator */}
-                    <div
-                      className="absolute w-2 h-2 bg-red-500 rounded-full transform -translate-x-1 -translate-y-1"
-                      style={{
-                        left: `${namePosition.x}%`,
-                        top: `${namePosition.y}%`
-                      }}
-                    />
-                    
-                    {/* Code position indicator */}
-                    <div
-                      className="absolute w-2 h-2 bg-green-500 rounded-full transform -translate-x-1 -translate-y-1"
-                      style={{
-                        left: `${codePosition.x}%`,
-                        top: `${codePosition.y}%`
-                      }}
-                    />
-                    
-                    {/* QR position indicator */}
-                    <div
-                      className="absolute w-2 h-2 bg-blue-500 rounded-full transform -translate-x-1 -translate-y-1"
-                      style={{
-                        left: `${qrPosition.x}%`,
-                        top: `${qrPosition.y}%`
-                      }}
-                    />
-                  </div>
-                </div>
-              ) : (
-                <div className="w-full h-48 bg-gray-200 rounded flex items-center justify-center">
-                  <div className="text-center">
-                    <PhotoIcon className="w-12 h-12 text-gray-400 mx-auto mb-2" />
-                    <p className="text-sm text-gray-500">Upload an image to see preview</p>
                   </div>
                 </div>
               )}
             </div>
-            
-            {uploadedImage && (
-              <div className="mt-4 space-y-2 text-sm">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-red-500 rounded-full"></div>
-                  <span>Name Position</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-green-500 rounded-full"></div>
-                  <span>Code Position</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
-                  <span>QR Code Position</span>
-                </div>
-              </div>
-            )}
           </div>
+
+          {/* Template Preview Section */}
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-medium text-gray-900">Template Preview</h3>
+              {uploadedImage && (
+                <div className="text-sm text-gray-500">
+                  {templateDimensions.width} × {templateDimensions.height} pixels
+                </div>
+              )}
+            </div>
+            <div className="border border-gray-300 rounded-lg p-6 bg-gray-50">
+              {uploadedImage ? (
+                <div className="relative">
+                  <canvas
+                    ref={canvasRef}
+                    onMouseDown={handleMouseDown}
+                    onMouseMove={handleMouseMove}
+                    onMouseUp={handleMouseUp}
+                    onMouseLeave={handleMouseUp}
+                    className={`w-full max-w-4xl mx-auto border border-gray-200 rounded bg-white shadow-lg ${
+                      isDragging ? 'cursor-grabbing' : hoveredElement ? 'cursor-grab' : 'cursor-default'
+                    }`}
+                      style={{
+                      aspectRatio: `${templateDimensions.width}/${templateDimensions.height}`,
+                      maxHeight: '600px'
+                    }}
+                  />
+                  
+                </div>
+              ) : (
+                <div className="w-full h-96 bg-gray-200 rounded flex items-center justify-center">
+                  <div className="text-center">
+                    <PhotoIcon className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+                    <p className="text-lg text-gray-500 mb-2">Upload a template image to start building</p>
+                    <p className="text-sm text-gray-400">The canvas will automatically resize to match your image dimensions</p>
+                  </div>
+                </div>
+              )}
+            </div>
+            </div>
+            
+          {/* Create/Update Button */}
+          <div className="flex gap-3">
+            <button
+              onClick={editingTemplate ? updateTemplate : createTemplate}
+              disabled={loading || !uploadedImage || !templateName.trim()}
+              className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+            >
+              {loading 
+                ? (editingTemplate ? 'Updating...' : 'Creating...') 
+                : (editingTemplate ? 'Update Template' : 'Create Template')
+              }
+            </button>
+            <button
+              onClick={() => {
+                setEditingTemplate(null);
+                resetForm();
+              }}
+              className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition-colors"
+            >
+              Cancel
+            </button>
+                </div>
         </div>
       </div>
     </div>
   );
+  };
 
   // Render canvas for template preview
   useEffect(() => {
@@ -713,54 +1177,121 @@ const CertificatesPage: React.FC = () => {
 
       const img = new Image();
       img.onload = () => {
-        // Set canvas size to match aspect ratio
-        const containerWidth = canvas.offsetWidth;
-        const aspectRatio = img.width / img.height;
-        const containerHeight = containerWidth / aspectRatio;
-        
-        canvas.width = img.width;
-        canvas.height = img.height;
-        canvas.style.width = `${containerWidth}px`;
-        canvas.style.height = `${containerHeight}px`;
+        // Set canvas size to template dimensions
+        canvas.width = templateDimensions.width;
+        canvas.height = templateDimensions.height;
         
         // Clear and draw image
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(img, 0, 0);
         
-        // Draw sample text and elements
-        const canvasWidth = canvas.width;
-        const canvasHeight = canvas.height;
-        
-        // Draw name
-        ctx.font = `${(namePosition.fontSize / 100) * canvasHeight}px ${namePosition.fontFamily}`;
-        ctx.fillStyle = namePosition.color;
-        ctx.textAlign = namePosition.align;
-        const nameX = (namePosition.x / 100) * canvasWidth;
-        const nameY = (namePosition.y / 100) * canvasHeight;
-        ctx.fillText('John Doe', nameX, nameY);
-        
-        // Draw verification code
-        ctx.font = `${(codePosition.fontSize / 100) * canvasHeight}px ${codePosition.fontFamily}`;
-        ctx.fillStyle = codePosition.color;
-        ctx.textAlign = codePosition.align;
-        const codeX = (codePosition.x / 100) * canvasWidth;
-        const codeY = (codePosition.y / 100) * canvasHeight;
-        ctx.fillText('CERT-1234567890', codeX, codeY);
-        
+        // Draw elements
+        elements.forEach(element => {
+          const x = (element.position.x / 100) * canvas.width;
+          const y = (element.position.y / 100) * canvas.height;
+          
+          ctx.save();
+
+          switch (element.type) {
+            case 'text':
+              // Set font properties
+              const fontSize = element.style.fontSize || 16;
+              const fontFamily = element.style.fontFamily || 'Arial';
+              const fontWeight = element.style.fontWeight || 'normal';
+              const fontStyle = element.style.fontStyle || 'normal';
+              
+              ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
+              ctx.fillStyle = element.style.color || '#000000';
+              ctx.textAlign = element.style.align || 'left';
+              
+              // Draw sample text with specific replacements
+              let sampleText = element.content;
+              if (element.content.includes('{{')) {
+                sampleText = element.content
+                  .replace(/\{\{\s*recipientName\s*\}\}/g, 'John Doe')
+                  .replace(/\{\{\s*verificationCode\s*\}\}/g, 'CERT-123456')
+                  .replace(/\{\{[^}]+\}\}/g, 'Sample Text'); // fallback for other variables
+              }
+              ctx.fillText(sampleText, x, y);
+              break;
+              
+            case 'qrcode':
         // Draw QR code placeholder
-        const qrSize = (qrPosition.size / 100) * Math.min(canvasWidth, canvasHeight);
-        const qrX = (qrPosition.x / 100) * canvasWidth - qrSize / 2;
-        const qrY = (qrPosition.y / 100) * canvasHeight - qrSize / 2;
+              const size = element.position.width || 100;
         ctx.fillStyle = '#000000';
-        ctx.fillRect(qrX, qrY, qrSize, qrSize);
+              ctx.fillRect(x - size/2, y - size/2, size, size);
         ctx.fillStyle = '#ffffff';
-        ctx.fillRect(qrX + qrSize * 0.1, qrY + qrSize * 0.1, qrSize * 0.8, qrSize * 0.8);
-        ctx.fillStyle = '#000000';
-        ctx.fillRect(qrX + qrSize * 0.2, qrY + qrSize * 0.2, qrSize * 0.6, qrSize * 0.6);
+              ctx.fillRect(x - size/2 + 10, y - size/2 + 10, size - 20, size - 20);
+              break;
+          }
+          
+          // Draw selection and hover indicators
+          const isSelected = selectedElement === element.id;
+          const isHovered = hoveredElement === element.id;
+          
+          if (isSelected || isHovered) {
+            let bounds = { x, y, width: 100, height: 30 };
+            
+            if (element.type === 'text') {
+              // Calculate text bounds based on actual text metrics
+              let sampleText = element.content;
+              if (element.content.includes('{{')) {
+                sampleText = element.content
+                  .replace(/\{\{\s*recipientName\s*\}\}/g, 'John Doe')
+                  .replace(/\{\{\s*verificationCode\s*\}\}/g, 'CERT-123456')
+                  .replace(/\{\{[^}]+\}\}/g, 'Sample Text');
+              }
+              
+              const fontSize = element.style.fontSize || 16;
+              const textMetrics = ctx.measureText(sampleText);
+              const textWidth = textMetrics.width;
+              const textHeight = fontSize;
+              
+              // Adjust bounds based on text alignment
+              let textX = x;
+              const textY = y - textHeight; // Text is drawn from baseline, so adjust for height
+              
+              if (element.style.align === 'center') {
+                textX = x - textWidth / 2;
+              } else if (element.style.align === 'right') {
+                textX = x - textWidth;
+              }
+              
+              bounds = { 
+                x: textX, 
+                y: textY, 
+                width: textWidth, 
+                height: textHeight 
+              };
+            } else if (element.type === 'qrcode') {
+              const size = element.position.width || 100;
+              bounds = { x: x - size/2, y: y - size/2, width: size, height: size };
+            }
+            
+            if (isSelected) {
+              // Selected element - solid blue border
+              ctx.strokeStyle = '#3b82f6';
+              ctx.lineWidth = 2;
+              ctx.setLineDash([5, 5]);
+              ctx.strokeRect(bounds.x - 5, bounds.y - 5, bounds.width + 10, bounds.height + 10);
+              ctx.setLineDash([]);
+            } else if (isHovered) {
+              // Hovered element - lighter blue border
+              ctx.strokeStyle = '#93c5fd';
+              ctx.lineWidth = 1;
+              ctx.setLineDash([3, 3]);
+              ctx.strokeRect(bounds.x - 3, bounds.y - 3, bounds.width + 6, bounds.height + 6);
+              ctx.setLineDash([]);
+            }
+          }
+          
+          ctx.restore();
+        });
+        
       };
       img.src = uploadedImage;
     }
-  }, [uploadedImage, namePosition, codePosition, qrPosition]);
+  }, [uploadedImage, elements, selectedElement, hoveredElement, templateDimensions]);
 
   return (
     <LayoutComponent>
@@ -799,15 +1330,15 @@ const CertificatesPage: React.FC = () => {
               Issued Certificates ({issuedCertificates.length})
             </button>
             <button
-              onClick={() => setActiveTab('upload')}
+              onClick={() => setActiveTab('builder')}
               className={`py-2 px-1 border-b-2 font-medium text-sm ${
-                activeTab === 'upload'
+                activeTab === 'builder'
                   ? 'border-blue-500 text-blue-600'
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
               }`}
             >
-              <CloudArrowUpIcon className="w-5 h-5 inline mr-2" />
-              Create Template
+              <SparklesIcon className="w-5 h-5 inline mr-2" />
+              Template Builder
             </button>
           </nav>
         </div>
@@ -815,7 +1346,7 @@ const CertificatesPage: React.FC = () => {
         {/* Tab Content */}
         {activeTab === 'templates' && renderTemplatesTab()}
         {activeTab === 'issued' && renderIssuedTab()}
-        {activeTab === 'upload' && renderUploadTab()}
+        {activeTab === 'builder' && renderBuilderTab()}
       </div>
     </LayoutComponent>
   );

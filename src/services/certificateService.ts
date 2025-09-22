@@ -100,6 +100,7 @@ export class CertificateService {
       const template: Omit<CertificateTemplate, 'id'> = {
         ...templateData,
         templateImageUrl: templateImageUrl || '',
+        dimensions: templateData.dimensions || { width: 1200, height: 800 },
         usageCount: 0,
         createdAt: serverTimestamp() as any,
         updatedAt: serverTimestamp() as any

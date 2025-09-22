@@ -112,6 +112,10 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **💬 Discussions**: [GitHub Discussions](https://github.com/gdgdavao/apohub/discussions)
 - **🎯 GDG Davao**: Join our local meetups and events
 
+
+## Special Mentions
+- [DICE ImaGen](https://github.com/dicedvo/imagen) - Certificate Builder
+
 ---
 
 **Built with ❤️ by the GDG Davao community**
