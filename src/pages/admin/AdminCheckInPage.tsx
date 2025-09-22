@@ -230,6 +230,7 @@ const AdminCheckInPage: React.FC = () => {
   } | null>(null);
   const [currentEvent, setCurrentEvent] = useState<Event | null>(null);
   const [events, setEvents] = useState<Event[]>([]);
+  const [activeTab, setActiveTab] = useState<'ready' | 'checkedIn'>('ready');
   
   // Force check-in modal state
   const [forceCheckInModal, setForceCheckInModal] = useState<{
@@ -291,6 +292,8 @@ const AdminCheckInPage: React.FC = () => {
           mappedStatus = 'attended';
         } else if (registrationStatus === 'approved' || rawPaymentStatus === 'paid') {
           mappedStatus = 'approved';
+        } else if (registrationStatus === 'cancelled' || attendanceStatus === 'cancelled') {
+          mappedStatus = 'cancelled';
         }
         
         console.log('Mapped status:', { registrationStatus, rawPaymentStatus, attendanceStatus, mappedStatus }); // Debug log
@@ -483,7 +486,7 @@ const AdminCheckInPage: React.FC = () => {
       // Update registration status to attended
       const registrationRef = doc(db, 'registrations', registration.id);
       await updateDoc(registrationRef, {
-        status: 'attended',
+        attendanceStatus: 'checked-in',
         checkedInAt: serverTimestamp(),
         checkedInBy: userProfile?.uid || 'admin'
       });
@@ -492,6 +495,9 @@ const AdminCheckInPage: React.FC = () => {
       setRegistrations(prev => prev.map(r => 
         r.id === registration.id ? { ...r, status: 'attended' as const } : r
       ));
+
+      // Switch to checked-in tab to show the result
+      setActiveTab('checkedIn');
 
       setCheckinResult({
         success: true,
@@ -571,7 +577,7 @@ const AdminCheckInPage: React.FC = () => {
 
       const registrationRef = doc(db, 'registrations', registration.id);
       await updateDoc(registrationRef, {
-        status: 'attended',
+        attendanceStatus: 'checked-in',
         checkedInAt: serverTimestamp(),
         checkedInBy: userProfile?.uid || 'admin'
       });
@@ -580,6 +586,9 @@ const AdminCheckInPage: React.FC = () => {
       setRegistrations(prev => prev.map(r => 
         r.id === registrationId ? { ...r, status: 'attended' as const } : r
       ));
+
+      // Switch to checked-in tab to show the result
+      setActiveTab('checkedIn');
 
       setCheckinResult({
         success: true,
@@ -816,84 +825,142 @@ const AdminCheckInPage: React.FC = () => {
           </div>
         )}
 
-        {/* Attendees Ready for Check-in */}
-        <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex-1">
-              <h3 className="text-lg font-semibold text-gray-900">Attendees Ready for Check-in</h3>
-              {(() => {
-                const dateStatus = getEventDateStatus(currentEvent);
-                if (dateStatus && !dateStatus.canCheckIn) {
-                  return (
-                    <p className="text-sm text-amber-600 mt-1 flex items-center">
-                      <ExclamationTriangleIcon className="w-4 h-4 mr-1" />
-                      {dateStatus.message} - Check-ins should be verified
-                    </p>
-                  );
-                }
-                return null;
-              })()}
-            </div>
-            <span className="text-sm text-gray-500">{readyForCheckin.length} ready</span>
+        {/* Attendees Management Tabs */}
+        <div className="bg-white rounded-xl border border-gray-200">
+          {/* Tab Navigation */}
+          <div className="border-b border-gray-200">
+            <nav className="flex space-x-8 px-6">
+              <button
+                onClick={() => setActiveTab('ready')}
+                className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'ready'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Ready for Check-in
+                <span className="ml-2 py-0.5 px-2 rounded-full text-xs bg-blue-100 text-blue-800">
+                  {readyForCheckin.length}
+                </span>
+              </button>
+              <button
+                onClick={() => setActiveTab('checkedIn')}
+                className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'checkedIn'
+                    ? 'border-green-500 text-green-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Checked In
+                <span className="ml-2 py-0.5 px-2 rounded-full text-xs bg-green-100 text-green-800">
+                  {checkedIn.length}
+                </span>
+              </button>
+            </nav>
           </div>
-          
-          {readyForCheckin.length === 0 ? (
-            <div className="text-center py-8">
-              <UserGroupIcon className="mx-auto h-12 w-12 text-gray-400" />
-              <h3 className="mt-2 text-sm font-medium text-gray-900">No attendees ready for check-in</h3>
-              <p className="mt-1 text-sm text-gray-500">
-                All approved and paid attendees have been checked in.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-3 max-h-96 overflow-y-auto">
-              {readyForCheckin.map((registration) => (
-                <div key={registration.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                  <div className="flex items-center space-x-3">
-                    <div className="h-10 w-10 bg-blue-100 rounded-full flex items-center justify-center">
-                      <span className="text-sm font-medium text-blue-600">
-                        {registration.attendee.name.charAt(0).toUpperCase()}
-                      </span>
-                    </div>
-                    <div>
-                      <p className="font-medium text-gray-900">{registration.attendee.name}</p>
-                      <p className="text-sm text-gray-500">{registration.attendee.email}</p>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => handleManualCheckin(registration.id)}
-                    className="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors"
-                  >
-                    Check In
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
 
-        {/* Recently Checked In */}
-        {checkedIn.length > 0 && (
-          <div className="bg-white rounded-xl border border-gray-200 p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Recently Checked In</h3>
-            <div className="space-y-3 max-h-96 overflow-y-auto">
-              {checkedIn.slice(0, 10).map((registration) => (
-                <div key={registration.id} className="flex items-center justify-between p-4 bg-green-50 rounded-lg">
-                  <div className="flex items-center space-x-3">
-                    <div className="h-10 w-10 bg-green-100 rounded-full flex items-center justify-center">
-                      <CheckIcon className="h-5 w-5 text-green-600" />
-                    </div>
-                    <div>
-                      <p className="font-medium text-gray-900">{registration.attendee.name}</p>
-                      <p className="text-sm text-gray-500">{registration.attendee.email}</p>
-                    </div>
+          {/* Tab Content */}
+          <div className="p-6">
+            {activeTab === 'ready' ? (
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex-1">
+                    <h3 className="text-lg font-semibold text-gray-900">Attendees Ready for Check-in</h3>
+                    {(() => {
+                      const dateStatus = getEventDateStatus(currentEvent);
+                      if (dateStatus && !dateStatus.canCheckIn) {
+                        return (
+                          <p className="text-sm text-amber-600 mt-1 flex items-center">
+                            <ExclamationTriangleIcon className="w-4 h-4 mr-1" />
+                            {dateStatus.message} - Check-ins should be verified
+                          </p>
+                        );
+                      }
+                      return null;
+                    })()}
                   </div>
-                  <span className="text-sm text-green-600 font-medium">✓ Checked In</span>
                 </div>
-              ))}
-            </div>
+                
+                {readyForCheckin.length === 0 ? (
+                  <div className="text-center py-8">
+                    <UserGroupIcon className="mx-auto h-12 w-12 text-gray-400" />
+                    <h3 className="mt-2 text-sm font-medium text-gray-900">No attendees ready for check-in</h3>
+                    <p className="mt-1 text-sm text-gray-500">
+                      All approved and paid attendees have been checked in.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-3 max-h-96 overflow-y-auto">
+                    {readyForCheckin.map((registration) => (
+                      <div key={registration.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                        <div className="flex items-center space-x-3">
+                          <div className="h-10 w-10 bg-blue-100 rounded-full flex items-center justify-center">
+                            <span className="text-sm font-medium text-blue-600">
+                              {registration.attendee.name.charAt(0).toUpperCase()}
+                            </span>
+                          </div>
+                          <div>
+                            <p className="font-medium text-gray-900">{registration.attendee.name}</p>
+                            <p className="text-sm text-gray-500">{registration.attendee.email}</p>
+                            {registration.attendee.organization && (
+                              <p className="text-xs text-gray-400">{registration.attendee.organization}</p>
+                            )}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => handleManualCheckin(registration.id)}
+                          className="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors"
+                        >
+                          Check In
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-gray-900">Checked In Attendees</h3>
+                  <p className="text-sm text-gray-500">{checkedIn.length} checked in</p>
+                </div>
+                
+                {checkedIn.length === 0 ? (
+                  <div className="text-center py-8">
+                    <CheckCircleIcon className="mx-auto h-12 w-12 text-gray-400" />
+                    <h3 className="mt-2 text-sm font-medium text-gray-900">No attendees checked in yet</h3>
+                    <p className="mt-1 text-sm text-gray-500">
+                      Checked in attendees will appear here.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-3 max-h-96 overflow-y-auto">
+                    {checkedIn.map((registration) => (
+                      <div key={registration.id} className="flex items-center justify-between p-4 bg-green-50 rounded-lg">
+                        <div className="flex items-center space-x-3">
+                          <div className="h-10 w-10 bg-green-100 rounded-full flex items-center justify-center">
+                            <CheckIcon className="h-5 w-5 text-green-600" />
+                          </div>
+                          <div>
+                            <p className="font-medium text-gray-900">{registration.attendee.name}</p>
+                            <p className="text-sm text-gray-500">{registration.attendee.email}</p>
+                            {registration.attendee.organization && (
+                              <p className="text-xs text-gray-400">{registration.attendee.organization}</p>
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-sm text-green-600 font-medium">✓ Checked In</span>
+                          <p className="text-xs text-gray-500">Just now</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </div>
 
       {/* Force Check-In Modal */}
