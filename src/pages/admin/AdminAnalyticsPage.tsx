@@ -11,29 +11,71 @@ import {
   ArrowLeftIcon,
   ArrowTrendingUpIcon,
   ArrowTrendingDownIcon,
-  SparklesIcon,
   EyeIcon,
   DocumentChartBarIcon,
   AdjustmentsHorizontalIcon
 } from '@heroicons/react/24/outline';
-import { AnalyticsService } from '../../../services/analyticsService';
-import { EventService } from '../../../services/eventService';
-import { RegistrationService } from '../../../services/registrationService';
-import { Event } from '../../../types';
-import { EventStats } from '../../../services/analyticsService';
-import AdminLayout from '../AdminLayout';
-import LoadingSpinner from '../../shared/UI/LoadingSpinner';
-import { useAuth } from '../../../contexts/AuthContext';
+import { AnalyticsService, DashboardStats } from '../../services/analyticsService';
+import { EventService } from '../../services/eventService';
+import { RegistrationService } from '../../services/registrationService';
+import { Event } from '../../types';
+import { EventStats } from '../../services/analyticsService';
+import AdminLayout from '../../components/admin/AdminLayout';
+import LoadingSpinner from '../../components/shared/UI/LoadingSpinner';
+import { useAuth } from '../../contexts/AuthContext';
 import toast from 'react-hot-toast';
-import { aiService } from '../../../services/aiService';
-import ReactMarkdown from 'react-markdown';
-import ConfirmationModal from '../../shared/UI/ConfirmationModal';
+// AI imports removed
 
 interface AnalyticsPageProps {
   isEventSpecific?: boolean;
 }
 
-const AnalyticsPage: React.FC<AnalyticsPageProps> = ({ isEventSpecific = false }) => {
+// Simple inline bar chart (SVG) to avoid external dependencies
+const SimpleBarChart: React.FC<{ data: Array<any>; xKey: string; yKey: string; color?: string; height?: number; formatYAxis?: (v: number)=>string }>
+  = ({ data, xKey, yKey, color = '#3b82f6', height = 200, formatYAxis }) => {
+  const width = Math.max(600, 18 * (data?.length || 0) + 80);
+  const padding = { top: 10, right: 10, bottom: 40, left: 48 };
+  const innerW = width - padding.left - padding.right;
+  const innerH = height - padding.top - padding.bottom;
+  const values = data.map(d => Number(d[yKey]) || 0);
+  const maxVal = Math.max(1, ...values);
+  const gap = 2;
+  const barW = data.length > 0 ? Math.max(6, innerW / data.length - gap) : innerW;
+  const yScale = (v: number) => innerH - (v / maxVal) * innerH;
+  const ticks = 4;
+  const yTicks = Array.from({length: ticks + 1}, (_, i) => Math.round((maxVal / ticks) * i));
+  const labelStep = Math.max(1, Math.ceil((data.length || 1) / 8));
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} className="w-full">
+      <g transform={`translate(${padding.left},${padding.top})`}>
+        {yTicks.map((t, i) => (
+          <g key={i}>
+            <line x1={0} x2={innerW} y1={yScale(t)} y2={yScale(t)} stroke="#e5e7eb" strokeWidth={1} />
+            <text x={-8} y={yScale(t)} textAnchor="end" dominantBaseline="middle" fontSize={10} fill="#6b7280">
+              {formatYAxis ? formatYAxis(t) : t}
+            </text>
+          </g>
+        ))}
+        {data.map((d, i) => (
+          <g key={i} transform={`translate(${i * (barW + gap)},0)`}>
+            <rect x={0} y={yScale(Number(d[yKey]) || 0)} width={barW} height={innerH - yScale(Number(d[yKey]) || 0)} fill={color} rx={3}>
+              <title>{`${String(d[xKey])}: ${formatYAxis ? formatYAxis(Number(d[yKey])||0) : Number(d[yKey])||0}`}</title>
+            </rect>
+          </g>
+        ))}
+        {data.map((d, i) => (
+          i % labelStep === 0 ? (
+            <text key={`x-${i}`} transform={`translate(${i * (barW + gap) + barW / 2},${innerH + 28}) rotate(-35)`} textAnchor="end" fontSize={9} fill="#6b7280">
+              {String(d[xKey]).slice(5)}
+            </text>
+          ) : null
+        ))}
+      </g>
+    </svg>
+  );
+};
+
+const AdminAnalyticsPage: React.FC<AnalyticsPageProps> = ({ isEventSpecific = false }) => {
   const { eventId: paramEventId } = useParams<{ eventId: string }>();
   const [searchParams] = useSearchParams();
   const queryEventId = searchParams.get('eventId');
@@ -45,44 +87,45 @@ const AnalyticsPage: React.FC<AnalyticsPageProps> = ({ isEventSpecific = false }
   const [event, setEvent] = useState<Event | null>(null);
   const [stats, setStats] = useState<EventStats | null>(null);
   const [registrations, setRegistrations] = useState<any[]>([]);
+  const [dashboard, setDashboard] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedTimeRange, setSelectedTimeRange] = useState('3m');
   const [selectedMetric, setSelectedMetric] = useState('all');
-  const [aiInsights, setAiInsights] = useState<{
-    performance: string;
-    recommendations: string[];
-    trends: string[];
-  }>({
-    performance: '',
-    recommendations: [],
-    trends: []
-  });
-    const [aiLoading, setAiLoading] = useState(false);
-  const [showCacheModal, setShowCacheModal] = useState(false);
+  const [registrationsByDate, setRegistrationsByDate] = useState<Array<{ date: string; count: number }>>([]);
+  const [revenueByDate, setRevenueByDate] = useState<Array<{ date: string; amount: number }>>([]);
 
-  // Cache key for persisting AI insights across page navigation
-  const INSIGHTS_CACHE_KEY = 'apohub_ai_insights_cache';
-
-  // Load cached AI insights on component mount
-  useEffect(() => {
-    const cachedInsights = localStorage.getItem(INSIGHTS_CACHE_KEY);
-    if (cachedInsights) {
-      try {
-        const parsedInsights = JSON.parse(cachedInsights);
-        setAiInsights(parsedInsights);
-      } catch (error) {
-        console.warn('Error parsing cached AI insights:', error);
-      }
+  const buildDateBuckets = (days: number): string[] => {
+    const arr: string[] = [];
+    const today = new Date();
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(today);
+      d.setDate(today.getDate() - i);
+      arr.push(d.toISOString().split('T')[0]);
     }
-  }, []);
-
-  // Function to save AI insights to cache
-  const saveInsightsToCache = (insights: typeof aiInsights) => {
-    try {
-      localStorage.setItem(INSIGHTS_CACHE_KEY, JSON.stringify(insights));
-    } catch (error) {
-      console.warn('Error saving AI insights to cache:', error);
-    }
+    return arr;
+  };
+  const bucketRegistrations = (regs: any[], days: number) => {
+    const buckets = buildDateBuckets(days);
+    const counts: Record<string, number> = Object.fromEntries(buckets.map(d => [d, 0]));
+    regs.forEach(r => {
+      const dt = r.registrationDate?.toDate ? r.registrationDate.toDate() : (r.registrationDate ? new Date(r.registrationDate) : null);
+      if (!dt) return;
+      const key = dt.toISOString().split('T')[0];
+      if (key in counts) counts[key] += 1;
+    });
+    setRegistrationsByDate(buckets.map(d => ({ date: d, count: counts[d] })));
+  };
+  const bucketRevenue = (regs: any[], days: number) => {
+    const buckets = buildDateBuckets(days);
+    const sums: Record<string, number> = Object.fromEntries(buckets.map(d => [d, 0]));
+    regs.forEach(r => {
+      if (r.paymentStatus !== 'paid') return;
+      const dt = r.registrationDate?.toDate ? r.registrationDate.toDate() : (r.registrationDate ? new Date(r.registrationDate) : null);
+      if (!dt) return;
+      const key = dt.toISOString().split('T')[0];
+      if (key in sums) sums[key] += r.totalAmount || 0;
+    });
+    setRevenueByDate(buckets.map(d => ({ date: d, amount: sums[d] })));
   };
 
   useEffect(() => {
@@ -105,11 +148,13 @@ const AnalyticsPage: React.FC<AnalyticsPageProps> = ({ isEventSpecific = false }
           // Load general analytics (for admin dashboard)
           try {
             const dashboardStats = await AnalyticsService.getDashboardStats();
-            // For now, we'll use the dashboard stats to populate the general analytics
-            setLoading(false);
+            setDashboard(dashboardStats);
+            const allRegs = await RegistrationService.getAllRegistrations();
+            setRegistrations(allRegs);
+            bucketRegistrations(allRegs, 30);
+            bucketRevenue(allRegs, 30);
           } catch (error) {
             console.error('Error loading dashboard stats:', error);
-            setLoading(false);
           }
         }
       } catch (error) {
@@ -148,95 +193,7 @@ const AnalyticsPage: React.FC<AnalyticsPageProps> = ({ isEventSpecific = false }
     );
   };
 
-  const generateFreshAIInsights = async () => {
-    setAiLoading(true);
-    setShowCacheModal(false);
-
-    try {
-      // Prepare context data for AI
-      const contextData = {
-        totalEvents: 4,
-        totalAttendees: 102,
-        totalRevenue: 4250,
-        averageRating: 4.2,
-        timeRange: selectedTimeRange,
-        selectedMetric
-      };
-
-      // Generate concise performance summary
-      const performancePrompt = `Analyze: ${JSON.stringify(contextData)}
-
-Write 1-2 concise sentences about key performance highlights and opportunities. Keep under 50 words.`;
-
-      // Generate focused recommendations
-      const recommendationsPrompt = `Data: ${JSON.stringify(contextData)}
-
-List 3 brief, actionable recommendations (each under 15 words). Focus on high-impact improvements.`;
-
-      // Generate key trends
-      const trendsPrompt = `Data: ${JSON.stringify(contextData)}
-
-Identify 3 key trends (each under 15 words). Focus on actionable insights for event organizers.`;
-
-      const [performance, recommendations, trends] = await Promise.all([
-        aiService.generateResponse(performancePrompt, undefined, undefined, false),
-        aiService.generateResponse(recommendationsPrompt, undefined, undefined, false),
-        aiService.generateResponse(trendsPrompt, undefined, undefined, false)
-      ]);
-
-      const newInsights = {
-        performance: performance || 'Unable to generate insights.',
-        recommendations: recommendations ? recommendations.split('\n').filter(item => item.trim()).slice(0, 3) : ['Unable to generate recommendations.'],
-        trends: trends ? trends.split('\n').filter(item => item.trim()).slice(0, 3) : ['Unable to identify trends.']
-      };
-
-      setAiInsights(newInsights);
-      saveInsightsToCache(newInsights);
-
-      toast.success('Fresh AI insights generated successfully!');
-    } catch (error) {
-      console.error('Error generating AI insights:', error);
-      toast.error('Failed to generate AI insights. Please try again.');
-    } finally {
-      setAiLoading(false);
-    }
-  };
-
-  const useCachedInsights = async () => {
-    setAiLoading(true);
-    setShowCacheModal(false);
-
-    try {
-      // Load from cache
-      const cachedInsights = localStorage.getItem(INSIGHTS_CACHE_KEY);
-      if (cachedInsights) {
-        const parsedInsights = JSON.parse(cachedInsights);
-        setAiInsights(parsedInsights);
-        toast.success('Loaded insights from cache!');
-      } else {
-        // Fallback to fresh generation if cache is empty
-        await generateFreshAIInsights();
-      }
-    } catch (error) {
-      console.error('Error loading cached insights:', error);
-      toast.error('Failed to load cached insights. Generating fresh ones...');
-      await generateFreshAIInsights();
-    } finally {
-      setAiLoading(false);
-    }
-  };
-
-  const handleRefreshClick = () => {
-    // Check if there's cached data
-    const cachedInsights = localStorage.getItem(INSIGHTS_CACHE_KEY);
-    if (cachedInsights) {
-      // Show confirmation modal
-      setShowCacheModal(true);
-    } else {
-      // No cache, generate fresh insights directly
-      generateFreshAIInsights();
-    }
-  };
+  // AI features removed
 
   if (loading) {
     return (
@@ -271,22 +228,9 @@ Identify 3 key trends (each under 15 words). Focus on actionable insights for ev
     // General analytics view (admin dashboard)
     return (
       <AdminLayout 
-        title="Analytics & Insights" 
-        subtitle="Comprehensive event analytics with AI-powered insights and recommendations"
-        actions={
-          <button
-            onClick={handleRefreshClick}
-            disabled={aiLoading}
-            className="btn-primary flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {aiLoading ? (
-              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
-            ) : (
-              <SparklesIcon className="h-4 w-4" />
-            )}
-            <span>{aiLoading ? 'Generating...' : 'Refresh AI Insights'}</span>
-          </button>
-        }
+        title="Analytics"
+        subtitle="Visualize your events performance over time"
+        actions={null}
       >
         {/* Filters */}
         <div className="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -315,7 +259,7 @@ Identify 3 key trends (each under 15 words). Focus on actionable insights for ev
           </div>
         </div>
 
-        {/* Overview Cards */}
+        {/* Overview Cards (aligned to real data) */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <div className="bg-white rounded-lg shadow p-6">
             <div className="flex items-center">
@@ -324,13 +268,15 @@ Identify 3 key trends (each under 15 words). Focus on actionable insights for ev
               </div>
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-600">Total Events</p>
-                <p className="text-2xl font-bold text-gray-900">4</p>
+                <p className="text-2xl font-bold text-gray-900">{dashboard?.totalEvents ?? 0}</p>
               </div>
             </div>
-            <div className="mt-4 flex items-center">
-              {getGrowthIcon(12)}
-              <span className="ml-2 text-sm text-green-600">+12% from last month</span>
-            </div>
+            {dashboard && dashboard.totalEvents > 0 && (
+              <div className="mt-4 flex items-center">
+                {getGrowthIcon(dashboard.monthlyGrowth.events)}
+                <span className="ml-2 text-sm text-green-600">{dashboard.monthlyGrowth.events >= 0 ? '+' : ''}{dashboard.monthlyGrowth.events}% from last month</span>
+              </div>
+            )}
           </div>
 
           <div className="bg-white rounded-lg shadow p-6">
@@ -339,14 +285,16 @@ Identify 3 key trends (each under 15 words). Focus on actionable insights for ev
                 <UsersIcon className="h-6 w-6 text-green-600" />
               </div>
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Total Attendees</p>
-                <p className="text-2xl font-bold text-gray-900">102</p>
+                <p className="text-sm font-medium text-gray-600">Total Registrations</p>
+                <p className="text-2xl font-bold text-gray-900">{dashboard?.totalRegistrations ?? 0}</p>
               </div>
             </div>
-            <div className="mt-4 flex items-center">
-              {getGrowthIcon(8)}
-              <span className="ml-2 text-sm text-green-600">+8% from last month</span>
-            </div>
+            {dashboard && dashboard.totalRegistrations > 0 && (
+              <div className="mt-4 flex items-center">
+                {getGrowthIcon(dashboard.monthlyGrowth.registrations)}
+                <span className="ml-2 text-sm text-green-600">{dashboard.monthlyGrowth.registrations >= 0 ? '+' : ''}{dashboard.monthlyGrowth.registrations}% from last month</span>
+              </div>
+            )}
           </div>
 
           <div className="bg-white rounded-lg shadow p-6">
@@ -356,13 +304,10 @@ Identify 3 key trends (each under 15 words). Focus on actionable insights for ev
               </div>
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-600">Total Revenue</p>
-                <p className="text-2xl font-bold text-gray-900">{formatCurrency(4250)}</p>
+                <p className="text-2xl font-bold text-gray-900">{formatCurrency(dashboard?.totalRevenue ?? 0)}</p>
               </div>
             </div>
-            <div className="mt-4 flex items-center">
-              {getGrowthIcon(15)}
-              <span className="ml-2 text-sm text-green-600">+15% from last month</span>
-            </div>
+            {/* Revenue growth not computed; omit growth row when data is 0 */}
           </div>
 
           <div className="bg-white rounded-lg shadow p-6">
@@ -371,70 +316,54 @@ Identify 3 key trends (each under 15 words). Focus on actionable insights for ev
                 <DocumentChartBarIcon className="h-6 w-6 text-purple-600" />
               </div>
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Avg. Rating</p>
-                <p className="text-2xl font-bold text-gray-900">4.2</p>
+                <p className="text-sm font-medium text-gray-600">Certificates Issued</p>
+                <p className="text-2xl font-bold text-gray-900">{dashboard?.certificatesIssued ?? 0}</p>
               </div>
             </div>
-            <div className="mt-4 flex items-center">
-              {getGrowthIcon(5)}
-              <span className="ml-2 text-sm text-green-600">+5% from last month</span>
-            </div>
+            {dashboard && dashboard.certificatesIssued > 0 && (
+              <div className="mt-4 flex items-center">
+                {getGrowthIcon(dashboard.monthlyGrowth.certificates)}
+                <span className="ml-2 text-sm text-green-600">{dashboard.monthlyGrowth.certificates >= 0 ? '+' : ''}{dashboard.monthlyGrowth.certificates}% from last month</span>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* AI Insights */}
-        <div className="bg-white rounded-lg shadow p-6 mb-8">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold text-gray-900">AI-Powered Insights</h3>
-            <SparklesIcon className="h-5 w-5 text-purple-500" />
+        {/* Data Analytics Charts */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">Registrations Over Time</h3>
+              <div className="relative group">
+                <button className="p-1 rounded hover:bg-gray-100" aria-label="Chart settings" title="Chart settings">
+                  <AdjustmentsHorizontalIcon className="h-5 w-5 text-gray-500" />
+                </button>
+                <div className="absolute right-0 mt-2 w-36 bg-white border border-gray-200 rounded-lg shadow-lg opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto z-10">
+                  <button onClick={()=>setSelectedTimeRange('1m')} className="block w-full text-left px-3 py-2 text-sm hover:bg-gray-50">Last Month</button>
+                  <button onClick={()=>setSelectedTimeRange('3m')} className="block w-full text-left px-3 py-2 text-sm hover:bg-gray-50">Last 3 Months</button>
+                  <button onClick={()=>setSelectedTimeRange('6m')} className="block w-full text-left px-3 py-2 text-sm hover:bg-gray-50">Last 6 Months</button>
+                  <button onClick={()=>setSelectedTimeRange('1y')} className="block w-full text-left px-3 py-2 text-sm hover:bg-gray-50">Last Year</button>
+                </div>
+              </div>
+            </div>
+            <SimpleBarChart data={registrationsByDate} xKey="date" yKey="count" color="#3b82f6" height={200} />
           </div>
-          <div className="space-y-4">
-            <div className="p-4 bg-blue-50 rounded-lg">
-              <h4 className="font-medium text-blue-900 mb-2">Performance Summary</h4>
-              <div className="text-blue-700 prose prose-sm max-w-none">
-                {aiInsights.performance ? (
-                  <ReactMarkdown>{aiInsights.performance}</ReactMarkdown>
-                ) : (
-                  'Click "Refresh AI Insights" to generate performance analysis.'
-                )}
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">Revenue Over Time</h3>
+              <div className="relative group">
+                <button className="p-1 rounded hover:bg-gray-100" aria-label="Chart settings" title="Chart settings">
+                  <AdjustmentsHorizontalIcon className="h-5 w-5 text-gray-500" />
+                </button>
+                <div className="absolute right-0 mt-2 w-36 bg-white border border-gray-200 rounded-lg shadow-lg opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto z-10">
+                  <button onClick={()=>setSelectedTimeRange('1m')} className="block w-full text-left px-3 py-2 text-sm hover:bg-gray-50">Last Month</button>
+                  <button onClick={()=>setSelectedTimeRange('3m')} className="block w-full text-left px-3 py-2 text-sm hover:bg-gray-50">Last 3 Months</button>
+                  <button onClick={()=>setSelectedTimeRange('6m')} className="block w-full text-left px-3 py-2 text-sm hover:bg-gray-50">Last 6 Months</button>
+                  <button onClick={()=>setSelectedTimeRange('1y')} className="block w-full text-left px-3 py-2 text-sm hover:bg-gray-50">Last Year</button>
+                </div>
               </div>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="p-4 bg-green-50 rounded-lg">
-                <h4 className="font-medium text-green-900 mb-2">Recommendations</h4>
-                {aiInsights.recommendations.length > 0 ? (
-                  <div className="text-green-700 prose prose-sm max-w-none">
-                    <ReactMarkdown components={{
-                      ul: ({children}) => <ul className="space-y-1 text-sm">{children}</ul>,
-                      li: ({children}) => <li className="text-sm">{children}</li>
-                    }}>
-                      {aiInsights.recommendations.map(rec => `- ${rec}`).join('\n')}
-                    </ReactMarkdown>
-                  </div>
-                ) : (
-                  <p className="text-green-700 text-sm">
-                    Click "Refresh AI Insights" to generate recommendations.
-                  </p>
-                )}
-              </div>
-              <div className="p-4 bg-purple-50 rounded-lg">
-                <h4 className="font-medium text-purple-900 mb-2">Trends</h4>
-                {aiInsights.trends.length > 0 ? (
-                  <div className="text-purple-700 prose prose-sm max-w-none">
-                    <ReactMarkdown components={{
-                      ul: ({children}) => <ul className="space-y-1 text-sm">{children}</ul>,
-                      li: ({children}) => <li className="text-sm">{children}</li>
-                    }}>
-                      {aiInsights.trends.map(trend => `- ${trend}`).join('\n')}
-                    </ReactMarkdown>
-                  </div>
-                ) : (
-                  <p className="text-purple-700 text-sm">
-                    Click "Refresh AI Insights" to identify trends.
-                  </p>
-                )}
-              </div>
-            </div>
+            <SimpleBarChart data={revenueByDate} xKey="date" yKey="amount" color="#f59e0b" height={200} formatYAxis={(v)=>formatCurrency(v)} />
           </div>
         </div>
 
@@ -471,19 +400,6 @@ Identify 3 key trends (each under 15 words). Focus on actionable insights for ev
             </div>
           </div>
         </div>
-
-        {/* Cache Confirmation Modal */}
-        <ConfirmationModal
-          isOpen={showCacheModal}
-          onClose={useCachedInsights}
-          onConfirm={generateFreshAIInsights}
-          title="Use Cached or Generate Fresh?"
-          message="You have cached AI insights from a previous generation. Would you like to generate fresh insights or use the cached ones?"
-          confirmText="Generate Fresh"
-          cancelText="Use Cached"
-          type="info"
-          isLoading={aiLoading}
-        />
       </AdminLayout>
     );
   }
@@ -668,4 +584,6 @@ Identify 3 key trends (each under 15 words). Focus on actionable insights for ev
   );
 };
 
-export default AnalyticsPage;
+export default AdminAnalyticsPage;
+
+

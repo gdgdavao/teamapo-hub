@@ -30,26 +30,30 @@ const StatCard: React.FC<{
   icon: React.ComponentType<{ className?: string }>;
   growth: number;
   color: string;
-}> = ({ title, value, icon: Icon, growth, color }) => (
-  <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
-    <div className="flex items-center justify-between mb-4">
-      <div className={`p-3 ${color} rounded-lg`}>
-        <Icon className="w-6 h-6 text-white" />
+}> = ({ title, value, icon: Icon, growth, color }) => {
+  return (
+    <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+      <div className="flex items-center justify-between mb-4">
+        <div className={`p-3 ${color} rounded-lg`}>
+          <Icon className="w-6 h-6 text-white" />
+        </div>
+        <div className="text-right">
+          <p className="text-2xl font-bold text-gray-900">
+            {typeof value === 'number' ? value.toLocaleString() : value}
+          </p>
+          <p className="text-sm text-gray-600">{title}</p>
+        </div>
       </div>
-      <div className="text-right">
-        <p className="text-2xl font-bold text-gray-900">
-          {typeof value === 'number' ? value.toLocaleString() : value}
-        </p>
-        <p className="text-sm text-gray-600">{title}</p>
-      </div>
+      {!(typeof value === 'number' && value === 0) && (
+        <div className="flex items-center text-sm">
+          <ArrowTrendingUpIcon className="w-4 h-4 text-green-500 mr-1" />
+          <span className="text-green-600 font-medium">+{growth}%</span>
+          <span className="text-gray-500 ml-1">this month</span>
+        </div>
+      )}
     </div>
-    <div className="flex items-center text-sm">
-      <ArrowTrendingUpIcon className="w-4 h-4 text-green-500 mr-1" />
-      <span className="text-green-600 font-medium">+{growth}%</span>
-      <span className="text-gray-500 ml-1">this month</span>
-    </div>
-  </div>
-);
+  );
+};
 
 const QuickActionCard: React.FC<{
   title: string;

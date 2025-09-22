@@ -153,6 +153,33 @@ export class RegistrationService {
   }
 
   /**
+   * Send registration confirmation email immediately after registration
+   */
+  static async sendRegistrationConfirmationEmail(
+    registrationId: string,
+    eventId: string,
+    userEmail: string,
+    userName: string,
+    requiresPayment: boolean = false
+  ): Promise<void> {
+    try {
+      const sendConfirmationEmail = httpsCallable(functions, 'sendConfirmationEmail');
+      await sendConfirmationEmail({
+        registrationId,
+        eventId,
+        userEmail,
+        userName,
+        requiresPayment,
+        emailType: 'submitted' // This is the immediate confirmation without QR code or registration ID
+      });
+      console.log('Registration submission confirmation email sent successfully');
+    } catch (error) {
+      console.error('Error sending registration confirmation email:', error);
+      throw new Error('Failed to send confirmation email');
+    }
+  }
+
+  /**
    * Complete registration after payment verification
    */
   static async completeRegistration(registrationId: string): Promise<void> {
@@ -178,17 +205,19 @@ export class RegistrationService {
           updatedAt: serverTimestamp()
         });
 
-        // Send confirmation email via Firebase Function
+        // Send approval confirmation email with QR code and registration ID
         try {
           const sendConfirmationEmail = httpsCallable(functions, 'sendConfirmationEmail');
           await sendConfirmationEmail({
             registrationId,
             eventId: registrationData.eventId,
             userEmail: registrationData.userDetails.email,
-            userName: registrationData.userDetails.name
+            userName: registrationData.userDetails.name,
+            emailType: 'approved', // This will include QR code and registration ID
+            requiresPayment: false // Payment is already completed at this point
           });
         } catch (emailError) {
-          console.error('Error sending confirmation email:', emailError);
+          console.error('Error sending approval confirmation email:', emailError);
           // Don't throw - email failure shouldn't break the flow
         }
       }
@@ -238,7 +267,7 @@ export class RegistrationService {
         totalAmount: validation.pricing.currentPrice * registrationData.quantity,
         currency: 'PHP', // Default currency
         ...(registrationData.promoCode ? { promoCode: registrationData.promoCode } : {}),
-        ...(validation.pricing.promoCode ? { promoCodeId: registrationData.promoCode } : {}),
+        ...(validation.pricing.promoCode ? { promoCodeId: validation.pricing.promoCode } : {}),
         pricing: validation.pricing,
         paymentStatus: paymentStatus as any,
         attendanceStatus: 'registered',
@@ -248,6 +277,7 @@ export class RegistrationService {
         registrationDate: serverTimestamp() as any,
         updatedAt: serverTimestamp() as any
       };
+
 
       // Add custom form responses if provided
       if (registrationData.customResponses) {

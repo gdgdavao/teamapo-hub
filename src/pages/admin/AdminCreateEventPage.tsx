@@ -1854,7 +1854,7 @@ const CreateEventPage: React.FC = () => {
                   </div>
                 </div>
                 <div className="flex items-center space-x-4 text-xs text-gray-500 mt-2">
-                  <span>Valid: {promo.validFrom.toDate().toLocaleDateString()} - {promo.validUntil.toDate().toLocaleDateString()}</span>
+                  <span>Valid: {convertTimestampToDate(promo.validFrom).toLocaleDateString()} - {convertTimestampToDate(promo.validUntil).toLocaleDateString()}</span>
                   <span>Max uses: {promo.maxUses || 'Unlimited'}</span>
                   <span>{promo.isActive ? 'Active' : 'Inactive'}</span>
                 </div>

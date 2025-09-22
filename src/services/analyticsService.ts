@@ -67,22 +67,70 @@ export class AnalyticsService {
 
       // Run all queries in parallel for better performance
       const [
+        // Totals
         eventsSnapshot,
         registrationsSnapshot,
         certificatesSnapshot,
-        upcomingEventsSnapshot
+        // Upcoming events (published and future)
+        upcomingEventsSnapshot,
+        // Month-scoped snapshots for growth calculations
+        eventsThisMonthSnap,
+        eventsLastMonthSnap,
+        regsThisMonthSnap,
+        regsLastMonthSnap,
+        certsThisMonthSnap,
+        certsLastMonthSnap
       ] = await Promise.all([
-        // Total counts
         getDocs(collection(db, this.EVENTS_COLLECTION)),
         getDocs(collection(db, this.REGISTRATIONS_COLLECTION)),
         getDocs(collection(db, this.CERTIFICATES_COLLECTION)),
-        
-        // Upcoming events (published and future)
         getDocs(query(
           collection(db, this.EVENTS_COLLECTION),
           where('isPublished', '==', true),
           where('startDate', '>', Timestamp.fromDate(now))
-        ))
+        )),
+        // Events created this month vs last month (uses createdAt)
+        getDocs(query(
+          collection(db, this.EVENTS_COLLECTION),
+          where('createdAt', '>=', Timestamp.fromDate(startOfMonth))
+        )),
+        getDocs(query(
+          collection(db, this.EVENTS_COLLECTION),
+          where('createdAt', '>=', Timestamp.fromDate(startOfLastMonth)),
+          where('createdAt', '<=', Timestamp.fromDate(endOfLastMonth))
+        )),
+        // Registrations this month vs last month (uses registrationDate)
+        getDocs(query(
+          collection(db, this.REGISTRATIONS_COLLECTION),
+          where('registrationDate', '>=', Timestamp.fromDate(startOfMonth))
+        )),
+        getDocs(query(
+          collection(db, this.REGISTRATIONS_COLLECTION),
+          where('registrationDate', '>=', Timestamp.fromDate(startOfLastMonth)),
+          where('registrationDate', '<=', Timestamp.fromDate(endOfLastMonth))
+        )),
+        // Certificates issued this month vs last month (uses issuedAt or createdAt if present)
+        getDocs(query(
+          collection(db, this.CERTIFICATES_COLLECTION),
+          where('issuedAt', '>=', Timestamp.fromDate(startOfMonth))
+        )).catch(async () => {
+          // Fallback to createdAt if issuedAt not indexed/available
+          return getDocs(query(
+            collection(db, this.CERTIFICATES_COLLECTION),
+            where('createdAt', '>=', Timestamp.fromDate(startOfMonth))
+          ));
+        }),
+        getDocs(query(
+          collection(db, this.CERTIFICATES_COLLECTION),
+          where('issuedAt', '>=', Timestamp.fromDate(startOfLastMonth)),
+          where('issuedAt', '<=', Timestamp.fromDate(endOfLastMonth))
+        )).catch(async () => {
+          return getDocs(query(
+            collection(db, this.CERTIFICATES_COLLECTION),
+            where('createdAt', '>=', Timestamp.fromDate(startOfLastMonth)),
+            where('createdAt', '<=', Timestamp.fromDate(endOfLastMonth))
+          ));
+        })
       ]);
 
       // Helper function to filter out placeholder documents
@@ -101,24 +149,44 @@ export class AnalyticsService {
       const realCertificatesData = filterPlaceholderDocs(certificatesSnapshot.docs);
       const realUpcomingEventsData = filterPlaceholderDocs(upcomingEventsSnapshot.docs);
 
-      // Calculate revenue from registrations
+      // Calculate revenue from registrations and pending counts
       let totalRevenue = 0;
+      let pendingPayments = 0;
       realRegistrationsData.forEach(doc => {
         const data = doc.data();
         if (data.paymentStatus === 'paid') {
           totalRevenue += data.totalAmount || 0;
+        } else if (data.paymentStatus === 'pending') {
+          // count registrations with pending payment
+          pendingPayments += 1;
         }
       });
 
-      // Calculate simple growth percentages (placeholder values for now)
-      const eventsGrowth = 12; // Placeholder
-      const registrationsGrowth = 8; // Placeholder
-      const certificatesGrowth = 5; // Placeholder
+      // For approvals, align with pending payments as a proxy in current flow
+      const pendingApprovals = pendingPayments;
+
+      // Growth calculations
+      const safeLen = (snap: any) => (snap && snap.docs ? snap.docs.length : 0);
+      const growthPct = (curr: number, prev: number) => {
+        if (prev <= 0) return curr > 0 ? 100 : 0;
+        return Math.round(((curr - prev) / prev) * 100);
+      };
+
+      const eventsThisMonth = safeLen(eventsThisMonthSnap);
+      const eventsLastMonth = safeLen(eventsLastMonthSnap);
+      const regsThisMonth = safeLen(regsThisMonthSnap);
+      const regsLastMonth = safeLen(regsLastMonthSnap);
+      const certsThisMonth = safeLen(certsThisMonthSnap);
+      const certsLastMonth = safeLen(certsLastMonthSnap);
+
+      const eventsGrowth = growthPct(eventsThisMonth, eventsLastMonth);
+      const registrationsGrowth = growthPct(regsThisMonth, regsLastMonth);
+      const certificatesGrowth = growthPct(certsThisMonth, certsLastMonth);
 
       return {
         totalEvents: realEventsData.length,
         totalRegistrations: realRegistrationsData.length,
-        pendingApprovals: 0, // Placeholder - no payment proofs collection
+        pendingApprovals,
         certificatesIssued: realCertificatesData.length,
         upcomingEvents: realUpcomingEventsData.length,
         monthlyGrowth: {
@@ -127,7 +195,7 @@ export class AnalyticsService {
           certificates: Math.round(certificatesGrowth)
         },
         totalRevenue,
-        pendingPayments: 0 // Placeholder - no payment proofs collection
+        pendingPayments
       };
     } catch (error) {
       console.error('Error fetching dashboard stats:', error);

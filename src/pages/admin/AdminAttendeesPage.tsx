@@ -100,6 +100,23 @@ interface Registration {
   requirements?: string[];
   formSubmission?: Record<string, any>;
   priority?: 'low' | 'medium' | 'high';
+  promoCode?: string;
+  quantity?: number;
+  originalAmount?: number;
+  discountAmount?: number;
+  totalAmount?: number;
+  currency?: string;
+  pricing?: {
+    originalPrice?: number;
+    currentPrice?: number;
+    discountAmount?: number;
+    promoCode?: {
+      code?: string;
+      name?: string;
+      discountType?: 'percentage' | 'fixed';
+      discountValue?: number;
+    };
+  };
 }
 
 const AdminAttendeesPage: React.FC = () => {
@@ -216,7 +233,7 @@ const AdminAttendeesPage: React.FC = () => {
               title: event.title,
               date: toISOStringSafe((event as any)?.startDate ?? (event as any)?.startDateTime ?? (event as any)?.date),
               venue: event.venue?.name || event.venue?.address || 'TBA',
-              ticketPrice: reg.totalAmount || 0
+              ticketPrice: (reg as any).pricing?.currentPrice || (reg.totalAmount && reg.quantity ? (reg.totalAmount / reg.quantity) : 0)
             },
             status: getDisplayStatus(reg),
             registrationDate: reg.registrationDate.toDate().toISOString(),
@@ -235,8 +252,16 @@ const AdminAttendeesPage: React.FC = () => {
             notes: (reg as any).adminNotes || undefined,
             requirements: undefined,
             formSubmission: (reg as any).customResponses || undefined,
-            priority: 'medium' // Default priority
+            priority: 'medium', // Default priority
+            promoCode: (reg as any).promoCode || undefined,
+            quantity: (reg as any).quantity,
+            originalAmount: (reg as any).originalAmount,
+            discountAmount: (reg as any).discountAmount,
+            totalAmount: (reg as any).totalAmount,
+            currency: (reg as any).currency,
+            pricing: (reg as any).pricing
           };
+
           
           transformedRegistrations.push(transformedReg);
         }
@@ -288,6 +313,7 @@ const AdminAttendeesPage: React.FC = () => {
 
     fetchLatestProof();
   }, [viewingRegistration?.id]);
+
 
   const handleStatusChange = (registrationId: string, newStatus: Registration['status'], notes?: string) => {
     // Only handle admin status changes (approved/rejected)
@@ -966,6 +992,67 @@ const AdminAttendeesPage: React.FC = () => {
                       </div>
                     </div>
 
+                    {/* Pricing */}
+                    <div className="lg:col-span-1">
+                      <div className="bg-white border border-gray-200 rounded-lg p-5">
+                        <div className="flex items-center space-x-3 mb-4">
+                          <div className="p-2 bg-yellow-100 rounded-lg">
+                            <CurrencyDollarIcon className="h-5 w-5 text-yellow-600" />
+                          </div>
+                          <h3 className="text-lg font-semibold text-gray-900">Pricing</h3>
+                        </div>
+
+                        <div className="space-y-4">
+                          {(viewingRegistration.promoCode || viewingRegistration.pricing?.promoCode) && (
+                            <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                              <label className="text-sm font-medium text-green-700">🎫 Promo Code Applied</label>
+                              <p className="text-green-900 font-mono text-sm font-semibold">
+                                {viewingRegistration.promoCode || 
+                                 (typeof viewingRegistration.pricing?.promoCode === 'string' 
+                                   ? viewingRegistration.pricing?.promoCode 
+                                   : viewingRegistration.pricing?.promoCode?.code)}
+                              </p>
+                            </div>
+                          )}
+
+                          {typeof viewingRegistration.quantity === 'number' && (
+                            <div>
+                              <label className="text-sm font-medium text-gray-700">Quantity</label>
+                              <p className="text-gray-900">{viewingRegistration.quantity}</p>
+                            </div>
+                          )}
+
+                          {typeof viewingRegistration.pricing?.originalPrice === 'number' && (
+                            <div>
+                              <label className="text-sm font-medium text-gray-700">Original Price</label>
+                              <p className="text-gray-900">₱{(viewingRegistration.pricing?.originalPrice || 0).toLocaleString()}</p>
+                            </div>
+                          )}
+
+                          {(typeof viewingRegistration.pricing?.discountAmount === 'number' || typeof viewingRegistration.discountAmount === 'number') && (
+                            <div>
+                              <label className="text-sm font-medium text-gray-700">Discount</label>
+                              <p className="text-green-600">-₱{(viewingRegistration.pricing?.discountAmount ?? viewingRegistration.discountAmount ?? 0).toLocaleString()}</p>
+                            </div>
+                          )}
+
+                          {typeof viewingRegistration.pricing?.currentPrice === 'number' && (
+                            <div>
+                              <label className="text-sm font-medium text-gray-700">Discounted Price</label>
+                              <p className="text-gray-900">₱{(viewingRegistration.pricing?.currentPrice || 0).toLocaleString()}</p>
+                            </div>
+                          )}
+
+                          {(typeof viewingRegistration.totalAmount === 'number') && (
+                            <div className="pt-2 border-t border-gray-100">
+                              <label className="text-sm font-medium text-gray-700">Total Amount</label>
+                              <p className="text-gray-900 font-semibold">₱{(viewingRegistration.totalAmount || 0).toLocaleString()}</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
                     {/* Payment Proof */}
                     {(viewingRegistration.paymentProof || loadingProof) && (
                       <div className="lg:col-span-1">
@@ -995,6 +1082,18 @@ const AdminAttendeesPage: React.FC = () => {
                                 </div>
                               )}
                             </div>
+
+                            {(viewingRegistration.promoCode || viewingRegistration.pricing?.promoCode) && (
+                              <div>
+                                <label className="text-sm font-medium text-gray-700">Promo Code Used</label>
+                                <p className="text-gray-900 font-mono text-sm bg-blue-50 px-2 py-1 rounded">
+                                  {viewingRegistration.promoCode || 
+                                   (typeof viewingRegistration.pricing?.promoCode === 'string' 
+                                     ? viewingRegistration.pricing?.promoCode 
+                                     : viewingRegistration.pricing?.promoCode?.code)}
+                                </p>
+                              </div>
+                            )}
                             
                             {viewingRegistration.paymentProof?.transactionId && (
                               <div>

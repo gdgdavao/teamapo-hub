@@ -50,6 +50,16 @@ const PromoCodeManager: React.FC<PromoCodeManagerProps> = ({
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingPromoCode, setEditingPromoCode] = useState<PromoCode | null>(null);
+  const toLocalDateTimeInput = (date: Date): string => {
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    const year = date.getFullYear();
+    const month = pad(date.getMonth() + 1);
+    const day = pad(date.getDate());
+    const hours = pad(date.getHours());
+    const minutes = pad(date.getMinutes());
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
+  };
+
   const [formData, setFormData] = useState<PromoCodeFormData>({
     code: '',
     name: '',
@@ -59,8 +69,8 @@ const PromoCodeManager: React.FC<PromoCodeManagerProps> = ({
     currency: 'PHP',
     maxUses: undefined,
     isActive: true,
-    validFrom: new Date().toISOString().slice(0, 16),
-    validUntil: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 16),
+    validFrom: toLocalDateTimeInput(new Date()),
+    validUntil: toLocalDateTimeInput(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)),
     applicableTicketTypes: [],
     minOrderAmount: undefined,
     maxDiscountAmount: undefined
@@ -76,8 +86,8 @@ const PromoCodeManager: React.FC<PromoCodeManagerProps> = ({
       currency: 'PHP',
       maxUses: undefined,
       isActive: true,
-      validFrom: new Date().toISOString().slice(0, 16),
-      validUntil: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 16),
+      validFrom: toLocalDateTimeInput(new Date()),
+      validUntil: toLocalDateTimeInput(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)),
       applicableTicketTypes: [],
       minOrderAmount: undefined,
       maxDiscountAmount: undefined
@@ -126,8 +136,8 @@ const PromoCodeManager: React.FC<PromoCodeManagerProps> = ({
       currency: promoCode.currency || 'PHP',
       maxUses: promoCode.maxUses,
       isActive: promoCode.isActive,
-      validFrom: convertTimestampToDate(promoCode.validFrom).toISOString().slice(0, 16),
-      validUntil: convertTimestampToDate(promoCode.validUntil).toISOString().slice(0, 16),
+      validFrom: toLocalDateTimeInput(convertTimestampToDate(promoCode.validFrom)),
+      validUntil: toLocalDateTimeInput(convertTimestampToDate(promoCode.validUntil)),
       applicableTicketTypes: promoCode.applicableTicketTypes || [],
       minOrderAmount: promoCode.minOrderAmount,
       maxDiscountAmount: promoCode.maxDiscountAmount

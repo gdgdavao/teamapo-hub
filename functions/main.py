@@ -1679,6 +1679,7 @@ def bulkProcessPayments(req: https_fn.CallableRequest) -> Dict[str, Any]:
 def sendConfirmationEmail(req: https_fn.CallableRequest) -> Dict[str, Any]:
     """
     Send a registration confirmation email using Resend.
+    Supports different email types: 'submitted' (immediate) or 'approved' (with QR code and registration ID)
     """
     try:
         data: Dict[str, Any] = req.data or {}
@@ -1687,11 +1688,12 @@ def sendConfirmationEmail(req: https_fn.CallableRequest) -> Dict[str, Any]:
         user_email = data.get('userEmail')
         user_name = data.get('userName', 'Attendee')
         requires_payment = data.get('requiresPayment', False)
+        email_type = data.get('emailType', 'submitted')  # 'submitted' or 'approved'
 
-        if not registration_id or not event_id or not user_email:
+        if not event_id or not user_email:
             raise https_fn.HttpsError(
                 code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
-                message="registrationId, eventId, and userEmail are required"
+                message="eventId and userEmail are required"
             )
 
         # Get event details for email content
@@ -1707,26 +1709,90 @@ def sendConfirmationEmail(req: https_fn.CallableRequest) -> Dict[str, Any]:
             
             event_data = event_doc.to_dict()
             event_title = event_data.get('title', 'Event')
-            event_date = event_data.get('date', 'TBD')
-            event_location = event_data.get('location', 'TBD')
             
-            # Generate QR code for check-in
+            # Debug: Log event data structure
+            logger.info(f"Event data keys: {list(event_data.keys())}")
+            logger.info(f"startDate value: {event_data.get('startDate')} (type: {type(event_data.get('startDate'))})")
+            logger.info(f"venue value: {event_data.get('venue')}")
+            
+            # Get proper event date and location from Firestore
+            event_date = 'TBD'
+            event_location = 'TBD'
+            
+            # Extract date from startDate (Firestore Timestamp)
+            start_date = event_data.get('startDate')
+            if start_date:
+                try:
+                    from datetime import datetime
+                    # Handle Firestore timestamp object
+                    if hasattr(start_date, 'seconds'):
+                        dt = datetime.fromtimestamp(start_date.seconds)
+                        event_date = dt.strftime('%B %d, %Y at %I:%M %p')
+                    elif isinstance(start_date, dict) and 'seconds' in start_date:
+                        # Handle serialized timestamp
+                        dt = datetime.fromtimestamp(start_date['seconds'])
+                        event_date = dt.strftime('%B %d, %Y at %I:%M %p')
+                    elif isinstance(start_date, str):
+                        # Handle ISO string
+                        dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+                        event_date = dt.strftime('%B %d, %Y at %I:%M %p')
+                    else:
+                        logger.warning(f"Unknown startDate format: {type(start_date)} - {start_date}")
+                        event_date = str(start_date)
+                except Exception as date_err:
+                    logger.warning(f"Failed to parse event date: {str(date_err)}")
+                    logger.warning(f"startDate type: {type(start_date)}, value: {start_date}")
+                    event_date = str(start_date)
+            
+            # Get venue information - handle both nested venue object and flat structure
+            venue = event_data.get('venue', {})
+            venue_type = venue.get('type') or event_data.get('venueType')
+            
+            logger.info(f"venue_type: {venue_type}")
+            
+            if venue_type == 'online':
+                event_location = venue.get('onlineUrl') or venue.get('url') or 'Online Event'
+            elif venue_type == 'offline':
+                # Try nested venue object first, then flat structure
+                venue_name = venue.get('name') or event_data.get('venueName', '')
+                venue_address = venue.get('address') or event_data.get('venueAddress', '')
+                venue_city = venue.get('city') or event_data.get('city', '')
+                
+                # Build location string from available parts
+                location_parts = []
+                if venue_name:
+                    location_parts.append(venue_name)
+                if venue_address:
+                    location_parts.append(venue_address)
+                if venue_city:
+                    location_parts.append(venue_city)
+                
+                event_location = ', '.join(location_parts) if location_parts else 'TBD'
+                logger.info(f"Built location: {event_location} from parts: {location_parts}")
+            else:
+                logger.info(f"Unknown venue type: {venue_type}, using TBD")
+            
+            # Generate QR code only for approved registrations
             qr_code_data = None
-            try:
-                import qrcode
-                from io import BytesIO
-                import base64
-                
-                qr = qrcode.QRCode(version=1, box_size=10, border=5)
-                qr.add_data(f"registration:{registration_id}")
-                qr.make(fit=True)
-                
-                img = qr.make_image(fill_color="black", back_color="white")
-                buffer = BytesIO()
-                img.save(buffer, format='PNG')
-                qr_code_data = base64.b64encode(buffer.getvalue()).decode()
-            except Exception as qr_err:
-                logger.warning(f"Failed to generate QR code: {str(qr_err)}")
+            include_registration_id = None
+            
+            if email_type == 'approved' and registration_id:
+                include_registration_id = registration_id
+                try:
+                    import qrcode
+                    from io import BytesIO
+                    import base64
+                    
+                    qr = qrcode.QRCode(version=1, box_size=10, border=5)
+                    qr.add_data(f"registration:{registration_id}")
+                    qr.make(fit=True)
+                    
+                    img = qr.make_image(fill_color="black", back_color="white")
+                    buffer = BytesIO()
+                    img.save(buffer, format='PNG')
+                    qr_code_data = base64.b64encode(buffer.getvalue()).decode()
+                except Exception as qr_err:
+                    logger.warning(f"Failed to generate QR code: {str(qr_err)}")
 
             # Send email using Resend
             email_result = email_service.send_registration_confirmation(
@@ -1735,7 +1801,7 @@ def sendConfirmationEmail(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 event_title=event_title,
                 event_date=event_date,
                 event_location=event_location,
-                registration_id=registration_id,
+                registration_id=include_registration_id,
                 qr_code_data=qr_code_data,
                 requires_payment=requires_payment
             )

@@ -29,8 +29,8 @@ import ManageEventsPage from './pages/admin/AdminManageEventsPage';
 // Shared Pages
 import CertificatesPage from './pages/shared/CertificatesPage';
 
-// Analytics Component
-import { AnalyticsPage } from './components/admin/Analytics';
+// Analytics Page
+import AnalyticsPage from './pages/admin/AdminAnalyticsPage';
 
 // Utility Pages (keeping in their current locations for now)
 import PaymentPage from './pages/payment/PaymentPage';
@@ -268,7 +268,7 @@ const App: React.FC = () => {
     <AuthProvider>
       <div className="min-h-screen bg-gray-50">
         <AppContent />
-        <FirebaseConnectionStatus />
+        
       </div>
     </AuthProvider>
   );

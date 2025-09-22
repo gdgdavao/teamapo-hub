@@ -173,13 +173,17 @@ class EmailService:
         event_title: str,
         event_date: str,
         event_location: str,
-        registration_id: str,
+        registration_id: Optional[str] = None,
         qr_code_data: Optional[str] = None,
         requires_payment: bool = False
     ) -> Dict[str, Any]:
         """Send registration confirmation email."""
         
-        subject = f"Registration Confirmed - {event_title}"
+        # Different subject based on whether registration is approved or just submitted
+        if registration_id and qr_code_data:
+            subject = f"Registration Approved - {event_title}"
+        else:
+            subject = f"Registration Submitted - {event_title}"
         
         # Create HTML content
         html_content = self._create_registration_confirmation_html(
@@ -205,7 +209,7 @@ class EmailService:
         tags = [
             {"name": "type", "value": "registration_confirmation"},
             {"name": "event", "value": sanitize_tag_value(event_title)},
-            {"name": "registration_id", "value": sanitize_tag_value(registration_id)}
+            {"name": "registration_id", "value": sanitize_tag_value(registration_id or "submitted")}
         ]
         
         return self.send_email(
@@ -399,7 +403,7 @@ class EmailService:
         event_title: str,
         event_date: str,
         event_location: str,
-        registration_id: str,
+        registration_id: Optional[str] = None,
         qr_code_data: Optional[str] = None,
         requires_payment: bool = False
     ) -> str:
@@ -447,7 +451,7 @@ class EmailService:
                     <p><strong>Event:</strong> {event_title}</p>
                     <p><strong>Date:</strong> {event_date}</p>
                     <p><strong>Location:</strong> {event_location}</p>
-                    <p><strong>Registration ID:</strong> {registration_id}</p>
+                    {f'<p><strong>Registration ID:</strong> {registration_id}</p>' if registration_id else ''}
                 </div>
                 
                 {payment_section}
@@ -739,7 +743,7 @@ class EmailService:
         event_title: str,
         event_date: str,
         event_location: str,
-        registration_id: str,
+        registration_id: Optional[str] = None,
         requires_payment: bool = False
     ) -> str:
         """Create plain text content for registration confirmation email."""
@@ -757,7 +761,7 @@ EVENT DETAILS:
 - Event: {event_title}
 - Date: {event_date}
 - Location: {event_location}
-- Registration ID: {registration_id}
+{f'- Registration ID: {registration_id}' if registration_id else ''}
 {payment_text}
 WHAT'S NEXT:
 - Save this email for your records
