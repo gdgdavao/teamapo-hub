@@ -409,73 +409,104 @@ class EmailService:
     ) -> str:
         """Create HTML content for registration confirmation email."""
         
-        payment_section = ""
-        if requires_payment:
-            payment_section = """
-            <div style="background-color: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px; padding: 20px; margin: 20px 0;">
-                <h3 style="color: #856404; margin-top: 0;">Payment Required</h3>
-                <p style="color: #856404; margin-bottom: 0;">Please complete your payment to secure your spot. Check your email for payment instructions.</p>
-            </div>
-            """
-        
-        qr_section = ""
-        if qr_code_data:
-            qr_section = f"""
-            <div style="text-align: center; margin: 30px 0;">
-                <h3>Your Check-in QR Code</h3>
-                <img src="data:image/png;base64,{qr_code_data}" alt="QR Code" style="max-width: 200px; border: 1px solid #ddd; border-radius: 8px;">
-                <p style="color: #666; font-size: 14px;">Present this QR code at the event for quick check-in</p>
-            </div>
-            """
-        
         return f"""
-        <!DOCTYPE html>
+        <!doctype html>
         <html>
-        <head>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Registration Confirmed</title>
-        </head>
-        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
-            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px 10px 0 0; text-align: center;">
-                <h1 style="margin: 0; font-size: 28px;">Registration Confirmed!</h1>
-                <p style="margin: 10px 0 0 0; font-size: 16px; opacity: 0.9;">You're all set for the event</p>
+          <body>
+            <div
+              style='background-color:#F2F5F7;color:#242424;font-family:"Helvetica Neue", "Arial Nova", "Nimbus Sans", Arial, sans-serif;font-size:16px;font-weight:400;letter-spacing:0.15008px;line-height:1.5;margin:0;padding:32px 0;min-height:100%;width:100%'
+            >
+              <table
+                align="center"
+                width="100%"
+                style="margin:0 auto;max-width:600px;background-color:#FFFFFF"
+                role="presentation"
+                cellspacing="0"
+                cellpadding="0"
+                border="0"
+              >
+                <tbody>
+                  <tr style="width:100%">
+                    <td>
+                      <div style="padding:24px 24px 24px 24px;text-align:center">
+                        <a
+                          href="https://gdgdavao.org"
+                          style="text-decoration:none"
+                          target="_blank"
+                          ><img
+                            alt="TeamApo Hub Logo"
+                            src="https://raw.githubusercontent.com/gdgdavao/assets-cdn/f20f81cb72891da14135d502c108bd8b4423fad7/apohub-title.svg"
+                            width="256"
+                            style="width:256px;outline:none;border:none;text-decoration:none;vertical-align:middle;display:inline-block;max-width:100%"
+                        /></a>
+                      </div>
+                      <div style="height:16px"></div>
+                      <div
+                        style='font-size:30px;font-family:"Nimbus Mono PS", "Courier New", "Cutive Mono", monospace;font-weight:bold;padding:16px 24px 16px 24px'
+                      >
+                        Hi {user_name} 👋
+                      </div>
+                      <div
+                        style="font-size:15px;font-weight:normal;padding:16px 24px 16px 24px"
+                      >
+                        <p>
+                          Thank you for registering for {event_title} will be held on {event_date} at {event_location}. We're excited
+                          to have you join us!
+                        </p>
+                        <br />
+                        <p>
+                          We received your registration and your payment proof. Our team
+                          will manually verify your payment. This usually takes
+                          <strong>1–2 business days.</strong>
+                        </p>
+                        <br />
+                        <p><strong>What happens next:</strong></p>
+                        <ul>
+                          <li>
+                            We'll review your payment proof and confirm your
+                            registration.
+                          </li>
+                          <li>
+                            Once verified, you'll receive a final confirmation email
+                            with your QR code and registration details.
+                          </li>
+                          <li>
+                            If we need additional information, we'll contact you at
+                            this email address.
+                          </li>
+                        </ul>
+                        <br />
+                        <p>
+                        Again, thank you for registering. Please keep an eye on your inbox for updates.
+                        </p>
+                        <br />
+                        <p>Googleyness,<br />Google Developer Groups - Davao</p>
+                      </div>
+                      <div style="padding:16px 0px 16px 0px">
+                        <hr
+                          style="width:100%;border:none;border-top:1px solid #CCCCCC;margin:0"
+                        />
+                      </div>
+                      <div
+                        style="font-size:15px;font-weight:normal;padding:16px 24px 16px 24px"
+                      >
+                        <p>
+                          <em
+                            >If you don't hear from us within 2 business days,
+                            please contact support at
+                            <a href="support@gdgdavao.org" target="_blank"
+                              >support@gdgdavao.org</a
+                            >.</em
+                          >
+                        </p>
+                      </div>
+                      <div style="height:16px"></div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
-            
-            <div style="background: white; padding: 30px; border: 1px solid #e0e0e0; border-top: none;">
-                <h2 style="color: #333; margin-top: 0;">Hello {user_name}!</h2>
-                <p>Thank you for registering for <strong>{event_title}</strong>. We're excited to have you join us!</p>
-                
-                <div style="background-color: #f8f9fa; border-radius: 8px; padding: 20px; margin: 20px 0;">
-                    <h3 style="margin-top: 0; color: #495057;">Event Details</h3>
-                    <p><strong>Event:</strong> {event_title}</p>
-                    <p><strong>Date:</strong> {event_date}</p>
-                    <p><strong>Location:</strong> {event_location}</p>
-                    {f'<p><strong>Registration ID:</strong> {registration_id}</p>' if registration_id else ''}
-                </div>
-                
-                {payment_section}
-                {qr_section}
-                
-                <div style="background-color: #e7f3ff; border: 1px solid #b3d9ff; border-radius: 8px; padding: 20px; margin: 20px 0;">
-                    <h3 style="color: #0066cc; margin-top: 0;">What's Next?</h3>
-                    <ul style="color: #0066cc;">
-                        <li>Save this email for your records</li>
-                        <li>Add the event to your calendar</li>
-                        <li>Arrive 15 minutes early for check-in</li>
-                        <li>Bring a valid ID for verification</li>
-                    </ul>
-                </div>
-                
-                <p>If you have any questions, feel free to contact us.</p>
-                <p>Best regards,<br>The GDG Davao Team</p>
-            </div>
-            
-            <div style="background-color: #f8f9fa; padding: 20px; border-radius: 0 0 10px 10px; text-align: center; color: #666; font-size: 14px;">
-                <p>This email was sent to {user_name} for their registration to {event_title}.</p>
-                <p>© 2024 GDG Davao. All rights reserved.</p>
-            </div>
-        </body>
+          </body>
         </html>
         """
     

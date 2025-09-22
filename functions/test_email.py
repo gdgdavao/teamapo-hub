@@ -13,7 +13,7 @@ def test_registration_confirmation():
     print("Testing registration confirmation email...")
     
     result = email_service.send_registration_confirmation(
-        user_email="yoboje7924@bitfami.com",
+        user_email="mojig18880@camjoint.com",
         user_name="John Doe",
         event_title="GDG Davao Meetup 2024",
         event_date="January 15, 2024 at 10:00 AM",
@@ -31,7 +31,7 @@ def test_payment_notification():
     print("Testing payment notification email...")
     
     result = email_service.send_payment_notification(
-        user_email="yoboje7924@bitfami.com",
+        user_email="mojig18880@camjoint.com",
         user_name="John Doe",
         event_title="GDG Davao Meetup 2024",
         registration_id="REG123456",
@@ -47,7 +47,7 @@ def test_certificate_notification():
     print("Testing certificate notification email...")
     
     result = email_service.send_certificate_notification(
-        user_email="yoboje7924@bitfami.com",
+        user_email="mojig18880@camjoint.com",
         user_name="John Doe",
         event_title="GDG Davao Meetup 2024",
         certificate_url="https://example.com/certificate/123",
@@ -62,7 +62,7 @@ def test_event_reminder():
     print("Testing event reminder email...")
     
     result = email_service.send_event_reminder(
-        user_email="yoboje7924@bitfami.com",
+        user_email="mojig18880@camjoint.com",
         user_name="John Doe",
         event_title="GDG Davao Meetup 2024",
         event_date="January 15, 2024 at 10:00 AM",
@@ -79,7 +79,7 @@ def test_feedback_request():
     print("Testing feedback request email...")
     
     result = email_service.send_feedback_request(
-        user_email="yoboje7924@bitfami.com",
+        user_email="mojig18880@camjoint.com",
         user_name="John Doe",
         event_title="GDG Davao Meetup 2024",
         feedback_url="https://example.com/feedback/123",
@@ -94,7 +94,7 @@ def test_checkin_notification():
     print("Testing check-in notification email...")
     
     result = email_service.send_event_reminder(
-        user_email="yoboje7924@bitfami.com",
+        user_email="mojig18880@camjoint.com",
         user_name="John Doe",
         event_title="GDG Davao Meetup 2024",
         event_date="January 15, 2024 at 10:00 AM",
