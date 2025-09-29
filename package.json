@@ -25,7 +25,7 @@
     "firebase:rules": "firebase deploy --only firestore:rules,storage",
     "firebase:indexes": "firebase deploy --only firestore:indexes",
     "firebase:functions": "firebase deploy --only functions",
-    "firebase:hosting": "npm run build && firebase deploy --only hosting",
+    
     "firebase:rules:generate": "node scripts/deploy-rules.js generate",
     "firebase:rules:deploy": "node scripts/deploy-rules.js deploy",
     "firebase:rules:validate": "node scripts/deploy-rules.js validate",
