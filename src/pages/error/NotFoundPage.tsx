@@ -1,5 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
+import dinoSvg from '@assets/dino.svg';
 
 const NotFoundPage: React.FC = () => {
 	return (
@@ -9,7 +10,7 @@ const NotFoundPage: React.FC = () => {
 				<h1 className="text-[160px] leading-none font-black tracking-widest text-red-500">404</h1>
 				{/* Dino SVG over the 0 */}
 				<div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-					<img src="/dino.svg" alt="Dinosaur" className="h-24 w-auto animate-bounce" style={{ animationDuration: '2.2s' }} />
+					<img src={dinoSvg} alt="Dinosaur" className="h-24 w-auto animate-bounce" style={{ animationDuration: '2.2s' }} />
 				</div>
 			</div>
 

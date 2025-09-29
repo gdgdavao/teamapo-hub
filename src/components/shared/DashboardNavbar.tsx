@@ -22,6 +22,7 @@ import { Fragment } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import NotificationDropdown from './NotificationDropdown';
 import { NotificationService } from '../../services/notificationService';
+import apohubTitle2 from '@assets/apohub-title2.svg';
 
 const DashboardNavbar: React.FC = () => {
   const location = useLocation();
@@ -142,7 +143,7 @@ const DashboardNavbar: React.FC = () => {
               className="flex items-center transition-transform duration-200 hover:scale-105"
             >
               <img
-                src="/src/assets/apohub-title2.svg"
+                src={apohubTitle2}
                 alt="ApoHub"
                 className="h-7 w-auto"
               />
@@ -256,7 +257,7 @@ const DashboardNavbar: React.FC = () => {
               className="flex-shrink-0 flex items-center transition-transform duration-200 hover:scale-105"
             >
               <img
-                src="/src/assets/apohub-title2.svg"
+                src={apohubTitle2}
                 alt="ApoHub"
                 className="h-6 w-auto"
               />
@@ -295,7 +296,7 @@ const DashboardNavbar: React.FC = () => {
                 isMobileMenuOpen ? 'scale-105' : 'scale-100'
               }`}>
                 <img
-                  src="/src/assets/apohub-title2.svg"
+                  src={apohubTitle2}
                   alt="ApoHub"
                   className="h-6 w-auto"
                 />
