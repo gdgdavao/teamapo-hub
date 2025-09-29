@@ -58,14 +58,18 @@ export const createEventWithValidation = async (
       await EventService.uploadEventImage(eventId, file);
     }
 
-    // Step 5: Upload payment QR if provided
-    if (eventData.paymentConfig?.qrCodeImage) {
-      await EventService.uploadPaymentQR(eventId, eventData.paymentConfig.qrCodeImage);
+    // Step 5: Upload payment QR if provided (supports multiple paymentConfigs)
+    if (Array.isArray(eventData.paymentConfigs) && eventData.paymentConfigs.length > 0) {
+      const firstConfigWithImage = eventData.paymentConfigs.find(c => !!c.qrCodeImage);
+      if (firstConfigWithImage?.qrCodeImage) {
+        await EventService.uploadPaymentQR(eventId, firstConfigWithImage.qrCodeImage);
+      }
     }
 
     // Step 6: Initialize analytics (if enabled)
     if (initializeAnalytics) {
-      const initializeEvent = httpsCallable(functions, 'initializeEvent');
+      // Match backend function name `initialize_event`
+      const initializeEvent = httpsCallable(functions, 'initialize_event');
       await initializeEvent({ eventId });
     }
 
@@ -112,8 +116,8 @@ export const duplicateEventComplete = async (
       await EventService.updateEvent(newEventId, modifications);
     }
     
-    // Initialize analytics for the new event
-    const initializeEvent = httpsCallable(functions, 'initializeEvent');
+    // Initialize analytics for the new event (match backend name)
+    const initializeEvent = httpsCallable(functions, 'initialize_event');
     await initializeEvent({ eventId: newEventId });
     
     return newEventId;
