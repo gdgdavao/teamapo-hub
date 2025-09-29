@@ -10,6 +10,7 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 import resend
 from pathlib import Path
+from email_template_loader import template_loader
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -83,7 +84,18 @@ class EmailService:
             'noreply@gdgdavao.com'
         )
         
-        logger.info(f"Email service initialized with from_email: {self.from_email}")
+        # Set sender display name
+        self.sender_name = (
+            os.getenv('SENDER_NAME') or 
+            os.getenv('SENDER_NAME'.lower()) or
+            self._get_firebase_config('resend.sender_name') or
+            'TeamApo Hub - GDG Davao'
+        )
+        
+        # Format the complete "from" field with display name
+        self.from_address = f"{self.sender_name} <{self.from_email}>"
+        
+        logger.info(f"Email service initialized with sender: {self.from_address}")
         if self.api_key.startswith('re_'):
             logger.info(f"Using Resend API key: {self.api_key[:10]}...")
         else:
@@ -131,7 +143,7 @@ class EmailService:
         try:
             # Prepare email data
             email_data = {
-                "from": self.from_email,
+                "from": self.from_address,
                 "to": to if isinstance(to, list) else [to],
                 "subject": subject,
                 "html": html_content,
@@ -409,106 +421,19 @@ class EmailService:
     ) -> str:
         """Create HTML content for registration confirmation email."""
         
-        return f"""
-        <!doctype html>
-        <html>
-          <body>
-            <div
-              style='background-color:#F2F5F7;color:#242424;font-family:"Helvetica Neue", "Arial Nova", "Nimbus Sans", Arial, sans-serif;font-size:16px;font-weight:400;letter-spacing:0.15008px;line-height:1.5;margin:0;padding:32px 0;min-height:100%;width:100%'
-            >
-              <table
-                align="center"
-                width="100%"
-                style="margin:0 auto;max-width:600px;background-color:#FFFFFF"
-                role="presentation"
-                cellspacing="0"
-                cellpadding="0"
-                border="0"
-              >
-                <tbody>
-                  <tr style="width:100%">
-                    <td>
-                      <div style="padding:24px 24px 24px 24px;text-align:center">
-                        <a
-                          href="https://gdgdavao.org"
-                          style="text-decoration:none"
-                          target="_blank"
-                          ><img
-                            alt="TeamApo Hub Logo"
-                            src="https://raw.githubusercontent.com/gdgdavao/assets-cdn/f20f81cb72891da14135d502c108bd8b4423fad7/apohub-title.svg"
-                            width="256"
-                            style="width:256px;outline:none;border:none;text-decoration:none;vertical-align:middle;display:inline-block;max-width:100%"
-                        /></a>
-                      </div>
-                      <div style="height:16px"></div>
-                      <div
-                        style='font-size:30px;font-family:"Nimbus Mono PS", "Courier New", "Cutive Mono", monospace;font-weight:bold;padding:16px 24px 16px 24px'
-                      >
-                        Hi {user_name} 👋
-                      </div>
-                      <div
-                        style="font-size:15px;font-weight:normal;padding:16px 24px 16px 24px"
-                      >
-                        <p>
-                          Thank you for registering for {event_title} will be held on {event_date} at {event_location}. We're excited
-                          to have you join us!
-                        </p>
-                        <br />
-                        <p>
-                          We received your registration and your payment proof. Our team
-                          will manually verify your payment. This usually takes
-                          <strong>1–2 business days.</strong>
-                        </p>
-                        <br />
-                        <p><strong>What happens next:</strong></p>
-                        <ul>
-                          <li>
-                            We'll review your payment proof and confirm your
-                            registration.
-                          </li>
-                          <li>
-                            Once verified, you'll receive a final confirmation email
-                            with your QR code and registration details.
-                          </li>
-                          <li>
-                            If we need additional information, we'll contact you at
-                            this email address.
-                          </li>
-                        </ul>
-                        <br />
-                        <p>
-                        Again, thank you for registering. Please keep an eye on your inbox for updates.
-                        </p>
-                        <br />
-                        <p>Googleyness,<br />Google Developer Groups - Davao</p>
-                      </div>
-                      <div style="padding:16px 0px 16px 0px">
-                        <hr
-                          style="width:100%;border:none;border-top:1px solid #CCCCCC;margin:0"
-                        />
-                      </div>
-                      <div
-                        style="font-size:15px;font-weight:normal;padding:16px 24px 16px 24px"
-                      >
-                        <p>
-                          <em
-                            >If you don't hear from us within 2 business days,
-                            please contact support at
-                            <a href="support@gdgdavao.org" target="_blank"
-                              >support@gdgdavao.org</a
-                            >.</em
-                          >
-                        </p>
-                      </div>
-                      <div style="height:16px"></div>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </body>
-        </html>
-        """
+        context = {
+            'user_name': user_name,
+            'event_title': event_title,
+            'event_date': event_date,
+            'event_location': event_location,
+            'registration_id': registration_id or '',
+            'qr_code_data': qr_code_data or ''
+        }
+        
+        return template_loader.render_email_template(
+            'registration_confirmation',
+            context
+        )
     
     def _create_payment_notification_html(
         self,
@@ -520,75 +445,37 @@ class EmailService:
     ) -> str:
         """Create HTML content for payment notification email."""
         
-        status_colors = {
-            'approved': {'bg': '#d4edda', 'border': '#c3e6cb', 'text': '#155724'},
-            'rejected': {'bg': '#f8d7da', 'border': '#f5c6cb', 'text': '#721c24'},
-            'pending': {'bg': '#fff3cd', 'border': '#ffeaa7', 'text': '#856404'}
-        }
+        # Get status-specific styling
+        colors = template_loader.get_payment_status_colors(status)
+        status_message = template_loader.get_payment_status_message(status)
+        next_steps = template_loader.get_payment_next_steps(status)
         
-        status_messages = {
-            'approved': 'Payment Approved!',
-            'rejected': 'Payment Rejected',
-            'pending': 'Payment Pending'
-        }
-        
-        color = status_colors.get(status, status_colors['pending'])
-        message = status_messages.get(status, 'Payment Update')
-        
-        instructions_section = ""
+        # Handle payment instructions section
+        payment_instructions_section = ""
         if payment_instructions and status == 'pending':
-            instructions_section = f"""
+            payment_instructions_section = f"""
             <div style="background-color: #f8f9fa; border-radius: 8px; padding: 20px; margin: 20px 0;">
                 <h3 style="margin-top: 0;">Payment Instructions</h3>
                 <p>{payment_instructions}</p>
             </div>
             """
         
-        return f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Payment Update</title>
-        </head>
-        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
-            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px 10px 0 0; text-align: center;">
-                <h1 style="margin: 0; font-size: 28px;">Payment Update</h1>
-                <p style="margin: 10px 0 0 0; font-size: 16px; opacity: 0.9;">{event_title}</p>
-            </div>
-            
-            <div style="background: white; padding: 30px; border: 1px solid #e0e0e0; border-top: none;">
-                <h2 style="color: #333; margin-top: 0;">Hello {user_name}!</h2>
-                
-                <div style="background-color: {color['bg']}; border: 1px solid {color['border']}; border-radius: 8px; padding: 20px; margin: 20px 0;">
-                    <h3 style="color: {color['text']}; margin-top: 0;">{message}</h3>
-                    <p style="color: {color['text']}; margin-bottom: 0;">Registration ID: {registration_id}</p>
-                </div>
-                
-                {instructions_section}
-                
-                <div style="background-color: #e7f3ff; border: 1px solid #b3d9ff; border-radius: 8px; padding: 20px; margin: 20px 0;">
-                    <h3 style="color: #0066cc; margin-top: 0;">Next Steps</h3>
-                    <ul style="color: #0066cc;">
-                        {"<li>Your registration is confirmed and you're all set for the event!</li>" if status == 'approved' else ""}
-                        {"<li>Please check your payment details and try again.</li>" if status == 'rejected' else ""}
-                        {"<li>Complete your payment to secure your spot at the event.</li>" if status == 'pending' else ""}
-                        <li>Keep this email for your records</li>
-                    </ul>
-                </div>
-                
-                <p>If you have any questions about your payment, please contact us.</p>
-                <p>Best regards,<br>The GDG Davao Team</p>
-            </div>
-            
-            <div style="background-color: #f8f9fa; padding: 20px; border-radius: 0 0 10px 10px; text-align: center; color: #666; font-size: 14px;">
-                <p>This email was sent to {user_name} regarding their registration for {event_title}.</p>
-                <p>© 2024 GDG Davao. All rights reserved.</p>
-            </div>
-        </body>
-        </html>
-        """
+        context = {
+            'user_name': user_name,
+            'event_title': event_title,
+            'registration_id': registration_id,
+            'status_bg_color': colors['bg_color'],
+            'status_border_color': colors['border_color'],
+            'status_text_color': colors['text_color'],
+            'status_message': status_message,
+            'payment_instructions_section': payment_instructions_section,
+            'next_steps': next_steps
+        }
+        
+        return template_loader.render_email_template(
+            'payment_notification',
+            context
+        )
     
     def _create_certificate_notification_html(
         self,
@@ -598,51 +485,16 @@ class EmailService:
     ) -> str:
         """Create HTML content for certificate notification email."""
         
-        return f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Certificate Ready</title>
-        </head>
-        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
-            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px 10px 0 0; text-align: center;">
-                <h1 style="margin: 0; font-size: 28px;">🎉 Certificate Ready!</h1>
-                <p style="margin: 10px 0 0 0; font-size: 16px; opacity: 0.9;">Your achievement awaits</p>
-            </div>
-            
-            <div style="background: white; padding: 30px; border: 1px solid #e0e0e0; border-top: none;">
-                <h2 style="color: #333; margin-top: 0;">Congratulations {user_name}!</h2>
-                <p>Your certificate for <strong>{event_title}</strong> is now ready for download.</p>
-                
-                <div style="text-align: center; margin: 30px 0;">
-                    <a href="{certificate_url}" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 30px; text-decoration: none; border-radius: 25px; font-weight: bold; display: inline-block;">
-                        Download Certificate
-                    </a>
-                </div>
-                
-                <div style="background-color: #e7f3ff; border: 1px solid #b3d9ff; border-radius: 8px; padding: 20px; margin: 20px 0;">
-                    <h3 style="color: #0066cc; margin-top: 0;">Certificate Details</h3>
-                    <ul style="color: #0066cc;">
-                        <li>Digital certificate with your name and event details</li>
-                        <li>Verifiable and shareable on professional networks</li>
-                        <li>Available for download anytime</li>
-                        <li>Perfect for your portfolio and LinkedIn profile</li>
-                    </ul>
-                </div>
-                
-                <p>Thank you for participating in our event. We hope you had a great experience!</p>
-                <p>Best regards,<br>The GDG Davao Team</p>
-            </div>
-            
-            <div style="background-color: #f8f9fa; padding: 20px; border-radius: 0 0 10px 10px; text-align: center; color: #666; font-size: 14px;">
-                <p>This certificate was generated for {user_name} for their participation in {event_title}.</p>
-                <p>© 2024 GDG Davao. All rights reserved.</p>
-            </div>
-        </body>
-        </html>
-        """
+        context = {
+            'user_name': user_name,
+            'event_title': event_title,
+            'certificate_url': certificate_url
+        }
+        
+        return template_loader.render_email_template(
+            'certificate_notification',
+            context
+        )
     
     def _create_event_reminder_html(
         self,
@@ -654,61 +506,20 @@ class EmailService:
     ) -> str:
         """Create HTML content for event reminder email."""
         
-        reminder_times = {
-            "24h": "24 hours",
-            "1h": "1 hour",
-            "checked_in": "now"
+        time_text = template_loader.get_reminder_time_text(reminder_type)
+        
+        context = {
+            'user_name': user_name,
+            'event_title': event_title,
+            'event_date': event_date,
+            'event_location': event_location,
+            'time_text': time_text
         }
         
-        time_text = reminder_times.get(reminder_type, "soon")
-        
-        return f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Event Reminder</title>
-        </head>
-        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
-            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px 10px 0 0; text-align: center;">
-                <h1 style="margin: 0; font-size: 28px;">⏰ Event Reminder</h1>
-                <p style="margin: 10px 0 0 0; font-size: 16px; opacity: 0.9;">Don't miss out!</p>
-            </div>
-            
-            <div style="background: white; padding: 30px; border: 1px solid #e0e0e0; border-top: none;">
-                <h2 style="color: #333; margin-top: 0;">Hello {user_name}!</h2>
-                <p><strong>{event_title}</strong> starts in {time_text}!</p>
-                
-                <div style="background-color: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px; padding: 20px; margin: 20px 0;">
-                    <h3 style="color: #856404; margin-top: 0;">Event Details</h3>
-                    <p style="color: #856404; margin-bottom: 5px;"><strong>Event:</strong> {event_title}</p>
-                    <p style="color: #856404; margin-bottom: 5px;"><strong>Date & Time:</strong> {event_date}</p>
-                    <p style="color: #856404; margin-bottom: 0;"><strong>Location:</strong> {event_location}</p>
-                </div>
-                
-                <div style="background-color: #e7f3ff; border: 1px solid #b3d9ff; border-radius: 8px; padding: 20px; margin: 20px 0;">
-                    <h3 style="color: #0066cc; margin-top: 0;">Reminder Checklist</h3>
-                    <ul style="color: #0066cc;">
-                        <li>Plan your route to the venue</li>
-                        <li>Bring a valid ID for check-in</li>
-                        <li>Arrive 15 minutes early</li>
-                        <li>Bring your phone for QR code check-in</li>
-                        <li>Prepare any questions you might have</li>
-                    </ul>
-                </div>
-                
-                <p>We're excited to see you there!</p>
-                <p>Best regards,<br>The GDG Davao Team</p>
-            </div>
-            
-            <div style="background-color: #f8f9fa; padding: 20px; border-radius: 0 0 10px 10px; text-align: center; color: #666; font-size: 14px;">
-                <p>This reminder was sent to {user_name} for {event_title}.</p>
-                <p>© 2024 GDG Davao. All rights reserved.</p>
-            </div>
-        </body>
-        </html>
-        """
+        return template_loader.render_email_template(
+            'event_reminder',
+            context
+        )
     
     def _create_feedback_request_html(
         self,
@@ -718,54 +529,16 @@ class EmailService:
     ) -> str:
         """Create HTML content for feedback request email."""
         
-        return f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Share Your Feedback</title>
-        </head>
-        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
-            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px 10px 0 0; text-align: center;">
-                <h1 style="margin: 0; font-size: 28px;">💬 Share Your Feedback</h1>
-                <p style="margin: 10px 0 0 0; font-size: 16px; opacity: 0.9;">Help us improve</p>
-            </div>
-            
-            <div style="background: white; padding: 30px; border: 1px solid #e0e0e0; border-top: none;">
-                <h2 style="color: #333; margin-top: 0;">Hello {user_name}!</h2>
-                <p>Thank you for attending <strong>{event_title}</strong>! We hope you had a great time.</p>
-                
-                <p>Your feedback is incredibly valuable to us. It helps us improve our events and create better experiences for everyone.</p>
-                
-                <div style="text-align: center; margin: 30px 0;">
-                    <a href="{feedback_url}" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 30px; text-decoration: none; border-radius: 25px; font-weight: bold; display: inline-block;">
-                        Share Your Feedback
-                    </a>
-                </div>
-                
-                <div style="background-color: #e7f3ff; border: 1px solid #b3d9ff; border-radius: 8px; padding: 20px; margin: 20px 0;">
-                    <h3 style="color: #0066cc; margin-top: 0;">What We'd Love to Know</h3>
-                    <ul style="color: #0066cc;">
-                        <li>How was your overall experience?</li>
-                        <li>What did you enjoy most?</li>
-                        <li>What could we improve?</li>
-                        <li>Would you recommend our events to others?</li>
-                        <li>Any suggestions for future events?</li>
-                    </ul>
-                </div>
-                
-                <p>Your feedback will help us make our next events even better!</p>
-                <p>Best regards,<br>The GDG Davao Team</p>
-            </div>
-            
-            <div style="background-color: #f8f9fa; padding: 20px; border-radius: 0 0 10px 10px; text-align: center; color: #666; font-size: 14px;">
-                <p>This feedback request was sent to {user_name} for {event_title}.</p>
-                <p>© 2024 GDG Davao. All rights reserved.</p>
-            </div>
-        </body>
-        </html>
-        """
+        context = {
+            'user_name': user_name,
+            'event_title': event_title,
+            'feedback_url': feedback_url
+        }
+        
+        return template_loader.render_email_template(
+            'feedback_request',
+            context
+        )
     
     # Text Template Methods
     def _create_registration_confirmation_text(
