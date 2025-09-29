@@ -2080,6 +2080,28 @@ def sendEventReminder(req: https_fn.CallableRequest) -> Dict[str, Any]:
         )
 
 
+def generate_feedback_url(event_id: str, registration_id: str = None, user_email: str = None, user_name: str = None) -> str:
+    """
+    Generate systematic feedback URL with optional parameters
+    """
+    base_url = "https://gdgdavao.org"  # Production URL
+    feedback_url = f"{base_url}/feedback/{event_id}"
+    
+    # Add query parameters for better UX
+    params = []
+    if registration_id:
+        params.append(f"registrationId={registration_id}")
+    if user_email:
+        params.append(f"email={user_email}")
+    if user_name:
+        params.append(f"name={user_name}")
+    
+    if params:
+        feedback_url += "?" + "&".join(params)
+    
+    return feedback_url
+
+
 @https_fn.on_call()
 def sendFeedbackRequest(req: https_fn.CallableRequest) -> Dict[str, Any]:
     """
@@ -2090,13 +2112,23 @@ def sendFeedbackRequest(req: https_fn.CallableRequest) -> Dict[str, Any]:
         user_email = data.get('userEmail')
         user_name = data.get('userName', 'Attendee')
         event_title = data.get('eventTitle')
-        feedback_url = data.get('feedbackUrl')
+        event_id = data.get('eventId')
         registration_id = data.get('registrationId')
+        
+        # Support both old and new API - feedbackUrl or generate from eventId
+        feedback_url = data.get('feedbackUrl')
+        if not feedback_url and event_id:
+            feedback_url = generate_feedback_url(
+                event_id=event_id,
+                registration_id=registration_id,
+                user_email=user_email,
+                user_name=user_name
+            )
 
         if not user_email or not event_title or not feedback_url:
             raise https_fn.HttpsError(
                 code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
-                message="userEmail, eventTitle, and feedbackUrl are required"
+                message="userEmail, eventTitle, and either feedbackUrl or eventId are required"
             )
 
         # Send email using Resend

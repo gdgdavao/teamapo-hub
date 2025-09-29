@@ -12,7 +12,9 @@ import {
   Squares2X2Icon,
   ListBulletIcon,
   ShareIcon,
-  LinkIcon
+  LinkIcon,
+  ChatBubbleLeftRightIcon,
+  XMarkIcon
 } from '@heroicons/react/24/outline';
 import { CheckCircleIcon, XCircleIcon, ClockIcon } from '@heroicons/react/20/solid';
 import { Link, useNavigate } from 'react-router-dom';
@@ -36,6 +38,8 @@ interface DeleteModalState {
   isForceDelete: boolean;
 }
 
+// Removed FeedbackModalState - now using dedicated page
+
 const ManageEventsPage: React.FC = () => {
   const navigate = useNavigate();
   const { userProfile, loading: authLoading, currentUser } = useAuth();
@@ -57,6 +61,8 @@ const ManageEventsPage: React.FC = () => {
     isLoading: false,
     isForceDelete: false
   });
+
+  // Removed feedbackModal state - now using dedicated page
 
   // Redirect non-admin users to dashboard
   useEffect(() => {
@@ -411,6 +417,10 @@ const ManageEventsPage: React.FC = () => {
     });
   };
 
+  const handleViewFeedback = (eventId: string) => {
+    navigate(`/admin/events/${eventId}/feedback`);
+  };
+
   const getPageTitle = () => {
     return 'Events Management';
   };
@@ -698,6 +708,13 @@ const ManageEventsPage: React.FC = () => {
                       >
                         <ShareIcon className="h-4 w-4" />
                       </button>
+                      <button
+                        onClick={() => handleViewFeedback(event.id)}
+                        className="flex items-center justify-center w-8 h-8 text-orange-600 hover:text-orange-900 hover:bg-orange-50 rounded-lg transition-colors"
+                        title="View Feedback Responses"
+                      >
+                        <ChatBubbleLeftRightIcon className="h-4 w-4" />
+                      </button>
                     </div>
                     <div className="flex items-center space-x-2">
                       <Link
@@ -850,6 +867,13 @@ const ManageEventsPage: React.FC = () => {
                             >
                               <ShareIcon className="h-4 w-4" />
                             </button>
+                            <button
+                              onClick={() => handleViewFeedback(event.id)}
+                              className="text-orange-600 hover:text-orange-900"
+                              title="View Feedback Responses"
+                            >
+                              <ChatBubbleLeftRightIcon className="h-4 w-4" />
+                            </button>
                             <Link
                               to={`/admin/analytics?eventId=${event.id}`}
                               className="text-purple-600 hover:text-purple-900"
@@ -971,6 +995,13 @@ const ManageEventsPage: React.FC = () => {
                         <ShareIcon className="h-4 w-4 flex-shrink-0" />
                         <span className="hidden sm:inline">Share</span>
                       </button>
+                      <button
+                        onClick={() => handleViewFeedback(event.id)}
+                        className="flex items-center justify-center space-x-1 px-2 sm:px-3 py-2 text-orange-600 hover:text-orange-900 hover:bg-orange-50 rounded-lg transition-colors text-xs font-medium min-w-0"
+                      >
+                        <ChatBubbleLeftRightIcon className="h-4 w-4 flex-shrink-0" />
+                        <span className="hidden sm:inline">Feedback</span>
+                      </button>
                       <Link
                         to={`/admin/analytics?eventId=${event.id}`}
                         className="flex items-center justify-center space-x-1 px-2 sm:px-3 py-2 text-purple-600 hover:text-purple-900 hover:bg-purple-50 rounded-lg transition-colors text-xs font-medium min-w-0"
@@ -1029,6 +1060,8 @@ const ManageEventsPage: React.FC = () => {
           type={deleteModal.type}
           isLoading={deleteModal.isLoading}
         />
+
+        {/* Feedback modal removed - now using dedicated page */}
       </LayoutComponent>
     );
   };

@@ -971,6 +971,82 @@ export class EventService {
   }
 
   /**
+   * Get feedback form structure (for feedback page)
+   */
+  static async getFeedbackForm(eventId: string): Promise<{ fields: FormField[] }> {
+    try {
+      const formRef = doc(db, `${this.EVENTS_COLLECTION}/${eventId}/forms/feedback`);
+      const formSnap = await getDoc(formRef);
+      
+      if (formSnap.exists()) {
+        const formData = formSnap.data();
+        return {
+          fields: formData.fields || []
+        };
+      }
+      
+      // Return default feedback form if none exists
+      return {
+        fields: [
+          {
+            id: 'overall_rating',
+            type: 'rating',
+            label: 'Overall Event Rating',
+            required: true,
+            gridSize: 'full'
+          },
+          {
+            id: 'liked_most',
+            type: 'textarea',
+            label: 'What did you like most about this event?',
+            required: false,
+            gridSize: 'full',
+            placeholder: 'Tell us what you enjoyed...'
+          },
+          {
+            id: 'improvements',
+            type: 'textarea',
+            label: 'What could we improve?',
+            required: false,
+            gridSize: 'full',
+            placeholder: 'Share your suggestions for improvement...'
+          },
+          {
+            id: 'would_recommend',
+            type: 'radio',
+            label: 'Would you recommend this event to others?',
+            required: false,
+            gridSize: 'full',
+            options: ['Yes', 'No', 'Maybe']
+          }
+        ]
+      };
+    } catch (error) {
+      console.error('Error getting feedback form:', error);
+      // Return default form on error
+      return {
+        fields: [
+          {
+            id: 'overall_rating',
+            type: 'rating',
+            label: 'Overall Event Rating',
+            required: true,
+            gridSize: 'full'
+          },
+          {
+            id: 'comments',
+            type: 'textarea',
+            label: 'Comments',
+            required: false,
+            gridSize: 'full',
+            placeholder: 'Share your feedback...'
+          }
+        ]
+      };
+    }
+  }
+
+  /**
    * Get event payment configuration
    */
   static async getEventPaymentConfig(eventId: string): Promise<any> {

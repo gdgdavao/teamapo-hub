@@ -46,6 +46,73 @@ export class FeedbackService {
   private static readonly REGISTRATIONS_COLLECTION = 'registrations';
 
   /**
+   * Generate feedback URL for an event
+   */
+  static generateFeedbackUrl(eventId: string, registrationId?: string, userEmail?: string, userName?: string): string {
+    const baseUrl = window.location.origin;
+    const feedbackUrl = `${baseUrl}/feedback/${eventId}`;
+    
+    // Add query parameters for better UX
+    const params = new URLSearchParams();
+    if (registrationId) params.append('registrationId', registrationId);
+    if (userEmail) params.append('email', userEmail);
+    if (userName) params.append('name', userName);
+    
+    return params.toString() ? `${feedbackUrl}?${params.toString()}` : feedbackUrl;
+  }
+
+  /**
+   * Generate feedback URL for server-side use
+   */
+  static generateServerFeedbackUrl(eventId: string, registrationId?: string, userEmail?: string, userName?: string): string {
+    const baseUrl = 'https://gdgdavao.org'; // Production URL
+    const feedbackUrl = `${baseUrl}/feedback/${eventId}`;
+    
+    // Add query parameters for better UX
+    const params = new URLSearchParams();
+    if (registrationId) params.append('registrationId', registrationId);
+    if (userEmail) params.append('email', userEmail);
+    if (userName) params.append('name', userName);
+    
+    return params.toString() ? `${feedbackUrl}?${params.toString()}` : feedbackUrl;
+  }
+
+  /**
+   * Send feedback request email
+   */
+  static async sendFeedbackRequest(data: {
+    eventId: string;
+    userEmail: string;
+    userName: string;
+    eventTitle: string;
+    registrationId?: string;
+  }): Promise<void> {
+    try {
+      const sendFeedbackRequest = httpsCallable(functions, 'sendFeedbackRequest');
+      
+      // Generate feedback URL
+      const feedbackUrl = this.generateServerFeedbackUrl(
+        data.eventId,
+        data.registrationId,
+        data.userEmail,
+        data.userName
+      );
+
+      await sendFeedbackRequest({
+        eventId: data.eventId,
+        userEmail: data.userEmail,
+        userName: data.userName,
+        eventTitle: data.eventTitle,
+        registrationId: data.registrationId,
+        feedbackUrl: feedbackUrl
+      });
+    } catch (error) {
+      console.error('Error sending feedback request:', error);
+      throw new Error('Failed to send feedback request');
+    }
+  }
+
+  /**
    * Submit feedback for an event
    */
   static async submitFeedback(feedbackData: {

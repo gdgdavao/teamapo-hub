@@ -25,6 +25,7 @@ import AdminUsersPage from './pages/admin/AdminUsersPage';
 import AdminPaymentVerificationPage from './pages/admin/AdminPaymentVerificationPage';
 import CreateEventPage from './pages/admin/AdminCreateEventPage';
 import ManageEventsPage from './pages/admin/AdminManageEventsPage';
+import AdminEventFeedbackPage from './pages/admin/AdminEventFeedbackPage';
 
 // Shared Pages
 import CertificatesPage from './pages/shared/CertificatesPage';
@@ -170,6 +171,12 @@ const AppContent: React.FC = () => {
       <Route path="/admin/events/:eventId/attendees" element={
         <ProtectedRoute requiredRole="admin">
           <AdminAttendeesPage />
+        </ProtectedRoute>
+      } />
+
+      <Route path="/admin/events/:eventId/feedback" element={
+        <ProtectedRoute requiredRole="admin">
+          <AdminEventFeedbackPage />
         </ProtectedRoute>
       } />
 

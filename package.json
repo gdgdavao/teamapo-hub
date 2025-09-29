@@ -13,7 +13,7 @@
     "emulator:start:import": "firebase emulators:start --only auth,firestore,functions,storage --import=./emulator-data",
     "emulator:export": "firebase emulators:export ./emulator-data",
     "emulator:clear": "firebase emulators:start --only auth,firestore,functions,storage --import=./emulator-data --export-on-exit",
-    "sample-data": "node scripts/populate-sample-data.js",
+    "sample-data": "node scripts/populate-sample-data.cjs",
     "sample-users": "node scripts/populate-users-only.cjs",
     "emulator:with-data": "npm run emulator:start && npm run sample-data",
     "emulator:with-users": "npm run emulator:start && npm run sample-users",

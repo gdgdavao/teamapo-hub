@@ -8,3 +8,4 @@ export { default as AdminPaymentVerificationPage } from './AdminPaymentVerificat
 export { default as AdminCreateEventPage } from './AdminCreateEventPage';
 export { default as AdminManageEventsPage } from './AdminManageEventsPage';
 export { default as AdminAnalyticsPage } from './AdminAnalyticsPage';
+export { default as AdminEventFeedbackPage } from './AdminEventFeedbackPage';
