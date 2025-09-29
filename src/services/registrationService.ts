@@ -63,6 +63,7 @@ export class RegistrationService {
     pricing: TicketPricing;
     qrCode: string;
     requiresPayment: boolean;
+    paymentLinkToken?: string;
   }> {
     try {
       // Validate event and get pricing locally (bypassing functions for now)
@@ -83,6 +84,19 @@ export class RegistrationService {
       const requiresPayment = validation.pricing.currentPrice > 0;
       const paymentStatus = 'pending';
 
+      // Generate one-time payment link token and expiry (24h)
+      const token = (() => {
+        try {
+          const arr = new Uint8Array(16);
+          // @ts-ignore - crypto is available in browser
+          (globalThis.crypto || (window as any).crypto).getRandomValues(arr);
+          return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+        } catch {
+          return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+        }
+      })();
+      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
       // Create pending registration document
       const registration: Omit<Registration, 'id'> = {
         eventId: registrationData.eventId,
@@ -94,6 +108,9 @@ export class RegistrationService {
         discountAmount: validation.pricing.discountAmount * registrationData.quantity,
         totalAmount: validation.pricing.currentPrice * registrationData.quantity,
         currency: 'PHP', // Default currency
+        // Save promo code information from validation
+        ...(validation.pricing.promoCode ? { promoCode: validation.pricing.promoCode } : {}),
+        ...(validation.pricing.promoCodeId ? { promoCodeId: validation.pricing.promoCodeId } : {}),
         pricing: validation.pricing,
         paymentStatus: paymentStatus as any,
         attendanceStatus: 'pending' as any,
@@ -101,7 +118,11 @@ export class RegistrationService {
         certificateIssued: false,
         qrCode,
         registrationDate: serverTimestamp() as any,
-        updatedAt: serverTimestamp() as any
+        updatedAt: serverTimestamp() as any,
+        // Payment link metadata
+        paymentLinkToken: token as any,
+        paymentLinkExpiresAt: expiresAt as any,
+        paymentLinkStatus: 'active' as any
       };
 
       // Add custom form responses if provided
@@ -125,11 +146,39 @@ export class RegistrationService {
         registrationId,
         pricing: validation.pricing,
         qrCode,
-        requiresPayment
+        requiresPayment,
+        paymentLinkToken: token
       };
     } catch (error) {
       console.error('Error creating pending registration:', error);
       throw new Error('Failed to create registration');
+    }
+  }
+
+  /**
+   * Send registration confirmation email immediately after registration
+   */
+  static async sendRegistrationConfirmationEmail(
+    registrationId: string,
+    eventId: string,
+    userEmail: string,
+    userName: string,
+    requiresPayment: boolean = false
+  ): Promise<void> {
+    try {
+      const sendConfirmationEmail = httpsCallable(functions, 'sendConfirmationEmail');
+      await sendConfirmationEmail({
+        registrationId,
+        eventId,
+        userEmail,
+        userName,
+        requiresPayment,
+        emailType: 'submitted' // This is the immediate confirmation without QR code or registration ID
+      });
+      console.log('Registration submission confirmation email sent successfully');
+    } catch (error) {
+      console.error('Error sending registration confirmation email:', error);
+      throw new Error('Failed to send confirmation email');
     }
   }
 
@@ -159,17 +208,19 @@ export class RegistrationService {
           updatedAt: serverTimestamp()
         });
 
-        // Send confirmation email via Firebase Function
+        // Send approval confirmation email with QR code and registration ID
         try {
           const sendConfirmationEmail = httpsCallable(functions, 'sendConfirmationEmail');
           await sendConfirmationEmail({
             registrationId,
             eventId: registrationData.eventId,
             userEmail: registrationData.userDetails.email,
-            userName: registrationData.userDetails.name
+            userName: registrationData.userDetails.name,
+            emailType: 'approved', // This will include QR code and registration ID
+            requiresPayment: false // Payment is already completed at this point
           });
         } catch (emailError) {
-          console.error('Error sending confirmation email:', emailError);
+          console.error('Error sending approval confirmation email:', emailError);
           // Don't throw - email failure shouldn't break the flow
         }
       }
@@ -218,8 +269,9 @@ export class RegistrationService {
         discountAmount: validation.pricing.discountAmount * registrationData.quantity,
         totalAmount: validation.pricing.currentPrice * registrationData.quantity,
         currency: 'PHP', // Default currency
-        ...(registrationData.promoCode ? { promoCode: registrationData.promoCode } : {}),
-        ...(validation.pricing.promoCode ? { promoCodeId: registrationData.promoCode } : {}),
+        // Save promo code information from both sources
+        ...(validation.pricing.promoCode ? { promoCode: validation.pricing.promoCode } : {}),
+        ...(validation.pricing.promoCodeId ? { promoCodeId: validation.pricing.promoCodeId } : {}),
         pricing: validation.pricing,
         paymentStatus: paymentStatus as any,
         attendanceStatus: 'registered',
@@ -229,6 +281,7 @@ export class RegistrationService {
         registrationDate: serverTimestamp() as any,
         updatedAt: serverTimestamp() as any
       };
+
 
       // Add custom form responses if provided
       if (registrationData.customResponses) {
@@ -247,7 +300,7 @@ export class RegistrationService {
 
       // Send confirmation email via Firebase Function
       try {
-        const sendRegistrationEmail = httpsCallable(functions, 'sendRegistrationConfirmation');
+        const sendRegistrationEmail = httpsCallable(functions, 'sendConfirmationEmail');
         await sendRegistrationEmail({
           registrationId,
           eventId: registrationData.eventId,
@@ -860,6 +913,9 @@ export class RegistrationService {
           } else {
             discountAmount = validPromoCode.discountValue;
           }
+        } else {
+          // Invalid promo code - reset it
+          console.warn('Invalid promo code provided:', registrationData.promoCode);
         }
       }
       
@@ -872,7 +928,8 @@ export class RegistrationService {
         discountAmount,
         ...(promoCode ? { 
           discountType: 'promo_code' as const,
-          promoCode: (promoCode as any).code 
+          promoCode: (promoCode as any).code,
+          promoCodeId: (promoCode as any).id  // Add the promo code ID
         } : {})
       };
       

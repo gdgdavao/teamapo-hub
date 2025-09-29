@@ -41,6 +41,7 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
   const [selectedTicketType, setSelectedTicketType] = useState<string>('');
   const [quantity, setQuantity] = useState<number>(1);
   const [promoCode, setPromoCode] = useState<string>('');
+  const [appliedPromoCode, setAppliedPromoCode] = useState<PromoCode | undefined>(undefined);
   const [promoCodeValid, setPromoCodeValid] = useState<boolean>(false);
   const [promoCodeError, setPromoCodeError] = useState<string>('');
   const [ticketPricings, setTicketPricings] = useState<Record<string, TicketPricing>>({});
@@ -57,7 +58,7 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
     if (selectedTicketType && quantity > 0) {
       updateSelection();
     }
-  }, [selectedTicketType, quantity, promoCode, ticketPricings]);
+  }, [selectedTicketType, quantity, appliedPromoCode, ticketPricings]);
 
   const updatePricings = () => {
     const pricings: Record<string, TicketPricing> = {};
@@ -71,11 +72,6 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
     const ticketType = ticketTypes.find(t => t.id === selectedTicketType);
     if (!ticketType) return;
 
-    let appliedPromoCode: PromoCode | undefined;
-    if (promoCode) {
-      appliedPromoCode = promoCodes.find(p => p.code.toLowerCase() === promoCode.toLowerCase());
-    }
-
     const calculation = calculateTicketPricing({
       ticketType,
       quantity,
@@ -85,13 +81,13 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
     const pricing = getCurrentTicketPricing(ticketType);
     if (appliedPromoCode && calculation.promoApplied) {
       pricing.discountType = 'promo_code';
-      pricing.promoCode = promoCode;
+      pricing.promoCode = appliedPromoCode.code;
     }
 
     const selection: TicketSelection = {
       ticketTypeId: selectedTicketType,
       quantity,
-      promoCode: calculation.promoApplied ? promoCode : undefined,
+      promoCode: calculation.promoApplied ? appliedPromoCode?.code : undefined,
       pricing,
       totalAmount: calculation.totalAmount,
       originalAmount: calculation.originalPrice * quantity,
@@ -104,26 +100,53 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
   const handlePromoCodeChange = (code: string) => {
     setPromoCode(code);
     setPromoCodeError('');
-    
-    if (code && selectedTicketType) {
-      const ticketType = ticketTypes.find(t => t.id === selectedTicketType);
-      const foundPromoCode = promoCodes.find(p => p.code.toLowerCase() === code.toLowerCase());
-      
-      if (!foundPromoCode) {
-        setPromoCodeError('Invalid promo code');
-        setPromoCodeValid(false);
-      } else if (ticketType) {
-        const validation = validatePromoCode(foundPromoCode, ticketType);
-        if (validation.isValid) {
-          setPromoCodeValid(true);
-        } else {
-          setPromoCodeError(validation.errors[0]);
-          setPromoCodeValid(false);
-        }
-      }
-    } else {
+    setPromoCodeValid(false);
+    setAppliedPromoCode(undefined);
+  };
+
+  const handleApplyPromo = () => {
+    if (!selectedTicketType) {
+      setPromoCodeError('Select a ticket type first');
       setPromoCodeValid(false);
+      setAppliedPromoCode(undefined);
+      return;
     }
+
+    if (!promoCode) {
+      setPromoCodeError('Enter a promo code');
+      setPromoCodeValid(false);
+      setAppliedPromoCode(undefined);
+      return;
+    }
+
+    const ticketType = ticketTypes.find(t => t.id === selectedTicketType);
+    const found = promoCodes.find(p => p.code.toLowerCase() === promoCode.toLowerCase());
+    if (!ticketType) return;
+
+    if (!found) {
+      setPromoCodeError('Promo code not found');
+      setPromoCodeValid(false);
+      setAppliedPromoCode(undefined);
+      return;
+    }
+
+    const validation = validatePromoCode(found, ticketType);
+    if (!validation.isValid) {
+      setPromoCodeError(validation.errors[0]);
+      setPromoCodeValid(false);
+      setAppliedPromoCode(undefined);
+      return;
+    }
+
+    setAppliedPromoCode(found);
+    setPromoCodeValid(true);
+    setPromoCodeError('');
+  };
+
+  const handleClearPromo = () => {
+    setAppliedPromoCode(undefined);
+    setPromoCodeValid(false);
+    setPromoCodeError('');
   };
 
   const getAvailableQuantity = (ticketType: TicketType): number => {
@@ -270,13 +293,29 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
                   <span className="text-sm">{promoCodeError}</span>
                 </div>
               )}
-              {promoCodeValid && (
+              {promoCodeValid && appliedPromoCode && (
                 <div className="flex items-center space-x-1 mt-1 text-green-600">
                   <CheckCircleIcon className="w-4 h-4" />
                   <span className="text-sm">Promo code applied!</span>
                 </div>
               )}
             </div>
+            <button
+              type="button"
+              onClick={handleApplyPromo}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            >
+              Apply
+            </button>
+            {appliedPromoCode && (
+              <button
+                type="button"
+                onClick={handleClearPromo}
+                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+              >
+                Clear
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -294,10 +333,15 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
             </div>
             
             
-            {promoCodeValid && promoCode && (
+            {promoCodeValid && appliedPromoCode && (
               <div className="flex justify-between text-green-600">
-                <span>Promo Code ({promoCode})</span>
-                <span>-₱{/* Calculate promo discount */}</span>
+                <span>Promo Code ({appliedPromoCode.code})</span>
+                <span>-₱{(() => {
+                  const ticketType = ticketTypes.find(t => t.id === selectedTicketType);
+                  if (!ticketType) return 0;
+                  const calc = calculateTicketPricing({ ticketType, quantity, promoCode: appliedPromoCode });
+                  return calc.discountAmount.toLocaleString();
+                })()}</span>
               </div>
             )}
             

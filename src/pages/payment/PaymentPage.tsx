@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useMemo } from 'react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { 
   CreditCardIcon, 
   QrCodeIcon, 
@@ -17,12 +17,16 @@ import toast from 'react-hot-toast';
 const PaymentPage: React.FC = () => {
   const { registrationId } = useParams<{ registrationId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   
   const [registration, setRegistration] = useState<Registration | null>(null);
   const [event, setEvent] = useState<Event | null>(null);
-  const [paymentConfig, setPaymentConfig] = useState<PaymentConfig | null>(null);
+  // Multiple payment configurations support
+  const [paymentConfigs, setPaymentConfigs] = useState<PaymentConfig[]>([]);
+  const [selectedPaymentConfigId, setSelectedPaymentConfigId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [formDisabled, setFormDisabled] = useState(false);
   
   // Payment proof form state
   const [paymentProof, setPaymentProof] = useState({
@@ -32,6 +36,20 @@ const PaymentPage: React.FC = () => {
     proofImageFile: null as File | null,
     proofImagePreview: null as string | null
   });
+
+  // Prevent navigation away after form submission
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (submitting) {
+        e.preventDefault();
+        e.returnValue = 'Your payment submission is in progress. Are you sure you want to leave?';
+        return e.returnValue;
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [submitting]);
 
   useEffect(() => {
     if (registrationId) {
@@ -43,12 +61,63 @@ const PaymentPage: React.FC = () => {
     try {
       setLoading(true);
       
-      // Get registration details
+  // Get registration details
       const registrationData = await RegistrationService.getRegistrationById(registrationId!);
       if (!registrationData) {
         throw new Error('Registration not found');
       }
+      // If payment already submitted or completed, block access to payment form
+      const status = (registrationData as any).paymentStatus as string | undefined;
+      if (status && status !== 'pending') {
+        // If processing or paid, send to success page; otherwise to home with info
+        if (status === 'processing' || status === 'paid') {
+          toast('This payment link has already been used.', { icon: 'ℹ️' });
+          window.location.replace('/payment/success');
+          return;
+        }
+        toast.error('This payment link is no longer available.');
+        window.location.replace('/');
+        return;
+      }
       setRegistration(registrationData);
+
+      // If a payment proof already exists (pending/approved), block access
+      try {
+        const latestProof = await PaymentService.getLatestPaymentProofByRegistrationId(registrationData.id);
+        if (latestProof && latestProof.verificationStatus !== 'rejected') {
+          toast('Payment already submitted for this registration.', { icon: 'ℹ️' });
+          window.location.replace('/payment/success');
+          return;
+        }
+      } catch (_e) {
+        // Non-fatal; continue
+      }
+
+      // Token check to enforce expiring, one-time links
+      const search = new URLSearchParams(location.search);
+      const token = search.get('t');
+      const regToken = (registrationData as any).paymentLinkToken as string | undefined;
+      const exp = (registrationData as any).paymentLinkExpiresAt as any;
+      const linkStatus = (registrationData as any).paymentLinkStatus as string | undefined;
+      let notExpired = true;
+      if (exp) {
+        try {
+          const expDate = typeof exp?.toDate === 'function' ? exp.toDate() : new Date(exp.seconds ? exp.seconds * 1000 : exp);
+          notExpired = expDate.getTime() > Date.now();
+        } catch { /* ignore */ }
+      }
+      if (regToken) {
+        if (linkStatus && linkStatus !== 'active') {
+          toast('This payment link has already been used.', { icon: 'ℹ️' });
+          window.location.replace('/payment/success');
+          return;
+        }
+        if (!token || token !== regToken || !notExpired) {
+          toast.error('Payment link expired or invalid.');
+          window.location.replace('/');
+          return;
+        }
+      }
       
       // Get event details
       const eventData = await EventService.getEvent(registrationData.eventId);
@@ -57,15 +126,23 @@ const PaymentPage: React.FC = () => {
       }
       setEvent(eventData);
       
-      // Get payment configuration from event data
-      if ((eventData as any).paymentConfig) {
-        setPaymentConfig((eventData as any).paymentConfig);
+      // Get payment configurations from event data (new multi-config model)
+      const configs: PaymentConfig[] = Array.isArray((eventData as any).paymentConfigs)
+        ? ((eventData as any).paymentConfigs as PaymentConfig[])
+        : [];
+      const activeConfigs = configs.filter(cfg => cfg?.isActive !== false);
+      setPaymentConfigs(activeConfigs);
+      // Default to first active config
+      if (activeConfigs.length > 0) {
+        setSelectedPaymentConfigId(activeConfigs[0].id);
+        // Keep paymentMethod in sync for submission/notifications
+        setPaymentProof(prev => ({ ...prev, paymentMethod: activeConfigs[0].name || activeConfigs[0].id }));
       }
       
     } catch (error) {
       console.error('Error loading registration data:', error);
       toast.error('Failed to load payment information');
-      navigate('/');
+      window.location.replace('/');
     } finally {
       setLoading(false);
     }
@@ -94,6 +171,12 @@ const PaymentPage: React.FC = () => {
     }
   };
 
+  // Derive selected payment config
+  const selectedConfig = useMemo(() => {
+    if (!selectedPaymentConfigId) return null;
+    return paymentConfigs.find(c => c.id === selectedPaymentConfigId) || null;
+  }, [paymentConfigs, selectedPaymentConfigId]);
+
   const handleSubmitPaymentProof = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -103,18 +186,24 @@ const PaymentPage: React.FC = () => {
     }
 
     // Validate required fields
-    if (paymentConfig?.requiresProof && !paymentProof.proofImageFile) {
+    if (selectedConfig?.requiresProof && !paymentProof.proofImageFile) {
       toast.error('Please upload a payment proof image');
       return;
     }
     
-    if (paymentConfig?.requiresTransactionId && !paymentProof.transactionId.trim()) {
+    if (selectedConfig?.requiresTransactionId && !paymentProof.transactionId.trim()) {
       toast.error('Please enter the transaction ID');
+      return;
+    }
+
+    if (!selectedConfig) {
+      toast.error('Please select a payment method');
       return;
     }
 
     try {
       setSubmitting(true);
+      setFormDisabled(true); // Disable the entire form
       
       await PaymentService.submitPaymentProof({
         registrationId: registration.id,
@@ -125,17 +214,23 @@ const PaymentPage: React.FC = () => {
         ticketPrice: registration.totalAmount,
         proofImageFile: paymentProof.proofImageFile || undefined,
         transactionId: paymentProof.transactionId || undefined,
-        paymentMethod: paymentProof.paymentMethod,
+  // Persist selected payment config label as payment method for admin clarity
+  paymentMethod: selectedConfig.name || paymentProof.paymentMethod,
         notes: paymentProof.notes
       });
       
       // Do NOT auto-complete registration. Keep status pending for manual verification.
       toast.success('Payment proof submitted. Your registration is pending manual verification.');
-      navigate('/payment/success');
+      
+      // Hard redirect to prevent back button access
+      setTimeout(() => {
+        window.location.replace('/payment/success');
+      }, 1000);
       
     } catch (error: any) {
       console.error('Error submitting payment proof:', error);
       toast.error(error.message || 'Failed to submit payment proof');
+      setFormDisabled(false); // Re-enable form on error
     } finally {
       setSubmitting(false);
     }
@@ -202,36 +297,58 @@ const PaymentPage: React.FC = () => {
           </div>
 
           {/* Payment Methods */}
-          {paymentConfig && (
+          {selectedConfig && (
             <div className="bg-white rounded-xl shadow-lg border border-gray-100 p-6">
               <h2 className="text-lg font-bold text-gray-900 mb-4 flex items-center">
                 <CreditCardIcon className="h-5 w-5 text-blue-500 mr-2" />
                 Payment Instructions
               </h2>
+              {/* Payment Method Selector (multiple configs) */}
+              {paymentConfigs.length > 1 && (
+                <div className="mb-6">
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">Choose a payment method</label>
+                  <select
+                    value={selectedPaymentConfigId || ''}
+                    onChange={(e) => {
+                      const id = e.target.value;
+                      setSelectedPaymentConfigId(id);
+                      const cfg = paymentConfigs.find(c => c.id === id);
+                      if (cfg) {
+                        setPaymentProof(prev => ({ ...prev, paymentMethod: cfg.name || cfg.id }));
+                      }
+                    }}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    {paymentConfigs.map(cfg => (
+                      <option key={cfg.id} value={cfg.id}>{cfg.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
               
               {/* Bank Details */}
               <div className="mb-6">
                 <h3 className="font-semibold text-gray-800 mb-3">Bank Transfer Details:</h3>
                 <div className="bg-gray-50 rounded-lg p-4 space-y-2">
-                  <div><span className="font-medium">Bank:</span> {paymentConfig.bankDetails.bankName}</div>
-                  <div><span className="font-medium">Account Name:</span> {paymentConfig.bankDetails.accountName}</div>
-                  <div><span className="font-medium">Account Number:</span> {paymentConfig.bankDetails.accountNumber}</div>
-                  {paymentConfig.bankDetails.swiftCode && (
-                    <div><span className="font-medium">SWIFT Code:</span> {paymentConfig.bankDetails.swiftCode}</div>
+                  <div><span className="font-medium">Bank:</span> {selectedConfig.bankDetails.bankName}</div>
+                  <div><span className="font-medium">Account Name:</span> {selectedConfig.bankDetails.accountName}</div>
+                  <div><span className="font-medium">Account Number:</span> {selectedConfig.bankDetails.accountNumber}</div>
+                  {selectedConfig.bankDetails.swiftCode && (
+                    <div><span className="font-medium">SWIFT Code:</span> {selectedConfig.bankDetails.swiftCode}</div>
                   )}
                 </div>
               </div>
 
               {/* QR Code */}
-              {paymentConfig.qrCodeUrl && (
+              {selectedConfig.qrCodeUrl && (
                 <div className="mb-6">
                   <h3 className="font-semibold text-gray-800 mb-3 flex items-center">
                     <QrCodeIcon className="h-4 w-4 mr-1" />
                     Scan QR Code:
                   </h3>
                   <div className="flex justify-center">
-                    <img 
-                      src={paymentConfig.qrCodeUrl} 
+                    <img
+                      src={selectedConfig.qrCodeUrl}
                       alt="Payment QR Code"
                       className="w-48 h-48 border border-gray-200 rounded-lg"
                     />
@@ -240,14 +357,20 @@ const PaymentPage: React.FC = () => {
               )}
 
               {/* Payment Instructions */}
-              {paymentConfig.instructions && (
+              {selectedConfig.instructions && (
                 <div className="mb-6">
                   <h3 className="font-semibold text-gray-800 mb-3">Instructions:</h3>
                   <div className="bg-blue-50 rounded-lg p-4">
-                    <p className="text-gray-700 whitespace-pre-line">{paymentConfig.instructions}</p>
+                    <p className="text-gray-700 whitespace-pre-line">{selectedConfig.instructions}</p>
                   </div>
                 </div>
               )}
+            </div>
+          )}
+          {!selectedConfig && (
+            <div className="bg-yellow-50 rounded-xl border border-yellow-200 p-6">
+              <h3 className="font-semibold text-yellow-800 mb-2">Payment method not available</h3>
+              <p className="text-yellow-700">This event has no active payment methods configured. Please contact the organizer.</p>
             </div>
           )}
         </div>
@@ -259,9 +382,16 @@ const PaymentPage: React.FC = () => {
             Submit Payment Proof
           </h2>
           
+          {formDisabled && (
+            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <p className="text-blue-800 font-medium">✓ Payment proof submitted successfully!</p>
+              <p className="text-blue-600 text-sm">Redirecting to confirmation page...</p>
+            </div>
+          )}
+          
           <form onSubmit={handleSubmitPaymentProof} className="space-y-4">
             {/* Transaction ID */}
-            {paymentConfig?.requiresTransactionId && (
+            {selectedConfig?.requiresTransactionId && (
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-2">
                   Transaction ID <span className="text-red-500">*</span>
@@ -272,30 +402,26 @@ const PaymentPage: React.FC = () => {
                   onChange={(e) => setPaymentProof(prev => ({ ...prev, transactionId: e.target.value }))}
                   className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   placeholder="Enter your transaction/reference number"
-                  required={paymentConfig.requiresTransactionId}
+                  required={selectedConfig.requiresTransactionId}
+                  disabled={formDisabled}
                 />
               </div>
             )}
 
-            {/* Payment Method */}
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Payment Method
-              </label>
-              <select
-                value={paymentProof.paymentMethod}
-                onChange={(e) => setPaymentProof(prev => ({ ...prev, paymentMethod: e.target.value }))}
-                className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              >
-                <option value="bank_transfer">Bank Transfer</option>
-                <option value="gcash">GCash</option>
-                <option value="paymaya">Maya</option>
-                <option value="other">Other</option>
-              </select>
-            </div>
+            {/* Selected Payment Method (auto from config) */}
+            {selectedConfig && (
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">
+                  Payment Method
+                </label>
+                <div className="px-4 py-3 border border-gray-200 rounded-xl bg-gray-50 text-gray-800">
+                  {selectedConfig.name}
+                </div>
+              </div>
+            )}
 
             {/* Payment Proof Image */}
-            {paymentConfig?.requiresProof && (
+            {selectedConfig?.requiresProof && (
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-2">
                   Payment Proof Image <span className="text-red-500">*</span>
@@ -306,7 +432,8 @@ const PaymentPage: React.FC = () => {
                     accept="image/*"
                     onChange={handleImageUpload}
                     className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    required={paymentConfig.requiresProof}
+                    required={selectedConfig.requiresProof}
+                    disabled={formDisabled}
                   />
                   
                   {paymentProof.proofImagePreview && (
@@ -334,13 +461,14 @@ const PaymentPage: React.FC = () => {
                 className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 rows={3}
                 placeholder="Any additional information about your payment..."
+                disabled={formDisabled}
               />
             </div>
 
             {/* Submit Button */}
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || !selectedConfig || formDisabled}
               className="w-full bg-blue-600 text-white py-4 px-6 rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 font-semibold text-lg shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
             >
               {submitting ? (
@@ -348,6 +476,8 @@ const PaymentPage: React.FC = () => {
                   <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
                   Submitting...
                 </div>
+              ) : formDisabled ? (
+                'Payment Submitted ✓'
               ) : (
                 'Complete Registration'
               )}

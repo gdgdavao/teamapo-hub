@@ -96,6 +96,7 @@ interface PaymentConfig {
 export class EventService {
   private static readonly EVENTS_COLLECTION = 'events';
   private static readonly EVENT_IMAGES_PATH = 'event-images';
+  private static readonly SPEAKER_PHOTOS_PATH = 'speaker-photos';
   private static readonly PAYMENT_QR_PATH = 'payment-qr';
 
   /**
@@ -129,6 +130,37 @@ export class EventService {
     }
     
     return obj;
+  }
+
+  /**
+   * Sanitize speakers to ensure Firestore-serializable values only
+   * - Keep whitelisted fields
+   * - Drop preview data URLs (base64) to avoid oversized/invalid values
+   * - Trim strings and remove empty optional fields
+   */
+  private static sanitizeSpeakers(speakers: any[] = []): any[] {
+    return (speakers || []).map((s) => {
+      const safe: any = {
+        id: String(s.id ?? '').trim(),
+        name: typeof s.name === 'string' ? s.name.trim() : '',
+        title: typeof s.title === 'string' ? s.title.trim() : '',
+        bio: typeof s.bio === 'string' ? s.bio.trim() : ''
+      };
+
+      if (s.company && typeof s.company === 'string' && s.company.trim()) {
+        safe.company = s.company.trim();
+      }
+
+      // Only persist hosted URLs for photoUrl; ignore base64 data URLs
+      if (s.photoUrl && typeof s.photoUrl === 'string') {
+        const url = s.photoUrl.trim();
+        if (url && !url.startsWith('data:')) {
+          safe.photoUrl = url;
+        }
+      }
+
+      return this.removeUndefinedValues(safe);
+    });
   }
 
   /**
@@ -263,7 +295,7 @@ export class EventService {
           name: organizerInfo.name,
           email: organizerInfo.email
         },
-        speakers: eventData.speakers || [],
+  speakers: this.sanitizeSpeakers(eventData.speakers || []),
         startDate: this.combineDateAndTime(eventData.startDate, eventData.startTime),
         endDate: this.combineDateAndTime(eventData.endDate, eventData.endTime),
         timezone: eventData.timezone,
@@ -369,6 +401,9 @@ export class EventService {
       }
       if (eventData.promoCodes) {
         updateData.promoCodes = this.sanitizePromoCodes(eventData.promoCodes as PromoCode[]);
+      }
+      if (eventData.speakers) {
+        updateData.speakers = this.sanitizeSpeakers(eventData.speakers as any[]);
       }
 
       // Handle date/time updates
@@ -600,6 +635,31 @@ export class EventService {
     } catch (error) {
       console.error('Error uploading event image:', error);
       throw new Error('Failed to upload event image');
+    }
+  }
+
+  /**
+   * Upload speaker photo
+   */
+  static async uploadSpeakerPhoto(eventId: string, speakerId: string, imageFile: File): Promise<string> {
+    try {
+      console.log('Uploading speaker photo for eventId:', eventId, 'speakerId:', speakerId, 'fileName:', imageFile.name);
+      const timestamp = Date.now();
+      const imageRef = ref(storage, `${this.SPEAKER_PHOTOS_PATH}/${eventId}/${speakerId}/photo-${timestamp}.jpg`);
+      console.log('Storage path:', `${this.SPEAKER_PHOTOS_PATH}/${eventId}/${speakerId}/photo-${timestamp}.jpg`);
+      
+      // Check current auth state before upload
+      const { auth } = await import('../config/firebase');
+      const currentUser = auth.currentUser;
+      console.log('Current user during speaker photo upload:', currentUser?.uid, currentUser?.email);
+      
+      const snapshot = await uploadBytes(imageRef, imageFile, { contentType: imageFile.type || 'image/jpeg' });
+      const downloadURL = await getDownloadURL(snapshot.ref);
+
+      return downloadURL;
+    } catch (error) {
+      console.error('Error uploading speaker photo:', error);
+      throw new Error('Failed to upload speaker photo');
     }
   }
 
@@ -907,6 +967,82 @@ export class EventService {
     } catch (error) {
       console.error('Error getting feedback form:', error);
       return [];
+    }
+  }
+
+  /**
+   * Get feedback form structure (for feedback page)
+   */
+  static async getFeedbackForm(eventId: string): Promise<{ fields: FormField[] }> {
+    try {
+      const formRef = doc(db, `${this.EVENTS_COLLECTION}/${eventId}/forms/feedback`);
+      const formSnap = await getDoc(formRef);
+      
+      if (formSnap.exists()) {
+        const formData = formSnap.data();
+        return {
+          fields: formData.fields || []
+        };
+      }
+      
+      // Return default feedback form if none exists
+      return {
+        fields: [
+          {
+            id: 'overall_rating',
+            type: 'rating',
+            label: 'Overall Event Rating',
+            required: true,
+            gridSize: 'full'
+          },
+          {
+            id: 'liked_most',
+            type: 'textarea',
+            label: 'What did you like most about this event?',
+            required: false,
+            gridSize: 'full',
+            placeholder: 'Tell us what you enjoyed...'
+          },
+          {
+            id: 'improvements',
+            type: 'textarea',
+            label: 'What could we improve?',
+            required: false,
+            gridSize: 'full',
+            placeholder: 'Share your suggestions for improvement...'
+          },
+          {
+            id: 'would_recommend',
+            type: 'radio',
+            label: 'Would you recommend this event to others?',
+            required: false,
+            gridSize: 'full',
+            options: ['Yes', 'No', 'Maybe']
+          }
+        ]
+      };
+    } catch (error) {
+      console.error('Error getting feedback form:', error);
+      // Return default form on error
+      return {
+        fields: [
+          {
+            id: 'overall_rating',
+            type: 'rating',
+            label: 'Overall Event Rating',
+            required: true,
+            gridSize: 'full'
+          },
+          {
+            id: 'comments',
+            type: 'textarea',
+            label: 'Comments',
+            required: false,
+            gridSize: 'full',
+            placeholder: 'Share your feedback...'
+          }
+        ]
+      };
     }
   }
 

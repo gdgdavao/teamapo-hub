@@ -23,7 +23,7 @@ let app;
 try {
   // For emulator, use the actual project ID
   app = initializeApp({
-    projectId: 'apohub-gdgdvo' // Use the actual project ID
+    projectId: 'project-iris-gdgdavao' // Use the actual project ID
   });
   console.log('✅ Connected to Firebase Emulator');
 } catch (error) {
@@ -354,6 +354,151 @@ const generateSampleEvents = () => [
     registrationDeadline: Timestamp.fromDate(new Date('2025-04-03T23:59:59Z')),
     requirements: ['Laptop with Flutter SDK', 'Android Studio or VS Code', 'Basic programming knowledge'],
     createdAt: Timestamp.fromDate(new Date('2025-01-05')),
+    updatedAt: Timestamp.now()
+  },
+  {
+    id: 'event-005',
+    title: 'AI & Machine Learning Workshop: Building Smart Applications',
+    description: 'Dive into the exciting world of AI and Machine Learning! This comprehensive workshop covers fundamental ML concepts, practical implementation with Python and TensorFlow, and building intelligent applications. Perfect for developers looking to integrate AI into their projects. We\'ll explore supervised learning, neural networks, and deploy a real ML model.',
+    shortDescription: 'Learn AI/ML fundamentals and build intelligent applications with Python and TensorFlow.',
+    imageUrl: 'https://images.unsplash.com/photo-1677442136019-21780ecad995?w=800',
+    organizer: {
+      uid: 'admin-001',
+      name: 'John Admin',
+      email: 'admin@gdgdavao.org'
+    },
+    speakers: [
+      {
+        id: 'speaker-006',
+        name: 'Dr. Sarah Chen',
+        title: 'AI Research Scientist',
+        company: 'Google Research',
+        bio: 'Leading AI researcher with 10+ years experience in machine learning and neural networks. Published 50+ papers in top-tier conferences.',
+        photoUrl: 'https://images.unsplash.com/photo-1494790108755-2616b612b786?w=300',
+        socialLinks: {
+          linkedin: 'https://linkedin.com/in/drsarahchen',
+          github: 'https://github.com/sarahchen',
+          twitter: 'https://twitter.com/drsarahchen'
+        },
+        topics: ['Machine Learning', 'Neural Networks', 'TensorFlow', 'AI Ethics']
+      },
+      {
+        id: 'speaker-007',
+        name: 'Mark Thompson',
+        title: 'Senior ML Engineer',
+        company: 'Microsoft Azure AI',
+        bio: 'Experienced ML engineer specializing in production AI systems and MLOps. Built ML pipelines serving millions of users.',
+        photoUrl: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=300',
+        socialLinks: {
+          linkedin: 'https://linkedin.com/in/markthompson',
+          github: 'https://github.com/markthompson'
+        },
+        topics: ['MLOps', 'Production ML', 'Azure AI', 'Deployment']
+      }
+    ],
+    startDate: Timestamp.fromDate(new Date('2024-12-15T09:00:00Z')),
+    endDate: Timestamp.fromDate(new Date('2024-12-15T17:00:00Z')),
+    timezone: 'Asia/Manila',
+    venue: {
+      type: 'hybrid',
+      name: 'Davao Innovation Hub',
+      address: '789 Innovation Drive, Davao City',
+      city: 'Davao City',
+      coordinates: { lat: 7.081, lng: 125.618 },
+      capacity: 80,
+      onlineDetails: {
+        platform: 'Google Meet',
+        meetingUrl: 'https://meet.google.com/ai-ml-workshop',
+        meetingId: 'ai-ml-workshop-2024',
+        instructions: 'Join link will be sent 30 minutes before the event'
+      }
+    },
+    ticketTypes: [
+      {
+        id: 'student-discount',
+        name: 'Student',
+        price: 800,
+        currency: 'PHP',
+        description: 'Special price for students with valid ID',
+        maxQuantity: 20,
+        currentSold: 12,
+        isActive: true,
+        benefits: ['Workshop materials', 'Certificate', 'Lunch included', 'Student networking session'],
+        sortOrder: 1
+      },
+      {
+        id: 'professional',
+        name: 'Professional',
+        price: 1500,
+        currency: 'PHP',
+        description: 'For working professionals and developers',
+        maxQuantity: 50,
+        currentSold: 38,
+        isActive: true,
+        benefits: ['Workshop materials', 'Certificate', 'Lunch included', 'Professional networking', 'Access to ML resources'],
+        sortOrder: 2
+      },
+      {
+        id: 'premium',
+        name: 'Premium',
+        price: 2500,
+        currency: 'PHP',
+        description: 'Premium experience with additional perks',
+        maxQuantity: 10,
+        currentSold: 8,
+        isActive: true,
+        benefits: ['All Professional benefits', '1-on-1 session with speakers', 'Premium swag kit', 'Follow-up consultation'],
+        sortOrder: 3
+      }
+    ],
+    promoCodes: [
+      {
+        id: 'early-bird-ai',
+        code: 'EARLYAI2024',
+        name: 'Early Bird AI',
+        description: '20% discount for early registrations',
+        discountType: 'percentage',
+        discountValue: 20,
+        maxUses: 25,
+        currentUses: 18,
+        isActive: true,
+        validFrom: Timestamp.fromDate(new Date('2024-11-01')),
+        validUntil: Timestamp.fromDate(new Date('2024-12-01')),
+        createdBy: 'admin-001',
+        createdAt: Timestamp.fromDate(new Date('2024-11-01')),
+        updatedAt: Timestamp.now()
+      }
+    ],
+    paymentConfigs: [
+      {
+        id: 'gcash-config',
+        name: 'GCash Payment',
+        bankDetails: {
+          bankName: 'GCash',
+          accountName: 'GDG Davao',
+          accountNumber: '09123456789'
+        },
+        instructions: 'Send payment to GCash number 09123456789 (GDG Davao). Include your full name and event name in the message.',
+        requiresProof: true,
+        requiresTransactionId: true,
+        isActive: true
+      }
+    ],
+    tags: ['AI', 'Machine Learning', 'TensorFlow', 'Python', 'Neural Networks', 'Data Science'],
+    category: 'workshop',
+    status: 'completed',
+    maxAttendees: 80,
+    currentAttendees: 58,
+    isPublished: true,
+    registrationDeadline: Timestamp.fromDate(new Date('2024-12-13T23:59:59Z')),
+    requirements: [
+      'Laptop with Python 3.8+ installed',
+      'Basic programming knowledge (Python preferred)',
+      'Jupyter Notebook or Google Colab access',
+      'GitHub account for code repositories',
+      'Enthusiasm for learning AI/ML!'
+    ],
+    createdAt: Timestamp.fromDate(new Date('2024-10-15')),
     updatedAt: Timestamp.now()
   }
 ];
@@ -726,6 +871,401 @@ const generateSampleRegistrations = () => [
       discountAmount: 0,
       isEarlyBird: false
     }
+  },
+  // Approved Attendees for AI/ML Workshop (event-005) - All PAID status
+  {
+    id: 'reg-011',
+    eventId: 'event-005',
+    userId: '', // Anonymous registration
+    userDetails: {
+      name: 'Dr. Lisa Wang',
+      email: 'lisa.wang@techcorp.com',
+      phoneNumber: '+639123456790',
+      organization: 'TechCorp Solutions',
+      dietaryRestrictions: 'Vegetarian',
+      tshirtSize: 'M',
+      emergencyContact: {
+        name: 'Michael Wang',
+        phone: '+639123456791'
+      }
+    },
+    ticketTypeId: 'premium',
+    quantity: 1,
+    originalAmount: 2500,
+    discountAmount: 0,
+    totalAmount: 2500,
+    currency: 'PHP',
+    paymentStatus: 'paid',
+    paymentDetails: {
+      paymentId: 'pay-ai-011',
+      paymentMethod: 'gcash',
+      paymentProvider: 'paymongo',
+      transactionId: 'GCash-AI-20241201-001',
+      paidAt: Timestamp.fromDate(new Date('2024-12-01T14:30:00Z')),
+      fees: {
+        processingFee: 75,
+        platformFee: 25
+      }
+    },
+    attendanceStatus: 'checked-in',
+    checkInTime: Timestamp.fromDate(new Date('2024-12-15T08:45:00Z')),
+    feedbackSubmitted: true,
+    certificateIssued: true,
+    certificateId: 'cert-ai-011',
+    qrCode: 'QR-REG-011-LISA',
+    registrationDate: Timestamp.fromDate(new Date('2024-11-20')),
+    updatedAt: Timestamp.now(),
+    pricing: {
+      ticketTypeId: 'premium',
+      originalPrice: 2500,
+      currentPrice: 2500,
+      discountAmount: 0
+    }
+  },
+  {
+    id: 'reg-012',
+    eventId: 'event-005',
+    userId: '', // Anonymous registration
+    userDetails: {
+      name: 'James Rodriguez',
+      email: 'james.rodriguez@startup.io',
+      phoneNumber: '+639123456792',
+      organization: 'AI Startup Philippines',
+      dietaryRestrictions: 'None',
+      tshirtSize: 'L'
+    },
+    ticketTypeId: 'professional',
+    quantity: 1,
+    originalAmount: 1500,
+    discountAmount: 300, // 20% early bird discount
+    totalAmount: 1200,
+    currency: 'PHP',
+    promoCode: 'EARLYAI2024',
+    promoCodeId: 'early-bird-ai',
+    paymentStatus: 'paid',
+    paymentDetails: {
+      paymentId: 'pay-ai-012',
+      paymentMethod: 'gcash',
+      paymentProvider: 'paymongo',
+      transactionId: 'GCash-AI-20241125-002',
+      paidAt: Timestamp.fromDate(new Date('2024-11-25T10:15:00Z')),
+      fees: {
+        processingFee: 36,
+        platformFee: 12
+      }
+    },
+    attendanceStatus: 'checked-in',
+    checkInTime: Timestamp.fromDate(new Date('2024-12-15T09:10:00Z')),
+    feedbackSubmitted: true,
+    certificateIssued: true,
+    certificateId: 'cert-ai-012',
+    qrCode: 'QR-REG-012-JAMES',
+    registrationDate: Timestamp.fromDate(new Date('2024-11-18')),
+    updatedAt: Timestamp.now(),
+    pricing: {
+      ticketTypeId: 'professional',
+      originalPrice: 1500,
+      currentPrice: 1200,
+      discountAmount: 300,
+      discountType: 'promo_code',
+      promoCode: 'EARLYAI2024',
+      promoCodeId: 'early-bird-ai'
+    }
+  },
+  {
+    id: 'reg-013',
+    eventId: 'event-005',
+    userId: '', // Anonymous registration
+    userDetails: {
+      name: 'Maria Gonzales',
+      email: 'maria.gonzales@university.edu.ph',
+      phoneNumber: '+639123456793',
+      organization: 'University of the Philippines - Mindanao',
+      dietaryRestrictions: 'Halal',
+      tshirtSize: 'S',
+      emergencyContact: {
+        name: 'Ana Gonzales',
+        phone: '+639123456794'
+      }
+    },
+    ticketTypeId: 'student-discount',
+    quantity: 1,
+    originalAmount: 800,
+    discountAmount: 160, // 20% early bird discount
+    totalAmount: 640,
+    currency: 'PHP',
+    promoCode: 'EARLYAI2024',
+    promoCodeId: 'early-bird-ai',
+    paymentStatus: 'paid',
+    paymentDetails: {
+      paymentId: 'pay-ai-013',
+      paymentMethod: 'gcash',
+      paymentProvider: 'paymongo',
+      transactionId: 'GCash-AI-20241122-003',
+      paidAt: Timestamp.fromDate(new Date('2024-11-22T16:20:00Z')),
+      fees: {
+        processingFee: 19.2,
+        platformFee: 6.4
+      }
+    },
+    attendanceStatus: 'checked-in',
+    checkInTime: Timestamp.fromDate(new Date('2024-12-15T08:55:00Z')),
+    feedbackSubmitted: true,
+    certificateIssued: true,
+    certificateId: 'cert-ai-013',
+    qrCode: 'QR-REG-013-MARIA',
+    registrationDate: Timestamp.fromDate(new Date('2024-11-15')),
+    updatedAt: Timestamp.now(),
+    pricing: {
+      ticketTypeId: 'student-discount',
+      originalPrice: 800,
+      currentPrice: 640,
+      discountAmount: 160,
+      discountType: 'promo_code',
+      promoCode: 'EARLYAI2024',
+      promoCodeId: 'early-bird-ai'
+    }
+  },
+  {
+    id: 'reg-014',
+    eventId: 'event-005',
+    userId: '', // Anonymous registration
+    userDetails: {
+      name: 'Kevin Tan',
+      email: 'kevin.tan@devstudio.ph',
+      phoneNumber: '+639123456795',
+      organization: 'DevStudio Philippines',
+      dietaryRestrictions: 'None',
+      tshirtSize: 'XL'
+    },
+    ticketTypeId: 'professional',
+    quantity: 1,
+    originalAmount: 1500,
+    discountAmount: 0,
+    totalAmount: 1500,
+    currency: 'PHP',
+    paymentStatus: 'paid',
+    paymentDetails: {
+      paymentId: 'pay-ai-014',
+      paymentMethod: 'gcash',
+      paymentProvider: 'paymongo',
+      transactionId: 'GCash-AI-20241205-004',
+      paidAt: Timestamp.fromDate(new Date('2024-12-05T11:45:00Z')),
+      fees: {
+        processingFee: 45,
+        platformFee: 15
+      }
+    },
+    attendanceStatus: 'checked-in',
+    checkInTime: Timestamp.fromDate(new Date('2024-12-15T09:05:00Z')),
+    feedbackSubmitted: true,
+    certificateIssued: true,
+    certificateId: 'cert-ai-014',
+    qrCode: 'QR-REG-014-KEVIN',
+    registrationDate: Timestamp.fromDate(new Date('2024-12-03')),
+    updatedAt: Timestamp.now(),
+    pricing: {
+      ticketTypeId: 'professional',
+      originalPrice: 1500,
+      currentPrice: 1500,
+      discountAmount: 0
+    }
+  },
+  {
+    id: 'reg-015',
+    eventId: 'event-005',
+    userId: '', // Anonymous registration
+    userDetails: {
+      name: 'Sarah Kim',
+      email: 'sarah.kim@dataanalytics.com',
+      phoneNumber: '+639123456796',
+      organization: 'Data Analytics Solutions',
+      dietaryRestrictions: 'Vegan',
+      tshirtSize: 'M',
+      emergencyContact: {
+        name: 'John Kim',
+        phone: '+639123456797'
+      }
+    },
+    ticketTypeId: 'premium',
+    quantity: 1,
+    originalAmount: 2500,
+    discountAmount: 500, // 20% early bird discount
+    totalAmount: 2000,
+    currency: 'PHP',
+    promoCode: 'EARLYAI2024',
+    promoCodeId: 'early-bird-ai',
+    paymentStatus: 'paid',
+    paymentDetails: {
+      paymentId: 'pay-ai-015',
+      paymentMethod: 'gcash',
+      paymentProvider: 'paymongo',
+      transactionId: 'GCash-AI-20241120-005',
+      paidAt: Timestamp.fromDate(new Date('2024-11-20T09:30:00Z')),
+      fees: {
+        processingFee: 60,
+        platformFee: 20
+      }
+    },
+    attendanceStatus: 'checked-in',
+    checkInTime: Timestamp.fromDate(new Date('2024-12-15T08:40:00Z')),
+    feedbackSubmitted: true,
+    certificateIssued: true,
+    certificateId: 'cert-ai-015',
+    qrCode: 'QR-REG-015-SARAH',
+    registrationDate: Timestamp.fromDate(new Date('2024-11-18')),
+    updatedAt: Timestamp.now(),
+    pricing: {
+      ticketTypeId: 'premium',
+      originalPrice: 2500,
+      currentPrice: 2000,
+      discountAmount: 500,
+      discountType: 'promo_code',
+      promoCode: 'EARLYAI2024',
+      promoCodeId: 'early-bird-ai'
+    }
+  },
+  {
+    id: 'reg-016',
+    eventId: 'event-005',
+    userId: '', // Anonymous registration
+    userDetails: {
+      name: 'Michael Chen',
+      email: 'michael.chen@fintech.ph',
+      phoneNumber: '+639123456798',
+      organization: 'FinTech Innovations',
+      dietaryRestrictions: 'None',
+      tshirtSize: 'L'
+    },
+    ticketTypeId: 'professional',
+    quantity: 1,
+    originalAmount: 1500,
+    discountAmount: 300, // 20% early bird discount
+    totalAmount: 1200,
+    currency: 'PHP',
+    promoCode: 'EARLYAI2024',
+    promoCodeId: 'early-bird-ai',
+    paymentStatus: 'paid',
+    paymentDetails: {
+      paymentId: 'pay-ai-016',
+      paymentMethod: 'gcash',
+      paymentProvider: 'paymongo',
+      transactionId: 'GCash-AI-20241128-006',
+      paidAt: Timestamp.fromDate(new Date('2024-11-28T15:10:00Z')),
+      fees: {
+        processingFee: 36,
+        platformFee: 12
+      }
+    },
+    attendanceStatus: 'checked-in',
+    checkInTime: Timestamp.fromDate(new Date('2024-12-15T09:15:00Z')),
+    feedbackSubmitted: true,
+    certificateIssued: false, // Certificate not yet issued
+    qrCode: 'QR-REG-016-MICHAEL',
+    registrationDate: Timestamp.fromDate(new Date('2024-11-26')),
+    updatedAt: Timestamp.now(),
+    pricing: {
+      ticketTypeId: 'professional',
+      originalPrice: 1500,
+      currentPrice: 1200,
+      discountAmount: 300,
+      discountType: 'promo_code',
+      promoCode: 'EARLYAI2024',
+      promoCodeId: 'early-bird-ai'
+    }
+  },
+  {
+    id: 'reg-017',
+    eventId: 'event-005',
+    userId: '', // Anonymous registration
+    userDetails: {
+      name: 'Anna Santos',
+      email: 'anna.santos@college.edu.ph',
+      phoneNumber: '+639123456799',
+      organization: 'Ateneo de Davao University',
+      dietaryRestrictions: 'Lactose intolerant',
+      tshirtSize: 'S',
+      emergencyContact: {
+        name: 'Pedro Santos',
+        phone: '+639123456800'
+      }
+    },
+    ticketTypeId: 'student-discount',
+    quantity: 1,
+    originalAmount: 800,
+    discountAmount: 0,
+    totalAmount: 800,
+    currency: 'PHP',
+    paymentStatus: 'paid',
+    paymentDetails: {
+      paymentId: 'pay-ai-017',
+      paymentMethod: 'gcash',
+      paymentProvider: 'paymongo',
+      transactionId: 'GCash-AI-20241210-007',
+      paidAt: Timestamp.fromDate(new Date('2024-12-10T13:25:00Z')),
+      fees: {
+        processingFee: 24,
+        platformFee: 8
+      }
+    },
+    attendanceStatus: 'checked-in',
+    checkInTime: Timestamp.fromDate(new Date('2024-12-15T09:00:00Z')),
+    feedbackSubmitted: false, // Feedback not submitted yet
+    certificateIssued: false,
+    qrCode: 'QR-REG-017-ANNA',
+    registrationDate: Timestamp.fromDate(new Date('2024-12-08')),
+    updatedAt: Timestamp.now(),
+    pricing: {
+      ticketTypeId: 'student-discount',
+      originalPrice: 800,
+      currentPrice: 800,
+      discountAmount: 0
+    }
+  },
+  {
+    id: 'reg-018',
+    eventId: 'event-005',
+    userId: '', // Anonymous registration
+    userDetails: {
+      name: 'David Park',
+      email: 'david.park@mlstudio.ai',
+      phoneNumber: '+639123456801',
+      organization: 'ML Studio AI',
+      dietaryRestrictions: 'Gluten-free',
+      tshirtSize: 'M'
+    },
+    ticketTypeId: 'premium',
+    quantity: 1,
+    originalAmount: 2500,
+    discountAmount: 0,
+    totalAmount: 2500,
+    currency: 'PHP',
+    paymentStatus: 'paid',
+    paymentDetails: {
+      paymentId: 'pay-ai-018',
+      paymentMethod: 'gcash',
+      paymentProvider: 'paymongo',
+      transactionId: 'GCash-AI-20241212-008',
+      paidAt: Timestamp.fromDate(new Date('2024-12-12T10:40:00Z')),
+      fees: {
+        processingFee: 75,
+        platformFee: 25
+      }
+    },
+    attendanceStatus: 'checked-in',
+    checkInTime: Timestamp.fromDate(new Date('2024-12-15T08:50:00Z')),
+    feedbackSubmitted: true,
+    certificateIssued: true,
+    certificateId: 'cert-ai-018',
+    qrCode: 'QR-REG-018-DAVID',
+    registrationDate: Timestamp.fromDate(new Date('2024-12-10')),
+    updatedAt: Timestamp.now(),
+    pricing: {
+      ticketTypeId: 'premium',
+      originalPrice: 2500,
+      currentPrice: 2500,
+      discountAmount: 0
+    }
   }
 ];
 
@@ -758,6 +1298,273 @@ const generateSampleFeedback = () => [
     wouldRecommend: true,
     futureTopics: ['Redux', 'React Native', 'Testing'],
     submittedAt: Timestamp.fromDate(new Date('2024-12-22'))
+  },
+  // Comprehensive Feedback for AI/ML Workshop (event-005)
+  {
+    id: 'feedback-ai-011',
+    eventId: 'event-005',
+    userId: 'reg-011',
+    registrationId: 'reg-011',
+    userEmail: 'lisa.wang@techcorp.com',
+    userName: 'Dr. Lisa Wang',
+    overallRating: 5,
+    contentRating: 5,
+    organizationRating: 5,
+    venueRating: 4,
+    speakerRatings: [
+      {
+        speakerId: 'speaker-006',
+        rating: 5,
+        comments: 'Dr. Chen\'s explanation of neural networks was incredibly clear and comprehensive. The theoretical foundation was excellent.'
+      },
+      {
+        speakerId: 'speaker-007',
+        rating: 5,
+        comments: 'Mark\'s practical insights on MLOps and production deployment were invaluable. Real-world examples were very helpful.'
+      }
+    ],
+    customResponses: {
+      'overall_rating': 5,
+      'content_rating': 5,
+      'organization_rating': 5,
+      'what_liked': 'The perfect balance between theory and practice. The hands-on TensorFlow exercises were excellent, and the speakers were world-class. The hybrid format worked well.',
+      'improvements': 'Perhaps a bit more time on advanced neural network architectures. Also, the lunch break could be slightly longer.',
+      'recommend': 'Yes',
+      'future_topics': 'Deep Learning, Computer Vision, Natural Language Processing, Reinforcement Learning'
+    },
+    comments: 'Outstanding workshop! As someone with a research background, I was impressed by the depth of content and quality of instruction. The combination of Dr. Chen\'s theoretical expertise and Mark\'s practical experience created a perfect learning environment. The TensorFlow exercises were well-designed and the deployment section was particularly valuable for our company projects.',
+    suggestions: 'Consider adding a session on AI ethics and responsible AI development. Also, a follow-up workshop on advanced topics would be fantastic.',
+    wouldRecommend: true,
+    futureTopics: ['Deep Learning', 'Computer Vision', 'NLP', 'AI Ethics', 'Reinforcement Learning'],
+    submittedAt: Timestamp.fromDate(new Date('2024-12-16T10:30:00Z'))
+  },
+  {
+    id: 'feedback-ai-012',
+    eventId: 'event-005',
+    userId: 'reg-012',
+    registrationId: 'reg-012',
+    userEmail: 'james.rodriguez@startup.io',
+    userName: 'James Rodriguez',
+    overallRating: 4,
+    contentRating: 4,
+    organizationRating: 5,
+    venueRating: 4,
+    speakerRatings: [
+      {
+        speakerId: 'speaker-006',
+        rating: 4,
+        comments: 'Great content but sometimes went a bit too fast for beginners like me.'
+      },
+      {
+        speakerId: 'speaker-007',
+        rating: 5,
+        comments: 'Excellent practical session! The deployment examples were exactly what I needed for my startup.'
+      }
+    ],
+    customResponses: {
+      'overall_rating': 4,
+      'content_rating': 4,
+      'organization_rating': 5,
+      'what_liked': 'The practical deployment session was amazing. Learning how to actually put ML models into production was invaluable for our startup.',
+      'improvements': 'Some parts were quite advanced for beginners. Maybe have different tracks or more foundational content.',
+      'recommend': 'Yes',
+      'future_topics': 'Startup-focused ML, Cost-effective AI solutions, Minimal viable ML products'
+    },
+    comments: 'Really valuable workshop for someone building AI products in a startup environment. The production deployment session by Mark was worth the entire ticket price. Dr. Chen\'s content was excellent but sometimes above my current level.',
+    suggestions: 'Consider having beginner and advanced tracks. Also, more focus on cost-effective AI solutions for startups would be great.',
+    wouldRecommend: true,
+    futureTopics: ['Startup AI', 'Cost-effective ML', 'MVP AI Products', 'AI for Small Teams'],
+    submittedAt: Timestamp.fromDate(new Date('2024-12-16T14:20:00Z'))
+  },
+  {
+    id: 'feedback-ai-013',
+    eventId: 'event-005',
+    userId: 'reg-013',
+    registrationId: 'reg-013',
+    userEmail: 'maria.gonzales@university.edu.ph',
+    userName: 'Maria Gonzales',
+    overallRating: 5,
+    contentRating: 5,
+    organizationRating: 4,
+    venueRating: 5,
+    speakerRatings: [
+      {
+        speakerId: 'speaker-006',
+        rating: 5,
+        comments: 'As a student, Dr. Chen\'s teaching style was perfect. Very clear explanations and great examples.'
+      },
+      {
+        speakerId: 'speaker-007',
+        rating: 4,
+        comments: 'Good practical insights, though some industry-specific content was over my head as a student.'
+      }
+    ],
+    customResponses: {
+      'overall_rating': 5,
+      'content_rating': 5,
+      'organization_rating': 4,
+      'what_liked': 'The theoretical foundations were explained so clearly! As a student, I finally understand how neural networks actually work. The Python exercises were perfect.',
+      'improvements': 'Maybe provide more student-focused resources and career guidance in AI/ML.',
+      'recommend': 'Yes',
+      'future_topics': 'AI research methods, Academic AI projects, AI career guidance'
+    },
+    comments: 'Absolutely loved this workshop! As a computer science student, this gave me a solid foundation in AI/ML. Dr. Chen\'s explanations were crystal clear, and I feel confident to start my own AI projects now. The student discount made it very affordable too!',
+    suggestions: 'More workshops like this for students! Maybe add a session on AI research opportunities and career paths in academia vs industry.',
+    wouldRecommend: true,
+    futureTopics: ['AI Research', 'Academic Projects', 'Career Guidance', 'Advanced Mathematics for AI'],
+    submittedAt: Timestamp.fromDate(new Date('2024-12-16T16:45:00Z'))
+  },
+  {
+    id: 'feedback-ai-014',
+    eventId: 'event-005',
+    userId: 'reg-014',
+    registrationId: 'reg-014',
+    userEmail: 'kevin.tan@devstudio.ph',
+    userName: 'Kevin Tan',
+    overallRating: 4,
+    contentRating: 4,
+    organizationRating: 4,
+    venueRating: 3,
+    speakerRatings: [
+      {
+        speakerId: 'speaker-006',
+        rating: 4,
+        comments: 'Good theoretical content, though quite dense at times.'
+      },
+      {
+        speakerId: 'speaker-007',
+        rating: 4,
+        comments: 'Practical insights were valuable for our development work.'
+      }
+    ],
+    customResponses: {
+      'overall_rating': 4,
+      'content_rating': 4,
+      'organization_rating': 4,
+      'what_liked': 'Good balance of theory and practice. The code examples were well-prepared and the GitHub repo is helpful.',
+      'improvements': 'Venue WiFi was a bit slow during hands-on sessions. Also, some technical difficulties with the projector.',
+      'recommend': 'Yes',
+      'future_topics': 'AI for web applications, Mobile AI, Edge computing for ML'
+    },
+    comments: 'Solid workshop overall. Got practical knowledge I can apply in our development projects. Some technical issues with the venue setup, but the content quality made up for it.',
+    suggestions: 'Better venue tech setup needed. Also, more focus on integrating AI into existing web/mobile applications would be great.',
+    wouldRecommend: true,
+    futureTopics: ['Web AI Integration', 'Mobile ML', 'Edge AI', 'AI APIs'],
+    submittedAt: Timestamp.fromDate(new Date('2024-12-17T09:15:00Z'))
+  },
+  {
+    id: 'feedback-ai-015',
+    eventId: 'event-005',
+    userId: 'reg-015',
+    registrationId: 'reg-015',
+    userEmail: 'sarah.kim@dataanalytics.com',
+    userName: 'Sarah Kim',
+    overallRating: 5,
+    contentRating: 5,
+    organizationRating: 5,
+    venueRating: 5,
+    speakerRatings: [
+      {
+        speakerId: 'speaker-006',
+        rating: 5,
+        comments: 'Exceptional expertise and teaching ability. The neural network deep-dive was exactly what I needed.'
+      },
+      {
+        speakerId: 'speaker-007',
+        rating: 5,
+        comments: 'Perfect practical complement to the theory. The MLOps pipeline examples were incredibly valuable.'
+      }
+    ],
+    customResponses: {
+      'overall_rating': 5,
+      'content_rating': 5,
+      'organization_rating': 5,
+      'what_liked': 'Everything! The premium experience was worth every peso. The 1-on-1 session with the speakers was invaluable for my specific data analytics challenges.',
+      'improvements': 'Honestly, hard to find any major issues. Maybe record the sessions for later reference?',
+      'recommend': 'Yes',
+      'future_topics': 'Advanced data analytics with AI, Time series forecasting, Anomaly detection'
+    },
+    comments: 'Exceptional workshop! The premium ticket was absolutely worth it. The 1-on-1 session helped me solve specific challenges in my data analytics work. Both speakers were world-class, and the organization was flawless. This is exactly the kind of high-quality tech education we need more of in the Philippines.',
+    suggestions: 'Please do more premium workshops like this! Consider recording sessions for premium attendees. Also, a follow-up advanced workshop would be fantastic.',
+    wouldRecommend: true,
+    futureTopics: ['Advanced Analytics', 'Time Series ML', 'Anomaly Detection', 'Predictive Analytics'],
+    submittedAt: Timestamp.fromDate(new Date('2024-12-15T20:30:00Z'))
+  },
+  {
+    id: 'feedback-ai-016',
+    eventId: 'event-005',
+    userId: 'reg-016',
+    registrationId: 'reg-016',
+    userEmail: 'michael.chen@fintech.ph',
+    userName: 'Michael Chen',
+    overallRating: 4,
+    contentRating: 5,
+    organizationRating: 4,
+    venueRating: 4,
+    speakerRatings: [
+      {
+        speakerId: 'speaker-006',
+        rating: 5,
+        comments: 'Outstanding theoretical foundation. The math behind neural networks was well explained.'
+      },
+      {
+        speakerId: 'speaker-007',
+        rating: 4,
+        comments: 'Good practical insights, especially relevant for fintech applications.'
+      }
+    ],
+    customResponses: {
+      'overall_rating': 4,
+      'content_rating': 5,
+      'organization_rating': 4,
+      'what_liked': 'The content quality was exceptional. Really appreciated the mathematical rigor while keeping it accessible.',
+      'improvements': 'Registration process was a bit confusing. Also, more fintech-specific examples would have been great.',
+      'recommend': 'Yes',
+      'future_topics': 'AI in fintech, Fraud detection, Risk assessment with ML, Algorithmic trading'
+    },
+    comments: 'High-quality content and excellent speakers. The theoretical foundation was solid and the practical applications were relevant. Would love to see more industry-specific workshops.',
+    suggestions: 'More fintech-focused AI workshops would be amazing. Also, streamline the registration process.',
+    wouldRecommend: true,
+    futureTopics: ['Fintech AI', 'Fraud Detection', 'Risk Assessment', 'Algorithmic Trading'],
+    submittedAt: Timestamp.fromDate(new Date('2024-12-18T11:00:00Z'))
+  },
+  {
+    id: 'feedback-ai-018',
+    eventId: 'event-005',
+    userId: 'reg-018',
+    registrationId: 'reg-018',
+    userEmail: 'david.park@mlstudio.ai',
+    userName: 'David Park',
+    overallRating: 5,
+    contentRating: 5,
+    organizationRating: 5,
+    venueRating: 4,
+    speakerRatings: [
+      {
+        speakerId: 'speaker-006',
+        rating: 5,
+        comments: 'World-class expertise. The research insights were particularly valuable for our AI studio work.'
+      },
+      {
+        speakerId: 'speaker-007',
+        rating: 5,
+        comments: 'Excellent practical knowledge. The production ML pipeline discussion was spot-on.'
+      }
+    ],
+    customResponses: {
+      'overall_rating': 5,
+      'content_rating': 5,
+      'organization_rating': 5,
+      'what_liked': 'The depth of knowledge from both speakers was incredible. Perfect for someone already working in the AI space who wanted to level up.',
+      'improvements': 'Maybe a longer session on cutting-edge research trends. The premium swag kit was nice touch!',
+      'recommend': 'Yes',
+      'future_topics': 'Cutting-edge AI research, Generative AI, Large Language Models, AI safety'
+    },
+    comments: 'Outstanding workshop for AI professionals! Both speakers brought incredible depth and the content was perfectly pitched for practitioners. The premium experience was excellent and the networking opportunities were valuable.',
+    suggestions: 'More advanced workshops like this! Consider a series focusing on cutting-edge topics like LLMs, generative AI, and AI safety.',
+    wouldRecommend: true,
+    futureTopics: ['Generative AI', 'Large Language Models', 'AI Safety', 'Cutting-edge Research'],
+    submittedAt: Timestamp.fromDate(new Date('2024-12-16T18:45:00Z'))
   }
 ];
 
@@ -774,6 +1581,145 @@ const generateSampleCertificates = () => [
     eventTitle: 'React Workshop: Building Modern Web Apps',
     organizerName: 'GDG Davao',
     completionDate: Timestamp.fromDate(new Date('2024-12-20'))
+  },
+  // Certificates for AI/ML Workshop (event-005)
+  {
+    id: 'cert-ai-011',
+    credentialId: 'GDG-AI-ML-2024-011',
+    eventId: 'event-005',
+    userId: 'reg-011',
+    registrationId: 'reg-011',
+    recipientName: 'Dr. Lisa Wang',
+    eventTitle: 'AI & Machine Learning Workshop: Building Smart Applications',
+    eventDate: 'December 15, 2024',
+    completionDate: Timestamp.fromDate(new Date('2024-12-15T17:00:00Z')),
+    certificateUrl: 'https://certificates.gdgdavao.org/ai-ml-2024/cert-ai-011.pdf',
+    verificationUrl: 'https://gdgdavao.org/verify/GDG-AI-ML-2024-011',
+    isVerified: true,
+    templateId: 'ai-workshop-premium',
+    metadata: {
+      eventDuration: '8 hours',
+      skills: ['Machine Learning', 'TensorFlow', 'Neural Networks', 'MLOps'],
+      topics: ['AI Fundamentals', 'Neural Networks', 'TensorFlow', 'Production ML']
+    },
+    issuedAt: Timestamp.fromDate(new Date('2024-12-16T09:00:00Z')),
+    downloadCount: 3,
+    verificationCount: 1
+  },
+  {
+    id: 'cert-ai-012',
+    credentialId: 'GDG-AI-ML-2024-012',
+    eventId: 'event-005',
+    userId: 'reg-012',
+    registrationId: 'reg-012',
+    recipientName: 'James Rodriguez',
+    eventTitle: 'AI & Machine Learning Workshop: Building Smart Applications',
+    eventDate: 'December 15, 2024',
+    completionDate: Timestamp.fromDate(new Date('2024-12-15T17:00:00Z')),
+    certificateUrl: 'https://certificates.gdgdavao.org/ai-ml-2024/cert-ai-012.pdf',
+    verificationUrl: 'https://gdgdavao.org/verify/GDG-AI-ML-2024-012',
+    isVerified: true,
+    templateId: 'ai-workshop-professional',
+    metadata: {
+      eventDuration: '8 hours',
+      skills: ['Machine Learning', 'TensorFlow', 'Production ML', 'Startup AI'],
+      topics: ['AI Fundamentals', 'Neural Networks', 'TensorFlow', 'Production ML']
+    },
+    issuedAt: Timestamp.fromDate(new Date('2024-12-16T09:00:00Z')),
+    downloadCount: 2,
+    verificationCount: 0
+  },
+  {
+    id: 'cert-ai-013',
+    credentialId: 'GDG-AI-ML-2024-013',
+    eventId: 'event-005',
+    userId: 'reg-013',
+    registrationId: 'reg-013',
+    recipientName: 'Maria Gonzales',
+    eventTitle: 'AI & Machine Learning Workshop: Building Smart Applications',
+    eventDate: 'December 15, 2024',
+    completionDate: Timestamp.fromDate(new Date('2024-12-15T17:00:00Z')),
+    certificateUrl: 'https://certificates.gdgdavao.org/ai-ml-2024/cert-ai-013.pdf',
+    verificationUrl: 'https://gdgdavao.org/verify/GDG-AI-ML-2024-013',
+    isVerified: true,
+    templateId: 'ai-workshop-student',
+    metadata: {
+      eventDuration: '8 hours',
+      skills: ['Machine Learning', 'TensorFlow', 'Python', 'Neural Networks'],
+      topics: ['AI Fundamentals', 'Neural Networks', 'TensorFlow', 'Python for AI']
+    },
+    issuedAt: Timestamp.fromDate(new Date('2024-12-16T09:00:00Z')),
+    downloadCount: 1,
+    verificationCount: 2
+  },
+  {
+    id: 'cert-ai-014',
+    credentialId: 'GDG-AI-ML-2024-014',
+    eventId: 'event-005',
+    userId: 'reg-014',
+    registrationId: 'reg-014',
+    recipientName: 'Kevin Tan',
+    eventTitle: 'AI & Machine Learning Workshop: Building Smart Applications',
+    eventDate: 'December 15, 2024',
+    completionDate: Timestamp.fromDate(new Date('2024-12-15T17:00:00Z')),
+    certificateUrl: 'https://certificates.gdgdavao.org/ai-ml-2024/cert-ai-014.pdf',
+    verificationUrl: 'https://gdgdavao.org/verify/GDG-AI-ML-2024-014',
+    isVerified: true,
+    templateId: 'ai-workshop-professional',
+    metadata: {
+      eventDuration: '8 hours',
+      skills: ['Machine Learning', 'TensorFlow', 'Web AI Integration'],
+      topics: ['AI Fundamentals', 'Neural Networks', 'TensorFlow', 'AI APIs']
+    },
+    issuedAt: Timestamp.fromDate(new Date('2024-12-16T09:00:00Z')),
+    downloadCount: 1,
+    verificationCount: 0
+  },
+  {
+    id: 'cert-ai-015',
+    credentialId: 'GDG-AI-ML-2024-015',
+    eventId: 'event-005',
+    userId: 'reg-015',
+    registrationId: 'reg-015',
+    recipientName: 'Sarah Kim',
+    eventTitle: 'AI & Machine Learning Workshop: Building Smart Applications',
+    eventDate: 'December 15, 2024',
+    completionDate: Timestamp.fromDate(new Date('2024-12-15T17:00:00Z')),
+    certificateUrl: 'https://certificates.gdgdavao.org/ai-ml-2024/cert-ai-015.pdf',
+    verificationUrl: 'https://gdgdavao.org/verify/GDG-AI-ML-2024-015',
+    isVerified: true,
+    templateId: 'ai-workshop-premium',
+    metadata: {
+      eventDuration: '8 hours',
+      skills: ['Machine Learning', 'TensorFlow', 'Data Analytics', 'Advanced ML'],
+      topics: ['AI Fundamentals', 'Neural Networks', 'TensorFlow', 'Advanced Analytics']
+    },
+    issuedAt: Timestamp.fromDate(new Date('2024-12-16T09:00:00Z')),
+    downloadCount: 4,
+    verificationCount: 3
+  },
+  {
+    id: 'cert-ai-018',
+    credentialId: 'GDG-AI-ML-2024-018',
+    eventId: 'event-005',
+    userId: 'reg-018',
+    registrationId: 'reg-018',
+    recipientName: 'David Park',
+    eventTitle: 'AI & Machine Learning Workshop: Building Smart Applications',
+    eventDate: 'December 15, 2024',
+    completionDate: Timestamp.fromDate(new Date('2024-12-15T17:00:00Z')),
+    certificateUrl: 'https://certificates.gdgdavao.org/ai-ml-2024/cert-ai-018.pdf',
+    verificationUrl: 'https://gdgdavao.org/verify/GDG-AI-ML-2024-018',
+    isVerified: true,
+    templateId: 'ai-workshop-premium',
+    metadata: {
+      eventDuration: '8 hours',
+      skills: ['Machine Learning', 'TensorFlow', 'AI Research', 'Advanced AI'],
+      topics: ['AI Fundamentals', 'Neural Networks', 'TensorFlow', 'Cutting-edge AI']
+    },
+    issuedAt: Timestamp.fromDate(new Date('2024-12-16T09:00:00Z')),
+    downloadCount: 2,
+    verificationCount: 1
   }
 ];
 
@@ -980,12 +1926,12 @@ async function populateSampleData() {
     console.log('');
     console.log('📋 What was created:');
     console.log('   • 3 Auth Users + Firestore Documents (1 admin, 2 organizers)');
-    console.log('   • 4 Events (3 published, 1 draft)');
-    console.log('   • 10 Registrations across different events');
-    console.log('     - 4 with paid status (confirmed)');
-    console.log('     - 6 with pending payment status (need verification)');
-    console.log('   • 1 Feedback submission');
-    console.log('   • 1 Certificate');
+    console.log('   • 5 Events (3 published, 1 completed with full data, 1 draft)');
+    console.log('   • 18 Registrations across different events');
+    console.log('     - 10 with paid status (confirmed attendees)');
+    console.log('     - 8 with pending payment status (need verification)');
+    console.log('   • 8 Feedback submissions (7 for AI/ML workshop + 1 for React)');
+    console.log('   • 7 Certificates (6 for AI/ML workshop + 1 for React)');
     console.log('   • 4 System settings');
     console.log('   • 3 Activity logs');
     console.log('');
@@ -998,10 +1944,20 @@ async function populateSampleData() {
     console.log('   • Use Payment Verification tab to approve/reject pending payments');
     console.log('');
     console.log('💳 Payment Verification Testing:');
-    console.log('   • 6 registrations need payment verification');
+    console.log('   • 8 registrations need payment verification');
     console.log('   • Navigate to Attendees page → Payment Verification tab');
     console.log('   • Approve or reject pending payments');
     console.log('   • Test payment workflow integration');
+    console.log('');
+    console.log('🤖 Featured Event - AI/ML Workshop (event-005):');
+    console.log('   • Complete event with 8 approved attendees (all paid)');
+    console.log('   • 6 comprehensive feedback submissions with ratings');
+    console.log('   • 6 issued certificates with verification codes');
+    console.log('   • Multiple ticket types (Student, Professional, Premium)');
+    console.log('   • Promo codes with usage tracking');
+    console.log('   • Hybrid venue (physical + online)');
+    console.log('   • World-class speakers with detailed profiles');
+    console.log('   • Perfect for testing analytics, feedback, and certificates');
     console.log('');
     console.log('📊 Next Steps:');
     console.log('   1. Start your app: npm run dev:emulator');
@@ -1016,4 +1972,23 @@ async function populateSampleData() {
 }
 
 // Run the population
-populateSampleData(); 
+if (require.main === module) {
+  populateSampleData()
+    .then(() => {
+      console.log('✅ Script completed successfully');
+      process.exit(0);
+    })
+    .catch((error) => {
+      console.error('❌ Script failed:', error);
+      process.exit(1);
+    });
+}
+
+module.exports = { 
+  populateSampleData, 
+  generateSampleUsers, 
+  generateSampleEvents, 
+  generateSampleRegistrations, 
+  generateSampleFeedback, 
+  generateSampleCertificates 
+}; 

@@ -83,7 +83,12 @@ service cloud.firestore {
     
     // Registrations collection - Anonymous attendee registrations
     match /registrations/{registrationId} {
-      allow read: if true; // Allow anonymous reads for payment processing
+      // Allow admins and organizers full access for management
+      allow read, list: if isAuthenticated() && (isAdmin() || isOrganizer());
+      // For anonymous payment access, only allow pending registrations with active payment links
+      allow read: if !isAuthenticated() && 
+                     resource.data.paymentStatus == 'pending' && 
+                     (!('paymentLinkStatus' in resource.data) || resource.data.paymentLinkStatus == 'active');
       allow create: if true; // Allow anonymous registrations
       allow update: if isAuthenticated();
       allow delete: if isAuthenticated();
@@ -135,7 +140,8 @@ service cloud.firestore {
     
     // Payment proofs collection
     match /paymentProofs/{proofId} {
-      allow read: if isAuthenticated();
+      allow read: if true; // Allow public reads for payment verification checks
+      allow list: if true; // Allow querying proofs by registrationId for verification
       allow create: if (
                         // Accept either top-level email or nested userDetails.email
                         (

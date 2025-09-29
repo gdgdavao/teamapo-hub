@@ -99,10 +99,30 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
       // Create a pending registration (not yet confirmed)
       const registration = await RegistrationService.createPendingRegistration(registrationPayload);
       
+      // Send immediate registration confirmation email
+      try {
+        await RegistrationService.sendRegistrationConfirmationEmail(
+          registration.registrationId,
+          event.id,
+          userDetails.email,
+          userDetails.name,
+          registration.requiresPayment
+        );
+      } catch (emailError) {
+        console.warn('Failed to send confirmation email:', emailError);
+        // Don't block the flow if email fails
+      }
+      
       toast.success('Registration details saved! Please proceed to payment.');
       
-      // Always navigate to payment page first
-      navigate(`/payment/${registration.registrationId}`);
+      // Navigate to payment page (token-based when available)
+      // If backend starts returning a signed token, append as query param for expiry validation
+      const token = (registration as any).paymentLinkToken;
+      if (token) {
+        navigate(`/payment/${registration.registrationId}?t=${encodeURIComponent(token)}`);
+      } else {
+        navigate(`/payment/${registration.registrationId}`);
+      }
     } catch (err: any) {
       console.error('Registration error:', err);
       toast.error(err.message || 'Registration failed. Please try again.');

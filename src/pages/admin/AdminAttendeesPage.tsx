@@ -27,6 +27,7 @@ import { RegistrationService } from '../../services/registrationService';
 import { EventService } from '../../services/eventService';
 import { PaymentService } from '../../services/paymentService';
 import { Registration as FirestoreRegistration, Event } from '../../types';
+import { getDownloadUrlFromPath } from '../../utils/storageUtils';
 
 // Utility function to format dates
 const formatDate = (dateString: string): string => {
@@ -99,6 +100,23 @@ interface Registration {
   requirements?: string[];
   formSubmission?: Record<string, any>;
   priority?: 'low' | 'medium' | 'high';
+  promoCode?: string;
+  quantity?: number;
+  originalAmount?: number;
+  discountAmount?: number;
+  totalAmount?: number;
+  currency?: string;
+  pricing?: {
+    originalPrice?: number;
+    currentPrice?: number;
+    discountAmount?: number;
+    promoCode?: {
+      code?: string;
+      name?: string;
+      discountType?: 'percentage' | 'fixed';
+      discountValue?: number;
+    };
+  };
 }
 
 const AdminAttendeesPage: React.FC = () => {
@@ -117,6 +135,8 @@ const AdminAttendeesPage: React.FC = () => {
   const [events, setEvents] = useState<Event[]>([]);
   const [currentEvent, setCurrentEvent] = useState<Event | null>(null);
   const [viewMode, setViewMode] = useState<'management'>('management');
+  const [convertedImageUrls, setConvertedImageUrls] = useState<Record<string, string>>({});
+  const [imageLoadingStates, setImageLoadingStates] = useState<Record<string, boolean>>({});
   const [loadingProof, setLoadingProof] = useState(false);
 
   // Load registrations from API
@@ -213,7 +233,7 @@ const AdminAttendeesPage: React.FC = () => {
               title: event.title,
               date: toISOStringSafe((event as any)?.startDate ?? (event as any)?.startDateTime ?? (event as any)?.date),
               venue: event.venue?.name || event.venue?.address || 'TBA',
-              ticketPrice: reg.totalAmount || 0
+              ticketPrice: (reg as any).pricing?.currentPrice || (reg.totalAmount && reg.quantity ? (reg.totalAmount / reg.quantity) : 0)
             },
             status: getDisplayStatus(reg),
             registrationDate: reg.registrationDate.toDate().toISOString(),
@@ -232,8 +252,16 @@ const AdminAttendeesPage: React.FC = () => {
             notes: (reg as any).adminNotes || undefined,
             requirements: undefined,
             formSubmission: (reg as any).customResponses || undefined,
-            priority: 'medium' // Default priority
+            priority: 'medium', // Default priority
+            promoCode: (reg as any).promoCode || undefined,
+            quantity: (reg as any).quantity,
+            originalAmount: (reg as any).originalAmount,
+            discountAmount: (reg as any).discountAmount,
+            totalAmount: (reg as any).totalAmount,
+            currency: (reg as any).currency,
+            pricing: (reg as any).pricing
           };
+
           
           transformedRegistrations.push(transformedReg);
         }
@@ -285,6 +313,7 @@ const AdminAttendeesPage: React.FC = () => {
 
     fetchLatestProof();
   }, [viewingRegistration?.id]);
+
 
   const handleStatusChange = (registrationId: string, newStatus: Registration['status'], notes?: string) => {
     // Only handle admin status changes (approved/rejected)
@@ -400,6 +429,54 @@ const AdminAttendeesPage: React.FC = () => {
       alert(`Failed to ${action} payment. Please try again.`);
     }
   };
+
+  // Function to open registration details modal
+  const handleViewRegistration = (registration: Registration) => {
+    setViewingRegistration(registration);
+  };
+
+  // Convert storage path to download URL when modal opens
+  useEffect(() => {
+    if (!viewingRegistration?.paymentProof?.proofImageUrl) {
+      return;
+    }
+
+    const proofImageUrl = viewingRegistration.paymentProof.proofImageUrl;
+    const cacheKey = viewingRegistration.id + '_proof';
+    
+    // Skip if already converted and cached
+    if (convertedImageUrls[cacheKey]) {
+      return;
+    }
+    
+    // Skip if already loading
+    if (imageLoadingStates[cacheKey]) {
+      return;
+    }
+    
+    // Don't try to convert if it's already a full URL
+    if (proofImageUrl.startsWith('https://')) {
+      return;
+    }
+    
+    // Set loading state and convert
+    const convertImage = async () => {
+      setImageLoadingStates(prev => ({ ...prev, [cacheKey]: true }));
+      
+      try {
+        const downloadUrl = await getDownloadUrlFromPath(proofImageUrl);
+        if (downloadUrl) {
+          setConvertedImageUrls(prev => ({ ...prev, [cacheKey]: downloadUrl }));
+        }
+      } catch (error) {
+        console.error('Failed to convert payment proof image URL:', error);
+      } finally {
+        setImageLoadingStates(prev => ({ ...prev, [cacheKey]: false }));
+      }
+    };
+
+    convertImage();
+  }, [viewingRegistration?.id, viewingRegistration?.paymentProof?.proofImageUrl, convertedImageUrls, imageLoadingStates]);
 
   const exportToCSV = () => {
     // Define CSV headers
@@ -771,7 +848,7 @@ const AdminAttendeesPage: React.FC = () => {
                   {/* Action Button - Only View Details */}
                   <div className="flex items-center justify-end mt-4 pt-4 border-t border-gray-100">
                     <button
-                      onClick={() => setViewingRegistration(registration)}
+                      onClick={() => handleViewRegistration(registration)}
                       className="btn-outline text-sm px-4 py-2"
                     >
                       View Details
@@ -915,6 +992,67 @@ const AdminAttendeesPage: React.FC = () => {
                       </div>
                     </div>
 
+                    {/* Pricing */}
+                    <div className="lg:col-span-1">
+                      <div className="bg-white border border-gray-200 rounded-lg p-5">
+                        <div className="flex items-center space-x-3 mb-4">
+                          <div className="p-2 bg-yellow-100 rounded-lg">
+                            <CurrencyDollarIcon className="h-5 w-5 text-yellow-600" />
+                          </div>
+                          <h3 className="text-lg font-semibold text-gray-900">Pricing</h3>
+                        </div>
+
+                        <div className="space-y-4">
+                          {(viewingRegistration.promoCode || viewingRegistration.pricing?.promoCode) && (
+                            <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                              <label className="text-sm font-medium text-green-700">🎫 Promo Code Applied</label>
+                              <p className="text-green-900 font-mono text-sm font-semibold">
+                                {viewingRegistration.promoCode || 
+                                 (typeof viewingRegistration.pricing?.promoCode === 'string' 
+                                   ? viewingRegistration.pricing?.promoCode 
+                                   : viewingRegistration.pricing?.promoCode?.code)}
+                              </p>
+                            </div>
+                          )}
+
+                          {typeof viewingRegistration.quantity === 'number' && (
+                            <div>
+                              <label className="text-sm font-medium text-gray-700">Quantity</label>
+                              <p className="text-gray-900">{viewingRegistration.quantity}</p>
+                            </div>
+                          )}
+
+                          {typeof viewingRegistration.pricing?.originalPrice === 'number' && (
+                            <div>
+                              <label className="text-sm font-medium text-gray-700">Original Price</label>
+                              <p className="text-gray-900">₱{(viewingRegistration.pricing?.originalPrice || 0).toLocaleString()}</p>
+                            </div>
+                          )}
+
+                          {(typeof viewingRegistration.pricing?.discountAmount === 'number' || typeof viewingRegistration.discountAmount === 'number') && (
+                            <div>
+                              <label className="text-sm font-medium text-gray-700">Discount</label>
+                              <p className="text-green-600">-₱{(viewingRegistration.pricing?.discountAmount ?? viewingRegistration.discountAmount ?? 0).toLocaleString()}</p>
+                            </div>
+                          )}
+
+                          {typeof viewingRegistration.pricing?.currentPrice === 'number' && (
+                            <div>
+                              <label className="text-sm font-medium text-gray-700">Discounted Price</label>
+                              <p className="text-gray-900">₱{(viewingRegistration.pricing?.currentPrice || 0).toLocaleString()}</p>
+                            </div>
+                          )}
+
+                          {(typeof viewingRegistration.totalAmount === 'number') && (
+                            <div className="pt-2 border-t border-gray-100">
+                              <label className="text-sm font-medium text-gray-700">Total Amount</label>
+                              <p className="text-gray-900 font-semibold">₱{(viewingRegistration.totalAmount || 0).toLocaleString()}</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
                     {/* Payment Proof */}
                     {(viewingRegistration.paymentProof || loadingProof) && (
                       <div className="lg:col-span-1">
@@ -944,6 +1082,18 @@ const AdminAttendeesPage: React.FC = () => {
                                 </div>
                               )}
                             </div>
+
+                            {(viewingRegistration.promoCode || viewingRegistration.pricing?.promoCode) && (
+                              <div>
+                                <label className="text-sm font-medium text-gray-700">Promo Code Used</label>
+                                <p className="text-gray-900 font-mono text-sm bg-blue-50 px-2 py-1 rounded">
+                                  {viewingRegistration.promoCode || 
+                                   (typeof viewingRegistration.pricing?.promoCode === 'string' 
+                                     ? viewingRegistration.pricing?.promoCode 
+                                     : viewingRegistration.pricing?.promoCode?.code)}
+                                </p>
+                              </div>
+                            )}
                             
                             {viewingRegistration.paymentProof?.transactionId && (
                               <div>
@@ -975,19 +1125,61 @@ const AdminAttendeesPage: React.FC = () => {
                       </div>
                       
                       <div className="flex justify-center">
-                        <div className="relative group cursor-pointer" onClick={() => window.open(viewingRegistration.paymentProof!.proofImageUrl!, '_blank')}>
-                          <img 
-                            src={viewingRegistration.paymentProof.proofImageUrl} 
-                            alt="Payment proof"
-                            className="max-w-full h-auto max-h-96 rounded-lg border border-gray-200 transition-transform group-hover:scale-105"
-                          />
-                          <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-0 transition-all rounded-lg flex items-center justify-center">
-                            <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-white bg-opacity-95 px-4 py-2 rounded-lg text-sm font-medium shadow-lg">
-                              <EyeIcon className="h-4 w-4 inline mr-2" />
-                              Click to enlarge
+                        {(() => {
+                          const cacheKey = viewingRegistration.id + '_proof';
+                          const isLoading = imageLoadingStates[cacheKey];
+                          const convertedUrl = convertedImageUrls[cacheKey];
+                          const originalUrl = viewingRegistration.paymentProof!.proofImageUrl!;
+                          const imageUrl = convertedUrl || originalUrl;
+                          
+                          // Show loading if we're currently converting
+                          if (isLoading === true) {
+                            return (
+                              <div className="flex flex-col items-center justify-center p-8 text-gray-500">
+                                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-600 mb-3"></div>
+                                <p className="text-sm">Loading payment proof image...</p>
+                              </div>
+                            );
+                          }
+                          
+                          // If it's a storage path and we haven't tried converting yet, show a message
+                          if (!originalUrl.startsWith('https://') && isLoading === undefined && !convertedUrl) {
+                            return (
+                              <div className="flex flex-col items-center justify-center p-8 text-gray-500">
+                                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-600 mb-3"></div>
+                                <p className="text-sm">Processing payment proof image...</p>
+                              </div>
+                            );
+                          }
+                          
+                          return (
+                            <div className="relative group cursor-pointer" onClick={() => window.open(imageUrl, '_blank')}>
+                              <img 
+                                src={imageUrl} 
+                                alt="Payment proof"
+                                className="max-w-full h-auto max-h-96 rounded-lg border border-gray-200 transition-transform group-hover:scale-105"
+                                onError={(e) => {
+                                  console.error('Failed to load payment proof image:', imageUrl);
+                                  // Show error message instead of trying to fallback
+                                  const errorDiv = document.createElement('div');
+                                  errorDiv.className = 'flex flex-col items-center justify-center p-8 text-red-500 border-2 border-dashed border-red-300 rounded-lg';
+                                  errorDiv.innerHTML = `
+                                    <div class="text-red-500 mb-2">⚠️</div>
+                                    <p class="text-sm text-center">Failed to load payment proof image</p>
+                                    <p class="text-xs text-gray-500 mt-1">Path: ${originalUrl}</p>
+                                  `;
+                                  e.currentTarget.parentNode?.replaceChild(errorDiv, e.currentTarget);
+                                }}
+                              />
+                              <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-0 transition-all rounded-lg flex items-center justify-center">
+                                <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-white bg-opacity-95 px-4 py-2 rounded-lg text-sm font-medium shadow-lg">
+                                  <EyeIcon className="h-4 w-4 inline mr-2" />
+                                  Click to enlarge
+                                </div>
+                              </div>
                             </div>
-                          </div>
-                        </div>
+                          );
+                        })()}
                       </div>
                     </div>
                   )}

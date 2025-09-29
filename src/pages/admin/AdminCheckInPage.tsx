@@ -7,12 +7,13 @@ import {
   CheckIcon,
   XMarkIcon
 } from '@heroicons/react/24/outline';
-import { CheckCircleIcon as CheckCircleSolidIcon, XCircleIcon as XCircleSolidIcon } from '@heroicons/react/20/solid';
+import { CheckCircleIcon as CheckCircleSolidIcon, XCircleIcon as XCircleSolidIcon, ExclamationTriangleIcon, InformationCircleIcon } from '@heroicons/react/20/solid';
 import { doc, updateDoc, serverTimestamp, query, collection, where, getDocs } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import AdminLayout from '../../components/admin/AdminLayout';
 import { useAuth } from '../../contexts/AuthContext';
 import { Registration as FirestoreRegistration, Event } from '../../types';
+import { ForceCheckInModal } from '../../components/shared/UI';
 
 interface Registration {
   id: string;
@@ -34,6 +35,197 @@ interface Registration {
   paymentStatus?: 'pending' | 'paid' | 'failed' | 'refunded';
 }
 
+// Scoped logger for this page
+const DEBUG = Boolean((import.meta as any)?.env?.DEV) || ((import.meta as any)?.env?.VITE_DEBUG_CHECKIN === 'true');
+const log = {
+  debug: (...args: unknown[]) => { if (DEBUG) console.debug('[AdminCheckIn]', ...args); },
+  info: (...args: unknown[]) => { if (DEBUG) console.info('[AdminCheckIn]', ...args); },
+  warn: (...args: unknown[]) => console.warn('[AdminCheckIn]', ...args),
+  error: (...args: unknown[]) => console.error('[AdminCheckIn]', ...args),
+};
+
+// Date awareness helper functions
+const getEventDateStatus = (event: Event | null) => {
+  if (!event || !event.startDate) return null;
+  
+  try {
+    const now = new Date();
+    let eventStartDate: Date;
+    let eventEndDate: Date;
+    
+    // Debug logging
+    log.debug('Processing event dates:', { 
+      startDate: event.startDate, 
+      endDate: event.endDate,
+      startDateType: typeof event.startDate,
+      hasToDate: !!(event.startDate as any)?.toDate
+    });
+    
+    // Handle different date formats for startDate with more robust checking
+    if (event.startDate && (event.startDate as any).toDate && typeof (event.startDate as any).toDate === 'function') {
+      // Firestore Timestamp object
+      log.debug('Using toDate() method for startDate');
+      eventStartDate = (event.startDate as any).toDate();
+    } else if (event.startDate instanceof Date) {
+      // Regular Date object
+      log.debug('startDate is already a Date object');
+      eventStartDate = event.startDate;
+    } else if (typeof event.startDate === 'string') {
+      // Date string
+      log.debug('Parsing startDate as string');
+      eventStartDate = new Date(event.startDate);
+    } else if (typeof event.startDate === 'number') {
+      // Unix timestamp
+      log.debug('Parsing startDate as number');
+      eventStartDate = new Date(event.startDate);
+    } else if ((event.startDate as any)?.seconds && typeof (event.startDate as any).seconds === 'number') {
+      // Firestore timestamp as plain object
+      log.debug('Using seconds property for startDate');
+      eventStartDate = new Date((event.startDate as any).seconds * 1000);
+    } else {
+      // Last resort - try to parse as any
+      log.debug('Fallback parsing for startDate');
+      eventStartDate = new Date(event.startDate as any);
+    }
+    
+    // Handle different date formats for endDate
+    if (event.endDate && (event.endDate as any).toDate && typeof (event.endDate as any).toDate === 'function') {
+      eventEndDate = (event.endDate as any).toDate();
+    } else if (event.endDate instanceof Date) {
+      eventEndDate = event.endDate;
+    } else if (typeof event.endDate === 'string') {
+      eventEndDate = new Date(event.endDate);
+    } else if (typeof event.endDate === 'number') {
+      eventEndDate = new Date(event.endDate);
+    } else if ((event.endDate as any)?.seconds && typeof (event.endDate as any).seconds === 'number') {
+      eventEndDate = new Date((event.endDate as any).seconds * 1000);
+    } else if (event.endDate) {
+      eventEndDate = new Date(event.endDate as any);
+    } else {
+      // Use startDate as endDate if endDate is not available
+      eventEndDate = eventStartDate;
+    }
+    
+    // Check if dates are valid
+    if (isNaN(eventStartDate.getTime()) || isNaN(eventEndDate.getTime())) {
+      log.warn('Invalid event dates after parsing:', { 
+        eventStartDate, 
+        eventEndDate,
+        originalStartDate: event.startDate,
+        originalEndDate: event.endDate
+      });
+      return null;
+    }
+    
+    log.debug('Successfully parsed dates:', { eventStartDate, eventEndDate });
+    
+    // Calculate time differences
+    const timeDiffStart = eventStartDate.getTime() - now.getTime();
+    const timeDiffEnd = eventEndDate.getTime() - now.getTime();
+    const daysDiffStart = Math.ceil(timeDiffStart / (1000 * 3600 * 24));
+    const daysDiffEnd = Math.ceil(timeDiffEnd / (1000 * 3600 * 24));
+    
+    // Event is in the past
+    if (timeDiffEnd < 0) {
+      const daysAgo = Math.abs(daysDiffEnd);
+      return {
+        type: 'past' as const,
+        severity: daysAgo > 7 ? 'high' : daysAgo > 1 ? 'medium' : 'low',
+        message: daysAgo === 0 ? 'This event ended today' :
+                 daysAgo === 1 ? 'This event ended yesterday' :
+                 `This event ended ${daysAgo} days ago`,
+        daysAgo,
+        canCheckIn: daysAgo <= 1 // Allow check-in up to 1 day after event
+      };
+    }
+    
+    // Event is happening now
+    if (timeDiffStart <= 0 && timeDiffEnd >= 0) {
+      return {
+        type: 'current' as const,
+        severity: 'none' as const,
+        message: 'Event is happening now',
+        canCheckIn: true
+      };
+    }
+    
+    // Event is in the future
+    if (timeDiffStart > 0) {
+      return {
+        type: 'future' as const,
+        severity: daysDiffStart > 7 ? 'high' : daysDiffStart > 1 ? 'medium' : 'low',
+        message: daysDiffStart === 0 ? 'This event starts today' :
+                 daysDiffStart === 1 ? 'This event starts tomorrow' :
+                 `This event starts in ${daysDiffStart} days`,
+        daysUntil: daysDiffStart,
+        canCheckIn: daysDiffStart <= 1 // Allow check-in starting 1 day before event
+      };
+    }
+    
+    return null;
+  } catch (error) {
+    log.error('Error in getEventDateStatus:', error, { event });
+    // Return null to gracefully degrade if date parsing fails
+    return null;
+  }
+};
+
+// Alert component for date warnings
+interface DateWarningAlertProps {
+  event: Event | null;
+  className?: string;
+}
+
+const DateWarningAlert: React.FC<DateWarningAlertProps> = ({ event, className = '' }) => {
+  const dateStatus = getEventDateStatus(event);
+  
+  if (!dateStatus || dateStatus.type === 'current') return null;
+  
+  const getAlertStyle = () => {
+    if (dateStatus.type === 'past') {
+      return dateStatus.severity === 'high' 
+        ? 'bg-red-50 border-red-200 text-red-800'
+        : 'bg-orange-50 border-orange-200 text-orange-800';
+    }
+    
+    if (dateStatus.type === 'future') {
+      return dateStatus.severity === 'high'
+        ? 'bg-blue-50 border-blue-200 text-blue-800'
+        : 'bg-yellow-50 border-yellow-200 text-yellow-800';
+    }
+    
+    return 'bg-gray-50 border-gray-200 text-gray-800';
+  };
+  
+  const getIcon = () => {
+    if (dateStatus.type === 'past' && dateStatus.severity === 'high') {
+      return <ExclamationTriangleIcon className="w-5 h-5 text-red-500" />;
+    }
+    if (dateStatus.type === 'past') {
+      return <ExclamationTriangleIcon className="w-5 h-5 text-orange-500" />;
+    }
+    return <InformationCircleIcon className="w-5 h-5 text-blue-500" />;
+  };
+  
+  return (
+    <div className={`rounded-lg border p-3 ${getAlertStyle()} ${className}`}>
+      <div className="flex items-center space-x-2">
+        {getIcon()}
+        <div className="flex-1">
+          <p className="text-sm font-medium">
+            {dateStatus.message}
+          </p>
+          {!dateStatus.canCheckIn && (
+            <p className="text-xs mt-1 opacity-80">
+              Check-in may not be appropriate for this event date.
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const AdminCheckInPage: React.FC = () => {
   const { userProfile } = useAuth();
   const [registrations, setRegistrations] = useState<Registration[]>([]);
@@ -47,6 +239,24 @@ const AdminCheckInPage: React.FC = () => {
   } | null>(null);
   const [currentEvent, setCurrentEvent] = useState<Event | null>(null);
   const [events, setEvents] = useState<Event[]>([]);
+  const [activeTab, setActiveTab] = useState<'ready' | 'checkedIn'>('ready');
+  
+  // Force check-in modal state
+  const [forceCheckInModal, setForceCheckInModal] = useState<{
+    isOpen: boolean;
+    registrationId: string;
+    attendeeName: string;
+    eventTitle: string;
+    dateWarning: string;
+    severity: 'low' | 'medium' | 'high';
+  }>({
+    isOpen: false,
+    registrationId: '',
+    attendeeName: '',
+    eventTitle: '',
+    dateWarning: '',
+    severity: 'low'
+  });
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -59,41 +269,75 @@ const AdminCheckInPage: React.FC = () => {
 
   const fetchRegistrations = async () => {
     try {
-      const registrationsQuery = query(
-        collection(db, 'registrations'),
-        where('status', 'in', ['approved', 'paid'])
-      );
+      // Get all registrations and filter client-side for better debugging
+      const registrationsQuery = query(collection(db, 'registrations'));
       
       const snapshot = await getDocs(registrationsQuery);
       const regs: Registration[] = [];
       
       for (const doc of snapshot.docs) {
         const data = doc.data() as FirestoreRegistration;
+        
+        log.debug('Raw registration data:', { docId: doc.id, data });
+        
+        // Map paymentStatus to match local interface
+        const mapPaymentStatus = (status: any): Registration['paymentStatus'] => {
+          if (status === 'paid') return 'paid';
+          if (status === 'pending' || status === 'processing') return 'pending';
+          if (status === 'failed') return 'failed';
+          if (status === 'refunded') return 'refunded';
+          return 'pending'; // Default for any other status including 'cancelled'
+        };
+        
+        // Check registration status - could be in registrationStatus or attendanceStatus
+        const registrationStatus = (data as any).registrationStatus;
+        const rawPaymentStatus = data.paymentStatus as string; // Get raw string value
+        const attendanceStatus = data.attendanceStatus;
+        
+        // Determine if registration is eligible for check-in
+        let mappedStatus: Registration['status'] = 'pending';
+        
+        if (attendanceStatus === 'checked-in') {
+          mappedStatus = 'attended';
+        } else if (registrationStatus === 'approved' || rawPaymentStatus === 'paid') {
+          mappedStatus = 'approved';
+        } else if (registrationStatus === 'cancelled' || attendanceStatus === 'cancelled') {
+          mappedStatus = 'cancelled';
+        }
+        
+        log.debug('Mapped status:', { registrationStatus, rawPaymentStatus, attendanceStatus, mappedStatus });
+        
         // Map Firestore data to local interface
         regs.push({
           id: doc.id,
           attendee: {
-            id: data.attendeeId,
-            name: data.attendeeName || 'Unknown',
-            email: data.attendeeEmail || 'Unknown',
-            phone: data.attendeePhone,
-            organization: data.attendeeOrganization,
-            profilePicture: data.attendeeProfilePicture
+            id: data.userId || doc.id,
+            name: data.userDetails?.name || 'Unknown',
+            email: data.userDetails?.email || 'Unknown',
+            phone: data.userDetails?.phoneNumber,
+            organization: data.userDetails?.organization,
+            profilePicture: undefined // Not available in current schema
           },
           event: {
             id: data.eventId,
-            title: data.eventTitle || 'Unknown Event',
-            date: data.eventDate || 'Unknown Date',
-            venue: data.eventVenue || 'Unknown Venue'
+            title: 'Event Title', // Will be populated from event data
+            date: 'Event Date', // Will be populated from event data
+            venue: 'Event Venue' // Will be populated from event data
           },
-          status: data.registrationStatus || 'pending',
-          paymentStatus: data.paymentStatus
+          status: mappedStatus,
+          paymentStatus: mapPaymentStatus(data.paymentStatus)
         });
       }
       
+      log.debug('Total registrations loaded:', regs.length);
+      log.debug('Registrations by status:', regs.reduce((acc, r) => {
+        acc[r.status] = (acc[r.status] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>)); // Debug log
+      
       setRegistrations(regs);
     } catch (error) {
-      console.error('Error fetching registrations:', error);
+      log.error('Error fetching registrations:', error);
     } finally {
       setLoading(false);
     }
@@ -118,7 +362,54 @@ const AdminCheckInPage: React.FC = () => {
         setCurrentEvent(eventList[0]);
       }
     } catch (error) {
-      console.error('Error fetching events:', error);
+      log.error('Error fetching events:', error);
+    }
+  };
+
+  // Helper function to format event date
+  const formatEventDate = (timestamp: any) => {
+    if (!timestamp) return 'No Date';
+    
+    try {
+      let date;
+      
+      // Handle different date formats with robust checking
+      if (timestamp && typeof (timestamp as any).toDate === 'function') {
+        // Firestore Timestamp object
+        date = (timestamp as any).toDate();
+      } else if (timestamp instanceof Date) {
+        // Regular Date object
+        date = timestamp;
+      } else if (typeof timestamp === 'string') {
+        // Date string
+        date = new Date(timestamp);
+      } else if (typeof timestamp === 'number') {
+        // Unix timestamp
+        date = new Date(timestamp);
+      } else if ((timestamp as any)?.seconds && typeof (timestamp as any).seconds === 'number') {
+        // Firestore timestamp as plain object (from Firestore emulator or client)
+        date = new Date((timestamp as any).seconds * 1000);
+      } else {
+        // Try to create a Date object
+        date = new Date(timestamp);
+      }
+      
+      // Check if the date is valid
+      if (isNaN(date.getTime())) {
+        log.warn('Invalid date:', timestamp);
+        return 'Invalid Date';
+      }
+      
+      return date.toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (error) {
+      log.error('Error formatting date:', error);
+      return 'Date Error';
     }
   };
 
@@ -139,7 +430,7 @@ const AdminCheckInPage: React.FC = () => {
         setIsCameraActive(true);
       }
     } catch (error) {
-      console.error('Error accessing camera:', error);
+      log.error('Error accessing camera:', error);
       alert('Unable to access camera. Please check permissions and try again.');
     }
   };
@@ -193,10 +484,18 @@ const AdminCheckInPage: React.FC = () => {
         return;
       }
 
+      // Check event date status and add warning message if necessary
+      const dateStatus = getEventDateStatus(currentEvent);
+      let successMessage = `${registration.attendee.name} has been checked in successfully!`;
+      
+      if (dateStatus && !dateStatus.canCheckIn) {
+        successMessage += ` ⚠️ Note: ${dateStatus.message.toLowerCase()}`;
+      }
+
       // Update registration status to attended
       const registrationRef = doc(db, 'registrations', registration.id);
       await updateDoc(registrationRef, {
-        status: 'attended',
+        attendanceStatus: 'checked-in',
         checkedInAt: serverTimestamp(),
         checkedInBy: userProfile?.uid || 'admin'
       });
@@ -206,9 +505,12 @@ const AdminCheckInPage: React.FC = () => {
         r.id === registration.id ? { ...r, status: 'attended' as const } : r
       ));
 
+      // Switch to checked-in tab to show the result
+      setActiveTab('checkedIn');
+
       setCheckinResult({
         success: true,
-        message: `${registration.attendee.name} has been checked in successfully!`,
+        message: successMessage,
         registration
       });
 
@@ -219,7 +521,7 @@ const AdminCheckInPage: React.FC = () => {
       setTimeout(() => setCheckinResult(null), 3000);
 
     } catch (error) {
-      console.error('Error during check-in:', error);
+      log.error('Error during check-in:', error);
       setCheckinResult({
         success: false,
         message: 'Failed to check in attendee. Please try again.'
@@ -242,9 +544,49 @@ const AdminCheckInPage: React.FC = () => {
         return;
       }
 
+      // Check event date status and show modal if necessary
+      const dateStatus = getEventDateStatus(currentEvent);
+      if (dateStatus && !dateStatus.canCheckIn) {
+        // Show custom modal instead of browser confirm
+        setForceCheckInModal({
+          isOpen: true,
+          registrationId: registration.id,
+          attendeeName: registration.attendee.name,
+          eventTitle: currentEvent?.title || 'Event',
+          dateWarning: dateStatus.message,
+          severity: dateStatus.severity as 'low' | 'medium' | 'high'
+        });
+        return;
+      }
+
+      // Proceed with normal check-in if no date issues
+      await performCheckIn(registrationId);
+
+    } catch (error) {
+      log.error('Error during manual check-in:', error);
+      setCheckinResult({
+        success: false,
+        message: 'Failed to check in attendee. Please try again.'
+      });
+    }
+  };
+
+  // Separate function to perform the actual check-in
+  const performCheckIn = async (registrationId: string) => {
+    try {
+      const registration = registrations.find(r => r.id === registrationId);
+      if (!registration) return;
+
+      // Check event date status for success message
+      const dateStatus = getEventDateStatus(currentEvent);
+      let successMessage = `${registration.attendee.name} has been checked in successfully!`;
+      if (dateStatus && !dateStatus.canCheckIn) {
+        successMessage += ` ⚠️ Note: ${dateStatus.message.toLowerCase()}`;
+      }
+
       const registrationRef = doc(db, 'registrations', registration.id);
       await updateDoc(registrationRef, {
-        status: 'attended',
+        attendanceStatus: 'checked-in',
         checkedInAt: serverTimestamp(),
         checkedInBy: userProfile?.uid || 'admin'
       });
@@ -254,9 +596,12 @@ const AdminCheckInPage: React.FC = () => {
         r.id === registrationId ? { ...r, status: 'attended' as const } : r
       ));
 
+      // Switch to checked-in tab to show the result
+      setActiveTab('checkedIn');
+
       setCheckinResult({
         success: true,
-        message: `${registration.attendee.name} has been checked in successfully!`,
+        message: successMessage,
         registration
       });
 
@@ -264,7 +609,7 @@ const AdminCheckInPage: React.FC = () => {
       setTimeout(() => setCheckinResult(null), 3000);
 
     } catch (error) {
-      console.error('Error during manual check-in:', error);
+      log.error('Error during check-in:', error);
       setCheckinResult({
         success: false,
         message: 'Failed to check in attendee. Please try again.'
@@ -272,14 +617,27 @@ const AdminCheckInPage: React.FC = () => {
     }
   };
 
+  // Modal handlers
+  const handleForceCheckInConfirm = async () => {
+    setForceCheckInModal(prev => ({ ...prev, isOpen: false }));
+    await performCheckIn(forceCheckInModal.registrationId);
+  };
+
+  const handleForceCheckInCancel = () => {
+    setForceCheckInModal(prev => ({ ...prev, isOpen: false }));
+  };
+
   // Filter registrations for current event
   const eventRegistrations = currentEvent 
     ? registrations.filter(r => r.event.id === currentEvent.id)
     : registrations;
 
-  const readyForCheckin = eventRegistrations.filter(r => 
-    r.status === 'approved' && r.paymentStatus === 'paid'
-  );
+  const readyForCheckin = eventRegistrations.filter(r => {
+    // Ready if status is 'approved' OR paymentStatus is 'paid', but not yet attended
+    const isReadyStatus = r.status === 'approved' || r.status === 'paid' || r.paymentStatus === 'paid';
+    const notAttended = r.status !== 'attended';
+    return isReadyStatus && notAttended;
+  });
   
   const checkedIn = eventRegistrations.filter(r => r.status === 'attended');
 
@@ -319,11 +677,14 @@ const AdminCheckInPage: React.FC = () => {
           >
             {events.map(event => (
               <option key={event.id} value={event.id}>
-                {event.title} - {new Date(event.date).toLocaleDateString()}
+                {event.title} - {formatEventDate(event.startDate)}
               </option>
             ))}
           </select>
         </div>
+
+        {/* Date Warning Alert */}
+        <DateWarningAlert event={currentEvent} />
 
         {/* Quick Stats */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -473,71 +834,154 @@ const AdminCheckInPage: React.FC = () => {
           </div>
         )}
 
-        {/* Attendees Ready for Check-in */}
-        <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold text-gray-900">Attendees Ready for Check-in</h3>
-            <span className="text-sm text-gray-500">{readyForCheckin.length} ready</span>
+        {/* Attendees Management Tabs */}
+        <div className="bg-white rounded-xl border border-gray-200">
+          {/* Tab Navigation */}
+          <div className="border-b border-gray-200">
+            <nav className="flex space-x-8 px-6">
+              <button
+                onClick={() => setActiveTab('ready')}
+                className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'ready'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Ready for Check-in
+                <span className="ml-2 py-0.5 px-2 rounded-full text-xs bg-blue-100 text-blue-800">
+                  {readyForCheckin.length}
+                </span>
+              </button>
+              <button
+                onClick={() => setActiveTab('checkedIn')}
+                className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'checkedIn'
+                    ? 'border-green-500 text-green-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Checked In
+                <span className="ml-2 py-0.5 px-2 rounded-full text-xs bg-green-100 text-green-800">
+                  {checkedIn.length}
+                </span>
+              </button>
+            </nav>
           </div>
-          
-          {readyForCheckin.length === 0 ? (
-            <div className="text-center py-8">
-              <UserGroupIcon className="mx-auto h-12 w-12 text-gray-400" />
-              <h3 className="mt-2 text-sm font-medium text-gray-900">No attendees ready for check-in</h3>
-              <p className="mt-1 text-sm text-gray-500">
-                All approved and paid attendees have been checked in.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-3 max-h-96 overflow-y-auto">
-              {readyForCheckin.map((registration) => (
-                <div key={registration.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                  <div className="flex items-center space-x-3">
-                    <div className="h-10 w-10 bg-blue-100 rounded-full flex items-center justify-center">
-                      <span className="text-sm font-medium text-blue-600">
-                        {registration.attendee.name.charAt(0).toUpperCase()}
-                      </span>
-                    </div>
-                    <div>
-                      <p className="font-medium text-gray-900">{registration.attendee.name}</p>
-                      <p className="text-sm text-gray-500">{registration.attendee.email}</p>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => handleManualCheckin(registration.id)}
-                    className="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors"
-                  >
-                    Check In
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
 
-        {/* Recently Checked In */}
-        {checkedIn.length > 0 && (
-          <div className="bg-white rounded-xl border border-gray-200 p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Recently Checked In</h3>
-            <div className="space-y-3 max-h-96 overflow-y-auto">
-              {checkedIn.slice(0, 10).map((registration) => (
-                <div key={registration.id} className="flex items-center justify-between p-4 bg-green-50 rounded-lg">
-                  <div className="flex items-center space-x-3">
-                    <div className="h-10 w-10 bg-green-100 rounded-full flex items-center justify-center">
-                      <CheckIcon className="h-5 w-5 text-green-600" />
-                    </div>
-                    <div>
-                      <p className="font-medium text-gray-900">{registration.attendee.name}</p>
-                      <p className="text-sm text-gray-500">{registration.attendee.email}</p>
-                    </div>
+          {/* Tab Content */}
+          <div className="p-6">
+            {activeTab === 'ready' ? (
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex-1">
+                    <h3 className="text-lg font-semibold text-gray-900">Attendees Ready for Check-in</h3>
+                    {(() => {
+                      const dateStatus = getEventDateStatus(currentEvent);
+                      if (dateStatus && !dateStatus.canCheckIn) {
+                        return (
+                          <p className="text-sm text-amber-600 mt-1 flex items-center">
+                            <ExclamationTriangleIcon className="w-4 h-4 mr-1" />
+                            {dateStatus.message} - Check-ins should be verified
+                          </p>
+                        );
+                      }
+                      return null;
+                    })()}
                   </div>
-                  <span className="text-sm text-green-600 font-medium">✓ Checked In</span>
                 </div>
-              ))}
-            </div>
+                
+                {readyForCheckin.length === 0 ? (
+                  <div className="text-center py-8">
+                    <UserGroupIcon className="mx-auto h-12 w-12 text-gray-400" />
+                    <h3 className="mt-2 text-sm font-medium text-gray-900">No attendees ready for check-in</h3>
+                    <p className="mt-1 text-sm text-gray-500">
+                      All approved and paid attendees have been checked in.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-3 max-h-96 overflow-y-auto">
+                    {readyForCheckin.map((registration) => (
+                      <div key={registration.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                        <div className="flex items-center space-x-3">
+                          <div className="h-10 w-10 bg-blue-100 rounded-full flex items-center justify-center">
+                            <span className="text-sm font-medium text-blue-600">
+                              {registration.attendee.name.charAt(0).toUpperCase()}
+                            </span>
+                          </div>
+                          <div>
+                            <p className="font-medium text-gray-900">{registration.attendee.name}</p>
+                            <p className="text-sm text-gray-500">{registration.attendee.email}</p>
+                            {registration.attendee.organization && (
+                              <p className="text-xs text-gray-400">{registration.attendee.organization}</p>
+                            )}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => handleManualCheckin(registration.id)}
+                          className="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors"
+                        >
+                          Check In
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-gray-900">Checked In Attendees</h3>
+                  <p className="text-sm text-gray-500">{checkedIn.length} checked in</p>
+                </div>
+                
+                {checkedIn.length === 0 ? (
+                  <div className="text-center py-8">
+                    <CheckCircleIcon className="mx-auto h-12 w-12 text-gray-400" />
+                    <h3 className="mt-2 text-sm font-medium text-gray-900">No attendees checked in yet</h3>
+                    <p className="mt-1 text-sm text-gray-500">
+                      Checked in attendees will appear here.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-3 max-h-96 overflow-y-auto">
+                    {checkedIn.map((registration) => (
+                      <div key={registration.id} className="flex items-center justify-between p-4 bg-green-50 rounded-lg">
+                        <div className="flex items-center space-x-3">
+                          <div className="h-10 w-10 bg-green-100 rounded-full flex items-center justify-center">
+                            <CheckIcon className="h-5 w-5 text-green-600" />
+                          </div>
+                          <div>
+                            <p className="font-medium text-gray-900">{registration.attendee.name}</p>
+                            <p className="text-sm text-gray-500">{registration.attendee.email}</p>
+                            {registration.attendee.organization && (
+                              <p className="text-xs text-gray-400">{registration.attendee.organization}</p>
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-sm text-green-600 font-medium">✓ Checked In</span>
+                          <p className="text-xs text-gray-500">Just now</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </div>
+
+      {/* Force Check-In Modal */}
+      <ForceCheckInModal
+        isOpen={forceCheckInModal.isOpen}
+        onClose={handleForceCheckInCancel}
+        onConfirm={handleForceCheckInConfirm}
+        attendeeName={forceCheckInModal.attendeeName}
+        eventTitle={forceCheckInModal.eventTitle}
+        dateWarning={forceCheckInModal.dateWarning}
+        severity={forceCheckInModal.severity}
+      />
     </AdminLayout>
   );
 };

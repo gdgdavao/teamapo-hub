@@ -175,7 +175,7 @@ const EventRegistrationPage: React.FC = () => {
                   <div className="flex-1">
                     <div className="flex items-center gap-3 mb-4">
                       <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800">
-                        {event.category}
+                        {event.category?.toUpperCase()}
                       </span>
                     </div>
                     <h1 className="text-4xl font-bold text-gray-900 mb-4">{event.title}</h1>

@@ -12,13 +12,15 @@ from firebase_functions.options import set_global_options
 from firebase_admin import initialize_app, firestore, storage, auth
 from firebase_admin.exceptions import FirebaseError
 from google.cloud.firestore_v1 import FieldFilter
+from email_service import email_service
 
 # Global variables for Firebase Admin services (lazy initialization)
 _app = None
 _db = None
 
-# Set global options for cost control
-set_global_options(max_instances=10)
+# Set global options for region and cost control
+# Ensure region matches Firestore location in firebase.json (asia-southeast2)
+set_global_options(region="asia-southeast2", max_instances=10)
 
 # Ensure Firebase Admin SDK is initialized at import time so callable auth verification works
 try:
@@ -1677,8 +1679,512 @@ def bulkProcessPayments(req: https_fn.CallableRequest) -> Dict[str, Any]:
 @https_fn.on_call()
 def sendConfirmationEmail(req: https_fn.CallableRequest) -> Dict[str, Any]:
     """
-    Queue or simulate sending a registration confirmation email.
-    This is a lightweight stub to support local dev and avoid client errors.
+    Send a registration confirmation email using Resend.
+    Supports different email types: 'submitted' (immediate) or 'approved' (with QR code and registration ID)
+    """
+    try:
+        data: Dict[str, Any] = req.data or {}
+        registration_id = data.get('registrationId')
+        event_id = data.get('eventId')
+        user_email = data.get('userEmail')
+        user_name = data.get('userName', 'Attendee')
+        requires_payment = data.get('requiresPayment', False)
+        email_type = data.get('emailType', 'submitted')  # 'submitted' or 'approved'
+
+        if not event_id or not user_email:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="eventId and userEmail are required"
+            )
+
+        # Get event details for email content
+        try:
+            event_ref = get_db().collection('events').document(event_id)
+            event_doc = event_ref.get()
+            
+            if not event_doc.exists:
+                raise https_fn.HttpsError(
+                    code=https_fn.FunctionsErrorCode.NOT_FOUND,
+                    message="Event not found"
+                )
+            
+            event_data = event_doc.to_dict()
+            event_title = event_data.get('title', 'Event')
+            
+            # Debug: Log event data structure
+            logger.info(f"Event data keys: {list(event_data.keys())}")
+            logger.info(f"startDate value: {event_data.get('startDate')} (type: {type(event_data.get('startDate'))})")
+            logger.info(f"venue value: {event_data.get('venue')}")
+            
+            # Get proper event date and location from Firestore
+            event_date = 'TBD'
+            event_location = 'TBD'
+            
+            # Extract date from startDate (Firestore Timestamp)
+            start_date = event_data.get('startDate')
+            if start_date:
+                try:
+                    from datetime import datetime
+                    # Handle Firestore timestamp object
+                    if hasattr(start_date, 'seconds'):
+                        dt = datetime.fromtimestamp(start_date.seconds)
+                        event_date = dt.strftime('%B %d, %Y at %I:%M %p')
+                    elif isinstance(start_date, dict) and 'seconds' in start_date:
+                        # Handle serialized timestamp
+                        dt = datetime.fromtimestamp(start_date['seconds'])
+                        event_date = dt.strftime('%B %d, %Y at %I:%M %p')
+                    elif isinstance(start_date, str):
+                        # Handle ISO string
+                        dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+                        event_date = dt.strftime('%B %d, %Y at %I:%M %p')
+                    else:
+                        logger.warning(f"Unknown startDate format: {type(start_date)} - {start_date}")
+                        event_date = str(start_date)
+                except Exception as date_err:
+                    logger.warning(f"Failed to parse event date: {str(date_err)}")
+                    logger.warning(f"startDate type: {type(start_date)}, value: {start_date}")
+                    event_date = str(start_date)
+            
+            # Get venue information - handle both nested venue object and flat structure
+            venue = event_data.get('venue', {})
+            venue_type = venue.get('type') or event_data.get('venueType')
+            
+            logger.info(f"venue_type: {venue_type}")
+            
+            if venue_type == 'online':
+                event_location = venue.get('onlineUrl') or venue.get('url') or 'Online Event'
+            elif venue_type == 'offline':
+                # Try nested venue object first, then flat structure
+                venue_name = venue.get('name') or event_data.get('venueName', '')
+                venue_address = venue.get('address') or event_data.get('venueAddress', '')
+                venue_city = venue.get('city') or event_data.get('city', '')
+                
+                # Build location string from available parts
+                location_parts = []
+                if venue_name:
+                    location_parts.append(venue_name)
+                if venue_address:
+                    location_parts.append(venue_address)
+                if venue_city:
+                    location_parts.append(venue_city)
+                
+                event_location = ', '.join(location_parts) if location_parts else 'TBD'
+                logger.info(f"Built location: {event_location} from parts: {location_parts}")
+            else:
+                logger.info(f"Unknown venue type: {venue_type}, using TBD")
+            
+            # Generate QR code only for approved registrations
+            qr_code_data = None
+            include_registration_id = None
+            
+            if email_type == 'approved' and registration_id:
+                include_registration_id = registration_id
+                try:
+                    import qrcode
+                    from io import BytesIO
+                    import base64
+                    
+                    qr = qrcode.QRCode(version=1, box_size=10, border=5)
+                    qr.add_data(f"registration:{registration_id}")
+                    qr.make(fit=True)
+                    
+                    img = qr.make_image(fill_color="black", back_color="white")
+                    buffer = BytesIO()
+                    img.save(buffer, format='PNG')
+                    qr_code_data = base64.b64encode(buffer.getvalue()).decode()
+                except Exception as qr_err:
+                    logger.warning(f"Failed to generate QR code: {str(qr_err)}")
+
+            # Send email using Resend
+            email_result = email_service.send_registration_confirmation(
+                user_email=user_email,
+                user_name=user_name,
+                event_title=event_title,
+                event_date=event_date,
+                event_location=event_location,
+                registration_id=include_registration_id,
+                qr_code_data=qr_code_data,
+                requires_payment=requires_payment
+            )
+
+            # Log activity for traceability
+            try:
+                get_db().collection('activity_logs').add({
+                    'type': 'email_confirmation_sent',
+                    'registrationId': registration_id,
+                    'eventId': event_id,
+                    'userEmail': user_email,
+                    'userName': user_name,
+                    'emailId': email_result.get('email_id'),
+                    'success': email_result.get('success', False),
+                    'timestamp': firestore.SERVER_TIMESTAMP
+                })
+            except Exception as log_err:
+                logger.warning(f"Failed to write activity log for confirmation email: {str(log_err)}")
+
+            if email_result.get('success'):
+                logger.info(f"Registration confirmation email sent to {user_email} (registration {registration_id})")
+                return {
+                    'success': True,
+                    'message': 'Confirmation email sent successfully',
+                    'registrationId': registration_id,
+                    'eventId': event_id,
+                    'emailId': email_result.get('email_id')
+                }
+            else:
+                logger.error(f"Failed to send confirmation email to {user_email}: {email_result.get('message')}")
+                return {
+                    'success': False,
+                    'message': f"Failed to send confirmation email: {email_result.get('message')}",
+                    'registrationId': registration_id,
+                    'eventId': event_id
+                }
+
+        except https_fn.HttpsError:
+            raise
+        except Exception as event_err:
+            logger.error(f"Error getting event details: {str(event_err)}")
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INTERNAL,
+                message="Internal server error getting event details"
+            )
+
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error in sendConfirmationEmail: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error sending confirmation email"
+        )
+
+
+@https_fn.on_call()
+def sendPaymentNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Send payment status notification email using Resend.
+    """
+    try:
+        data: Dict[str, Any] = req.data or {}
+        registration_id = data.get('registrationId')
+        status = data.get('status')  # expected: 'approved' | 'rejected' | 'pending'
+        event_title = data.get('eventTitle')
+        attendee_email = data.get('attendeeEmail')
+        attendee_name = data.get('attendeeName', 'Attendee')
+        payment_instructions = data.get('paymentInstructions')
+
+        if not registration_id or not status:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="registrationId and status are required"
+            )
+
+        if not attendee_email:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="attendeeEmail is required"
+            )
+
+        # Send email using Resend
+        email_result = email_service.send_payment_notification(
+            user_email=attendee_email,
+            user_name=attendee_name,
+            event_title=event_title or 'Event',
+            registration_id=registration_id,
+            status=status,
+            payment_instructions=payment_instructions
+        )
+
+        # Log activity for traceability
+        try:
+            get_db().collection('activity_logs').add({
+                'type': 'payment_notification_sent',
+                'registrationId': registration_id,
+                'status': status,
+                'eventTitle': event_title,
+                'attendeeEmail': attendee_email,
+                'attendeeName': attendee_name,
+                'emailId': email_result.get('email_id'),
+                'success': email_result.get('success', False),
+                'timestamp': firestore.SERVER_TIMESTAMP
+            })
+        except Exception as log_err:
+            logger.warning(f"Failed to write activity log for payment notification: {str(log_err)}")
+
+        if email_result.get('success'):
+            logger.info(f"Payment notification email sent to {attendee_email} for registration {registration_id} with status {status}")
+            return {
+                'success': True,
+                'message': 'Payment notification sent successfully',
+                'registrationId': registration_id,
+                'status': status,
+                'emailId': email_result.get('email_id')
+            }
+        else:
+            logger.error(f"Failed to send payment notification to {attendee_email}: {email_result.get('message')}")
+            return {
+                'success': False,
+                'message': f"Failed to send payment notification: {email_result.get('message')}",
+                'registrationId': registration_id,
+                'status': status
+            }
+
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error in sendPaymentNotification: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error sending payment notification"
+        )
+
+
+@https_fn.on_call()
+def sendCertificateNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Send certificate ready notification email using Resend.
+    """
+    try:
+        data: Dict[str, Any] = req.data or {}
+        user_email = data.get('userEmail')
+        user_name = data.get('userName', 'Attendee')
+        event_title = data.get('eventTitle')
+        certificate_url = data.get('certificateUrl')
+        registration_id = data.get('registrationId')
+
+        if not user_email or not event_title or not certificate_url:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="userEmail, eventTitle, and certificateUrl are required"
+            )
+
+        # Send email using Resend
+        email_result = email_service.send_certificate_notification(
+            user_email=user_email,
+            user_name=user_name,
+            event_title=event_title,
+            certificate_url=certificate_url,
+            registration_id=registration_id or 'unknown'
+        )
+
+        # Log activity for traceability
+        try:
+            get_db().collection('activity_logs').add({
+                'type': 'certificate_notification_sent',
+                'userEmail': user_email,
+                'userName': user_name,
+                'eventTitle': event_title,
+                'certificateUrl': certificate_url,
+                'registrationId': registration_id,
+                'emailId': email_result.get('email_id'),
+                'success': email_result.get('success', False),
+                'timestamp': firestore.SERVER_TIMESTAMP
+            })
+        except Exception as log_err:
+            logger.warning(f"Failed to write activity log for certificate notification: {str(log_err)}")
+
+        if email_result.get('success'):
+            logger.info(f"Certificate notification email sent to {user_email} for {event_title}")
+            return {
+                'success': True,
+                'message': 'Certificate notification sent successfully',
+                'emailId': email_result.get('email_id')
+            }
+        else:
+            logger.error(f"Failed to send certificate notification to {user_email}: {email_result.get('message')}")
+            return {
+                'success': False,
+                'message': f"Failed to send certificate notification: {email_result.get('message')}"
+            }
+
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error in sendCertificateNotification: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error sending certificate notification"
+        )
+
+
+@https_fn.on_call()
+def sendEventReminder(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Send event reminder email using Resend.
+    """
+    try:
+        data: Dict[str, Any] = req.data or {}
+        user_email = data.get('userEmail')
+        user_name = data.get('userName', 'Attendee')
+        event_title = data.get('eventTitle')
+        event_date = data.get('eventDate')
+        event_location = data.get('eventLocation')
+        registration_id = data.get('registrationId')
+        reminder_type = data.get('reminderType', '24h')  # '24h' or '1h'
+
+        if not user_email or not event_title or not event_date:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="userEmail, eventTitle, and eventDate are required"
+            )
+
+        # Send email using Resend
+        email_result = email_service.send_event_reminder(
+            user_email=user_email,
+            user_name=user_name,
+            event_title=event_title,
+            event_date=event_date,
+            event_location=event_location or 'TBD',
+            registration_id=registration_id or 'unknown',
+            reminder_type=reminder_type
+        )
+
+        # Log activity for traceability
+        try:
+            get_db().collection('activity_logs').add({
+                'type': 'event_reminder_sent',
+                'userEmail': user_email,
+                'userName': user_name,
+                'eventTitle': event_title,
+                'eventDate': event_date,
+                'eventLocation': event_location,
+                'registrationId': registration_id,
+                'reminderType': reminder_type,
+                'emailId': email_result.get('email_id'),
+                'success': email_result.get('success', False),
+                'timestamp': firestore.SERVER_TIMESTAMP
+            })
+        except Exception as log_err:
+            logger.warning(f"Failed to write activity log for event reminder: {str(log_err)}")
+
+        if email_result.get('success'):
+            logger.info(f"Event reminder email sent to {user_email} for {event_title} ({reminder_type})")
+            return {
+                'success': True,
+                'message': 'Event reminder sent successfully',
+                'emailId': email_result.get('email_id')
+            }
+        else:
+            logger.error(f"Failed to send event reminder to {user_email}: {email_result.get('message')}")
+            return {
+                'success': False,
+                'message': f"Failed to send event reminder: {email_result.get('message')}"
+            }
+
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error in sendEventReminder: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error sending event reminder"
+        )
+
+
+def generate_feedback_url(event_id: str, registration_id: str = None, user_email: str = None, user_name: str = None) -> str:
+    """
+    Generate systematic feedback URL with optional parameters
+    """
+    base_url = "https://gdgdavao.org"  # Production URL
+    feedback_url = f"{base_url}/feedback/{event_id}"
+    
+    # Add query parameters for better UX
+    params = []
+    if registration_id:
+        params.append(f"registrationId={registration_id}")
+    if user_email:
+        params.append(f"email={user_email}")
+    if user_name:
+        params.append(f"name={user_name}")
+    
+    if params:
+        feedback_url += "?" + "&".join(params)
+    
+    return feedback_url
+
+
+@https_fn.on_call()
+def sendFeedbackRequest(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Send feedback request email using Resend.
+    """
+    try:
+        data: Dict[str, Any] = req.data or {}
+        user_email = data.get('userEmail')
+        user_name = data.get('userName', 'Attendee')
+        event_title = data.get('eventTitle')
+        event_id = data.get('eventId')
+        registration_id = data.get('registrationId')
+        
+        # Support both old and new API - feedbackUrl or generate from eventId
+        feedback_url = data.get('feedbackUrl')
+        if not feedback_url and event_id:
+            feedback_url = generate_feedback_url(
+                event_id=event_id,
+                registration_id=registration_id,
+                user_email=user_email,
+                user_name=user_name
+            )
+
+        if not user_email or not event_title or not feedback_url:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="userEmail, eventTitle, and either feedbackUrl or eventId are required"
+            )
+
+        # Send email using Resend
+        email_result = email_service.send_feedback_request(
+            user_email=user_email,
+            user_name=user_name,
+            event_title=event_title,
+            feedback_url=feedback_url,
+            registration_id=registration_id or 'unknown'
+        )
+
+        # Log activity for traceability
+        try:
+            get_db().collection('activity_logs').add({
+                'type': 'feedback_request_sent',
+                'userEmail': user_email,
+                'userName': user_name,
+                'eventTitle': event_title,
+                'feedbackUrl': feedback_url,
+                'registrationId': registration_id,
+                'emailId': email_result.get('email_id'),
+                'success': email_result.get('success', False),
+                'timestamp': firestore.SERVER_TIMESTAMP
+            })
+        except Exception as log_err:
+            logger.warning(f"Failed to write activity log for feedback request: {str(log_err)}")
+
+        if email_result.get('success'):
+            logger.info(f"Feedback request email sent to {user_email} for {event_title}")
+            return {
+                'success': True,
+                'message': 'Feedback request sent successfully',
+                'emailId': email_result.get('email_id')
+            }
+        else:
+            logger.error(f"Failed to send feedback request to {user_email}: {email_result.get('message')}")
+            return {
+                'success': False,
+                'message': f"Failed to send feedback request: {email_result.get('message')}"
+            }
+
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error in sendFeedbackRequest: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error sending feedback request"
+        )
+
+
+@https_fn.on_call()
+def sendCheckInNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Send check-in confirmation notification email using Resend.
     """
     try:
         data: Dict[str, Any] = req.data or {}
@@ -1693,86 +2199,82 @@ def sendConfirmationEmail(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 message="registrationId, eventId, and userEmail are required"
             )
 
-        # Log activity for traceability in emulator
+        # Get event details for email content
         try:
-            get_db().collection('activity_logs').add({
-                'type': 'email_confirmation_queued',
-                'registrationId': registration_id,
-                'eventId': event_id,
-                'userEmail': user_email,
-                'userName': user_name,
-                'timestamp': firestore.SERVER_TIMESTAMP
-            })
-        except Exception as log_err:
-            logger.warning(f"Failed to write activity log for confirmation email: {str(log_err)}")
+            event_ref = get_db().collection('events').document(event_id)
+            event_doc = event_ref.get()
+            
+            if not event_doc.exists:
+                raise https_fn.HttpsError(
+                    code=https_fn.FunctionsErrorCode.NOT_FOUND,
+                    message="Event not found"
+                )
+            
+            event_data = event_doc.to_dict()
+            event_title = event_data.get('title', 'Event')
+            event_date = event_data.get('date', 'TBD')
+            event_location = event_data.get('location', 'TBD')
 
-        logger.info(f"sendConfirmationEmail queued for {user_email} (registration {registration_id})")
-        return {
-            'success': True,
-            'message': 'Confirmation email queued',
-            'registrationId': registration_id,
-            'eventId': event_id
-        }
-    except https_fn.HttpsError:
-        raise
-    except Exception as e:
-        logger.error(f"Error in sendConfirmationEmail: {str(e)}")
-        raise https_fn.HttpsError(
-            code=https_fn.FunctionsErrorCode.INTERNAL,
-            message="Internal server error queuing confirmation email"
-        )
-
-
-@https_fn.on_call()
-def sendPaymentNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
-    """
-    Notify attendee or admins of payment status change.
-    This is a lightweight stub to support local dev and avoid client errors.
-    """
-    try:
-        data: Dict[str, Any] = req.data or {}
-        registration_id = data.get('registrationId')
-        status = data.get('status')  # expected: 'approved' | 'rejected' | 'pending'
-        event_title = data.get('eventTitle')
-        attendee_email = data.get('attendeeEmail')
-        attendee_name = data.get('attendeeName', 'Attendee')
-
-        if not registration_id or not status:
-            raise https_fn.HttpsError(
-                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
-                message="registrationId and status are required"
+            # Send email using Resend (using event reminder template as base)
+            email_result = email_service.send_event_reminder(
+                user_email=user_email,
+                user_name=user_name,
+                event_title=event_title,
+                event_date=event_date,
+                event_location=event_location,
+                registration_id=registration_id,
+                reminder_type="checked_in"  # Custom type for check-in
             )
 
-        # Log activity for traceability in emulator
-        try:
-            get_db().collection('activity_logs').add({
-                'type': 'payment_notification',
-                'registrationId': registration_id,
-                'status': status,
-                'eventTitle': event_title,
-                'attendeeEmail': attendee_email,
-                'attendeeName': attendee_name,
-                'timestamp': firestore.SERVER_TIMESTAMP
-            })
-        except Exception as log_err:
-            logger.warning(f"Failed to write activity log for payment notification: {str(log_err)}")
+            # Log activity for traceability
+            try:
+                get_db().collection('activity_logs').add({
+                    'type': 'checkin_notification_sent',
+                    'registrationId': registration_id,
+                    'eventId': event_id,
+                    'userEmail': user_email,
+                    'userName': user_name,
+                    'emailId': email_result.get('email_id'),
+                    'success': email_result.get('success', False),
+                    'timestamp': firestore.SERVER_TIMESTAMP
+                })
+            except Exception as log_err:
+                logger.warning(f"Failed to write activity log for check-in notification: {str(log_err)}")
 
-        logger.info(
-            f"sendPaymentNotification queued for registration {registration_id} with status {status}"
-        )
-        return {
-            'success': True,
-            'message': 'Payment notification queued',
-            'registrationId': registration_id,
-            'status': status
-        }
+            if email_result.get('success'):
+                logger.info(f"Check-in notification email sent to {user_email} (registration {registration_id})")
+                return {
+                    'success': True,
+                    'message': 'Check-in notification sent successfully',
+                    'registrationId': registration_id,
+                    'eventId': event_id,
+                    'emailId': email_result.get('email_id')
+                }
+            else:
+                logger.error(f"Failed to send check-in notification to {user_email}: {email_result.get('message')}")
+                return {
+                    'success': False,
+                    'message': f"Failed to send check-in notification: {email_result.get('message')}",
+                    'registrationId': registration_id,
+                    'eventId': event_id
+                }
+
+        except https_fn.HttpsError:
+            raise
+        except Exception as event_err:
+            logger.error(f"Error getting event details for check-in notification: {str(event_err)}")
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INTERNAL,
+                message="Internal server error getting event details"
+            )
+
     except https_fn.HttpsError:
         raise
     except Exception as e:
-        logger.error(f"Error in sendPaymentNotification: {str(e)}")
+        logger.error(f"Error in sendCheckInNotification: {str(e)}")
         raise https_fn.HttpsError(
             code=https_fn.FunctionsErrorCode.INTERNAL,
-            message="Internal server error queuing payment notification"
+            message="Internal server error sending check-in notification"
         )
 
 

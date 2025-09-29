@@ -25,12 +25,13 @@ import AdminUsersPage from './pages/admin/AdminUsersPage';
 import AdminPaymentVerificationPage from './pages/admin/AdminPaymentVerificationPage';
 import CreateEventPage from './pages/admin/AdminCreateEventPage';
 import ManageEventsPage from './pages/admin/AdminManageEventsPage';
+import AdminEventFeedbackPage from './pages/admin/AdminEventFeedbackPage';
 
 // Shared Pages
 import CertificatesPage from './pages/shared/CertificatesPage';
 
-// Analytics Component
-import { AnalyticsPage } from './components/admin/Analytics';
+// Analytics Page
+import AnalyticsPage from './pages/admin/AdminAnalyticsPage';
 
 // Utility Pages (keeping in their current locations for now)
 import PaymentPage from './pages/payment/PaymentPage';
@@ -173,6 +174,12 @@ const AppContent: React.FC = () => {
         </ProtectedRoute>
       } />
 
+      <Route path="/admin/events/:eventId/feedback" element={
+        <ProtectedRoute requiredRole="admin">
+          <AdminEventFeedbackPage />
+        </ProtectedRoute>
+      } />
+
       <Route path="/admin/events/:eventId/analytics" element={
         <ProtectedRoute requiredRole="admin">
           <AnalyticsPage isEventSpecific={true} />
@@ -268,7 +275,7 @@ const App: React.FC = () => {
     <AuthProvider>
       <div className="min-h-screen bg-gray-50">
         <AppContent />
-        <FirebaseConnectionStatus />
+        
       </div>
     </AuthProvider>
   );

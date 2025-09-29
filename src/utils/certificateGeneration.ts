@@ -38,9 +38,9 @@ export class CertificateGenerationService {
         throw new Error('Could not get canvas context');
       }
 
-      // Set canvas size (you might want to make this configurable)
-      canvas.width = 1200;
-      canvas.height = 800;
+      // Set canvas size from template dimensions or default
+      canvas.width = template.dimensions?.width || 1200;
+      canvas.height = template.dimensions?.height || 800;
 
       return new Promise((resolve, reject) => {
         const img = new Image();
@@ -53,7 +53,7 @@ export class CertificateGenerationService {
 
             // Draw recipient name
             const namePos = template.textPositions.recipientName;
-            ctx.font = `${namePos.fontSize}px ${namePos.fontFamily}`;
+            ctx.font = `${namePos.fontStyle || 'normal'} ${namePos.fontWeight || 'normal'} ${namePos.fontSize}px ${namePos.fontFamily}`;
             ctx.fillStyle = namePos.color;
             ctx.textAlign = namePos.align;
             
@@ -63,18 +63,18 @@ export class CertificateGenerationService {
 
             // Draw verification code
             const codePos = template.textPositions.verificationCode;
-            ctx.font = `${codePos.fontSize}px ${codePos.fontFamily}`;
+            ctx.font = `${codePos.fontStyle || 'normal'} ${codePos.fontWeight || 'normal'} ${codePos.fontSize}px ${codePos.fontFamily}`;
             ctx.fillStyle = codePos.color;
             ctx.textAlign = codePos.align;
             
             const codeX = (codePos.x / 100) * canvas.width;
             const codeY = (codePos.y / 100) * canvas.height;
-            ctx.fillText(`Verification Code: ${verificationCode}`, codeX, codeY);
+            ctx.fillText(verificationCode, codeX, codeY);
 
             // Draw event title if position is defined
             if (template.textPositions.eventTitle) {
               const eventPos = template.textPositions.eventTitle;
-              ctx.font = `${eventPos.fontSize}px ${eventPos.fontFamily}`;
+              ctx.font = `${eventPos.fontStyle || 'normal'} ${eventPos.fontWeight || 'normal'} ${eventPos.fontSize}px ${eventPos.fontFamily}`;
               ctx.fillStyle = eventPos.color;
               ctx.textAlign = eventPos.align;
               
@@ -86,7 +86,7 @@ export class CertificateGenerationService {
             // Draw event date if position is defined
             if (template.textPositions.eventDate) {
               const datePos = template.textPositions.eventDate;
-              ctx.font = `${datePos.fontSize}px ${datePos.fontFamily}`;
+              ctx.font = `${datePos.fontStyle || 'normal'} ${datePos.fontWeight || 'normal'} ${datePos.fontSize}px ${datePos.fontFamily}`;
               ctx.fillStyle = datePos.color;
               ctx.textAlign = datePos.align;
               

@@ -24,6 +24,7 @@ import {
   ShareIcon,
 } from '@heroicons/react/24/outline';
 import { FormBuilder, FormField } from '../../components/shared/FormBuilder';
+import { PhotoUpload } from '../../components/shared';
 import { TicketType, PromoCode } from '../../types';
 import PromoCodeManager from '../../components/public/PromoCodeManager';
 
@@ -127,6 +128,7 @@ const CreateEventPage: React.FC = () => {
   const [currentStep, setCurrentStep] = useState(0);
   const [loading, setLoading] = useState(false);
   const [eventId, setEventId] = useState<string | null>(null);
+  const [speakerPhotoFiles, setSpeakerPhotoFiles] = useState<{ [speakerId: string]: File }>({});
 
   const [formData, setFormData] = useState<EventFormData>({
     title: '',
@@ -436,11 +438,14 @@ const CreateEventPage: React.FC = () => {
 
       let savedEventId: string;
 
-      // Create or update event first (without base64 image data)
+      // Create or update event first (without base64 image data or base64 speaker photoUrl previews)
       const eventDataWithoutBase64Image = {
         ...formData,
-        // Remove base64 image data to prevent Firestore size limit error
-        imageUrl: formData.imageUrl && formData.imageUrl.startsWith('data:') ? undefined : formData.imageUrl
+        imageUrl: formData.imageUrl && formData.imageUrl.startsWith('data:') ? undefined : formData.imageUrl,
+        speakers: (formData.speakers || []).map((s) => ({
+          ...s,
+          photoUrl: s.photoUrl && s.photoUrl.startsWith('data:') ? undefined : s.photoUrl
+        }))
       };
 
       if (isEditMode && eventId) {
@@ -490,6 +495,32 @@ const CreateEventPage: React.FC = () => {
         // Update event with all payment configs
         await EventService.updateEvent(savedEventId, {
           paymentConfigs: updatedPaymentConfigs // Use all payment configs
+        });
+      }
+
+      // Upload speaker photos if provided
+      if (Object.keys(speakerPhotoFiles).length > 0) {
+        const updatedSpeakers = [...formData.speakers];
+        
+        for (const [speakerId, photoFile] of Object.entries(speakerPhotoFiles)) {
+          try {
+            const photoUrl = await EventService.uploadSpeakerPhoto(savedEventId, speakerId, photoFile);
+            const speakerIndex = updatedSpeakers.findIndex(s => s.id === speakerId);
+            if (speakerIndex !== -1) {
+              updatedSpeakers[speakerIndex] = {
+                ...updatedSpeakers[speakerIndex],
+                photoUrl
+              };
+            }
+          } catch (error) {
+            const speaker = formData.speakers.find(s => s.id === speakerId);
+            warnings.push(`Speaker photo upload failed for ${speaker?.name || 'Unknown speaker'}`);
+          }
+        }
+        
+        // Update event with all speakers (including photo URLs)
+        await EventService.updateEvent(savedEventId, {
+          speakers: updatedSpeakers
         });
       }
 
@@ -897,6 +928,30 @@ const CreateEventPage: React.FC = () => {
       }));
     };
 
+    const handleSpeakerPhotoChange = (speakerId: string, file: File | null, previewUrl?: string) => {
+      if (file) {
+        setSpeakerPhotoFiles(prev => ({ ...prev, [speakerId]: file }));
+        // Update the speaker with the preview URL for immediate display
+        const speakerIndex = formData.speakers.findIndex(s => s.id === speakerId);
+        if (speakerIndex !== -1) {
+          updateSpeaker(speakerIndex, { photoUrl: previewUrl });
+        }
+      }
+    };
+
+    const handleSpeakerPhotoRemove = (speakerId: string) => {
+      setSpeakerPhotoFiles(prev => {
+        const newFiles = { ...prev };
+        delete newFiles[speakerId];
+        return newFiles;
+      });
+      // Remove the photo URL from the speaker
+      const speakerIndex = formData.speakers.findIndex(s => s.id === speakerId);
+      if (speakerIndex !== -1) {
+        updateSpeaker(speakerIndex, { photoUrl: undefined });
+      }
+    };
+
     const removeSpeaker = (index: number) => {
       setFormData(prev => ({
         ...prev,
@@ -985,14 +1040,14 @@ const CreateEventPage: React.FC = () => {
                     />
                   </div>
 
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Photo URL</label>
-                    <input
-                      type="url"
-                      value={speaker.photoUrl || ''}
-                      onChange={(e) => updateSpeaker(index, { photoUrl: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      placeholder="https://example.com/photo.jpg"
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Speaker Photo</label>
+                    <PhotoUpload
+                      currentPhotoUrl={speaker.photoUrl}
+                      onPhotoChange={(file, previewUrl) => handleSpeakerPhotoChange(speaker.id, file, previewUrl)}
+                      onPhotoRemove={() => handleSpeakerPhotoRemove(speaker.id)}
+                      placeholder="Upload Photo"
+                      maxSize={5}
                     />
                   </div>
 
@@ -1799,7 +1854,7 @@ const CreateEventPage: React.FC = () => {
                   </div>
                 </div>
                 <div className="flex items-center space-x-4 text-xs text-gray-500 mt-2">
-                  <span>Valid: {promo.validFrom.toDate().toLocaleDateString()} - {promo.validUntil.toDate().toLocaleDateString()}</span>
+                  <span>Valid: {convertTimestampToDate(promo.validFrom).toLocaleDateString()} - {convertTimestampToDate(promo.validUntil).toLocaleDateString()}</span>
                   <span>Max uses: {promo.maxUses || 'Unlimited'}</span>
                   <span>{promo.isActive ? 'Active' : 'Inactive'}</span>
                 </div>
