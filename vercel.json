@@ -1,8 +1,10 @@
 {
   "installCommand": "bun install",
   "buildCommand": "bun run build",
-  "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
+  "outputDirectory": "dist",
+  "routes": [
+    { "handle": "filesystem" },
+    { "src": "/(.*)", "dest": "/index.html" }
   ],
   "cleanUrls": true,
   "trailingSlash": false
