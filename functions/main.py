@@ -18,8 +18,9 @@ from email_service import email_service
 _app = None
 _db = None
 
-# Set global options for cost control
-set_global_options(max_instances=10)
+# Set global options for region and cost control
+# Ensure region matches Firestore location in firebase.json (asia-southeast2)
+set_global_options(region="asia-southeast2", max_instances=10)
 
 # Ensure Firebase Admin SDK is initialized at import time so callable auth verification works
 try:

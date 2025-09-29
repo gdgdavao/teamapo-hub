@@ -35,6 +35,15 @@ interface Registration {
   paymentStatus?: 'pending' | 'paid' | 'failed' | 'refunded';
 }
 
+// Scoped logger for this page
+const DEBUG = Boolean((import.meta as any)?.env?.DEV) || ((import.meta as any)?.env?.VITE_DEBUG_CHECKIN === 'true');
+const log = {
+  debug: (...args: unknown[]) => { if (DEBUG) console.debug('[AdminCheckIn]', ...args); },
+  info: (...args: unknown[]) => { if (DEBUG) console.info('[AdminCheckIn]', ...args); },
+  warn: (...args: unknown[]) => console.warn('[AdminCheckIn]', ...args),
+  error: (...args: unknown[]) => console.error('[AdminCheckIn]', ...args),
+};
+
 // Date awareness helper functions
 const getEventDateStatus = (event: Event | null) => {
   if (!event || !event.startDate) return null;
@@ -45,7 +54,7 @@ const getEventDateStatus = (event: Event | null) => {
     let eventEndDate: Date;
     
     // Debug logging
-    console.log('Processing event dates:', { 
+    log.debug('Processing event dates:', { 
       startDate: event.startDate, 
       endDate: event.endDate,
       startDateType: typeof event.startDate,
@@ -55,27 +64,27 @@ const getEventDateStatus = (event: Event | null) => {
     // Handle different date formats for startDate with more robust checking
     if (event.startDate && (event.startDate as any).toDate && typeof (event.startDate as any).toDate === 'function') {
       // Firestore Timestamp object
-      console.log('Using toDate() method for startDate');
+      log.debug('Using toDate() method for startDate');
       eventStartDate = (event.startDate as any).toDate();
     } else if (event.startDate instanceof Date) {
       // Regular Date object
-      console.log('startDate is already a Date object');
+      log.debug('startDate is already a Date object');
       eventStartDate = event.startDate;
     } else if (typeof event.startDate === 'string') {
       // Date string
-      console.log('Parsing startDate as string');
+      log.debug('Parsing startDate as string');
       eventStartDate = new Date(event.startDate);
     } else if (typeof event.startDate === 'number') {
       // Unix timestamp
-      console.log('Parsing startDate as number');
+      log.debug('Parsing startDate as number');
       eventStartDate = new Date(event.startDate);
     } else if ((event.startDate as any)?.seconds && typeof (event.startDate as any).seconds === 'number') {
       // Firestore timestamp as plain object
-      console.log('Using seconds property for startDate');
+      log.debug('Using seconds property for startDate');
       eventStartDate = new Date((event.startDate as any).seconds * 1000);
     } else {
       // Last resort - try to parse as any
-      console.log('Fallback parsing for startDate');
+      log.debug('Fallback parsing for startDate');
       eventStartDate = new Date(event.startDate as any);
     }
     
@@ -99,7 +108,7 @@ const getEventDateStatus = (event: Event | null) => {
     
     // Check if dates are valid
     if (isNaN(eventStartDate.getTime()) || isNaN(eventEndDate.getTime())) {
-      console.warn('Invalid event dates after parsing:', { 
+      log.warn('Invalid event dates after parsing:', { 
         eventStartDate, 
         eventEndDate,
         originalStartDate: event.startDate,
@@ -108,7 +117,7 @@ const getEventDateStatus = (event: Event | null) => {
       return null;
     }
     
-    console.log('Successfully parsed dates:', { eventStartDate, eventEndDate });
+    log.debug('Successfully parsed dates:', { eventStartDate, eventEndDate });
     
     // Calculate time differences
     const timeDiffStart = eventStartDate.getTime() - now.getTime();
@@ -155,7 +164,7 @@ const getEventDateStatus = (event: Event | null) => {
     
     return null;
   } catch (error) {
-    console.error('Error in getEventDateStatus:', error, { event });
+    log.error('Error in getEventDateStatus:', error, { event });
     // Return null to gracefully degrade if date parsing fails
     return null;
   }
@@ -269,7 +278,7 @@ const AdminCheckInPage: React.FC = () => {
       for (const doc of snapshot.docs) {
         const data = doc.data() as FirestoreRegistration;
         
-        console.log('Raw registration data:', { docId: doc.id, data }); // Debug log
+        log.debug('Raw registration data:', { docId: doc.id, data });
         
         // Map paymentStatus to match local interface
         const mapPaymentStatus = (status: any): Registration['paymentStatus'] => {
@@ -296,7 +305,7 @@ const AdminCheckInPage: React.FC = () => {
           mappedStatus = 'cancelled';
         }
         
-        console.log('Mapped status:', { registrationStatus, rawPaymentStatus, attendanceStatus, mappedStatus }); // Debug log
+        log.debug('Mapped status:', { registrationStatus, rawPaymentStatus, attendanceStatus, mappedStatus });
         
         // Map Firestore data to local interface
         regs.push({
@@ -320,15 +329,15 @@ const AdminCheckInPage: React.FC = () => {
         });
       }
       
-      console.log('Total registrations loaded:', regs.length); // Debug log
-      console.log('Registrations by status:', regs.reduce((acc, r) => {
+      log.debug('Total registrations loaded:', regs.length);
+      log.debug('Registrations by status:', regs.reduce((acc, r) => {
         acc[r.status] = (acc[r.status] || 0) + 1;
         return acc;
       }, {} as Record<string, number>)); // Debug log
       
       setRegistrations(regs);
     } catch (error) {
-      console.error('Error fetching registrations:', error);
+      log.error('Error fetching registrations:', error);
     } finally {
       setLoading(false);
     }
@@ -353,7 +362,7 @@ const AdminCheckInPage: React.FC = () => {
         setCurrentEvent(eventList[0]);
       }
     } catch (error) {
-      console.error('Error fetching events:', error);
+      log.error('Error fetching events:', error);
     }
   };
 
@@ -387,7 +396,7 @@ const AdminCheckInPage: React.FC = () => {
       
       // Check if the date is valid
       if (isNaN(date.getTime())) {
-        console.warn('Invalid date:', timestamp);
+        log.warn('Invalid date:', timestamp);
         return 'Invalid Date';
       }
       
@@ -399,7 +408,7 @@ const AdminCheckInPage: React.FC = () => {
         minute: '2-digit'
       });
     } catch (error) {
-      console.error('Error formatting date:', error);
+      log.error('Error formatting date:', error);
       return 'Date Error';
     }
   };
@@ -421,7 +430,7 @@ const AdminCheckInPage: React.FC = () => {
         setIsCameraActive(true);
       }
     } catch (error) {
-      console.error('Error accessing camera:', error);
+      log.error('Error accessing camera:', error);
       alert('Unable to access camera. Please check permissions and try again.');
     }
   };
@@ -512,7 +521,7 @@ const AdminCheckInPage: React.FC = () => {
       setTimeout(() => setCheckinResult(null), 3000);
 
     } catch (error) {
-      console.error('Error during check-in:', error);
+      log.error('Error during check-in:', error);
       setCheckinResult({
         success: false,
         message: 'Failed to check in attendee. Please try again.'
@@ -554,7 +563,7 @@ const AdminCheckInPage: React.FC = () => {
       await performCheckIn(registrationId);
 
     } catch (error) {
-      console.error('Error during manual check-in:', error);
+      log.error('Error during manual check-in:', error);
       setCheckinResult({
         success: false,
         message: 'Failed to check in attendee. Please try again.'
@@ -600,7 +609,7 @@ const AdminCheckInPage: React.FC = () => {
       setTimeout(() => setCheckinResult(null), 3000);
 
     } catch (error) {
-      console.error('Error during check-in:', error);
+      log.error('Error during check-in:', error);
       setCheckinResult({
         success: false,
         message: 'Failed to check in attendee. Please try again.'
