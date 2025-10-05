@@ -242,11 +242,12 @@ const CreateEventPage: React.FC = () => {
           ? prev.paymentConfigs 
           : [createDefaultPaymentConfig('Primary Payment Method')]
       }));
-    } else if (!hasPaidTickets && formData.isPaid) {
+    } else if (!hasPaidTickets && formData.isPaid && !formData.ticketTypes.some(ticket => ticket.price > 0)) {
+      // Only clear payment configs if explicitly switching to free event AND no tickets have prices
       setFormData(prev => ({
         ...prev,
         isPaid: false,
-        paymentConfigs: []
+        // Don't clear paymentConfigs - keep them for when user adds paid tickets later
       }));
     }
   }, [formData.ticketTypes]);
@@ -321,8 +322,19 @@ const CreateEventPage: React.FC = () => {
           category: event.category,
           tags: event.tags,
           requirements: event.requirements || [],
-          registrationDeadline: registrationDeadline?.toISOString().split('T')[0]
+          registrationDeadline: registrationDeadline?.toISOString().split('T')[0],
+          paymentConfigs: (event as any).paymentConfigs || []
         };
+        
+        // Debug logging for payment configs
+        console.log('Loading event data - paymentConfigs from Firestore:', (event as any).paymentConfigs);
+        if ((event as any).paymentConfigs) {
+          (event as any).paymentConfigs.forEach((config: any, index: number) => {
+            console.log(`Payment config ${index}:`, config);
+            console.log(`  - qrCodeImage:`, config.qrCodeImage);
+            console.log(`  - qrCodeUrl:`, config.qrCodeUrl);
+          });
+        }
         setFormData(eventFormData);
       }
     } catch (error) {
@@ -479,22 +491,44 @@ const CreateEventPage: React.FC = () => {
         
         for (let i = 0; i < updatedPaymentConfigs.length; i++) {
           const config = updatedPaymentConfigs[i];
-          if (config.qrCodeImage) {
+          // Only upload if there's a new File object (not an empty object from existing data)
+          if (config.qrCodeImage && (config.qrCodeImage as any) instanceof File) {
             try {
+              // Debug logging
+              console.log(`Processing QR upload for config ${i}:`, config.name);
+              console.log('config.qrCodeImage:', config.qrCodeImage);
+              console.log('config.qrCodeImage instanceof File:', config.qrCodeImage instanceof File);
+              console.log('config.qrCodeImage type:', typeof config.qrCodeImage);
+              console.log('config.qrCodeImage constructor:', config.qrCodeImage?.constructor?.name);
+              
               const qrCodeUrl = await EventService.uploadPaymentQR(savedEventId, config.qrCodeImage);
               updatedPaymentConfigs[i] = {
                 ...config,
                 qrCodeUrl
               };
             } catch (error) {
+              console.error(`QR upload error for ${config.name}:`, error);
               warnings.push(`Payment QR upload failed for ${config.name}`);
             }
+          } else if (config.qrCodeImage && !((config.qrCodeImage as any) instanceof File)) {
+            // Clean up invalid qrCodeImage objects (from existing data)
+            console.log(`Skipping QR upload for ${config.name} - no new file provided`);
+            updatedPaymentConfigs[i] = {
+              ...config,
+              qrCodeImage: undefined // Remove the invalid object
+            };
           }
         }
         
+        // Clean payment configs before saving - remove qrCodeImage fields entirely
+        const cleanedPaymentConfigs = updatedPaymentConfigs.map(config => {
+          const { qrCodeImage, ...configWithoutFile } = config;
+          return configWithoutFile;
+        });
+        
         // Update event with all payment configs
         await EventService.updateEvent(savedEventId, {
-          paymentConfigs: updatedPaymentConfigs // Use all payment configs
+          paymentConfigs: cleanedPaymentConfigs // Use cleaned payment configs
         });
       }
 
@@ -1277,7 +1311,7 @@ const CreateEventPage: React.FC = () => {
 
 
         {/* Payment Configuration Section */}
-      {(formData.isPaid || formData.ticketTypes.some(ticket => ticket.price > 0)) && (
+      {(formData.isPaid || formData.ticketTypes.some(ticket => ticket.price > 0) || (formData.paymentConfigs && formData.paymentConfigs.length > 0)) && (
         <div className="border-t pt-6 mt-6">
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
             <div className="flex items-center">
@@ -1335,7 +1369,7 @@ const CreateEventPage: React.FC = () => {
             )}
             
 
-            {(formData.isPaid || formData.ticketTypes.some(ticket => ticket.price > 0)) && (
+            {(formData.isPaid || formData.ticketTypes.some(ticket => ticket.price > 0) || (formData.paymentConfigs && formData.paymentConfigs.length > 0)) && (
               <div>
                 <div className="flex items-center justify-between mb-4">
                   <h4 className="text-lg font-medium text-gray-900">Currency</h4>
@@ -1494,12 +1528,7 @@ const CreateEventPage: React.FC = () => {
                             <input
                               type="file"
                               accept="image/*"
-                              onChange={(e) => {
-                                const file = e.target.files?.[0];
-                                if (file) {
-                                  updatePaymentConfig(index, { qrCodeImage: file });
-                                }
-                              }}
+                              onChange={(e) => handleQRCodeUploadForConfig(e, index)}
                               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                             />
                             {config.qrCodeUrl && (
@@ -1975,17 +2004,6 @@ const CreateEventPage: React.FC = () => {
             >
               {authLoading ? 'Authenticating...' : loading ? 'Publishing...' : 'Publish Event'}
             </button>
-            {eventId && (
-              <button
-                type="button"
-                onClick={() => handleShareEvent(eventId, formData.title)}
-                className="inline-flex items-center px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-                title="Share Registration Link"
-              >
-                <ShareIcon className="w-4 h-4 mr-2" />
-                Share
-              </button>
-            )}
           </div>
         </div>
 

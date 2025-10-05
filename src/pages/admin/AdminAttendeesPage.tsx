@@ -147,7 +147,7 @@ const AdminAttendeesPage: React.FC = () => {
       try {
         setLoading(true);
         
-        let firestoreRegistrations;
+        let firestoreRegistrations: FirestoreRegistration[];
         let organizerEvents: Event[] = [];
         
         if (isAdmin) {
@@ -303,9 +303,20 @@ const AdminAttendeesPage: React.FC = () => {
             }
           } : prev);
         }
-      } catch (e) {
+      } catch (e: any) {
         // eslint-disable-next-line no-console
-        console.warn('Failed to load latest payment proof', e);
+        console.warn('[AdminAttendeesPage] Failed to load latest payment proof', e);
+        
+        // Show user-friendly message if it's an index error
+        if (e?.message?.includes('index') || e?.code === 'failed-precondition') {
+          // eslint-disable-next-line no-console
+          console.error(
+            '⚠️ Firestore Index Required!\n\n' +
+            'Please create the required index by visiting:\n' +
+            'Firebase Console → Firestore Database → Indexes\n\n' +
+            'Or use: firebase deploy --only firestore:indexes'
+          );
+        }
       } finally {
         setLoadingProof(false);
       }

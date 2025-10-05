@@ -471,7 +471,53 @@ export class PaymentService {
         verifiedBy: data.verifiedBy,
         notes: data.notes
       } as PaymentVerificationData;
-    } catch (error) {
+    } catch (error: any) {
+      // Check if it's an index error
+      if (error?.code === 'failed-precondition' || error?.message?.includes('index')) {
+        console.warn('[PaymentService] Firestore index required. Falling back to client-side sorting.');
+        
+        // Fallback: Get all proofs for this registration and sort client-side
+        try {
+          const fallbackQuery = query(
+            collection(db, this.PAYMENT_PROOFS_COLLECTION),
+            where('registrationId', '==', registrationId)
+          );
+          const fallbackSnapshot = await getDocs(fallbackQuery);
+          
+          if (fallbackSnapshot.empty) return null;
+          
+          // Sort client-side by submittedAt (descending)
+          const sortedDocs = fallbackSnapshot.docs.sort((a, b) => {
+            const aTime = a.data().submittedAt?.toDate?.()?.getTime() || 0;
+            const bTime = b.data().submittedAt?.toDate?.()?.getTime() || 0;
+            return bTime - aTime;
+          });
+          
+          const docSnap = sortedDocs[0];
+          const data = docSnap.data();
+          
+          return {
+            id: docSnap.id,
+            registrationId: data.registrationId,
+            attendeeName: data.attendeeName,
+            attendeeEmail: data.attendeeEmail,
+            eventTitle: data.eventTitle,
+            eventDate: data.eventDate || new Date().toISOString(),
+            ticketPrice: data.ticketPrice,
+            proofImageUrl: data.proofImageUrl,
+            transactionId: data.transactionId,
+            submittedAt: data.submittedAt?.toDate?.()?.toISOString() || new Date().toISOString(),
+            verificationStatus: data.verificationStatus,
+            verifiedAt: data.verifiedAt?.toDate?.()?.toISOString(),
+            verifiedBy: data.verifiedBy,
+            notes: data.notes
+          } as PaymentVerificationData;
+        } catch (fallbackError) {
+          console.error('[PaymentService] Fallback query also failed:', fallbackError);
+          throw new Error('Failed to fetch payment proof - please contact support');
+        }
+      }
+      
       console.error('Error fetching latest payment proof by registration:', error);
       throw new Error('Failed to fetch payment proof');
     }

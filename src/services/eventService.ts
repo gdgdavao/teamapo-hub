@@ -892,12 +892,24 @@ export class EventService {
    */
   static async uploadPaymentQR(eventId: string, qrFile: File): Promise<string> {
     try {
+      // Debug logging
+      console.log('uploadPaymentQR - qrFile:', qrFile);
+      console.log('uploadPaymentQR - qrFile.type:', qrFile?.type);
+      console.log('uploadPaymentQR - qrFile.size:', qrFile?.size);
+      console.log('uploadPaymentQR - qrFile.name:', qrFile?.name);
+      console.log('uploadPaymentQR - qrFile instanceof File:', qrFile instanceof File);
+      console.log('uploadPaymentQR - qrFile constructor:', qrFile?.constructor?.name);
+      
       // Validate file
-      if (!qrFile.type.startsWith('image/')) {
+      if (!qrFile || !(qrFile instanceof File)) {
+        throw new Error('QR code must be a valid File object');
+      }
+      
+      if (!qrFile.type || !qrFile.type.startsWith('image/')) {
         throw new Error('QR code must be an image file');
       }
       
-      if (qrFile.size > 5 * 1024 * 1024) { // 5MB limit
+      if (!qrFile.size || qrFile.size > 5 * 1024 * 1024) { // 5MB limit
         throw new Error('QR code image must be smaller than 5MB');
       }
 
