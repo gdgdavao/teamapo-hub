@@ -174,7 +174,7 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
                         className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                         rows={3}
                         required={field.required}
-                        placeholder={`Enter your ${field.label.toLowerCase()}`}
+                        placeholder={field.placeholder || `Enter your ${field.label.toLowerCase()}`}
                       />
                     ) : field.type === 'select' ? (
                       <select
@@ -191,6 +191,85 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
                           <option key={option} value={option}>{option}</option>
                         ))}
                       </select>
+                    ) : field.type === 'radio' ? (
+                      <div className="space-y-2">
+                        {field.options?.map((option) => (
+                          <label key={option} className="flex items-center p-3 border border-gray-300 rounded-xl hover:bg-gray-50 cursor-pointer transition-all">
+                            <input
+                              type="radio"
+                              name={field.id}
+                              value={option}
+                              checked={registrationData.customResponses[field.id] === option}
+                              onChange={(e) => setRegistrationData(prev => ({
+                                ...prev,
+                                customResponses: { ...prev.customResponses, [field.id]: e.target.value }
+                              }))}
+                              className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+                              required={field.required && !registrationData.customResponses[field.id]}
+                            />
+                            <span className="ml-3 text-gray-700">{option}</span>
+                          </label>
+                        ))}
+                      </div>
+                    ) : field.type === 'multiselect' ? (
+                      <div className="space-y-2">
+                        {field.options?.map((option) => (
+                          <label key={option} className="flex items-center p-3 border border-gray-300 rounded-xl hover:bg-gray-50 cursor-pointer transition-all">
+                            <input
+                              type="checkbox"
+                              checked={(registrationData.customResponses[field.id] || []).includes(option)}
+                              onChange={(e) => {
+                                const currentValues = registrationData.customResponses[field.id] || [];
+                                if (e.target.checked) {
+                                  setRegistrationData(prev => ({
+                                    ...prev,
+                                    customResponses: { ...prev.customResponses, [field.id]: [...currentValues, option] }
+                                  }));
+                                } else {
+                                  setRegistrationData(prev => ({
+                                    ...prev,
+                                    customResponses: { ...prev.customResponses, [field.id]: currentValues.filter((v: string) => v !== option) }
+                                  }));
+                                }
+                              }}
+                              className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                            />
+                            <span className="ml-3 text-gray-700">{option}</span>
+                          </label>
+                        ))}
+                      </div>
+                    ) : field.type === 'checkbox' ? (
+                      <label className="flex items-start p-3 border border-gray-300 rounded-xl hover:bg-gray-50 cursor-pointer transition-all">
+                        <input
+                          type="checkbox"
+                          checked={registrationData.customResponses[field.id] === true}
+                          onChange={(e) => setRegistrationData(prev => ({
+                            ...prev,
+                            customResponses: { ...prev.customResponses, [field.id]: e.target.checked }
+                          }))}
+                          className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded mt-1"
+                          required={field.required}
+                        />
+                        <span className="ml-3 text-gray-700">{field.placeholder || field.label}</span>
+                      </label>
+                    ) : field.type === 'rating' ? (
+                      <div className="flex space-x-1">
+                        {[1, 2, 3, 4, 5].map((star) => (
+                          <button
+                            key={star}
+                            type="button"
+                            onClick={() => setRegistrationData(prev => ({
+                              ...prev,
+                              customResponses: { ...prev.customResponses, [field.id]: star }
+                            }))}
+                            className={`text-3xl transition-colors hover:text-yellow-400 ${
+                              (registrationData.customResponses[field.id] || 0) >= star ? 'text-yellow-400' : 'text-gray-300'
+                            }`}
+                          >
+                            ⭐
+                          </button>
+                        ))}
+                      </div>
                     ) : (
                       <input
                         type={field.type}
@@ -201,7 +280,7 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
                         }))}
                         className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                         required={field.required}
-                        placeholder={`Enter your ${field.label.toLowerCase()}`}
+                        placeholder={field.placeholder || `Enter your ${field.label.toLowerCase()}`}
                       />
                     )}
                   </div>

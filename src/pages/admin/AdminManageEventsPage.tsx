@@ -392,13 +392,31 @@ const ManageEventsPage: React.FC = () => {
 
   const handleStatusChange = async (eventId: string, newStatus: string) => {
     try {
+      console.log('🔄 Updating event status:', { eventId, newStatus });
+      
+      // Call the service to update Firebase
       await EventService.updateEventStatus(eventId, newStatus);
+      console.log('✅ Firebase update successful for event:', eventId, 'new status:', newStatus);
+      
+      // Update local state - update both status and isPublished
+      const updatedIsPublished = newStatus === 'published';
       setEvents(events.map(e => 
-        e.id === eventId ? { ...e, status: newStatus as Event['status'] } : e
+        e.id === eventId ? { 
+          ...e, 
+          status: newStatus as Event['status'],
+          isPublished: updatedIsPublished
+        } : e
       ));
+      
+      console.log('✅ Local state updated successfully', {
+        eventId,
+        newStatus,
+        isPublished: updatedIsPublished
+      });
+      
       toast.success('Event status updated successfully');
     } catch (error) {
-      console.error('Error updating event status:', error);
+      console.error('❌ Error updating event status:', error);
       toast.error('Failed to update event status');
     }
   };

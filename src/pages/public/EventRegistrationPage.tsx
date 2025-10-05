@@ -46,10 +46,20 @@ const EventRegistrationPage: React.FC = () => {
           return;
         }
 
-        if (!eventData.isPublished) {
+        // Check if event is published - check both status and isPublished for robustness
+        console.log('🔍 Registration Page: Event status check', {
+          eventId,
+          status: eventData.status,
+          isPublished: eventData.isPublished
+        });
+        
+        if (eventData.status !== 'published' || !eventData.isPublished) {
+          console.log('❌ Registration Page: Event not published, blocking access');
           setError('This event is not yet published');
           return;
         }
+        
+        console.log('✅ Registration Page: Event is published, allowing access');
 
         setEvent(eventData);
         
@@ -266,45 +276,48 @@ const EventRegistrationPage: React.FC = () => {
 
             {/* Speakers */}
             {event.speakers && event.speakers.length > 0 && (
-              <div className="bg-white rounded-xl shadow-lg border border-gray-100 p-6">
-                <h2 className="text-xl font-bold text-gray-900 mb-4 flex items-center">
-                  <div className="w-1 h-6 bg-green-500 rounded-full mr-3"></div>
+              <div className="bg-white rounded-xl shadow-lg border border-gray-100 p-8">
+                <h2 className="text-3xl font-bold text-gray-900 mb-8 flex items-center">
+                  <div className="w-2 h-8 bg-green-500 rounded-full mr-4"></div>
                   Meet Our Speakers
                 </h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                   {event.speakers.map((speaker, index) => (
-                    <div key={index} className="group p-4 bg-gray-50 rounded-lg border border-gray-100 hover:shadow-md transition-all duration-300">
-                      <div className="flex items-start space-x-4">
-                        <div className="relative">
+                    <div key={index} className="group p-8 bg-gradient-to-br from-gray-50 to-blue-50 rounded-2xl border border-gray-200 hover:shadow-xl hover:border-blue-300 transition-all duration-300 transform hover:-translate-y-1">
+                      <div className="text-center">
+                        <div className="relative inline-block mb-6">
                           {speaker.photoUrl ? (
                             <img
                               src={speaker.photoUrl}
                               alt={speaker.name}
-                              className="w-16 h-16 rounded-full object-cover border-4 border-white shadow-lg"
+                              className="w-32 h-32 rounded-full object-cover border-4 border-white shadow-xl"
                             />
                           ) : (
-                            <div className="w-16 h-16 bg-blue-500 rounded-full flex items-center justify-center text-white font-bold text-xl shadow-lg">
+                            <div className="w-32 h-32 bg-gradient-to-br from-blue-500 to-blue-600 rounded-full flex items-center justify-center text-white font-bold text-3xl shadow-xl">
                               {speaker.name.charAt(0)}
                             </div>
                           )}
-                          <div className="absolute -bottom-1 -right-1 w-6 h-6 bg-green-500 rounded-full border-2 border-white flex items-center justify-center">
-                            <CheckCircleIcon className="w-4 h-4 text-white" />
+                          <div className="absolute -bottom-2 -right-2 w-10 h-10 bg-green-500 rounded-full border-4 border-white flex items-center justify-center shadow-lg">
+                            <CheckCircleIcon className="w-6 h-6 text-white" />
                           </div>
                         </div>
-                        <div className="flex-1">
-                          <h3 className="font-bold text-gray-900 text-lg group-hover:text-blue-600 transition-colors">
-                            {speaker.name}
-                          </h3>
-                          {speaker.title && (
-                            <p className="text-blue-600 font-medium mb-2">{speaker.title}</p>
-                          )}
-                          {speaker.company && (
-                            <p className="text-gray-600 text-sm mb-2">{speaker.company}</p>
-                          )}
-                          {speaker.bio && (
-                            <p className="text-gray-600 text-sm leading-relaxed">{speaker.bio}</p>
-                          )}
-                        </div>
+                        
+                        <h3 className="font-bold text-gray-900 text-2xl group-hover:text-blue-600 transition-colors mb-3">
+                          {speaker.name}
+                        </h3>
+                        {speaker.title && (
+                          <p className="text-blue-600 font-semibold text-lg mb-3">{speaker.title}</p>
+                        )}
+                        {speaker.company && (
+                          <p className="text-gray-600 text-base mb-6 font-medium">{speaker.company}</p>
+                        )}
+                        
+                        {speaker.bio && (
+                          <>
+                            <div className="w-16 h-0.5 bg-gradient-to-r from-blue-400 to-blue-600 mx-auto mb-4"></div>
+                            <p className="text-gray-600 text-base leading-relaxed">{speaker.bio}</p>
+                          </>
+                        )}
                       </div>
                     </div>
                   ))}
