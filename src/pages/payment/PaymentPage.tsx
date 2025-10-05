@@ -61,7 +61,61 @@ const PaymentPage: React.FC = () => {
     try {
       setLoading(true);
       
-  // Get registration details
+      // Check if this is a temporary registration (from session storage)
+      if (registrationId!.startsWith('temp_')) {
+        const tempData = sessionStorage.getItem(`temp_registration_${registrationId}`);
+        if (!tempData) {
+          throw new Error('Registration session expired. Please start over.');
+        }
+        
+        const tempRegistration = JSON.parse(tempData);
+        
+        // Check if session is not too old (24 hours)
+        const sessionAge = Date.now() - tempRegistration.timestamp;
+        if (sessionAge > 24 * 60 * 60 * 1000) {
+          sessionStorage.removeItem(`temp_registration_${registrationId}`);
+          throw new Error('Registration session expired. Please start over.');
+        }
+        
+        // Create a mock registration object for the UI
+        const mockRegistration = {
+          id: registrationId!,
+          eventId: tempRegistration.eventId,
+          userDetails: tempRegistration.userDetails,
+          ticketTypeId: tempRegistration.ticketTypeId,
+          quantity: tempRegistration.quantity,
+          originalAmount: tempRegistration.originalAmount,
+          discountAmount: tempRegistration.discountAmount,
+          totalAmount: tempRegistration.totalAmount,
+          paymentStatus: 'pending',
+          attendanceStatus: 'pending',
+          customResponses: tempRegistration.customResponses || {}
+        };
+        
+        setRegistration(mockRegistration as any);
+        
+        // Get event details
+        const eventData = await EventService.getEvent(tempRegistration.eventId);
+        if (!eventData) {
+          throw new Error('Event not found');
+        }
+        setEvent(eventData);
+        
+        // Get payment configurations from event data
+        const configs: PaymentConfig[] = Array.isArray((eventData as any).paymentConfigs)
+          ? ((eventData as any).paymentConfigs as PaymentConfig[])
+          : [];
+        const activeConfigs = configs.filter(cfg => cfg?.isActive !== false);
+        setPaymentConfigs(activeConfigs);
+        if (activeConfigs.length > 0) {
+          setSelectedPaymentConfigId(activeConfigs[0].id);
+          setPaymentProof(prev => ({ ...prev, paymentMethod: activeConfigs[0].name || activeConfigs[0].id }));
+        }
+        
+        return;
+      }
+      
+      // Handle existing Firestore registrations (legacy flow)
       const registrationData = await RegistrationService.getRegistrationById(registrationId!);
       if (!registrationData) {
         throw new Error('Registration not found');
@@ -205,19 +259,66 @@ const PaymentPage: React.FC = () => {
       setSubmitting(true);
       setFormDisabled(true); // Disable the entire form
       
-      await PaymentService.submitPaymentProof({
-        registrationId: registration.id,
-        attendeeName: registration.userDetails.name,
-        attendeeEmail: registration.userDetails.email,
-        eventTitle: event.title,
-        eventId: event.id,
-        ticketPrice: registration.totalAmount,
-        proofImageFile: paymentProof.proofImageFile || undefined,
-        transactionId: paymentProof.transactionId || undefined,
-  // Persist selected payment config label as payment method for admin clarity
-  paymentMethod: selectedConfig.name || paymentProof.paymentMethod,
-        notes: paymentProof.notes
-      });
+      // Check if this is a temporary registration that needs to be created in Firestore
+      if (registrationId!.startsWith('temp_')) {
+        // Get temporary registration data from session storage
+        const tempData = sessionStorage.getItem(`temp_registration_${registrationId}`);
+        if (!tempData) {
+          throw new Error('Registration session expired. Please start over.');
+        }
+        
+        const tempRegistration = JSON.parse(tempData);
+        
+        // Create the actual registration in Firestore
+        const actualRegistration = await RegistrationService.createPendingRegistration({
+          eventId: tempRegistration.eventId,
+          ticketTypeId: tempRegistration.ticketTypeId,
+          quantity: tempRegistration.quantity,
+          promoCode: tempRegistration.promoCode,
+          userDetails: tempRegistration.userDetails,
+          customResponses: tempRegistration.customResponses,
+          agreeToTerms: tempRegistration.agreeToTerms,
+          subscribeToUpdates: tempRegistration.subscribeToUpdates
+        });
+        
+        // Clean up session storage
+        sessionStorage.removeItem(`temp_registration_${registrationId}`);
+        
+        // Update registration ID for payment proof submission
+        const updatedRegistration = {
+          ...registration,
+          id: actualRegistration.registrationId
+        };
+        setRegistration(updatedRegistration as any);
+        
+        // Submit payment proof with the actual registration ID
+        await PaymentService.submitPaymentProof({
+          registrationId: actualRegistration.registrationId,
+          attendeeName: tempRegistration.userDetails.name,
+          attendeeEmail: tempRegistration.userDetails.email,
+          eventTitle: event.title,
+          eventId: event.id,
+          ticketPrice: tempRegistration.totalAmount,
+          proofImageFile: paymentProof.proofImageFile || undefined,
+          transactionId: paymentProof.transactionId || undefined,
+          paymentMethod: selectedConfig.name || paymentProof.paymentMethod,
+          notes: paymentProof.notes
+        });
+      } else {
+        // Handle existing Firestore registrations (legacy flow)
+        await PaymentService.submitPaymentProof({
+          registrationId: registration.id,
+          attendeeName: registration.userDetails.name,
+          attendeeEmail: registration.userDetails.email,
+          eventTitle: event.title,
+          eventId: event.id,
+          ticketPrice: registration.totalAmount,
+          proofImageFile: paymentProof.proofImageFile || undefined,
+          transactionId: paymentProof.transactionId || undefined,
+          paymentMethod: selectedConfig.name || paymentProof.paymentMethod,
+          notes: paymentProof.notes
+        });
+      }
       
       // Do NOT auto-complete registration. Keep status pending for manual verification.
       toast.success('Payment proof submitted. Your registration is pending manual verification.');
@@ -350,7 +451,7 @@ const PaymentPage: React.FC = () => {
                     <img
                       src={selectedConfig.qrCodeUrl}
                       alt="Payment QR Code"
-                      className="w-48 h-48 border border-gray-200 rounded-lg"
+                      className="w-64 h-128 border border-gray-200 rounded-lg shadow-lg"
                     />
                   </div>
                 </div>

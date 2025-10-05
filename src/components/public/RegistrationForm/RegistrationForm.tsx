@@ -96,32 +96,52 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
         subscribeToUpdates: false
       };
 
-      // Create a pending registration (not yet confirmed)
-      const registration = await RegistrationService.createPendingRegistration(registrationPayload);
+      // Check if event requires payment
+      const requiresPayment = ticketSelection.totalAmount > 0;
       
-      // Send immediate registration confirmation email
-      try {
-        await RegistrationService.sendRegistrationConfirmationEmail(
-          registration.registrationId,
-          event.id,
-          userDetails.email,
-          userDetails.name,
-          registration.requiresPayment
-        );
-      } catch (emailError) {
-        console.warn('Failed to send confirmation email:', emailError);
-        // Don't block the flow if email fails
-      }
-      
-      toast.success('Registration details saved! Please proceed to payment.');
-      
-      // Navigate to payment page (token-based when available)
-      // If backend starts returning a signed token, append as query param for expiry validation
-      const token = (registration as any).paymentLinkToken;
-      if (token) {
-        navigate(`/payment/${registration.registrationId}?t=${encodeURIComponent(token)}`);
+      if (requiresPayment) {
+        // For paid events, store registration data in session storage instead of Firestore
+        // This prevents storing incomplete registrations until payment is verified
+        const tempRegistrationId = `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        
+        // Store registration data in session storage
+        const tempRegistrationData = {
+          ...registrationPayload,
+          registrationId: tempRegistrationId,
+          totalAmount: ticketSelection.totalAmount,
+          originalAmount: ticketSelection.originalAmount,
+          discountAmount: ticketSelection.discountAmount,
+          timestamp: Date.now()
+        };
+        
+        sessionStorage.setItem(`temp_registration_${tempRegistrationId}`, JSON.stringify(tempRegistrationData));
+        
+        toast.success('Registration details saved! Please proceed to payment.');
+        
+        // Navigate to payment page with temporary registration ID
+        navigate(`/payment/${tempRegistrationId}`);
       } else {
-        navigate(`/payment/${registration.registrationId}`);
+        // For free events, create registration immediately in Firestore
+        const registration = await RegistrationService.createPendingRegistration(registrationPayload);
+        
+        // Send immediate registration confirmation email
+        try {
+          await RegistrationService.sendRegistrationConfirmationEmail(
+            registration.registrationId,
+            event.id,
+            userDetails.email,
+            userDetails.name,
+            registration.requiresPayment
+          );
+        } catch (emailError) {
+          console.warn('Failed to send confirmation email:', emailError);
+          // Don't block the flow if email fails
+        }
+        
+        toast.success('Registration completed! You will receive a confirmation email shortly.');
+        
+        // Navigate to success page for free events
+        navigate('/payment/success');
       }
     } catch (err: any) {
       console.error('Registration error:', err);
