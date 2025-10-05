@@ -43,6 +43,9 @@ import NotFoundPage from './pages/error/NotFoundPage';
 // Public Pages
 import EventRegistrationPage from './pages/public/EventRegistrationPage';
 
+// Domain Redirect Component
+import DomainRedirect from './components/shared/DomainRedirect';
+
 // Protected Route Component
 const ProtectedRoute: React.FC<{ 
   children: React.ReactNode; 
@@ -80,6 +83,26 @@ const PublicRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   return <>{children}</>;
 };
 
+// Domain Check Component
+const DomainCheck: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const hostname = window.location.hostname;
+  const pathname = window.location.pathname;
+  
+  // If on apohub subdomain, check if it's a login route
+  if (hostname === 'apohub.gdgdavao.org') {
+    // Allow access to login routes
+    if (pathname === '/login' || pathname === '/auth/login' || pathname === '/auth/signup' || pathname === '/auth/forgot-password') {
+      return <>{children}</>;
+    }
+    
+    // For all other paths on apohub subdomain, redirect to main GDG Davao website
+    return <DomainRedirect />;
+  }
+  
+  // For other domains, render the app normally
+  return <>{children}</>;
+};
+
 const AppContent: React.FC = () => {
   const { loading } = useAuth();
 
@@ -91,7 +114,8 @@ const AppContent: React.FC = () => {
   }
 
   return (
-    <Routes>
+    <DomainCheck>
+      <Routes>
       {/* Authentication Routes */}
       <Route path="/login" element={
         <PublicRoute>
@@ -266,7 +290,8 @@ const AppContent: React.FC = () => {
 
       {/* 404 Route */}
       <Route path="*" element={<NotFoundPage />} />
-    </Routes>
+      </Routes>
+    </DomainCheck>
   );
 };
 

@@ -14,6 +14,7 @@ import RegistrationModal from '../../components/public/RegistrationModal';
 import { Event, FormField } from '../../types';
 import toast from 'react-hot-toast';
 import usePageTitle from '../../hooks/usePageTitle';
+import useSEO from '../../hooks/useSEO';
 
 const EventRegistrationPage: React.FC = () => {
   const { eventId } = useParams<{ eventId: string }>();
@@ -27,6 +28,46 @@ const EventRegistrationPage: React.FC = () => {
 
   // Set page title
   usePageTitle();
+
+  // Set up SEO with event image
+  useSEO({
+    title: event ? `${event.title} | TeamApo Hub` : 'Event Registration | TeamApo Hub',
+    description: event ? (event.shortDescription || event.description) : 'Join our upcoming event',
+    ogImage: event?.imageUrl || event?.bannerUrl || 'https://gdgdavao.org/gdgdvo.svg',
+    ogType: 'event',
+    structuredData: event ? {
+      '@context': 'https://schema.org',
+      '@type': 'Event',
+      name: event.title,
+      description: event.shortDescription || event.description,
+      image: event.imageUrl || event.bannerUrl,
+      startDate: event.startDate,
+      endDate: event.endDate,
+      location: event.venue.type === 'online' 
+        ? {
+            '@type': 'VirtualLocation',
+            url: event.venue.onlineDetails?.meetingUrl
+          }
+        : {
+            '@type': 'Place',
+            name: event.venue.name,
+            address: event.venue.address,
+            addressLocality: event.venue.city
+          },
+      organizer: {
+        '@type': 'Organization',
+        name: event.organizer.name,
+        email: event.organizer.email
+      },
+      offers: event.ticketTypes?.map(ticket => ({
+        '@type': 'Offer',
+        name: ticket.name,
+        price: ticket.price,
+        priceCurrency: ticket.currency,
+        availability: ticket.isActive ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock'
+      }))
+    } : undefined
+  });
 
   // Load event data
   useEffect(() => {

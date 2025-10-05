@@ -470,6 +470,17 @@ const CreateEventPage: React.FC = () => {
         setEventId(savedEventId);
       }
 
+      // Set event status based on publish parameter
+      if (isEditMode && eventId) {
+        // For editing, explicitly set the status
+        const status = publish ? 'published' : 'draft';
+        await EventService.updateEventStatus(savedEventId, status);
+      } else if (!isEditMode) {
+        // For new events, set status based on publish parameter
+        const status = publish ? 'published' : 'draft';
+        await EventService.updateEventStatus(savedEventId, status);
+      }
+
       // Upload event image if provided (after event is created)
       if (formData.imageUrl && formData.imageUrl.startsWith('data:')) {
         try {
@@ -558,14 +569,7 @@ const CreateEventPage: React.FC = () => {
         });
       }
 
-      // Publish event if requested
-      if (publish) {
-        try {
-          await EventService.publishEvent(savedEventId);
-        } catch (error) {
-          warnings.push('Publishing failed');
-        }
-      }
+      // Note: Publishing is now handled via status update above
 
       // Fetch statistics post-save when editing to update any dashboards (non-blocking)
       if (isEditMode && savedEventId) {
@@ -1977,9 +1981,14 @@ const CreateEventPage: React.FC = () => {
       <div className="bg-gradient-to-r from-blue-50 to-green-50 border border-blue-200 rounded-lg p-6">
         <div className="flex items-center justify-between">
           <div>
-            <h4 className="font-semibold text-gray-900">Ready to Publish?</h4>
+            <h4 className="font-semibold text-gray-900">
+              {isEditMode ? 'Ready to Update?' : 'Ready to Publish?'}
+            </h4>
             <p className="text-gray-600 mt-1">
-              Your event will be published and visible to attendees immediately.
+              {isEditMode 
+                ? 'Your event changes will be saved and visible to attendees immediately.'
+                : 'Your event will be published and visible to attendees immediately.'
+              }
             </p>
             {(formData.isPaid || formData.ticketTypes.some(ticket => ticket.price > 0)) && (
               <p className="text-sm text-blue-600 mt-2 font-medium">
@@ -1994,7 +2003,7 @@ const CreateEventPage: React.FC = () => {
               disabled={loading || authLoading}
               className="px-6 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50"
             >
-              {authLoading ? 'Authenticating...' : loading ? 'Saving...' : 'Save as Draft'}
+              {authLoading ? 'Authenticating...' : loading ? (isEditMode ? 'Updating...' : 'Saving...') : (isEditMode ? 'Update' : 'Save as Draft')}
             </button>
             <button
               type="button"
@@ -2002,7 +2011,7 @@ const CreateEventPage: React.FC = () => {
               disabled={loading || authLoading}
               className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
             >
-              {authLoading ? 'Authenticating...' : loading ? 'Publishing...' : 'Publish Event'}
+              {authLoading ? 'Authenticating...' : loading ? (isEditMode ? 'Publishing...' : 'Publishing...') : (isEditMode ? 'Publish Changes' : 'Publish Event')}
             </button>
           </div>
         </div>
@@ -2040,11 +2049,23 @@ const CreateEventPage: React.FC = () => {
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center space-x-4">
               <button
-                onClick={() => navigate('/events')}
+                onClick={() => navigate('/admin/dashboard')}
                 className="flex items-center text-gray-600 hover:text-gray-900"
               >
                 <ArrowLeftIcon className="w-5 h-5 mr-2" />
-                Back to Events
+                {isEditMode ? 'Back to Dashboard' : 'Back to Dashboard'}
+              </button>
+              <div className="h-6 w-px bg-gray-300" />
+              <h1 className="text-lg font-semibold text-gray-900">
+                {isEditMode ? 'Edit Event' : 'Create New Event'}
+              </h1>
+            </div>
+            <div className="flex items-center space-x-3">
+              <button
+                onClick={() => navigate('/admin/dashboard')}
+                className="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
+              >
+                Cancel
               </button>
             </div>
           </div>
@@ -2058,7 +2079,7 @@ const CreateEventPage: React.FC = () => {
           <div className="lg:col-span-3">
             <div className="bg-white rounded-lg shadow p-6 sticky top-24">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                {isEditMode ? 'Edit Event' : 'Create Event'}
+                {isEditMode ? 'Edit Event' : 'Create New Event'}
               </h3>
               <nav className="space-y-2">
                 {steps.map((step, index) => {
@@ -2131,7 +2152,7 @@ const CreateEventPage: React.FC = () => {
                     {steps[currentStep].title}
                   </h2>
                   <p className="text-gray-600 mt-1">
-                    Step {currentStep + 1} of {steps.length}
+                    {isEditMode ? 'Edit Event' : 'Create New Event'} - Step {currentStep + 1} of {steps.length}
                   </p>
                 </div>
               </div>
