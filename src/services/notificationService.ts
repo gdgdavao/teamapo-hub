@@ -17,9 +17,53 @@ import { Notification, NotificationType } from '../types';
 
 export class NotificationService {
   private static COLLECTION = 'notifications';
+  private static notificationCache = new Map<string, number>(); // Cache to prevent duplicates
 
   /**
-   * Create a new notification
+   * Create a unique key for deduplication
+   */
+  private static createNotificationKey(
+    userId: string,
+    type: NotificationType,
+    title: string,
+    message: string
+  ): string {
+    return `${userId}-${type}-${title}-${message}`;
+  }
+
+  /**
+   * Check if notification already exists recently (within 5 minutes)
+   */
+  private static isDuplicateNotification(key: string): boolean {
+    const now = Date.now();
+    const lastCreated = this.notificationCache.get(key);
+    
+    if (lastCreated && (now - lastCreated) < 5 * 60 * 1000) { // 5 minutes
+      return true;
+    }
+    
+    // Clean up old cache entries (older than 10 minutes)
+    this.cleanupCache();
+    
+    return false;
+  }
+
+  /**
+   * Clean up old cache entries to prevent memory leaks
+   */
+  private static cleanupCache(): void {
+    const now = Date.now();
+    const tenMinutesAgo = now - 10 * 60 * 1000;
+    
+    for (const [key, timestamp] of this.notificationCache.entries()) {
+      if (timestamp < tenMinutesAgo) {
+        this.notificationCache.delete(key);
+      }
+    }
+  }
+
+  /**
+   * Create a new notification with deduplication
    */
   static async createNotification(
     userId: string,
@@ -29,6 +73,15 @@ export class NotificationService {
     data?: Record<string, any>
   ): Promise<string> {
     try {
+      // Create deduplication key
+      const notificationKey = this.createNotificationKey(userId, type, title, message);
+      
+      // Check for duplicates
+      if (this.isDuplicateNotification(notificationKey)) {
+        console.log('Skipping duplicate notification:', notificationKey);
+        return ''; // Return empty string for duplicates
+      }
+
       const notification: Omit<Notification, 'id'> = {
         userId,
         type,
@@ -41,6 +94,10 @@ export class NotificationService {
       };
 
       const docRef = await addDoc(collection(db, this.COLLECTION), notification);
+      
+      // Update cache with creation time
+      this.notificationCache.set(notificationKey, Date.now());
+      
       return docRef.id;
     } catch (error) {
       console.error('Error creating notification:', error);
@@ -162,7 +219,7 @@ export class NotificationService {
     amount: number,
     currency: string = 'PHP'
   ): Promise<string> {
-    return this.createNotification(
+    const notificationId = await this.createNotification(
       adminUserId,
       'admin_pending_attendee',
       'New Pending Attendee',
@@ -176,6 +233,9 @@ export class NotificationService {
         actionRequired: 'payment_verification'
       }
     );
+    
+    // Return the notification ID or a placeholder for duplicates
+    return notificationId || 'duplicate-skipped';
   }
 
   /**
@@ -185,7 +245,7 @@ export class NotificationService {
     adminUserId: string,
     pendingCount: number
   ): Promise<string> {
-    return this.createNotification(
+    const notificationId = await this.createNotification(
       adminUserId,
       'admin_high_pending_count',
       'High Pending Count Alert',
@@ -196,6 +256,9 @@ export class NotificationService {
         priority: 'high'
       }
     );
+    
+    // Return the notification ID or a placeholder for duplicates
+    return notificationId || 'duplicate-skipped';
   }
 
   /**

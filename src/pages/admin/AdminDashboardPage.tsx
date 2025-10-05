@@ -422,7 +422,7 @@ const AdminDashboardPage: React.FC = () => {
     };
 
     fetchDashboardData();
-  }, [currentUser?.uid, userProfile?.role, getDateFromTimestamp, previousPendingCount, createNotificationsForNewAttendees, createHighPriorityNotification]);
+  }, [currentUser?.uid, userProfile?.role, getDateFromTimestamp, previousPendingCount]);
 
   if (loading) {
     return (
