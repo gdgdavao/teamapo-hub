@@ -149,15 +149,20 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
     setPromoCodeError('');
   };
 
-  const getAvailableQuantity = (ticketType: TicketType): number => {
-    if (!ticketType.maxQuantity) return 10; // Default max
+  const getAvailableQuantity = (ticketType: TicketType): number | null => {
+    if (!ticketType.maxQuantity) return null; // Unlimited
     return Math.max(0, ticketType.maxQuantity - ticketType.currentSold);
+  };
+
+  const isUnlimited = (ticketType: TicketType): boolean => {
+    return !ticketType.maxQuantity || ticketType.maxQuantity === 0;
   };
 
   const renderTicketCard = (ticketType: TicketType) => {
     const pricing = ticketPricings[ticketType.id];
     const isSelected = selectedTicketType === ticketType.id;
-    const isAvailable = getAvailableQuantity(ticketType) > 0;
+    const availableQty = getAvailableQuantity(ticketType);
+    const isAvailable = availableQty === null || availableQty > 0; // null means unlimited
     const savingsPercentage = calculateSavingsPercentage(pricing?.originalPrice || 0, pricing?.currentPrice || 0);
 
     return (
@@ -224,7 +229,9 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
         <div className="text-sm text-gray-500">
           {isAvailable ? (
             <span>
-              {getAvailableQuantity(ticketType)} tickets remaining
+              {availableQty !== null && (
+                <span>{availableQty} tickets remaining</span>
+              )}
             </span>
           ) : (
             <span className="text-red-500 font-medium">Sold Out</span>
@@ -252,17 +259,47 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
           <label className="block text-sm font-medium text-gray-700 mb-2">
             Quantity
           </label>
-          <select
-            value={quantity}
-            onChange={(e) => setQuantity(parseInt(e.target.value))}
-            className="w-32 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          >
-            {Array.from({ length: Math.min(10, getAvailableQuantity(ticketTypes.find(t => t.id === selectedTicketType)!)) }, (_, i) => (
-              <option key={i + 1} value={i + 1}>
-                {i + 1}
-              </option>
-            ))}
-          </select>
+          {(() => {
+            const selectedTicket = ticketTypes.find(t => t.id === selectedTicketType);
+            if (!selectedTicket) return null;
+            
+            const available = getAvailableQuantity(selectedTicket);
+            // If unlimited, allow up to 100 tickets, otherwise use available quantity
+            const maxQty = available === null ? 100 : available;
+            
+            return (
+              <>
+                <input
+                  type="number"
+                  value={quantity}
+                  onChange={(e) => {
+                    const value = parseInt(e.target.value);
+                    if (value >= 1 && value <= maxQty) {
+                      setQuantity(value);
+                    } else if (e.target.value === '') {
+                      setQuantity(1);
+                    }
+                  }}
+                  onBlur={(e) => {
+                    // Ensure valid value on blur
+                    const value = parseInt(e.target.value);
+                    if (isNaN(value) || value < 1) {
+                      setQuantity(1);
+                    } else if (value > maxQty) {
+                      setQuantity(maxQty);
+                    }
+                  }}
+                  min="1"
+                  max={maxQty}
+                  className="w-32 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="1"
+                />
+                {!isUnlimited(selectedTicket) && (
+                  <p className="text-xs text-gray-500 mt-1">{available} tickets remaining</p>
+                )}
+              </>
+            );
+          })()}
         </div>
       )}
 

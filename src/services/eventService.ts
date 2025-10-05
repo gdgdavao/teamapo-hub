@@ -1299,13 +1299,35 @@ export class EventService {
    */
   static async updateEventStatus(eventId: string, status: string): Promise<void> {
     try {
+      console.log('🔥 EventService: Updating event status in Firebase', { eventId, status });
+      
       const eventRef = doc(db, this.EVENTS_COLLECTION, eventId);
-      await updateDoc(eventRef, {
+      const updateData = {
         status: status,
+        isPublished: status === 'published', // Update isPublished based on status
         updatedAt: serverTimestamp()
-      });
+      };
+      
+      console.log('🔥 EventService: Update data:', updateData);
+      
+      await updateDoc(eventRef, updateData);
+      
+      console.log('✅ EventService: Firebase update completed successfully');
+      
+      // Verify the update by reading the document back
+      try {
+        const updatedDoc = await getDoc(eventRef);
+        if (updatedDoc.exists()) {
+          const data = updatedDoc.data();
+          console.log('🔍 EventService: Verified Firebase update - current status:', data.status);
+        } else {
+          console.warn('⚠️ EventService: Document not found after update');
+        }
+      } catch (verifyError) {
+        console.warn('⚠️ EventService: Could not verify update:', verifyError);
+      }
     } catch (error) {
-      console.error('Error updating event status:', error);
+      console.error('❌ EventService: Error updating event status:', error);
       throw new Error('Failed to update event status');
     }
   }
