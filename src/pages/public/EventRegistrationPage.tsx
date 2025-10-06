@@ -26,7 +26,7 @@ const EventRegistrationPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [registrationForm, setRegistrationForm] = useState<FormField[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [metaImageUrl, setMetaImageUrl] = useState<string>('https://github.com/gdgdavao/assets-cdn/blob/main/banner.png?raw=true');
+  const [metaImageUrl, setMetaImageUrl] = useState<string>('https://raw.githubusercontent.com/gdgdavao/assets-cdn/main/banner.png');
   const [imageResolved, setImageResolved] = useState(false);
 
   // Set page title
@@ -43,7 +43,7 @@ const EventRegistrationPage: React.FC = () => {
 
       if (!event) {
         console.log('⚠️ Image Resolution: No event, using default banner');
-        setMetaImageUrl('https://github.com/gdgdavao/assets-cdn/blob/main/banner.png?raw=true');
+        setMetaImageUrl('https://raw.githubusercontent.com/gdgdavao/assets-cdn/main/banner.png');
         setImageResolved(true);
         return;
       }
@@ -51,7 +51,7 @@ const EventRegistrationPage: React.FC = () => {
       const raw = event.imageUrl || event.bannerUrl;
       if (!raw) {
         console.log('⚠️ Image Resolution: No image URL in event, using default banner');
-        setMetaImageUrl('https://github.com/gdgdavao/assets-cdn/blob/main/banner.png?raw=true');
+        setMetaImageUrl('https://raw.githubusercontent.com/gdgdavao/assets-cdn/main/banner.png');
         setImageResolved(true);
         return;
       }
@@ -73,12 +73,12 @@ const EventRegistrationPage: React.FC = () => {
           setMetaImageUrl(url);
         } else {
           console.warn('⚠️ Image Resolution: Failed to resolve, using default banner');
-          setMetaImageUrl('https://github.com/gdgdavao/assets-cdn/blob/main/banner.png?raw=true');
+          setMetaImageUrl('https://raw.githubusercontent.com/gdgdavao/assets-cdn/main/banner.png');
         }
         setImageResolved(true);
       } catch (error) {
         console.error('❌ Image Resolution: Error resolving Firebase Storage URL', error);
-        setMetaImageUrl('https://github.com/gdgdavao/assets-cdn/blob/main/banner.png?raw=true');
+        setMetaImageUrl('https://raw.githubusercontent.com/gdgdavao/assets-cdn/main/banner.png');
         setImageResolved(true);
       }
     };
@@ -94,7 +94,7 @@ const EventRegistrationPage: React.FC = () => {
     console.log('🎨 SEO Update: Setting meta tags with resolved image', {
       eventTitle: event?.title,
       metaImageUrl,
-      isEventImage: metaImageUrl !== 'https://github.com/gdgdavao/assets-cdn/blob/main/banner.png?raw=true'
+      isEventImage: metaImageUrl !== 'https://raw.githubusercontent.com/gdgdavao/assets-cdn/main/banner.png'
     });
   }, [imageResolved, event, metaImageUrl]);
 

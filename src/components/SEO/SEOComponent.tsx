@@ -17,7 +17,7 @@ const SEOComponent: React.FC<SEOProps> = ({
   title = 'GDG Davao | Google Developer Groups - Davao',
   description = 'Join GDG Davao, the premier Google Developer Groups community in Davao City. Connect with fellow developers, attend tech events, and grow your skills in Google technologies.',
   keywords = 'GDG Davao, Google Developer Groups, Davao developers, tech events, programming, software development, Google technologies, developer community, tech meetups',
-  ogImage = 'https://github.com/gdgdavao/assets-cdn/blob/main/banner.png?raw=true',
+  ogImage = 'https://raw.githubusercontent.com/gdgdavao/assets-cdn/main/banner.png',
   ogImageAlt = 'GDG Davao Community Banner',
   ogImageWidth = '1200',
   ogImageHeight = '630',
