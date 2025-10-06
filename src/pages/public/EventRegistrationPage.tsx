@@ -26,7 +26,8 @@ const EventRegistrationPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [registrationForm, setRegistrationForm] = useState<FormField[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [metaImageUrl, setMetaImageUrl] = useState<string | undefined>(undefined);
+  const [metaImageUrl, setMetaImageUrl] = useState<string>('https://github.com/gdgdavao/assets-cdn/blob/main/banner.png?raw=true');
+  const [imageResolved, setImageResolved] = useState(false);
 
   // Set page title
   usePageTitle();
@@ -34,35 +35,76 @@ const EventRegistrationPage: React.FC = () => {
   // Resolve public URL for social sharing image when event changes
   useEffect(() => {
     const resolveImage = async () => {
+      console.log('🖼️ Image Resolution: Starting...', {
+        hasEvent: !!event,
+        eventImageUrl: event?.imageUrl,
+        eventBannerUrl: event?.bannerUrl
+      });
+
       if (!event) {
-        setMetaImageUrl(undefined);
+        console.log('⚠️ Image Resolution: No event, using default banner');
+        setMetaImageUrl('https://github.com/gdgdavao/assets-cdn/blob/main/banner.png?raw=true');
+        setImageResolved(true);
         return;
       }
+
       const raw = event.imageUrl || event.bannerUrl;
       if (!raw) {
-        setMetaImageUrl(undefined);
+        console.log('⚠️ Image Resolution: No image URL in event, using default banner');
+        setMetaImageUrl('https://github.com/gdgdavao/assets-cdn/blob/main/banner.png?raw=true');
+        setImageResolved(true);
         return;
       }
+
       // If already an absolute URL, use it; otherwise resolve from storage path
       if (/^https?:\/\//i.test(raw)) {
+        console.log('✅ Image Resolution: Using absolute URL', { url: raw });
         setMetaImageUrl(raw);
+        setImageResolved(true);
         return;
       }
+
+      // This is a Firebase Storage path, resolve it to a public URL
+      console.log('🔄 Image Resolution: Resolving Firebase Storage path', { path: raw });
       try {
         const url = await getDownloadUrlFromPath(raw);
-        setMetaImageUrl(url || undefined);
-      } catch {
-        setMetaImageUrl(undefined);
+        if (url) {
+          console.log('✅ Image Resolution: Successfully resolved Firebase Storage URL', { url });
+          setMetaImageUrl(url);
+        } else {
+          console.warn('⚠️ Image Resolution: Failed to resolve, using default banner');
+          setMetaImageUrl('https://github.com/gdgdavao/assets-cdn/blob/main/banner.png?raw=true');
+        }
+        setImageResolved(true);
+      } catch (error) {
+        console.error('❌ Image Resolution: Error resolving Firebase Storage URL', error);
+        setMetaImageUrl('https://github.com/gdgdavao/assets-cdn/blob/main/banner.png?raw=true');
+        setImageResolved(true);
       }
     };
     resolveImage();
   }, [event]);
 
-  // Set up SEO with resolved event image
+  // Set up SEO with resolved event image - only update when image is resolved and event is loaded
+  // This ensures the event's Firebase Storage image is used instead of the default banner
+  useEffect(() => {
+    // Only set SEO meta tags after image resolution is complete
+    if (!imageResolved) return;
+
+    console.log('🎨 SEO Update: Setting meta tags with resolved image', {
+      eventTitle: event?.title,
+      metaImageUrl,
+      isEventImage: metaImageUrl !== 'https://github.com/gdgdavao/assets-cdn/blob/main/banner.png?raw=true'
+    });
+  }, [imageResolved, event, metaImageUrl]);
+
   useSEO({
     title: event ? `${event.title} | TeamApo Hub` : 'Event Registration | TeamApo Hub',
     description: event ? (event.shortDescription || event.description) : 'Join our upcoming event',
-    ogImage: metaImageUrl || 'https://github.com/gdgdavao/assets-cdn/blob/main/banner.png?raw=true',
+    ogImage: metaImageUrl,
+    ogImageAlt: event ? `${event.title} Event Banner` : 'GDG Davao Community Banner',
+    ogImageWidth: '1200',
+    ogImageHeight: '630',
     ogType: 'event',
     structuredData: event ? {
       '@context': 'https://schema.org',
