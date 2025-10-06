@@ -5,6 +5,9 @@ interface SEOProps {
   description?: string;
   keywords?: string;
   ogImage?: string;
+  ogImageAlt?: string;
+  ogImageWidth?: string;
+  ogImageHeight?: string;
   ogType?: string;
   canonical?: string;
   noindex?: boolean;
@@ -14,7 +17,10 @@ const SEOComponent: React.FC<SEOProps> = ({
   title = 'GDG Davao | Google Developer Groups - Davao',
   description = 'Join GDG Davao, the premier Google Developer Groups community in Davao City. Connect with fellow developers, attend tech events, and grow your skills in Google technologies.',
   keywords = 'GDG Davao, Google Developer Groups, Davao developers, tech events, programming, software development, Google technologies, developer community, tech meetups',
-  ogImage = 'https://gdgdavao.org/gdgdvo.svg',
+  ogImage = 'https://github.com/gdgdavao/assets-cdn/blob/main/banner.png?raw=true',
+  ogImageAlt = 'GDG Davao Community Banner',
+  ogImageWidth = '1200',
+  ogImageHeight = '630',
   ogType = 'website',
   canonical,
   noindex = false,
@@ -52,14 +58,27 @@ const SEOComponent: React.FC<SEOProps> = ({
     // Update Open Graph tags
     updateMetaTag('og:title', title, true);
     updateMetaTag('og:description', description, true);
-    updateMetaTag('og:image', ogImage, true);
     updateMetaTag('og:type', ogType, true);
     updateMetaTag('og:url', window.location.href, true);
+    updateMetaTag('og:site_name', 'TeamApo Hub', true);
+    updateMetaTag('og:locale', 'en_US', true);
+    
+    // Update Open Graph image tags
+    updateMetaTag('og:image', ogImage, true);
+    updateMetaTag('og:image:secure_url', ogImage, true);
+    updateMetaTag('og:image:width', ogImageWidth, true);
+    updateMetaTag('og:image:height', ogImageHeight, true);
+    updateMetaTag('og:image:alt', ogImageAlt, true);
+    
+    // Generic image meta
+    updateMetaTag('image', ogImage);
 
     // Update Twitter tags
+    updateMetaTag('twitter:card', 'summary_large_image');
     updateMetaTag('twitter:title', title, true);
     updateMetaTag('twitter:description', description, true);
     updateMetaTag('twitter:image', ogImage, true);
+    updateMetaTag('twitter:image:alt', ogImageAlt, true);
     updateMetaTag('twitter:url', window.location.href, true);
 
     // Update canonical URL
