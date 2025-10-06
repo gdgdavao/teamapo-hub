@@ -17,7 +17,7 @@ const useSEO = ({
   title,
   description = 'Join GDG Davao, the premier Google Developer Groups community in Davao City. Connect with fellow developers, attend tech events, and grow your skills in Google technologies.',
   keywords = 'GDG Davao, Google Developer Groups, Davao developers, tech events, programming, software development, Google technologies, developer community, tech meetups',
-  ogImage = 'https://gdgdavao.org/gdgdvo.svg',
+  ogImage = 'https://github.com/gdgdavao/assets-cdn/blob/main/banner.png?raw=true',
   ogType = 'website',
   noindex = false,
   structuredData,
@@ -181,10 +181,14 @@ const useSEO = ({
     updateMetaTag('og:title', finalTitle, true);
     updateMetaTag('og:description', description, true);
     updateMetaTag('og:image', ogImage, true);
+    updateMetaTag('og:image:secure_url', ogImage, true);
     updateMetaTag('og:type', ogType, true);
     updateMetaTag('og:url', currentUrl, true);
+    // Some scrapers also look for a generic image meta
+    updateMetaTag('image', ogImage);
 
     // Update Twitter tags
+    updateMetaTag('twitter:card', 'summary_large_image');
     updateMetaTag('twitter:title', finalTitle, true);
     updateMetaTag('twitter:description', description, true);
     updateMetaTag('twitter:image', ogImage, true);
