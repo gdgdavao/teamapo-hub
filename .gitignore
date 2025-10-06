@@ -34,3 +34,4 @@ scripts/emulator-data/storage_export/buckets.json
 .firebase
 *.cache
 .vercel
+venv
