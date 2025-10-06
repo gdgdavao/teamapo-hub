@@ -15,6 +15,7 @@ import { Event, FormField } from '../../types';
 import toast from 'react-hot-toast';
 import usePageTitle from '../../hooks/usePageTitle';
 import useSEO from '../../hooks/useSEO';
+import { getDownloadUrlFromPath } from '../../utils/storageUtils';
 
 const EventRegistrationPage: React.FC = () => {
   const { eventId } = useParams<{ eventId: string }>();
@@ -25,22 +26,50 @@ const EventRegistrationPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [registrationForm, setRegistrationForm] = useState<FormField[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [metaImageUrl, setMetaImageUrl] = useState<string | undefined>(undefined);
 
   // Set page title
   usePageTitle();
 
-  // Set up SEO with event image
+  // Resolve public URL for social sharing image when event changes
+  useEffect(() => {
+    const resolveImage = async () => {
+      if (!event) {
+        setMetaImageUrl(undefined);
+        return;
+      }
+      const raw = event.imageUrl || event.bannerUrl;
+      if (!raw) {
+        setMetaImageUrl(undefined);
+        return;
+      }
+      // If already an absolute URL, use it; otherwise resolve from storage path
+      if (/^https?:\/\//i.test(raw)) {
+        setMetaImageUrl(raw);
+        return;
+      }
+      try {
+        const url = await getDownloadUrlFromPath(raw);
+        setMetaImageUrl(url || undefined);
+      } catch {
+        setMetaImageUrl(undefined);
+      }
+    };
+    resolveImage();
+  }, [event]);
+
+  // Set up SEO with resolved event image
   useSEO({
     title: event ? `${event.title} | TeamApo Hub` : 'Event Registration | TeamApo Hub',
     description: event ? (event.shortDescription || event.description) : 'Join our upcoming event',
-    ogImage: event?.imageUrl || event?.bannerUrl || 'https://gdgdavao.org/gdgdvo.svg',
+    ogImage: metaImageUrl || 'https://github.com/gdgdavao/assets-cdn/blob/main/banner.png?raw=true',
     ogType: 'event',
     structuredData: event ? {
       '@context': 'https://schema.org',
       '@type': 'Event',
       name: event.title,
       description: event.shortDescription || event.description,
-      image: event.imageUrl || event.bannerUrl,
+      image: metaImageUrl,
       startDate: event.startDate,
       endDate: event.endDate,
       location: event.venue.type === 'online' 
