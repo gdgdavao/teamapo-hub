@@ -52,26 +52,66 @@ export class PaymentService {
   static async uploadPaymentProof(registrationId: string, imageFile: File): Promise<string> {
     try {
       const timestamp = Date.now();
-      const imageRef = ref(storage, `${this.PAYMENT_PROOFS_PATH}/${registrationId}/proof-${timestamp}.jpg`);
-      const normalizedType = imageFile.type && imageFile.type.startsWith('image/')
-        ? imageFile.type
-        : 'image/jpeg';
-      const snapshot = await uploadBytes(imageRef, imageFile, { contentType: normalizedType });
-
-      // Try to obtain a download URL if permitted; otherwise return storage path
-      try {
-        const { auth } = await import('../config/firebase');
-        if (auth.currentUser) {
-          return await getDownloadURL(snapshot.ref);
-        }
-      } catch (_e) {
-        // ignore and fallback to path
+      // Use file extension from original file, fallback to jpg
+      const fileExtension = imageFile.name.split('.').pop()?.toLowerCase() || 'jpg';
+      const safeExtension = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif'].includes(fileExtension) 
+        ? fileExtension 
+        : 'jpg';
+      
+      const imageRef = ref(storage, `${this.PAYMENT_PROOFS_PATH}/${registrationId}/proof-${timestamp}.${safeExtension}`);
+      
+      // Normalize content type, ensuring it's always set for CORS compliance
+      let contentType = imageFile.type;
+      if (!contentType || !contentType.startsWith('image/')) {
+        // Infer from extension if type is missing (Safari issue)
+        const typeMap: Record<string, string> = {
+          'jpg': 'image/jpeg',
+          'jpeg': 'image/jpeg',
+          'png': 'image/png',
+          'gif': 'image/gif',
+          'webp': 'image/webp',
+          'heic': 'image/heic',
+          'heif': 'image/heif'
+        };
+        contentType = typeMap[safeExtension] || 'image/jpeg';
       }
-      // Fallback for anonymous/public uploads where read is restricted by rules
-      return snapshot.ref.fullPath;
-    } catch (error) {
-      console.error('Error uploading payment proof:', error);
-      throw new Error('Failed to upload payment proof');
+
+      console.log(`[PaymentService] Uploading payment proof: ${imageRef.fullPath}, type: ${contentType}`);
+      
+      const snapshot = await uploadBytes(imageRef, imageFile, { 
+        contentType,
+        customMetadata: {
+          registrationId,
+          uploadedAt: new Date().toISOString()
+        }
+      });
+
+      console.log(`[PaymentService] Upload successful: ${snapshot.ref.fullPath}`);
+
+      // Try to obtain a download URL (for authenticated users or if rules allow)
+      try {
+        const downloadUrl = await getDownloadURL(snapshot.ref);
+        return downloadUrl;
+      } catch (urlError) {
+        console.warn('[PaymentService] Could not get download URL, using storage path:', urlError);
+        // Fallback: return storage path for server-side access
+        return snapshot.ref.fullPath;
+      }
+    } catch (error: any) {
+      console.error('[PaymentService] Error uploading payment proof:', error);
+      
+      // Provide more specific error messages
+      if (error?.code === 'storage/unauthorized') {
+        throw new Error('Upload failed: Permission denied. Please try again or contact support.');
+      } else if (error?.code === 'storage/canceled') {
+        throw new Error('Upload was canceled. Please try again.');
+      } else if (error?.code === 'storage/unknown') {
+        throw new Error('Upload failed due to network error. Please check your connection and try again.');
+      } else if (error?.message?.includes('CORS')) {
+        throw new Error('Upload failed due to browser security settings. Please try a different browser or contact support.');
+      }
+      
+      throw new Error('Failed to upload payment proof. Please try again.');
     }
   }
 
