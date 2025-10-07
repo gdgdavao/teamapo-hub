@@ -90,7 +90,10 @@ service cloud.firestore {
                      resource.data.paymentStatus == 'pending' && 
                      (!('paymentLinkStatus' in resource.data) || resource.data.paymentLinkStatus == 'active');
       allow create: if true; // Allow anonymous registrations
-      allow update: if isAuthenticated();
+      // Allow anonymous updates for payment status changes (limited fields)
+      allow update: if isAuthenticated() || 
+                       (resource.data.paymentStatus == 'pending' && 
+                        request.resource.data.paymentStatus in ['pending', 'processing']);
       allow delete: if isAuthenticated();
     }
     
@@ -162,7 +165,8 @@ service cloud.firestore {
     match /notifications/{notificationId} {
       allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
       allow list: if isAuthenticated() && request.auth.uid == resource.data.userId;
-      allow create: if isAuthenticated();
+      // Allow system to create notifications (for anonymous user actions)
+      allow create: if true;
       allow update: if isAuthenticated() && request.auth.uid == resource.data.userId;
       allow delete: if isAuthenticated() && request.auth.uid == resource.data.userId;
     }

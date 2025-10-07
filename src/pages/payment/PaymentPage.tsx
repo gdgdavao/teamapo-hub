@@ -318,6 +318,20 @@ const PaymentPage: React.FC = () => {
           paymentMethod: selectedConfig.name || paymentProof.paymentMethod,
           notes: paymentProof.notes
         });
+
+        // Send confirmation email after successful submission
+        try {
+          await RegistrationService.sendRegistrationConfirmationEmail(
+            actualRegistration.registrationId,
+            event.id,
+            tempRegistration.userDetails.email,
+            tempRegistration.userDetails.name,
+            true // requiresPayment
+          );
+        } catch (emailError) {
+          console.warn('Failed to send confirmation email:', emailError);
+          // Don't block the flow if email fails
+        }
       } else {
         // Handle existing Firestore registrations (legacy flow)
         await PaymentService.submitPaymentProof({
@@ -332,6 +346,20 @@ const PaymentPage: React.FC = () => {
           paymentMethod: selectedConfig.name || paymentProof.paymentMethod,
           notes: paymentProof.notes
         });
+
+        // Send confirmation email after successful submission
+        try {
+          await RegistrationService.sendRegistrationConfirmationEmail(
+            registration.id,
+            event.id,
+            registration.userDetails.email,
+            registration.userDetails.name,
+            true // requiresPayment
+          );
+        } catch (emailError) {
+          console.warn('Failed to send confirmation email:', emailError);
+          // Don't block the flow if email fails
+        }
       }
       
       // Dismiss loading toast
