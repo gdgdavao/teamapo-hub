@@ -136,12 +136,8 @@ service firebase.storage {
     
     // Payment proof uploads - Allow anonymous uploads for registration flow
     match /payment-proofs/{registrationId}/{proofId} {
-      allow read: if isAdmin() || 
-                     (isAuthenticated() && 
-                      firestore.exists(/databases/(default)/documents/registrations/$(registrationId)) &&
-                      firestore.get(/databases/(default)/documents/registrations/$(registrationId)).data.eventId != null &&
-                      firestore.exists(/databases/(default)/documents/events/$(firestore.get(/databases/(default)/documents/registrations/$(registrationId)).data.eventId)) &&
-                      firestore.get(/databases/(default)/documents/events/$(firestore.get(/databases/(default)/documents/registrations/$(registrationId)).data.eventId)).data.organizer.uid == request.auth.uid);
+      // Allow public read for payment proofs (needed for anonymous upload flow to get download URL)
+      allow read: if true;
       // Allow anonymous uploads for payment proof submissions (validated server-side)
       allow write: if (request.resource != null ? request.resource.size : resource.size) < 5 * 1024 * 1024 && // 5MB limit
                       (
