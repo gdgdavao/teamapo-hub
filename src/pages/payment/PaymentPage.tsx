@@ -205,17 +205,26 @@ const PaymentPage: React.FC = () => {
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      // Validate file type
-      if (!file.type.startsWith('image/')) {
-        toast.error('Please select an image file');
+      // Validate file type - be more lenient for mobile uploads
+      const fileName = file.name.toLowerCase();
+      const validExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif'];
+      const hasValidExtension = validExtensions.some(ext => fileName.endsWith(`.${ext}`));
+      
+      if (!file.type.startsWith('image/') && !hasValidExtension) {
+        toast.error('Please select a valid image file (JPG, PNG, GIF, WebP, HEIC)');
+        e.target.value = ''; // Reset input
         return;
       }
       
       // Validate file size (5MB limit)
       if (file.size > 5 * 1024 * 1024) {
         toast.error('Image must be smaller than 5MB');
+        e.target.value = ''; // Reset input
         return;
       }
+      
+      // Show success feedback
+      toast.success(`Image selected: ${file.name} (${(file.size / 1024).toFixed(0)} KB)`);
       
       setPaymentProof(prev => ({
         ...prev,
@@ -255,9 +264,14 @@ const PaymentPage: React.FC = () => {
       return;
     }
 
+    let uploadToast: string | undefined;
+    
     try {
       setSubmitting(true);
       setFormDisabled(true); // Disable the entire form
+      
+      // Show progress toast
+      uploadToast = toast.loading('Uploading payment proof...');
       
       // Check if this is a temporary registration that needs to be created in Firestore
       if (registrationId!.startsWith('temp_')) {
@@ -320,17 +334,32 @@ const PaymentPage: React.FC = () => {
         });
       }
       
+      // Dismiss loading toast
+      toast.dismiss(uploadToast);
+      
       // Do NOT auto-complete registration. Keep status pending for manual verification.
-      toast.success('Payment proof submitted. Your registration is pending manual verification.');
+      toast.success('Payment proof submitted successfully! Awaiting verification.', {
+        duration: 4000,
+        icon: '✅'
+      });
       
       // Hard redirect to prevent back button access
       setTimeout(() => {
         window.location.replace('/payment/success');
-      }, 1000);
+      }, 1500);
       
     } catch (error: any) {
       console.error('Error submitting payment proof:', error);
-      toast.error(error.message || 'Failed to submit payment proof');
+      
+      // Dismiss loading toast
+      if (uploadToast) {
+        toast.dismiss(uploadToast);
+      }
+      
+      // Show detailed error message
+      const errorMessage = error.message || 'Failed to submit payment proof';
+      toast.error(errorMessage, { duration: 5000 });
+      
       setFormDisabled(false); // Re-enable form on error
     } finally {
       setSubmitting(false);
