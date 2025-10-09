@@ -106,6 +106,7 @@ interface Registration {
   discountAmount?: number;
   totalAmount?: number;
   currency?: string;
+  ticketTypeId?: string;
   pricing?: {
     originalPrice?: number;
     currentPrice?: number;
@@ -131,6 +132,8 @@ const AdminAttendeesPage: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [eventFilter, setEventFilter] = useState<string>(eventId || 'all');
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
+  const [ticketTypeFilter, setTicketTypeFilter] = useState<string>('all');
+  const [priceRangeFilter, setPriceRangeFilter] = useState<string>('all');
   const [viewingRegistration, setViewingRegistration] = useState<Registration | null>(null);
   const [events, setEvents] = useState<Event[]>([]);
   const [currentEvent, setCurrentEvent] = useState<Event | null>(null);
@@ -259,6 +262,7 @@ const AdminAttendeesPage: React.FC = () => {
             discountAmount: (reg as any).discountAmount,
             totalAmount: (reg as any).totalAmount,
             currency: (reg as any).currency,
+            ticketTypeId: (reg as any).ticketTypeId || undefined,
             pricing: (reg as any).pricing
           };
 
@@ -535,6 +539,22 @@ const AdminAttendeesPage: React.FC = () => {
 
 
 
+  // Get unique ticket types from current event or all events
+  const availableTicketTypes = React.useMemo(() => {
+    const ticketTypesMap = new Map<string, { id: string; name: string; price: number }>();
+    
+    const eventsToCheck = currentEvent ? [currentEvent] : events;
+    eventsToCheck.forEach(event => {
+      event.ticketTypes?.forEach(tt => {
+        if (!ticketTypesMap.has(tt.id)) {
+          ticketTypesMap.set(tt.id, { id: tt.id, name: tt.name, price: tt.price });
+        }
+      });
+    });
+    
+    return Array.from(ticketTypesMap.values());
+  }, [currentEvent, events]);
+
   const filteredRegistrations = registrations.filter(registration => {
     const matchesSearch = 
       registration.attendee.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -548,7 +568,20 @@ const AdminAttendeesPage: React.FC = () => {
     const matchesEvent = eventId ? registration.event.id === eventId : (eventFilter === 'all' || registration.event.id === eventFilter);
     const matchesPriority = priorityFilter === 'all' || registration.priority === priorityFilter;
     
-    return matchesSearch && matchesStatus && matchesEvent && matchesPriority;
+    // Ticket type filter
+    const matchesTicketType = ticketTypeFilter === 'all' || registration.ticketTypeId === ticketTypeFilter;
+    
+    // Price range filter
+    const totalAmount = registration.totalAmount || 0;
+    const matchesPriceRange = 
+      priceRangeFilter === 'all' ||
+      (priceRangeFilter === 'free' && totalAmount === 0) ||
+      (priceRangeFilter === 'under-500' && totalAmount > 0 && totalAmount < 500) ||
+      (priceRangeFilter === '500-1000' && totalAmount >= 500 && totalAmount < 1000) ||
+      (priceRangeFilter === '1000-2000' && totalAmount >= 1000 && totalAmount < 2000) ||
+      (priceRangeFilter === 'above-2000' && totalAmount >= 2000);
+    
+    return matchesSearch && matchesStatus && matchesEvent && matchesPriority && matchesTicketType && matchesPriceRange;
   });
 
   const getStatusIcon = (status: string) => {
@@ -694,23 +727,28 @@ const AdminAttendeesPage: React.FC = () => {
 
         {/* Filters and Search */}
         <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
-            <div className="flex flex-col sm:flex-row sm:items-center space-y-3 sm:space-y-0 sm:space-x-4">
-              <div className="relative">
-                <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
-                <input
-                  type="text"
-                  placeholder="Search attendees..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent w-full sm:w-64"
-                />
-              </div>
+          {/* Search Bar - Full Width */}
+          <div className="mb-4">
+            <div className="relative max-w-md">
+              <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+              <input
+                type="text"
+                placeholder="Search attendees..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent w-full"
+              />
+            </div>
+          </div>
 
+          {/* Filters Grid - Responsive */}
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div className="flex flex-wrap gap-3 flex-1">
+              {/* Status Filter */}
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
-                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent min-w-[140px] flex-shrink-0"
               >
                 <option value="all">All Status</option>
                 <option value="pending">Pending Review</option>
@@ -720,11 +758,12 @@ const AdminAttendeesPage: React.FC = () => {
                 <option value="attended">Attended</option>
               </select>
 
-              {!eventId && (
+              {/* Event Filter or Badge */}
+              {!eventId ? (
                 <select
                   value={eventFilter}
                   onChange={(e) => setEventFilter(e.target.value)}
-                  className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent min-w-[180px] max-w-[280px] flex-shrink-0"
                 >
                   <option value="all">All Events</option>
                   {events.map(event => (
@@ -733,17 +772,48 @@ const AdminAttendeesPage: React.FC = () => {
                     </option>
                   ))}
                 </select>
+              ) : (
+                currentEvent && (
+                  <div className="px-3 py-2 bg-blue-100 text-blue-800 rounded-lg border border-blue-200 text-sm font-medium whitespace-nowrap flex-shrink-0">
+                    📅 {currentEvent.title}
+                  </div>
+                )
               )}
-              
-              {eventId && currentEvent && (
-                <div className="px-3 py-2 bg-blue-100 text-blue-800 rounded-lg border border-blue-200">
-                  Event: {currentEvent.title}
-                </div>
+
+              {/* Ticket Type Filter */}
+              {availableTicketTypes.length > 0 && (
+                <select
+                  value={ticketTypeFilter}
+                  onChange={(e) => setTicketTypeFilter(e.target.value)}
+                  className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent min-w-[160px] max-w-[240px] flex-shrink-0"
+                >
+                  <option value="all">All Ticket Types</option>
+                  {availableTicketTypes.map(tt => (
+                    <option key={tt.id} value={tt.id}>
+                      {tt.name} (₱{tt.price.toLocaleString()})
+                    </option>
+                  ))}
+                </select>
               )}
+
+              {/* Price Range Filter */}
+              <select
+                value={priceRangeFilter}
+                onChange={(e) => setPriceRangeFilter(e.target.value)}
+                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent min-w-[140px] flex-shrink-0"
+              >
+                <option value="all">All Prices</option>
+                <option value="free">Free</option>
+                <option value="under-500">Under ₱500</option>
+                <option value="500-1000">₱500 - ₱1K</option>
+                <option value="1000-2000">₱1K - ₱2K</option>
+                <option value="above-2000">Above ₱2K</option>
+              </select>
             </div>
 
-            <div className="text-sm text-gray-600">
-              {filteredRegistrations.length} registration{filteredRegistrations.length !== 1 ? 's' : ''} found
+            {/* Results Count */}
+            <div className="text-sm text-gray-600 font-medium whitespace-nowrap px-3 py-2 bg-gray-50 rounded-lg border border-gray-200">
+              {filteredRegistrations.length} result{filteredRegistrations.length !== 1 ? 's' : ''}
             </div>
           </div>
         </div>
@@ -1064,6 +1134,62 @@ const AdminAttendeesPage: React.FC = () => {
                       </div>
                     </div>
 
+                    {/* Ticket Information */}
+                    <div className="lg:col-span-1">
+                      <div className="bg-white border border-gray-200 rounded-lg p-5">
+                        <div className="flex items-center space-x-3 mb-4">
+                          <div className="p-2 bg-indigo-100 rounded-lg">
+                            <DocumentTextIcon className="h-5 w-5 text-indigo-600" />
+                          </div>
+                          <h3 className="text-lg font-semibold text-gray-900">Ticket Details</h3>
+                        </div>
+                        
+                        <div className="space-y-4">
+                          {(() => {
+                            const ticketTypeId = viewingRegistration.ticketTypeId;
+                            const event = events.find(e => e.id === viewingRegistration.event.id);
+                            const ticketType = event?.ticketTypes?.find(tt => tt.id === ticketTypeId);
+                            
+                            return ticketType ? (
+                              <>
+                                <div>
+                                  <label className="text-sm font-medium text-gray-700">Ticket Type</label>
+                                  <p className="text-gray-900 font-medium">{ticketType.name}</p>
+                                </div>
+                                {ticketType.description && (
+                                  <div>
+                                    <label className="text-sm font-medium text-gray-700">Description</label>
+                                    <p className="text-gray-900 text-sm">{ticketType.description}</p>
+                                  </div>
+                                )}
+                                <div>
+                                  <label className="text-sm font-medium text-gray-700">Base Price</label>
+                                  <p className="text-gray-900">₱{ticketType.price.toLocaleString()}</p>
+                                </div>
+                                {ticketType.benefits && ticketType.benefits.length > 0 && (
+                                  <div>
+                                    <label className="text-sm font-medium text-gray-700">Benefits</label>
+                                    <ul className="mt-1 space-y-1">
+                                      {ticketType.benefits.map((benefit, idx) => (
+                                        <li key={idx} className="text-gray-900 text-sm flex items-start">
+                                          <CheckIcon className="h-4 w-4 text-green-500 mr-2 mt-0.5 flex-shrink-0" />
+                                          <span>{benefit}</span>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+                              </>
+                            ) : (
+                              <div className="text-sm text-gray-500">
+                                Ticket type information not available
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      </div>
+                    </div>
+
                     {/* Payment Proof */}
                     {(viewingRegistration.paymentProof || loadingProof) && (
                       <div className="lg:col-span-1">
@@ -1195,6 +1321,56 @@ const AdminAttendeesPage: React.FC = () => {
                     </div>
                   )}
 
+                  {/* Registration Form Responses */}
+                  {viewingRegistration.formSubmission && Object.keys(viewingRegistration.formSubmission).length > 0 && (
+                    <div className="bg-white border border-gray-200 rounded-lg p-5">
+                      <div className="flex items-center space-x-3 mb-4">
+                        <div className="p-2 bg-teal-100 rounded-lg">
+                          <DocumentTextIcon className="h-5 w-5 text-teal-600" />
+                        </div>
+                        <h3 className="text-lg font-semibold text-gray-900">Registration Form Responses</h3>
+                      </div>
+                      
+                      <div className="space-y-4">
+                        {Object.entries(viewingRegistration.formSubmission).map(([fieldId, value]) => {
+                          // Get the event and its registration form to find field details
+                          const event = events.find(e => e.id === viewingRegistration.event.id);
+                          const formField = (event as any)?.registrationForm?.find((f: any) => f.id === fieldId);
+                          const label = formField?.label || fieldId;
+                          
+                          // Format the value based on type
+                          let displayValue: string | React.ReactNode = '';
+                          
+                          if (value === null || value === undefined || value === '') {
+                            displayValue = <span className="text-gray-400 italic">No response</span>;
+                          } else if (Array.isArray(value)) {
+                            displayValue = value.length > 0 
+                              ? value.join(', ') 
+                              : <span className="text-gray-400 italic">No items selected</span>;
+                          } else if (typeof value === 'boolean') {
+                            displayValue = value ? 'Yes' : 'No';
+                          } else if (typeof value === 'object' && value.name && value.phone) {
+                            // Emergency contact format
+                            displayValue = `${value.name} - ${value.phone}`;
+                          } else {
+                            displayValue = String(value);
+                          }
+                          
+                          return (
+                            <div key={fieldId} className="border-b border-gray-100 pb-3 last:border-0">
+                              <label className="text-sm font-medium text-gray-700 block mb-1">
+                                {label}
+                              </label>
+                              <div className="text-gray-900">
+                                {displayValue}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Notes */}
                   {viewingRegistration.notes && (
                     <div className="bg-white border border-gray-200 rounded-lg p-5">
@@ -1212,72 +1388,111 @@ const AdminAttendeesPage: React.FC = () => {
               
               {/* Action Buttons */}
               <div className="border-t border-gray-200 bg-gray-50 p-6">
-                <div className="flex flex-wrap gap-3 justify-center">
-                  {/* Primary Actions */}
-                  {viewingRegistration.status === 'pending' && (
-                    <button
-                      onClick={async () => {
-                        // Approve registration and payment if proof exists
-                        await handleStatusChange(viewingRegistration.id, 'approved');
-                        if (viewingRegistration.paymentProof && viewingRegistration.paymentProof.verificationStatus === 'pending') {
-                          await handlePaymentVerification(viewingRegistration.id, 'approved');
-                        }
-                        setViewingRegistration(null);
-                      }}
-                      className="inline-flex items-center px-6 py-3 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition-colors shadow-sm"
-                    >
-                      <CheckIcon className="h-5 w-5 mr-2" />
-                      Approve Registration & Payment
-                    </button>
-                  )}
-                  
-                  {/* Payment-only Actions (when registration is already approved) */}
-                  {viewingRegistration.status === 'approved' && viewingRegistration.paymentProof && viewingRegistration.paymentProof.verificationStatus === 'pending' && (
-                    <>
+                <div className="flex flex-wrap gap-3 justify-between">
+                  <div className="flex flex-wrap gap-3">
+                    {/* Primary Actions */}
+                    {viewingRegistration.status === 'pending' && (
                       <button
-                        onClick={() => {
-                          handlePaymentVerification(viewingRegistration.id, 'approved');
+                        onClick={async () => {
+                          // Approve registration and payment if proof exists
+                          await handleStatusChange(viewingRegistration.id, 'approved');
+                          if (viewingRegistration.paymentProof && viewingRegistration.paymentProof.verificationStatus === 'pending') {
+                            await handlePaymentVerification(viewingRegistration.id, 'approved');
+                          }
                           setViewingRegistration(null);
                         }}
-                        className="inline-flex items-center px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
+                        className="inline-flex items-center px-6 py-3 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition-colors shadow-sm"
                       >
                         <CheckIcon className="h-5 w-5 mr-2" />
-                        Approve Payment
+                        Approve Registration & Payment
                       </button>
+                    )}
+                    
+                    {/* Payment-only Actions (when registration is already approved) */}
+                    {viewingRegistration.status === 'approved' && viewingRegistration.paymentProof && viewingRegistration.paymentProof.verificationStatus === 'pending' && (
+                      <>
+                        <button
+                          onClick={() => {
+                            handlePaymentVerification(viewingRegistration.id, 'approved');
+                            setViewingRegistration(null);
+                          }}
+                          className="inline-flex items-center px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
+                        >
+                          <CheckIcon className="h-5 w-5 mr-2" />
+                          Approve Payment
+                        </button>
+                        <button
+                          onClick={() => {
+                            handlePaymentVerification(viewingRegistration.id, 'rejected');
+                            setViewingRegistration(null);
+                          }}
+                          className="inline-flex items-center px-6 py-3 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition-colors shadow-sm"
+                        >
+                          <XMarkIcon className="h-5 w-5 mr-2" />
+                          Reject Payment
+                        </button>
+                      </>
+                    )}
+                    
+
+                    
+                    {/* Reject/Cancel Action - for any non-approved status */}
+                    {viewingRegistration.status !== 'rejected' && viewingRegistration.status !== 'cancelled' && (
                       <button
                         onClick={() => {
-                          handlePaymentVerification(viewingRegistration.id, 'rejected');
+                          handleStatusChange(viewingRegistration.id, 'rejected');
                           setViewingRegistration(null);
                         }}
                         className="inline-flex items-center px-6 py-3 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition-colors shadow-sm"
                       >
                         <XMarkIcon className="h-5 w-5 mr-2" />
-                        Reject Payment
+                        Reject Registration
                       </button>
-                    </>
-                  )}
-                  
-
-                  
-                  {/* Reject/Cancel Action - for any non-approved status */}
-                  {viewingRegistration.status !== 'rejected' && viewingRegistration.status !== 'cancelled' && (
+                    )}
+                    
                     <button
-                      onClick={() => {
-                        handleStatusChange(viewingRegistration.id, 'rejected');
-                        setViewingRegistration(null);
-                      }}
-                      className="inline-flex items-center px-6 py-3 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition-colors shadow-sm"
+                      onClick={() => setViewingRegistration(null)}
+                      className="inline-flex items-center px-6 py-3 bg-white border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors shadow-sm"
                     >
-                      <XMarkIcon className="h-5 w-5 mr-2" />
-                      Reject Registration
+                      Close
                     </button>
-                  )}
-                  
+                  </div>
+
+                  {/* Delete Action - Separated on the right */}
                   <button
-                    onClick={() => setViewingRegistration(null)}
-                    className="inline-flex items-center px-6 py-3 bg-white border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors shadow-sm"
+                    onClick={async () => {
+                      if (window.confirm(
+                        `Are you sure you want to permanently delete this registration?\n\n` +
+                        `Attendee: ${viewingRegistration.attendee.name}\n` +
+                        `Event: ${viewingRegistration.event.title}\n\n` +
+                        `This will delete:\n` +
+                        `• The registration record\n` +
+                        `• All associated payment proofs\n` +
+                        `• Payment proof images from storage\n\n` +
+                        `This action cannot be undone!`
+                      )) {
+                        try {
+                          // Delete registration and all associated data
+                          await RegistrationService.deleteRegistration(viewingRegistration.id);
+                          
+                          // Remove from local state
+                          setRegistrations(prev => prev.filter(r => r.id !== viewingRegistration.id));
+                          
+                          // Close modal
+                          setViewingRegistration(null);
+                          
+                          // Show success message
+                          alert('Registration deleted successfully');
+                        } catch (error) {
+                          console.error('Failed to delete registration:', error);
+                          alert('Failed to delete registration. Please try again.');
+                        }
+                      }
+                    }}
+                    className="inline-flex items-center px-6 py-3 bg-gray-800 text-white font-medium rounded-lg hover:bg-gray-900 transition-colors shadow-sm"
                   >
-                    Close
+                    <XMarkIcon className="h-5 w-5 mr-2" />
+                    Delete Registration
                   </button>
                 </div>
               </div>

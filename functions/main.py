@@ -1720,23 +1720,40 @@ def sendConfirmationEmail(req: https_fn.CallableRequest) -> Dict[str, Any]:
             event_date = 'TBD'
             event_location = 'TBD'
             
-            # Extract date from startDate (Firestore Timestamp)
+            # Extract date from startDate (Firestore Timestamp) with proper timezone handling
             start_date = event_data.get('startDate')
+            event_timezone = event_data.get('timezone', 'Asia/Manila')  # Default to Manila timezone
+            
             if start_date:
                 try:
                     from datetime import datetime
+                    import pytz
+                    
+                    # Parse the timezone
+                    try:
+                        tz = pytz.timezone(event_timezone)
+                    except pytz.exceptions.UnknownTimeZoneError:
+                        logger.warning(f"Unknown timezone: {event_timezone}, using Asia/Manila")
+                        tz = pytz.timezone('Asia/Manila')
+                    
                     # Handle Firestore timestamp object
                     if hasattr(start_date, 'seconds'):
-                        dt = datetime.fromtimestamp(start_date.seconds)
-                        event_date = dt.strftime('%B %d, %Y at %I:%M %p')
+                        # Convert UTC timestamp to the event's timezone
+                        dt_utc = datetime.utcfromtimestamp(start_date.seconds).replace(tzinfo=pytz.UTC)
+                        dt_local = dt_utc.astimezone(tz)
+                        event_date = dt_local.strftime('%B %d, %Y at %I:%M %p')
                     elif isinstance(start_date, dict) and 'seconds' in start_date:
                         # Handle serialized timestamp
-                        dt = datetime.fromtimestamp(start_date['seconds'])
-                        event_date = dt.strftime('%B %d, %Y at %I:%M %p')
+                        dt_utc = datetime.utcfromtimestamp(start_date['seconds']).replace(tzinfo=pytz.UTC)
+                        dt_local = dt_utc.astimezone(tz)
+                        event_date = dt_local.strftime('%B %d, %Y at %I:%M %p')
                     elif isinstance(start_date, str):
                         # Handle ISO string
                         dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
-                        event_date = dt.strftime('%B %d, %Y at %I:%M %p')
+                        if dt.tzinfo is None:
+                            dt = pytz.UTC.localize(dt)
+                        dt_local = dt.astimezone(tz)
+                        event_date = dt_local.strftime('%B %d, %Y at %I:%M %p')
                     else:
                         logger.warning(f"Unknown startDate format: {type(start_date)} - {start_date}")
                         event_date = str(start_date)
