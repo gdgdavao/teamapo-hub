@@ -239,7 +239,8 @@ class EmailService:
         event_title: str,
         registration_id: str,
         status: str,  # 'approved', 'rejected', 'pending'
-        payment_instructions: Optional[str] = None
+        payment_instructions: Optional[str] = None,
+        qr_code_data: Optional[str] = None
     ) -> Dict[str, Any]:
         """Send payment status notification email."""
         
@@ -256,7 +257,8 @@ class EmailService:
             event_title=event_title,
             registration_id=registration_id,
             status=status,
-            payment_instructions=payment_instructions
+            payment_instructions=payment_instructions,
+            qr_code_data=qr_code_data
         )
         
         text_content = self._create_payment_notification_text(
@@ -441,7 +443,8 @@ class EmailService:
         event_title: str,
         registration_id: str,
         status: str,
-        payment_instructions: Optional[str] = None
+        payment_instructions: Optional[str] = None,
+        qr_code_data: Optional[str] = None
     ) -> str:
         """Create HTML content for payment notification email."""
         
@@ -460,6 +463,18 @@ class EmailService:
             </div>
             """
         
+        # Handle QR code section for approved payments
+        qr_code_section = ""
+        if qr_code_data and status == 'approved':
+            qr_code_section = f"""
+            <div style="background-color: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px; padding: 20px; margin: 20px 0; text-align: center;">
+                <h3 style="color: #0369a1; margin-top: 0;">Your Check-In QR Code</h3>
+                <p style="color: #0c4a6e; margin-bottom: 15px;">Present this QR code at the event for check-in</p>
+                <img src="data:image/png;base64,{qr_code_data}" alt="Check-in QR Code" style="max-width: 250px; height: auto; border: 2px solid #0369a1; border-radius: 8px;" />
+                <p style="color: #0c4a6e; font-size: 12px; margin-top: 10px;">Registration ID: {registration_id}</p>
+            </div>
+            """
+        
         context = {
             'user_name': user_name,
             'event_title': event_title,
@@ -469,6 +484,7 @@ class EmailService:
             'status_text_color': colors['text_color'],
             'status_message': status_message,
             'payment_instructions_section': payment_instructions_section,
+            'qr_code_section': qr_code_section,
             'next_steps': next_steps
         }
         

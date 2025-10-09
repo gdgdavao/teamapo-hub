@@ -137,10 +137,18 @@ const AdminAttendeesPage: React.FC = () => {
   const [viewingRegistration, setViewingRegistration] = useState<Registration | null>(null);
   const [events, setEvents] = useState<Event[]>([]);
   const [currentEvent, setCurrentEvent] = useState<Event | null>(null);
-  const [viewMode, setViewMode] = useState<'management'>('management');
+  const [viewMode, setViewMode] = useState<'management' | 'details'>('management');
   const [convertedImageUrls, setConvertedImageUrls] = useState<Record<string, string>>({});
   const [imageLoadingStates, setImageLoadingStates] = useState<Record<string, boolean>>({});
   const [loadingProof, setLoadingProof] = useState(false);
+  const [editingAttendee, setEditingAttendee] = useState<string | null>(null);
+  const [editingDetails, setEditingDetails] = useState<{
+    name: string;
+    email: string;
+    phone: string;
+    organization: string;
+  } | null>(null);
+  const [savingDetails, setSavingDetails] = useState(false);
 
   // Load registrations from API
   useEffect(() => {
@@ -448,6 +456,70 @@ const AdminAttendeesPage: React.FC = () => {
   // Function to open registration details modal
   const handleViewRegistration = (registration: Registration) => {
     setViewingRegistration(registration);
+  };
+
+  // Function to start editing attendee details
+  const handleStartEditingDetails = (registration: Registration) => {
+    setEditingAttendee(registration.id);
+    setEditingDetails({
+      name: registration.attendee.name,
+      email: registration.attendee.email,
+      phone: registration.attendee.phone || '',
+      organization: registration.attendee.organization || ''
+    });
+  };
+
+  // Function to cancel editing
+  const handleCancelEditingDetails = () => {
+    setEditingAttendee(null);
+    setEditingDetails(null);
+  };
+
+  // Function to save updated attendee details
+  const handleSaveAttendeeDetails = async (registrationId: string) => {
+    if (!editingDetails) return;
+
+    try {
+      setSavingDetails(true);
+
+      // Update in Firestore
+      const registrationRef = doc(db, 'registrations', registrationId);
+      await updateDoc(registrationRef, {
+        'userDetails.name': editingDetails.name,
+        'userDetails.email': editingDetails.email,
+        'userDetails.phoneNumber': editingDetails.phone,
+        'userDetails.organization': editingDetails.organization,
+        updatedAt: serverTimestamp()
+      });
+
+      // Update local state
+      setRegistrations(prev => prev.map(reg => 
+        reg.id === registrationId 
+          ? {
+              ...reg,
+              attendee: {
+                ...reg.attendee,
+                name: editingDetails.name,
+                email: editingDetails.email,
+                phone: editingDetails.phone,
+                organization: editingDetails.organization
+              }
+            }
+          : reg
+      ));
+
+      // Reset editing state
+      setEditingAttendee(null);
+      setEditingDetails(null);
+
+      // Show success message
+      console.log('Attendee details updated successfully');
+    } catch (error) {
+      console.error('Failed to update attendee details:', error);
+      alert('Failed to update attendee details. Please try again.');
+    } finally {
+      setSavingDetails(false);
+    }
   };
 
   // Convert storage path to download URL when modal opens
@@ -818,6 +890,38 @@ const AdminAttendeesPage: React.FC = () => {
           </div>
         </div>
 
+        {/* Tab Navigation */}
+        <div className="bg-white rounded-xl border border-gray-200 p-2">
+          <div className="flex space-x-2">
+            <button
+              onClick={() => setViewMode('management')}
+              className={`flex-1 px-6 py-3 rounded-lg font-medium transition-colors ${
+                viewMode === 'management'
+                  ? 'bg-blue-600 text-white'
+                  : 'text-gray-600 hover:bg-gray-100'
+              }`}
+            >
+              <div className="flex items-center justify-center space-x-2">
+                <UserGroupIcon className="h-5 w-5" />
+                <span>Registration Management</span>
+              </div>
+            </button>
+            <button
+              onClick={() => setViewMode('details')}
+              className={`flex-1 px-6 py-3 rounded-lg font-medium transition-colors ${
+                viewMode === 'details'
+                  ? 'bg-blue-600 text-white'
+                  : 'text-gray-600 hover:bg-gray-100'
+              }`}
+            >
+              <div className="flex items-center justify-center space-x-2">
+                <DocumentTextIcon className="h-5 w-5" />
+                <span>Details Management</span>
+              </div>
+            </button>
+          </div>
+        </div>
+
         {/* Quick Actions */}
         <div className="mb-6 flex items-center justify-end">
           <div className="text-sm text-gray-500">
@@ -825,7 +929,8 @@ const AdminAttendeesPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Registrations List */}
+        {/* Registration Management View */}
+        {viewMode === 'management' && (
         <div className="dashboard-card">
           {filteredRegistrations.length === 0 ? (
             <div className="text-center py-12">
@@ -940,7 +1045,165 @@ const AdminAttendeesPage: React.FC = () => {
             </div>
           )}
         </div>
+        )}
 
+        {/* Details Management View */}
+        {viewMode === 'details' && (
+          <div className="dashboard-card">
+            {filteredRegistrations.length === 0 ? (
+              <div className="text-center py-12">
+                <UserIcon className="mx-auto h-12 w-12 text-gray-400" />
+                <h3 className="mt-2 text-sm font-medium text-gray-900">No registrations found</h3>
+                <p className="mt-1 text-sm text-gray-500">
+                  {searchTerm || statusFilter !== 'all' || eventFilter !== 'all'
+                    ? 'Try adjusting your search or filter criteria.'
+                    : 'Attendee registrations will appear here once people start signing up for events.'
+                  }
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Attendee Name
+                      </th>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Email
+                      </th>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Phone
+                      </th>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Organization
+                      </th>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Event
+                      </th>
+                      <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {filteredRegistrations.map((registration) => {
+                      const isEditing = editingAttendee === registration.id;
+                      
+                      return (
+                        <tr key={registration.id} className={isEditing ? 'bg-blue-50' : 'hover:bg-gray-50'}>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            {isEditing ? (
+                              <input
+                                type="text"
+                                value={editingDetails?.name || ''}
+                                onChange={(e) => setEditingDetails(prev => prev ? { ...prev, name: e.target.value } : null)}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                placeholder="Full Name"
+                              />
+                            ) : (
+                              <div className="flex items-center">
+                                <div className="flex-shrink-0 h-10 w-10">
+                                  <div className="h-10 w-10 rounded-full bg-gray-300 flex items-center justify-center">
+                                    <UserIcon className="h-5 w-5 text-gray-600" />
+                                  </div>
+                                </div>
+                                <div className="ml-4">
+                                  <div className="text-sm font-medium text-gray-900">{registration.attendee.name}</div>
+                                </div>
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            {isEditing ? (
+                              <input
+                                type="email"
+                                value={editingDetails?.email || ''}
+                                onChange={(e) => setEditingDetails(prev => prev ? { ...prev, email: e.target.value } : null)}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                placeholder="email@example.com"
+                              />
+                            ) : (
+                              <div className="text-sm text-gray-900">{registration.attendee.email}</div>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            {isEditing ? (
+                              <input
+                                type="tel"
+                                value={editingDetails?.phone || ''}
+                                onChange={(e) => setEditingDetails(prev => prev ? { ...prev, phone: e.target.value } : null)}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                placeholder="Phone Number"
+                              />
+                            ) : (
+                              <div className="text-sm text-gray-900">{registration.attendee.phone || '-'}</div>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            {isEditing ? (
+                              <input
+                                type="text"
+                                value={editingDetails?.organization || ''}
+                                onChange={(e) => setEditingDetails(prev => prev ? { ...prev, organization: e.target.value } : null)}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                placeholder="Organization"
+                              />
+                            ) : (
+                              <div className="text-sm text-gray-900">{registration.attendee.organization || '-'}</div>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="text-sm text-gray-900">{registration.event.title}</div>
+                            <div className="text-xs text-gray-500">{formatDate(registration.event.date)}</div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                            {isEditing ? (
+                              <div className="flex items-center justify-end space-x-2">
+                                <button
+                                  onClick={() => handleSaveAttendeeDetails(registration.id)}
+                                  disabled={savingDetails}
+                                  className="inline-flex items-center px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
+                                >
+                                  {savingDetails ? (
+                                    <>
+                                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                                      Saving...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <CheckIcon className="h-4 w-4 mr-1" />
+                                      Save
+                                    </>
+                                  )}
+                                </button>
+                                <button
+                                  onClick={handleCancelEditingDetails}
+                                  disabled={savingDetails}
+                                  className="inline-flex items-center px-3 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors disabled:opacity-50"
+                                >
+                                  <XMarkIcon className="h-4 w-4 mr-1" />
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => handleStartEditingDetails(registration)}
+                                className="text-blue-600 hover:text-blue-900"
+                              >
+                                Edit Details
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Registration Details Modal */}
         {viewingRegistration && (

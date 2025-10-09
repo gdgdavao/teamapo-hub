@@ -1902,6 +1902,25 @@ def sendPaymentNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 message="attendeeEmail is required"
             )
 
+        # Generate QR code for approved payments (for event check-in)
+        qr_code_data = None
+        if status == 'approved' and registration_id:
+            try:
+                import qrcode
+                from io import BytesIO
+                import base64
+                
+                qr = qrcode.QRCode(version=1, box_size=10, border=5)
+                qr.add_data(f"registration:{registration_id}")
+                qr.make(fit=True)
+                
+                img = qr.make_image(fill_color="black", back_color="white")
+                buffer = BytesIO()
+                img.save(buffer, format='PNG')
+                qr_code_data = base64.b64encode(buffer.getvalue()).decode()
+            except Exception as qr_err:
+                logger.warning(f"Failed to generate QR code for payment notification: {str(qr_err)}")
+
         # Send email using Resend
         email_result = email_service.send_payment_notification(
             user_email=attendee_email,
@@ -1909,7 +1928,8 @@ def sendPaymentNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
             event_title=event_title or 'Event',
             registration_id=registration_id,
             status=status,
-            payment_instructions=payment_instructions
+            payment_instructions=payment_instructions,
+            qr_code_data=qr_code_data
         )
 
         # Log activity for traceability
