@@ -15,7 +15,8 @@ import {
   EllipsisHorizontalIcon,
   ChevronDownIcon,
   CheckIcon,
-  QrCodeIcon
+  QrCodeIcon,
+  EnvelopeIcon
 } from '@heroicons/react/24/outline';
 import { Menu, Transition } from '@headlessui/react';
 import { Fragment } from 'react';
@@ -112,6 +113,7 @@ const DashboardNavbar: React.FC = () => {
     { name: 'Events', href: '/events', icon: CalendarDaysIcon },
     { name: 'Attendees', href: '/attendees', icon: UserGroupIcon },
     { name: 'Check-In', href: '/admin/checkin', icon: QrCodeIcon },
+    { name: 'Emails', href: '/admin/emails', icon: EnvelopeIcon },
     { name: 'Certificates', href: '/certificates', icon: AcademicCapIcon },
     { name: 'Analytics', href: '/analytics', icon: ChartBarIcon },
     { name: 'Users', href: '/users', icon: UserCircleIcon },

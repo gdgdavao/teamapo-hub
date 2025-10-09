@@ -2219,6 +2219,87 @@ def sendFeedbackRequest(req: https_fn.CallableRequest) -> Dict[str, Any]:
 
 
 @https_fn.on_call()
+def getResendEmailStatus(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Get email status from Resend API
+    """
+    try:
+        data: Dict[str, Any] = req.data or {}
+        email_id = data.get('emailId')
+
+        if not email_id:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="emailId is required"
+            )
+
+        # Call Resend API to get email status
+        try:
+            import requests
+            
+            # Get Resend API key from environment
+            resend_api_key = os.getenv('RESEND_API_KEY')
+            if not resend_api_key:
+                raise https_fn.HttpsError(
+                    code=https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
+                    message="Resend API key not configured"
+                )
+            
+            # Make request to Resend API
+            response = requests.get(
+                f"https://api.resend.com/emails/{email_id}",
+                headers={
+                    "Authorization": f"Bearer {resend_api_key}",
+                    "Content-Type": "application/json"
+                }
+            )
+            
+            if response.status_code == 200:
+                email_data = response.json()
+                logger.info(f"Email status retrieved for {email_id}: {email_data.get('last_event')}")
+                return {
+                    'success': True,
+                    'status': {
+                        'id': email_data.get('id'),
+                        'status': email_data.get('last_event', 'unknown'),
+                        'created_at': email_data.get('created_at'),
+                        'last_event': email_data.get('last_event'),
+                        'to': email_data.get('to', []),
+                        'from': email_data.get('from'),
+                        'subject': email_data.get('subject')
+                    }
+                }
+            elif response.status_code == 404:
+                logger.warning(f"Email {email_id} not found in Resend")
+                return {
+                    'success': False,
+                    'message': 'Email not found'
+                }
+            else:
+                logger.error(f"Resend API error: {response.status_code} - {response.text}")
+                return {
+                    'success': False,
+                    'message': f"Failed to fetch email status: {response.text}"
+                }
+                
+        except Exception as api_error:
+            logger.error(f"Error calling Resend API: {str(api_error)}")
+            return {
+                'success': False,
+                'message': f"API error: {str(api_error)}"
+            }
+
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error in getResendEmailStatus: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error fetching email status"
+        )
+
+
+@https_fn.on_call()
 def sendCheckInNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
     """
     Send check-in confirmation notification email using Resend.
