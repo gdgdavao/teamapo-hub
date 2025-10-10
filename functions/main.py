@@ -5,6 +5,8 @@ Handles event creation, validation, publishing, and related operations.
 
 import json
 import logging
+import os
+import requests
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
 from firebase_functions import https_fn, firestore_fn
@@ -2272,8 +2274,6 @@ def getResendEmailStatus(req: https_fn.CallableRequest) -> Dict[str, Any]:
 
         # Call Resend API to get email status
         try:
-            import requests
-            
             # Get Resend API key from environment
             resend_api_key = os.getenv('RESEND_API_KEY')
             if not resend_api_key:
@@ -2343,8 +2343,6 @@ def getAllResendEmails(req: https_fn.CallableRequest) -> Dict[str, Any]:
     Useful for getting bounced emails directly from Resend
     """
     try:
-        import requests
-        
         # Get Resend API key from environment
         resend_api_key = os.getenv('RESEND_API_KEY')
         if not resend_api_key:
