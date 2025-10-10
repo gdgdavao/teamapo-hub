@@ -134,6 +134,7 @@ const AdminAttendeesPage: React.FC = () => {
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
   const [ticketTypeFilter, setTicketTypeFilter] = useState<string>('all');
   const [priceRangeFilter, setPriceRangeFilter] = useState<string>('all');
+  const [registrationTypeFilter, setRegistrationTypeFilter] = useState<string>('all');
   const [viewingRegistration, setViewingRegistration] = useState<Registration | null>(null);
   const [events, setEvents] = useState<Event[]>([]);
   const [currentEvent, setCurrentEvent] = useState<Event | null>(null);
@@ -149,6 +150,11 @@ const AdminAttendeesPage: React.FC = () => {
     organization: string;
   } | null>(null);
   const [savingDetails, setSavingDetails] = useState(false);
+  
+  // Bulk selection state
+  const [selectedRegistrations, setSelectedRegistrations] = useState<Set<string>>(new Set());
+  const [isSelectAllChecked, setIsSelectAllChecked] = useState(false);
+  const [isBulkProcessing, setIsBulkProcessing] = useState(false);
 
   // Load registrations from API
   useEffect(() => {
@@ -653,8 +659,167 @@ const AdminAttendeesPage: React.FC = () => {
       (priceRangeFilter === '1000-2000' && totalAmount >= 1000 && totalAmount < 2000) ||
       (priceRangeFilter === 'above-2000' && totalAmount >= 2000);
     
-    return matchesSearch && matchesStatus && matchesEvent && matchesPriority && matchesTicketType && matchesPriceRange;
+    // Registration type filter
+    const regType = (registration as any).registrationType || 'online';
+    const matchesRegistrationType = 
+      registrationTypeFilter === 'all' || 
+      regType === registrationTypeFilter;
+    
+    return matchesSearch && matchesStatus && matchesEvent && matchesPriority && matchesTicketType && matchesPriceRange && matchesRegistrationType;
   });
+
+  // Bulk selection handlers (must be after filteredRegistrations)
+  const handleSelectAll = () => {
+    if (isSelectAllChecked) {
+      setSelectedRegistrations(new Set());
+      setIsSelectAllChecked(false);
+    } else {
+      const allIds = new Set(filteredRegistrations.map(r => r.id));
+      setSelectedRegistrations(allIds);
+      setIsSelectAllChecked(true);
+    }
+  };
+
+  const handleSelectRegistration = (registrationId: string) => {
+    setSelectedRegistrations(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(registrationId)) {
+        newSet.delete(registrationId);
+      } else {
+        newSet.add(registrationId);
+      }
+      return newSet;
+    });
+  };
+
+  // Update select-all checkbox state when filtered registrations change
+  useEffect(() => {
+    if (selectedRegistrations.size === 0) {
+      setIsSelectAllChecked(false);
+    } else if (filteredRegistrations.length > 0 && selectedRegistrations.size === filteredRegistrations.length) {
+      const allSelected = filteredRegistrations.every(r => selectedRegistrations.has(r.id));
+      setIsSelectAllChecked(allSelected);
+    } else {
+      setIsSelectAllChecked(false);
+    }
+  }, [selectedRegistrations, filteredRegistrations]);
+
+  // Bulk approve registrations
+  const handleBulkApproveRegistrations = async () => {
+    const selectedRegs = registrations.filter(r => selectedRegistrations.has(r.id));
+    const pendingRegs = selectedRegs.filter(r => r.status === 'pending');
+    
+    if (pendingRegs.length === 0) {
+      alert('No pending registrations selected. Please select registrations with pending status.');
+      return;
+    }
+
+    if (!window.confirm(
+      `Are you sure you want to approve ${pendingRegs.length} registration(s)?\n\n` +
+      `This will change their status to "approved".`
+    )) {
+      return;
+    }
+
+    setIsBulkProcessing(true);
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const reg of pendingRegs) {
+      try {
+        await RegistrationService.updateRegistrationStatus(reg.id, 'approved');
+        successCount++;
+      } catch (error) {
+        console.error(`Failed to approve registration ${reg.id}:`, error);
+        failCount++;
+      }
+    }
+
+    // Update local state
+    setRegistrations(prev =>
+      prev.map(reg =>
+        pendingRegs.some(pr => pr.id === reg.id)
+          ? { ...reg, status: 'approved' as const }
+          : reg
+      )
+    );
+
+    setIsBulkProcessing(false);
+    setSelectedRegistrations(new Set());
+    
+    alert(
+      `Bulk Approve Complete!\n\n` +
+      `✓ Successfully approved: ${successCount}\n` +
+      (failCount > 0 ? `✗ Failed: ${failCount}` : '')
+    );
+  };
+
+  // Bulk approve payments
+  const handleBulkApprovePayments = async () => {
+    const selectedRegs = registrations.filter(r => selectedRegistrations.has(r.id));
+    const pendingPayments = selectedRegs.filter(r => 
+      r.paymentProof && 
+      r.paymentProof.verificationStatus === 'pending'
+    );
+    
+    if (pendingPayments.length === 0) {
+      alert('No pending payments selected. Please select registrations with pending payment proofs.');
+      return;
+    }
+
+    if (!window.confirm(
+      `Are you sure you want to approve ${pendingPayments.length} payment(s)?\n\n` +
+      `This will mark their payment status as "paid" and verification as "approved".`
+    )) {
+      return;
+    }
+
+    setIsBulkProcessing(true);
+    let successCount = 0;
+    let failCount = 0;
+    const verifierUid = userProfile?.uid || 'system';
+    const verifierName = (userProfile as any)?.displayName || (userProfile as any)?.email || 'Admin';
+
+    for (const reg of pendingPayments) {
+      try {
+        if (reg.paymentProof) {
+          await PaymentService.verifyPaymentProof(reg.paymentProof.id, 'approved', verifierUid, verifierName);
+          successCount++;
+        }
+      } catch (error) {
+        console.error(`Failed to approve payment for registration ${reg.id}:`, error);
+        failCount++;
+      }
+    }
+
+    // Update local state
+    setRegistrations(prev =>
+      prev.map(reg => {
+        if (pendingPayments.some(pr => pr.id === reg.id)) {
+          return {
+            ...reg,
+            paymentStatus: 'paid' as const,
+            paymentProof: reg.paymentProof ? {
+              ...reg.paymentProof,
+              verificationStatus: 'approved' as const,
+              verifiedAt: new Date().toISOString(),
+              verifiedBy: verifierName
+            } : reg.paymentProof
+          };
+        }
+        return reg;
+      })
+    );
+
+    setIsBulkProcessing(false);
+    setSelectedRegistrations(new Set());
+    
+    alert(
+      `Bulk Payment Approve Complete!\n\n` +
+      `✓ Successfully approved: ${successCount}\n` +
+      (failCount > 0 ? `✗ Failed: ${failCount}` : '')
+    );
+  };
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -718,6 +883,26 @@ const AdminAttendeesPage: React.FC = () => {
 
   const headerActions = (
     <div className="flex items-center space-x-3">
+      {selectedRegistrations.size > 0 && (
+        <>
+          <button 
+            onClick={handleBulkApproveRegistrations}
+            disabled={isBulkProcessing}
+            className="inline-flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <CheckCircleIcon className="w-4 h-4 mr-2" />
+            {isBulkProcessing ? 'Processing...' : `Approve Registrations (${selectedRegistrations.size})`}
+          </button>
+          <button 
+            onClick={handleBulkApprovePayments}
+            disabled={isBulkProcessing}
+            className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <CurrencyDollarIcon className="w-4 h-4 mr-2" />
+            {isBulkProcessing ? 'Processing...' : `Approve Payments (${selectedRegistrations.size})`}
+          </button>
+        </>
+      )}
       <button 
         onClick={exportToCSV}
         className="inline-flex items-center px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
@@ -741,7 +926,7 @@ const AdminAttendeesPage: React.FC = () => {
 
 
         {/* Quick Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 md:gap-6">
           <div className="bg-white rounded-xl border border-gray-200 p-6">
             <div className="flex items-center">
               <div className="p-3 bg-orange-100 rounded-lg">
@@ -779,6 +964,20 @@ const AdminAttendeesPage: React.FC = () => {
                 <p className="text-sm text-gray-600">Paid</p>
                 <p className="text-2xl font-bold text-gray-900">
                   {filteredRegistrations.filter(r => r.paymentStatus === 'paid').length}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl border border-gray-200 p-6">
+            <div className="flex items-center">
+              <div className="p-3 bg-indigo-100 rounded-lg">
+                <UserGroupIcon className="w-6 h-6 text-indigo-600" />
+              </div>
+              <div className="ml-4">
+                <p className="text-sm text-gray-600">Walk-In</p>
+                <p className="text-2xl font-bold text-gray-900">
+                  {filteredRegistrations.filter(r => (r as any).registrationType === 'walk-in').length}
                 </p>
               </div>
             </div>
@@ -881,6 +1080,17 @@ const AdminAttendeesPage: React.FC = () => {
                 <option value="1000-2000">₱1K - ₱2K</option>
                 <option value="above-2000">Above ₱2K</option>
               </select>
+
+              {/* Registration Type Filter */}
+              <select
+                value={registrationTypeFilter}
+                onChange={(e) => setRegistrationTypeFilter(e.target.value)}
+                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent min-w-[140px] flex-shrink-0"
+              >
+                <option value="all">All Types</option>
+                <option value="online">🌐 Online</option>
+                <option value="walk-in">🚶 Walk-In</option>
+              </select>
             </div>
 
             {/* Results Count */}
@@ -922,12 +1132,34 @@ const AdminAttendeesPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Quick Actions */}
-        <div className="mb-6 flex items-center justify-end">
-          <div className="text-sm text-gray-500">
-            Showing {filteredRegistrations.length} of {registrations.length} registrations
+        {/* Bulk Selection Toolbar */}
+        {filteredRegistrations.length > 0 && (
+          <div className="bg-white rounded-xl border border-gray-200 p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-4">
+                <label className="flex items-center space-x-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={isSelectAllChecked}
+                    onChange={handleSelectAll}
+                    className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+                  />
+                  <span className="text-sm font-medium text-gray-700">
+                    Select All ({filteredRegistrations.length})
+                  </span>
+                </label>
+                {selectedRegistrations.size > 0 && (
+                  <span className="text-sm text-gray-600">
+                    {selectedRegistrations.size} selected
+                  </span>
+                )}
+              </div>
+              <div className="text-sm text-gray-500">
+                Showing {filteredRegistrations.length} of {registrations.length} registrations
+              </div>
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Registration Management View */}
         {viewMode === 'management' && (
@@ -949,6 +1181,16 @@ const AdminAttendeesPage: React.FC = () => {
                 <div key={registration.id} className="p-6 hover:bg-gray-50 transition-colors">
                   <div className="flex items-start space-x-4">
 
+                    {/* Checkbox */}
+                    <div className="flex-shrink-0 pt-1">
+                      <input
+                        type="checkbox"
+                        checked={selectedRegistrations.has(registration.id)}
+                        onChange={() => handleSelectRegistration(registration.id)}
+                        className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                      />
+                    </div>
+
                     {/* Avatar */}
                     <div className="flex-shrink-0">
                       {registration.attendee.profilePicture ? (
@@ -969,7 +1211,7 @@ const AdminAttendeesPage: React.FC = () => {
                         <h3 className="text-lg font-semibold text-gray-900">
                           {registration.attendee.name}
                         </h3>
-                        <div className="flex items-center space-x-1">
+                        <div className="flex items-center space-x-1 flex-wrap">
                           {getStatusIcon(registration.status)}
                           <span className={`px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(registration.status)}`}>
                             {registration.status}
@@ -986,6 +1228,13 @@ const AdminAttendeesPage: React.FC = () => {
                           {registration.paymentStatus === 'pending' && registration.paymentProof && (
                             <span className="px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-800">
                               📄 Proof Submitted
+                            </span>
+                          )}
+                          {/* Registration Type Badge */}
+                          {(registration as any).registrationType === 'walk-in' && (
+                            <span className="px-2 py-1 text-xs font-medium rounded-full bg-purple-100 text-purple-800 flex items-center space-x-1">
+                              <span>🚶</span>
+                              <span>Walk-In</span>
                             </span>
                           )}
                         </div>
@@ -1067,6 +1316,14 @@ const AdminAttendeesPage: React.FC = () => {
                   <thead className="bg-gray-50">
                     <tr>
                       <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        <input
+                          type="checkbox"
+                          checked={isSelectAllChecked}
+                          onChange={handleSelectAll}
+                          className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                        />
+                      </th>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Attendee Name
                       </th>
                       <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -1092,6 +1349,14 @@ const AdminAttendeesPage: React.FC = () => {
                       
                       return (
                         <tr key={registration.id} className={isEditing ? 'bg-blue-50' : 'hover:bg-gray-50'}>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <input
+                              type="checkbox"
+                              checked={selectedRegistrations.has(registration.id)}
+                              onChange={() => handleSelectRegistration(registration.id)}
+                              className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                            />
+                          </td>
                           <td className="px-6 py-4 whitespace-nowrap">
                             {isEditing ? (
                               <input
