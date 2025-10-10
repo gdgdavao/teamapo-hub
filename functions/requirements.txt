@@ -37,7 +37,7 @@ itsdangerous==2.2.0
 Jinja2==3.1.6
 MarkupSafe==3.0.2
 msgpack==1.1.1
-packaging==20.6
+packaging==25.0
 pillow==11.3.0
 proto-plus==1.26.1
 protobuf==6.32.1
