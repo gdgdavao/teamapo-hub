@@ -1002,4 +1002,177 @@ export class RegistrationService {
       throw new Error('Failed to delete registration');
     }
   }
+
+  /**
+   * Create a walk-in registration (immediate registration at event)
+   * Skips online payment flow and creates registration with specified payment status
+   */
+  static async createWalkInRegistration(data: {
+    eventId: string;
+    userDetails: {
+      name: string;
+      email: string;
+      phoneNumber?: string;
+      organization?: string;
+    };
+    ticketTypeId: string;
+    quantity: number;
+    paymentStatus: 'paid' | 'pending';
+    paymentMethod?: string;
+    paymentReference?: string;
+    notes?: string;
+    customFormData?: Record<string, any>; // Store all form responses
+    registeredBy: string; // UID of admin/organizer
+  }): Promise<{
+    registrationId: string;
+    qrCode: string;
+  }> {
+    try {
+      // Validate event
+      const eventRef = doc(db, this.EVENTS_COLLECTION, data.eventId);
+      const eventSnap = await getDoc(eventRef);
+      
+      if (!eventSnap.exists()) {
+        throw new Error('Event not found');
+      }
+      
+      const event = eventSnap.data() as Event;
+      
+      // Check event status - allow for published and ongoing events
+      if (event.status !== 'published' && event.status !== 'ongoing') {
+        throw new Error('Walk-in registrations are only allowed for published or ongoing events');
+      }
+      
+      // Find ticket type
+      const ticketType = event.ticketTypes.find(tt => tt.id === data.ticketTypeId);
+      if (!ticketType) {
+        throw new Error('Ticket type not found');
+      }
+      
+      // Check ticket availability
+      if (ticketType.maxQuantity) {
+        const available = ticketType.maxQuantity - ticketType.currentSold;
+        if (data.quantity > available) {
+          throw new Error(`Only ${available} tickets available for ${ticketType.name}`);
+        }
+      }
+      
+      // Check event capacity
+      if (event.maxAttendees) {
+        const available = event.maxAttendees - event.currentAttendees;
+        if (data.quantity > available) {
+          throw new Error(`Event is full. Only ${available} spots remaining`);
+        }
+      }
+      
+      // Generate registration ID and QR code
+      const registrationRef = doc(collection(db, this.REGISTRATIONS_COLLECTION));
+      const registrationId = registrationRef.id;
+      const qrCode = this.generateQRCode(registrationId);
+      
+      // Calculate pricing
+      const originalAmount = ticketType.price * data.quantity;
+      const totalAmount = originalAmount; // No discounts for walk-ins by default
+      
+      // Create registration document
+      const registration: Omit<Registration, 'id'> = {
+        eventId: data.eventId,
+        userId: '', // Anonymous - walk-in attendee
+        userDetails: {
+          name: data.userDetails.name,
+          email: data.userDetails.email,
+          phoneNumber: data.userDetails.phoneNumber,
+          organization: data.userDetails.organization
+        },
+        ticketTypeId: data.ticketTypeId,
+        quantity: data.quantity,
+        originalAmount,
+        discountAmount: 0,
+        totalAmount,
+        currency: ticketType.currency || 'PHP',
+        pricing: {
+          ticketTypeId: data.ticketTypeId,
+          originalPrice: ticketType.price,
+          currentPrice: ticketType.price,
+          discountAmount: 0
+        },
+        paymentStatus: data.paymentStatus,
+        attendanceStatus: data.paymentStatus === 'paid' ? 'confirmed' : 'registered',
+        feedbackSubmitted: false,
+        certificateIssued: false,
+        qrCode,
+        registrationDate: serverTimestamp() as any,
+        updatedAt: serverTimestamp() as any,
+        registrationType: 'walk-in',
+        registeredBy: data.registeredBy
+      };
+      
+      // Add payment details if paid
+      if (data.paymentStatus === 'paid' && data.paymentMethod) {
+        (registration as any).paymentDetails = {
+          paymentMethod: data.paymentMethod,
+          paymentReference: data.paymentReference,
+          paidAt: serverTimestamp()
+        };
+      }
+      
+      // Add notes if provided
+      if (data.notes) {
+        (registration as any).notes = data.notes;
+      }
+      
+      // Add custom form responses if provided
+      if (data.customFormData && Object.keys(data.customFormData).length > 0) {
+        (registration as any).customResponses = data.customFormData;
+      }
+      
+      // Save registration
+      await setDoc(registrationRef, registration);
+      
+      // Update event attendee count and ticket sold count
+      await updateDoc(eventRef, {
+        currentAttendees: increment(data.quantity),
+        updatedAt: serverTimestamp()
+      });
+      
+      // Update ticket type sold count
+      const updatedTicketTypes = event.ticketTypes.map(tt => {
+        if (tt.id === data.ticketTypeId) {
+          return {
+            ...tt,
+            currentSold: tt.currentSold + data.quantity
+          };
+        }
+        return tt;
+      });
+      
+      await updateDoc(eventRef, {
+        ticketTypes: updatedTicketTypes
+      });
+      
+      // Send confirmation email (optional for walk-ins)
+      try {
+        await this.sendRegistrationConfirmationEmail(
+          registrationId,
+          data.eventId,
+          data.userDetails.email,
+          data.userDetails.name,
+          false // Walk-ins are already processed
+        );
+      } catch (emailError) {
+        console.warn('Failed to send confirmation email for walk-in:', emailError);
+        // Don't throw error if email fails
+      }
+      
+      console.log('Walk-in registration created:', registrationId);
+      
+      return {
+        registrationId,
+        qrCode
+      };
+    } catch (error) {
+      console.error('Error creating walk-in registration:', error);
+      throw error;
+    }
+  }
 } 

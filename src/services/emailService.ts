@@ -99,7 +99,7 @@ export class EmailService {
   /**
    * Get sent emails for an event
    */
-  static async getEventEmails(eventId: string, limitCount: number = 100): Promise<EmailLog[]> {
+  static async getEventEmails(eventId: string, limitCount: number = 1000): Promise<EmailLog[]> {
     try {
       const constraints: QueryConstraint[] = [
         where('eventId', '==', eventId),
@@ -135,7 +135,7 @@ export class EmailService {
   /**
    * Get all sent emails across all events
    */
-  static async getAllEmails(limitCount: number = 100): Promise<EmailLog[]> {
+  static async getAllEmails(limitCount: number = 1000): Promise<EmailLog[]> {
     try {
       const constraints: QueryConstraint[] = [
         orderBy('timestamp', 'desc')
@@ -552,6 +552,39 @@ export class EmailService {
     } catch (error) {
       console.error('Error fetching email stats:', error);
       throw new Error('Failed to fetch email statistics');
+    }
+  }
+
+  /**
+   * Get all emails directly from Resend API (including bounced emails)
+   */
+  static async getAllResendEmails(): Promise<{
+    success: boolean;
+    total: number;
+    bounced_count: number;
+    delivered_count: number;
+    pending_count: number;
+    bounced_emails: Array<{
+      id: string;
+      to: string[];
+      from: string;
+      subject: string;
+      created_at: string;
+      last_event: string;
+    }>;
+  } | null> {
+    try {
+      const getAllResendEmails = httpsCallable(functions, 'getAllResendEmails');
+      const result = await getAllResendEmails({}) as any;
+      
+      if (result.data.success) {
+        return result.data;
+      }
+      
+      return null;
+    } catch (error) {
+      console.error('Error fetching all Resend emails:', error);
+      return null;
     }
   }
 

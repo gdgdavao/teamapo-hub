@@ -5,7 +5,9 @@ import {
   XCircleIcon,
   UserGroupIcon,
   CheckIcon,
-  XMarkIcon
+  XMarkIcon,
+  UserPlusIcon,
+  MagnifyingGlassIcon
 } from '@heroicons/react/24/outline';
 import { CheckCircleIcon as CheckCircleSolidIcon, XCircleIcon as XCircleSolidIcon, ExclamationTriangleIcon, InformationCircleIcon } from '@heroicons/react/20/solid';
 import { doc, updateDoc, serverTimestamp, query, collection, where, getDocs } from 'firebase/firestore';
@@ -13,7 +15,10 @@ import { db } from '../../config/firebase';
 import AdminLayout from '../../components/admin/AdminLayout';
 import { useAuth } from '../../contexts/AuthContext';
 import { Registration as FirestoreRegistration, Event } from '../../types';
-import { ForceCheckInModal } from '../../components/shared/UI';
+import { ForceCheckInModal, WalkInRegistrationModal } from '../../components/shared/UI';
+import { RegistrationService } from '../../services/registrationService';
+import type { WalkInRegistrationData } from '../../components/shared/UI/WalkInRegistrationModal';
+import toast from 'react-hot-toast';
 
 interface Registration {
   id: string;
@@ -122,8 +127,8 @@ const getEventDateStatus = (event: Event | null) => {
     // Calculate time differences
     const timeDiffStart = eventStartDate.getTime() - now.getTime();
     const timeDiffEnd = eventEndDate.getTime() - now.getTime();
-    const daysDiffStart = Math.ceil(timeDiffStart / (1000 * 3600 * 24));
-    const daysDiffEnd = Math.ceil(timeDiffEnd / (1000 * 3600 * 24));
+    const daysDiffStart = Math.floor(timeDiffStart / (1000 * 3600 * 24));
+    const daysDiffEnd = Math.floor(timeDiffEnd / (1000 * 3600 * 24));
     
     // Event is in the past
     if (timeDiffEnd < 0) {
@@ -232,6 +237,7 @@ const AdminCheckInPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [scannedQRCode, setScannedQRCode] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
   const [checkinResult, setCheckinResult] = useState<{
     success: boolean;
     message: string;
@@ -257,6 +263,9 @@ const AdminCheckInPage: React.FC = () => {
     dateWarning: '',
     severity: 'low'
   });
+
+  // Walk-in registration modal state
+  const [isWalkInModalOpen, setIsWalkInModalOpen] = useState(false);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -627,19 +636,126 @@ const AdminCheckInPage: React.FC = () => {
     setForceCheckInModal(prev => ({ ...prev, isOpen: false }));
   };
 
+  // Walk-in registration handler
+  const handleWalkInRegistration = async (data: WalkInRegistrationData) => {
+    if (!currentEvent || !userProfile) {
+      throw new Error('Event or user profile not found');
+    }
+
+    try {
+      // Extract name and email from customFormData (from the dynamic registration form)
+      // PRIORITIZE customFormData fields over fallback fields
+      const customData = data.customFormData || {};
+      
+      log.debug('Walk-in registration customFormData:', customData);
+      log.debug('Current event registration form:', (currentEvent as any)?.registrationForm);
+      
+      // Helper function to find field by checking the registration form structure
+      const findFieldByType = (fieldType: string): string | undefined => {
+        const registrationForm = (currentEvent as any)?.registrationForm || [];
+        const field = registrationForm.find((f: any) => f.type === fieldType);
+        if (field && customData[field.id]) {
+          return customData[field.id];
+        }
+        return undefined;
+      };
+      
+      // Helper function to find a field value by checking both key and field labels
+      const findFieldValue = (keywords: string[], fieldType?: string): string | undefined => {
+        // First try to find by field type in registration form
+        if (fieldType) {
+          const value = findFieldByType(fieldType);
+          if (value) return value;
+        }
+        
+        // Try to find by key name (for fallback forms)
+        const entry = Object.entries(customData).find(([key, value]) => {
+          if (typeof value !== 'string' || !value.trim()) return false;
+          const lowerKey = key.toLowerCase();
+          return keywords.some(keyword => lowerKey.includes(keyword));
+        });
+        
+        if (entry) return entry[1] as string;
+        
+        // Try to match by checking field labels in registration form
+        const registrationForm = (currentEvent as any)?.registrationForm || [];
+        for (const field of registrationForm) {
+          const lowerLabel = (field.label || '').toLowerCase();
+          if (keywords.some(keyword => lowerLabel.includes(keyword)) && customData[field.id]) {
+            return customData[field.id];
+          }
+        }
+        
+        return undefined;
+      };
+      
+      // Extract fields with improved logic - check by field type first, then keywords
+      const name = findFieldValue(['name', 'fullname', 'full_name', 'full name', 'attendee'], 'text') || data.name || 'Walk-in Attendee';
+      const email = findFieldValue(['email', 'e-mail', 'e_mail', 'mail'], 'email') || data.email || `walkin-${Date.now()}@temp.local`;
+      const phoneNumber = findFieldValue(['phone', 'mobile', 'contact', 'number', 'tel'], 'phone') || data.phoneNumber;
+      const organization = findFieldValue(['organization', 'organisation', 'company', 'org', 'affiliation']) || data.organization;
+      
+      log.debug('Extracted walk-in data:', { name, email, phoneNumber, organization });
+
+      const result = await RegistrationService.createWalkInRegistration({
+        eventId: currentEvent.id,
+        userDetails: {
+          name,
+          email,
+          phoneNumber,
+          organization
+        },
+        ticketTypeId: data.ticketTypeId,
+        quantity: data.quantity,
+        paymentStatus: data.paymentStatus,
+        paymentMethod: data.paymentMethod,
+        paymentReference: data.paymentReference,
+        notes: data.notes,
+        customFormData: data.customFormData, // Pass custom form data to service
+        registeredBy: userProfile.uid
+      });
+
+      // Reload registrations to include the new walk-in
+      await fetchRegistrations();
+      await fetchEvents(); // Refresh event data with updated counts
+
+      toast.success(`Walk-in registration completed! QR Code: ${result.qrCode}`);
+    } catch (error: any) {
+      console.error('Walk-in registration error:', error);
+      throw error;
+    }
+  };
+
   // Filter registrations for current event
   const eventRegistrations = currentEvent 
     ? registrations.filter(r => r.event.id === currentEvent.id)
     : registrations;
 
+  // Search filter function
+  const filterBySearch = (registration: Registration) => {
+    if (!searchQuery.trim()) return true;
+    
+    const query = searchQuery.toLowerCase();
+    const name = registration.attendee.name.toLowerCase();
+    const email = registration.attendee.email.toLowerCase();
+    const organization = registration.attendee.organization?.toLowerCase() || '';
+    const phone = registration.attendee.phone?.toLowerCase() || '';
+    
+    return name.includes(query) || 
+           email.includes(query) || 
+           organization.includes(query) ||
+           phone.includes(query) ||
+           registration.id.toLowerCase().includes(query);
+  };
+
   const readyForCheckin = eventRegistrations.filter(r => {
     // Ready if status is 'approved' OR paymentStatus is 'paid', but not yet attended
     const isReadyStatus = r.status === 'approved' || r.status === 'paid' || r.paymentStatus === 'paid';
     const notAttended = r.status !== 'attended';
-    return isReadyStatus && notAttended;
+    return isReadyStatus && notAttended && filterBySearch(r);
   });
   
-  const checkedIn = eventRegistrations.filter(r => r.status === 'attended');
+  const checkedIn = eventRegistrations.filter(r => r.status === 'attended' && filterBySearch(r));
 
   if (loading) {
     return (
@@ -685,6 +801,30 @@ const AdminCheckInPage: React.FC = () => {
 
         {/* Date Warning Alert */}
         <DateWarningAlert event={currentEvent} />
+
+        {/* Walk-In Registration Button - Only show for published/ongoing events */}
+        {currentEvent && (currentEvent.status === 'published' || currentEvent.status === 'ongoing') && (
+          <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <div className="bg-blue-100 p-2 rounded-lg">
+                  <UserPlusIcon className="h-6 w-6 text-blue-600" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-900">Walk-In Registration</h3>
+                  <p className="text-xs text-gray-600">Register attendees on-site without online payment</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsWalkInModalOpen(true)}
+                className="px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors flex items-center space-x-2"
+              >
+                <UserPlusIcon className="h-5 w-5" />
+                <span>Add Walk-In</span>
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Quick Stats */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -872,31 +1012,80 @@ const AdminCheckInPage: React.FC = () => {
           <div className="p-6">
             {activeTab === 'ready' ? (
               <div>
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex-1">
-                    <h3 className="text-lg font-semibold text-gray-900">Attendees Ready for Check-in</h3>
-                    {(() => {
-                      const dateStatus = getEventDateStatus(currentEvent);
-                      if (dateStatus && !dateStatus.canCheckIn) {
-                        return (
-                          <p className="text-sm text-amber-600 mt-1 flex items-center">
-                            <ExclamationTriangleIcon className="w-4 h-4 mr-1" />
-                            {dateStatus.message} - Check-ins should be verified
-                          </p>
-                        );
-                      }
-                      return null;
-                    })()}
+                <div className="mb-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex-1">
+                      <h3 className="text-lg font-semibold text-gray-900">Attendees Ready for Check-in</h3>
+                      {(() => {
+                        const dateStatus = getEventDateStatus(currentEvent);
+                        if (dateStatus && !dateStatus.canCheckIn) {
+                          return (
+                            <p className="text-sm text-amber-600 mt-1 flex items-center">
+                              <ExclamationTriangleIcon className="w-4 h-4 mr-1" />
+                              {dateStatus.message} - Check-ins should be verified
+                            </p>
+                          );
+                        }
+                        return null;
+                      })()}
+                    </div>
                   </div>
+                  
+                  {/* Search Bar */}
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <MagnifyingGlassIcon className="h-5 w-5 text-gray-400" />
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="Search by name, email, organization, phone, or registration ID..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder-gray-400"
+                    />
+                    {searchQuery && (
+                      <button
+                        onClick={() => setSearchQuery('')}
+                        className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
+                      >
+                        <XMarkIcon className="h-5 w-5" />
+                      </button>
+                    )}
+                  </div>
+                  
+                  {/* Search results indicator */}
+                  {searchQuery && readyForCheckin.length > 0 && (
+                    <div className="mt-2 text-sm text-gray-600">
+                      Found <span className="font-semibold text-blue-600">{readyForCheckin.length}</span> attendee{readyForCheckin.length !== 1 ? 's' : ''} matching "{searchQuery}"
+                    </div>
+                  )}
                 </div>
                 
                 {readyForCheckin.length === 0 ? (
                   <div className="text-center py-8">
-                    <UserGroupIcon className="mx-auto h-12 w-12 text-gray-400" />
-                    <h3 className="mt-2 text-sm font-medium text-gray-900">No attendees ready for check-in</h3>
-                    <p className="mt-1 text-sm text-gray-500">
-                      All approved and paid attendees have been checked in.
-                    </p>
+                    {searchQuery ? (
+                      <>
+                        <MagnifyingGlassIcon className="mx-auto h-12 w-12 text-gray-400" />
+                        <h3 className="mt-2 text-sm font-medium text-gray-900">No attendees found</h3>
+                        <p className="mt-1 text-sm text-gray-500">
+                          No attendees match your search "{searchQuery}"
+                        </p>
+                        <button
+                          onClick={() => setSearchQuery('')}
+                          className="mt-3 text-sm text-blue-600 hover:text-blue-800 font-medium"
+                        >
+                          Clear search
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <UserGroupIcon className="mx-auto h-12 w-12 text-gray-400" />
+                        <h3 className="mt-2 text-sm font-medium text-gray-900">No attendees ready for check-in</h3>
+                        <p className="mt-1 text-sm text-gray-500">
+                          All approved and paid attendees have been checked in.
+                        </p>
+                      </>
+                    )}
                   </div>
                 ) : (
                   <div className="space-y-3 max-h-96 overflow-y-auto">
@@ -929,18 +1118,67 @@ const AdminCheckInPage: React.FC = () => {
               </div>
             ) : (
               <div>
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-lg font-semibold text-gray-900">Checked In Attendees</h3>
-                  <p className="text-sm text-gray-500">{checkedIn.length} checked in</p>
+                <div className="mb-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-lg font-semibold text-gray-900">Checked In Attendees</h3>
+                    <p className="text-sm text-gray-500">{checkedIn.length} checked in</p>
+                  </div>
+                  
+                  {/* Search Bar */}
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <MagnifyingGlassIcon className="h-5 w-5 text-gray-400" />
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="Search by name, email, organization, phone, or registration ID..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent placeholder-gray-400"
+                    />
+                    {searchQuery && (
+                      <button
+                        onClick={() => setSearchQuery('')}
+                        className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
+                      >
+                        <XMarkIcon className="h-5 w-5" />
+                      </button>
+                    )}
+                  </div>
+                  
+                  {/* Search results indicator */}
+                  {searchQuery && checkedIn.length > 0 && (
+                    <div className="mt-2 text-sm text-gray-600">
+                      Found <span className="font-semibold text-green-600">{checkedIn.length}</span> checked-in attendee{checkedIn.length !== 1 ? 's' : ''} matching "{searchQuery}"
+                    </div>
+                  )}
                 </div>
                 
                 {checkedIn.length === 0 ? (
                   <div className="text-center py-8">
-                    <CheckCircleIcon className="mx-auto h-12 w-12 text-gray-400" />
-                    <h3 className="mt-2 text-sm font-medium text-gray-900">No attendees checked in yet</h3>
-                    <p className="mt-1 text-sm text-gray-500">
-                      Checked in attendees will appear here.
-                    </p>
+                    {searchQuery ? (
+                      <>
+                        <MagnifyingGlassIcon className="mx-auto h-12 w-12 text-gray-400" />
+                        <h3 className="mt-2 text-sm font-medium text-gray-900">No attendees found</h3>
+                        <p className="mt-1 text-sm text-gray-500">
+                          No checked-in attendees match your search "{searchQuery}"
+                        </p>
+                        <button
+                          onClick={() => setSearchQuery('')}
+                          className="mt-3 text-sm text-green-600 hover:text-green-800 font-medium"
+                        >
+                          Clear search
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircleIcon className="mx-auto h-12 w-12 text-gray-400" />
+                        <h3 className="mt-2 text-sm font-medium text-gray-900">No attendees checked in yet</h3>
+                        <p className="mt-1 text-sm text-gray-500">
+                          Checked in attendees will appear here.
+                        </p>
+                      </>
+                    )}
                   </div>
                 ) : (
                   <div className="space-y-3 max-h-96 overflow-y-auto">
@@ -982,6 +1220,16 @@ const AdminCheckInPage: React.FC = () => {
         dateWarning={forceCheckInModal.dateWarning}
         severity={forceCheckInModal.severity}
       />
+
+      {/* Walk-In Registration Modal */}
+      {currentEvent && (
+        <WalkInRegistrationModal
+          isOpen={isWalkInModalOpen}
+          onClose={() => setIsWalkInModalOpen(false)}
+          event={currentEvent}
+          onSubmit={handleWalkInRegistration}
+        />
+      )}
     </AdminLayout>
   );
 };

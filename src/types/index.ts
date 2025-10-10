@@ -178,6 +178,8 @@ export interface Registration {
   qrCode: string;
   registrationDate: Timestamp;
   updatedAt: Timestamp;
+  registrationType?: 'online' | 'walk-in'; // Type of registration
+  registeredBy?: string; // UID of admin/organizer who registered walk-in attendee
 }
 
 export interface PaymentDetails {
