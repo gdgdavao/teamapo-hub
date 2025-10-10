@@ -1830,6 +1830,7 @@ def sendConfirmationEmail(req: https_fn.CallableRequest) -> Dict[str, Any]:
                     'type': 'email_confirmation_sent',
                     'registrationId': registration_id,
                     'eventId': event_id,
+                    'eventTitle': event_title,
                     'userEmail': user_email,
                     'userName': user_name,
                     'emailId': email_result.get('email_id'),
@@ -1934,13 +1935,24 @@ def sendPaymentNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
 
         # Log activity for traceability
         try:
+            # Get eventId from registration
+            event_id = None
+            try:
+                reg_ref = get_db().collection('registrations').document(registration_id)
+                reg_doc = reg_ref.get()
+                if reg_doc.exists:
+                    event_id = reg_doc.to_dict().get('eventId')
+            except Exception:
+                pass
+            
             get_db().collection('activity_logs').add({
                 'type': 'payment_notification_sent',
                 'registrationId': registration_id,
+                'eventId': event_id,
                 'status': status,
                 'eventTitle': event_title,
-                'attendeeEmail': attendee_email,
-                'attendeeName': attendee_name,
+                'userEmail': attendee_email,
+                'userName': attendee_name,
                 'emailId': email_result.get('email_id'),
                 'success': email_result.get('success', False),
                 'timestamp': firestore.SERVER_TIMESTAMP
@@ -2006,8 +2018,20 @@ def sendCertificateNotification(req: https_fn.CallableRequest) -> Dict[str, Any]
 
         # Log activity for traceability
         try:
+            # Get eventId from registration
+            event_id = None
+            try:
+                if registration_id:
+                    reg_ref = get_db().collection('registrations').document(registration_id)
+                    reg_doc = reg_ref.get()
+                    if reg_doc.exists:
+                        event_id = reg_doc.to_dict().get('eventId')
+            except Exception:
+                pass
+            
             get_db().collection('activity_logs').add({
                 'type': 'certificate_notification_sent',
+                'eventId': event_id,
                 'userEmail': user_email,
                 'userName': user_name,
                 'eventTitle': event_title,
@@ -2078,8 +2102,20 @@ def sendEventReminder(req: https_fn.CallableRequest) -> Dict[str, Any]:
 
         # Log activity for traceability
         try:
+            # Get eventId from registration
+            event_id = None
+            try:
+                if registration_id:
+                    reg_ref = get_db().collection('registrations').document(registration_id)
+                    reg_doc = reg_ref.get()
+                    if reg_doc.exists:
+                        event_id = reg_doc.to_dict().get('eventId')
+            except Exception:
+                pass
+            
             get_db().collection('activity_logs').add({
                 'type': 'event_reminder_sent',
+                'eventId': event_id,
                 'userEmail': user_email,
                 'userName': user_name,
                 'eventTitle': event_title,
@@ -2182,6 +2218,7 @@ def sendFeedbackRequest(req: https_fn.CallableRequest) -> Dict[str, Any]:
         try:
             get_db().collection('activity_logs').add({
                 'type': 'feedback_request_sent',
+                'eventId': event_id,
                 'userEmail': user_email,
                 'userName': user_name,
                 'eventTitle': event_title,
@@ -2296,6 +2333,109 @@ def getResendEmailStatus(req: https_fn.CallableRequest) -> Dict[str, Any]:
         raise https_fn.HttpsError(
             code=https_fn.FunctionsErrorCode.INTERNAL,
             message="Internal server error fetching email status"
+        )
+
+
+@https_fn.on_call()
+def getAllResendEmails(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Fetch all emails from Resend API with their delivery status
+    Useful for getting bounced emails directly from Resend
+    """
+    try:
+        import requests
+        
+        # Get Resend API key from environment
+        resend_api_key = os.getenv('RESEND_API_KEY')
+        if not resend_api_key:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
+                message="Resend API key not configured"
+            )
+        
+        all_emails = []
+        has_more = True
+        cursor = None
+        
+        # Resend API pagination - fetch all emails
+        while has_more and len(all_emails) < 1000:  # Safety limit
+            try:
+                url = "https://api.resend.com/emails"
+                params = {}
+                if cursor:
+                    params['cursor'] = cursor
+                
+                response = requests.get(
+                    url,
+                    headers={
+                        "Authorization": f"Bearer {resend_api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    params=params
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    emails = data.get('data', [])
+                    all_emails.extend(emails)
+                    
+                    # Check if there are more pages
+                    has_more = data.get('has_more', False)
+                    if has_more:
+                        cursor = data.get('next_cursor')
+                    
+                    logger.info(f"Fetched {len(emails)} emails from Resend (total: {len(all_emails)})")
+                else:
+                    logger.error(f"Resend API error: {response.status_code} - {response.text}")
+                    break
+                    
+            except Exception as page_error:
+                logger.error(f"Error fetching page: {str(page_error)}")
+                break
+        
+        # Filter and categorize emails
+        bounced_emails = []
+        delivered_emails = []
+        pending_emails = []
+        
+        for email in all_emails:
+            last_event = email.get('last_event', '').lower()
+            email_info = {
+                'id': email.get('id'),
+                'to': email.get('to', []),
+                'from': email.get('from'),
+                'subject': email.get('subject'),
+                'created_at': email.get('created_at'),
+                'last_event': last_event
+            }
+            
+            if last_event in ['bounced', 'bounce']:
+                bounced_emails.append(email_info)
+            elif last_event in ['delivered', 'delivery']:
+                delivered_emails.append(email_info)
+            else:
+                pending_emails.append(email_info)
+        
+        logger.info(f"Total emails: {len(all_emails)}, Bounced: {len(bounced_emails)}, Delivered: {len(delivered_emails)}, Pending: {len(pending_emails)}")
+        
+        return {
+            'success': True,
+            'total': len(all_emails),
+            'bounced_count': len(bounced_emails),
+            'delivered_count': len(delivered_emails),
+            'pending_count': len(pending_emails),
+            'bounced_emails': bounced_emails,
+            'delivered_emails': delivered_emails,
+            'pending_emails': pending_emails
+        }
+        
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error in getAllResendEmails: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error fetching all emails from Resend"
         )
 
 

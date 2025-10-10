@@ -22,11 +22,14 @@ import { RegistrationService } from '../../services/registrationService';
 import { Event, Registration } from '../../types';
 import AdminLayout from '../../components/admin/AdminLayout';
 
+type DeliveryStatus = 'queued' | 'sent' | 'delivered' | 'delivery_delayed' | 'bounced' | 'complained' | 'unknown';
+type EmailLogWithStatus = EmailLog & { deliveryStatus?: DeliveryStatus };
+
 const AdminEmailManagementPage = () => {
   const { eventId } = useParams<{ eventId?: string }>();
   
-  const [emails, setEmails] = useState<EmailLog[]>([]);
-  const [filteredEmails, setFilteredEmails] = useState<EmailLog[]>([]);
+  const [emails, setEmails] = useState<EmailLogWithStatus[]>([]);
+  const [filteredEmails, setFilteredEmails] = useState<EmailLogWithStatus[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
   const [registrations, setRegistrations] = useState<Registration[]>([]);
   const [selectedEvent, setSelectedEvent] = useState<string>(eventId || 'all');
@@ -37,10 +40,13 @@ const AdminEmailManagementPage = () => {
   const [resendingEmail, setResendingEmail] = useState<string | null>(null);
   const [showBulkSendModal, setShowBulkSendModal] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<EmailTemplate | null>(null);
+  const [refreshingStatuses, setRefreshingStatuses] = useState(false);
+  const [fetchingFromResend, setFetchingFromResend] = useState(false);
   const [emailStats, setEmailStats] = useState({
     total: 0,
     successful: 0,
     failed: 0,
+    bounced: 0,
     byType: {} as Record<string, number>
   });
 
@@ -62,7 +68,7 @@ const AdminEmailManagementPage = () => {
       setEvents(eventsData);
 
       // Load emails based on event selection
-      let emailsData: EmailLog[];
+      let emailsData: EmailLogWithStatus[];
       if (eventId) {
         emailsData = await EmailService.getEventEmails(eventId);
         setSelectedEvent(eventId);
@@ -70,34 +76,191 @@ const AdminEmailManagementPage = () => {
         // Load event-specific registrations
         const regsData = await RegistrationService.getEventRegistrations(eventId);
         setRegistrations(regsData);
-        
-        // Load email stats
-        const stats = await EmailService.getEmailStats(eventId);
-        setEmailStats(stats);
       } else {
         emailsData = await EmailService.getAllEmails();
-        
-        // Calculate overall stats
-        const stats = {
-          total: emailsData.length,
-          successful: emailsData.filter(e => e.success).length,
-          failed: emailsData.filter(e => !e.success).length,
-          byType: {} as Record<string, number>
-        };
-        emailsData.forEach(email => {
-          if (!stats.byType[email.type]) {
-            stats.byType[email.type] = 0;
-          }
-          stats.byType[email.type]++;
-        });
-        setEmailStats(stats);
       }
 
-      setEmails(emailsData);
+      // Initially set emails without delivery status (for performance)
+      const initialEmails: EmailLogWithStatus[] = emailsData.map(email => ({
+        ...email,
+        deliveryStatus: email.success ? 'sent' : 'unknown'
+      }));
+
+      // Calculate stats based on deliveryStatus
+      const computeStats = (list: EmailLogWithStatus[]) => {
+        const isSuccess = (s?: DeliveryStatus) => s === 'delivered' || s === 'sent';
+        const isFailed = (s?: DeliveryStatus) => s === 'bounced' || s === 'complained';
+        const stats = {
+          total: list.length,
+          successful: list.filter(e => isSuccess(e.deliveryStatus)).length,
+          failed: list.filter(e => isFailed(e.deliveryStatus)).length,
+          bounced: list.filter(e => e.deliveryStatus === 'bounced').length,
+          byType: {} as Record<string, number>
+        };
+        list.forEach(email => {
+          if (!stats.byType[email.type]) stats.byType[email.type] = 0;
+          stats.byType[email.type]++;
+        });
+        return stats;
+      };
+
+      setEmails(initialEmails);
+      setEmailStats(computeStats(initialEmails));
     } catch (error) {
       console.error('Error loading email data:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchBouncedEmailsFromResend = async () => {
+    if (fetchingFromResend) return;
+    
+    setFetchingFromResend(true);
+    try {
+      console.log('Fetching ALL emails directly from Resend API...');
+      const resendData = await EmailService.getAllResendEmails();
+      
+      if (resendData && resendData.success) {
+        console.log(`📧 Resend API Summary:
+          Total: ${resendData.total}
+          ✅ Delivered: ${resendData.delivered_count}
+          ❌ Bounced: ${resendData.bounced_count}
+          ⏳ Pending: ${resendData.pending_count}
+        `);
+        
+        // Log bounced emails
+        if (resendData.bounced_emails.length > 0) {
+          console.log('\n🚫 BOUNCED EMAILS FROM RESEND:');
+          resendData.bounced_emails.forEach((email, index) => {
+            console.log(`  ${index + 1}. ${email.to.join(', ')} - ${email.subject} (${email.id})`);
+          });
+        }
+        
+        alert(
+          `📊 Resend API Data:\n\n` +
+          `Total Emails: ${resendData.total}\n` +
+          `✅ Delivered: ${resendData.delivered_count}\n` +
+          `❌ Bounced: ${resendData.bounced_count}\n` +
+          `⏳ Pending/Other: ${resendData.pending_count}\n\n` +
+          `Check browser console for full bounced emails list.`
+        );
+      } else {
+        alert('Failed to fetch emails from Resend API');
+      }
+    } catch (error) {
+      console.error('Error fetching from Resend:', error);
+      alert('Error fetching emails from Resend. Check console for details.');
+    } finally {
+      setFetchingFromResend(false);
+    }
+  };
+
+  const refreshDeliveryStatuses = async () => {
+    if (refreshingStatuses) return;
+    
+    setRefreshingStatuses(true);
+    try {
+      const emailsWithIds = emails.filter(e => e.emailId);
+      console.log(`Refreshing delivery status for ${emailsWithIds.length} emails with emailIds...`);
+      
+      let successCount = 0;
+      let bouncedCount = 0;
+      let failedFetchCount = 0;
+
+      // Enrich with delivery status from Resend (process in batches to avoid rate limiting)
+      const batchSize = 10;
+      const enrichedEmails = [...emails];
+      
+      for (let i = 0; i < emailsWithIds.length; i += batchSize) {
+        const batch = emailsWithIds.slice(i, i + batchSize);
+        
+        await Promise.all(
+          batch.map(async (email) => {
+            try {
+              const status = await EmailService.getEmailStatus(email.emailId!);
+              
+              if (status) {
+                // Map Resend status to our DeliveryStatus
+                let deliveryStatus: DeliveryStatus;
+                const resendStatus = status.status?.toLowerCase() || status.last_event?.toLowerCase() || 'unknown';
+                
+                console.log(`Email ${email.emailId}: Resend status = ${resendStatus}`);
+                
+                if (resendStatus === 'delivered') {
+                  deliveryStatus = 'delivered';
+                  successCount++;
+                } else if (resendStatus === 'sent') {
+                  deliveryStatus = 'sent';
+                  successCount++;
+                } else if (resendStatus === 'bounced' || resendStatus === 'bounce') {
+                  deliveryStatus = 'bounced';
+                  bouncedCount++;
+                  console.warn(`⚠️ BOUNCED email detected: ${email.userEmail} (${email.emailId})`);
+                } else if (resendStatus === 'complained' || resendStatus === 'complaint') {
+                  deliveryStatus = 'complained';
+                  bouncedCount++;
+                } else if (resendStatus === 'delivery_delayed') {
+                  deliveryStatus = 'delivery_delayed';
+                } else if (resendStatus === 'queued') {
+                  deliveryStatus = 'queued';
+                } else {
+                  deliveryStatus = 'unknown';
+                }
+                
+                // Update the email in the array
+                const index = enrichedEmails.findIndex(e => e.id === email.id);
+                if (index !== -1) {
+                  enrichedEmails[index] = { ...enrichedEmails[index], deliveryStatus };
+                }
+              } else {
+                failedFetchCount++;
+                console.warn(`No status returned for email ${email.emailId}`);
+              }
+            } catch (error) {
+              failedFetchCount++;
+              console.error(`Error fetching status for ${email.emailId}:`, error);
+            }
+          })
+        );
+        
+        // Small delay between batches to avoid rate limiting
+        if (i + batchSize < emailsWithIds.length) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      }
+
+      console.log(`✅ Status refresh complete: ${successCount} successful, ${bouncedCount} bounced/complained, ${failedFetchCount} failed to fetch`);
+
+      setEmails(enrichedEmails as EmailLogWithStatus[]);
+      
+      // Recalculate stats
+      const computeStats = (list: EmailLogWithStatus[]) => {
+        const isSuccess = (s?: DeliveryStatus) => s === 'delivered' || s === 'sent';
+        const isFailed = (s?: DeliveryStatus) => s === 'bounced' || s === 'complained';
+        const stats = {
+          total: list.length,
+          successful: list.filter(e => isSuccess(e.deliveryStatus)).length,
+          failed: list.filter(e => isFailed(e.deliveryStatus)).length,
+          bounced: list.filter(e => e.deliveryStatus === 'bounced').length,
+          byType: {} as Record<string, number>
+        };
+        list.forEach(email => {
+          if (!stats.byType[email.type]) stats.byType[email.type] = 0;
+          stats.byType[email.type]++;
+        });
+        return stats;
+      };
+      
+      const newStats = computeStats(enrichedEmails as EmailLogWithStatus[]);
+      setEmailStats(newStats);
+      
+      alert(`Status updated!\n✅ Successful: ${successCount}\n❌ Bounced: ${bouncedCount}\n⚠️ Failed to fetch: ${failedFetchCount}`);
+    } catch (error) {
+      console.error('Error refreshing delivery statuses:', error);
+      alert('Failed to refresh delivery statuses. Check console for details.');
+    } finally {
+      setRefreshingStatuses(false);
     }
   };
 
@@ -123,11 +286,14 @@ const AdminEmailManagementPage = () => {
       filtered = filtered.filter(email => email.type === selectedEmailType);
     }
 
-    // Filter by status
+    // Filter by status (use deliveryStatus from Resend when available)
     if (selectedStatus !== 'all') {
       filtered = filtered.filter(email => {
-        if (selectedStatus === 'success') return email.success;
-        if (selectedStatus === 'failed') return !email.success;
+        const status = (email as EmailLogWithStatus).deliveryStatus;
+        if (selectedStatus === 'success') return status === 'delivered' || status === 'sent';
+        if (selectedStatus === 'failed') return status === 'bounced' || status === 'complained';
+        if (selectedStatus === 'bounced') return status === 'bounced';
+        if (selectedStatus === 'pending') return status === 'unknown' || status === 'queued' || status === 'delivery_delayed';
         return true;
       });
     }
@@ -243,6 +409,56 @@ const AdminEmailManagementPage = () => {
     return colors[type] || 'bg-gray-100 text-gray-800';
   };
 
+  const renderDeliveryStatus = (email: EmailLogWithStatus) => {
+    const status = email.deliveryStatus;
+    if (status === 'delivered') {
+      return (
+        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+          <CheckCircle className="h-3 w-3 mr-1" />
+          Delivered
+        </span>
+      );
+    }
+    if (status === 'sent' || status === 'queued') {
+      return (
+        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+          <MailOpen className="h-3 w-3 mr-1" />
+          Sent
+        </span>
+      );
+    }
+    if (status === 'delivery_delayed') {
+      return (
+        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+          <Clock className="h-3 w-3 mr-1" />
+          Delayed
+        </span>
+      );
+    }
+    if (status === 'bounced') {
+      return (
+        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800 border border-red-300">
+          <XCircle className="h-3 w-3 mr-1" />
+          BOUNCED
+        </span>
+      );
+    }
+    if (status === 'complained') {
+      return (
+        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-800 border border-orange-300">
+          <AlertCircle className="h-3 w-3 mr-1" />
+          Complained
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
+        <Clock className="h-3 w-3 mr-1" />
+        Unknown
+      </span>
+    );
+  };
+
   return (
     <AdminLayout>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -253,7 +469,7 @@ const AdminEmailManagementPage = () => {
         </div>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-8">
           <div className="bg-white rounded-lg shadow-sm p-6">
             <div className="flex items-center justify-between">
               <div>
@@ -281,6 +497,16 @@ const AdminEmailManagementPage = () => {
                 <p className="text-2xl font-bold text-red-600">{emailStats.failed}</p>
               </div>
               <XCircle className="h-8 w-8 text-red-600" />
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg shadow-sm p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-600">Bounced</p>
+                <p className="text-2xl font-bold text-red-600">{emailStats.bounced}</p>
+              </div>
+              <AlertCircle className="h-8 w-8 text-red-600" />
             </div>
           </div>
 
@@ -315,6 +541,26 @@ const AdminEmailManagementPage = () => {
               >
                 <RefreshCw className="h-4 w-4 mr-2" />
                 Refresh
+              </button>
+
+              <button
+                onClick={fetchBouncedEmailsFromResend}
+                disabled={fetchingFromResend}
+                className="inline-flex items-center px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Fetch ALL emails directly from Resend API"
+              >
+                <Download className={`h-4 w-4 mr-2 ${fetchingFromResend ? 'animate-spin' : ''}`} />
+                Get Bounced from Resend
+              </button>
+
+              <button
+                onClick={refreshDeliveryStatuses}
+                disabled={refreshingStatuses || emails.length === 0}
+                className="inline-flex items-center px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Update delivery status for current emails"
+              >
+                <RefreshCw className={`h-4 w-4 mr-2 ${refreshingStatuses ? 'animate-spin' : ''}`} />
+                Update Delivery Status
               </button>
 
               <button
@@ -383,8 +629,10 @@ const AdminEmailManagementPage = () => {
               className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             >
               <option value="all">All Status</option>
-              <option value="success">Successful</option>
-              <option value="failed">Failed</option>
+              <option value="success">✅ Successful (Delivered/Sent)</option>
+              <option value="failed">❌ Failed (Bounced/Complained)</option>
+              <option value="bounced">🚫 Bounced Only</option>
+              <option value="pending">⏳ Pending/Unknown</option>
             </select>
           </div>
         </div>
@@ -444,17 +692,7 @@ const AdminEmailManagementPage = () => {
                         {email.eventTitle || 'N/A'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        {email.success ? (
-                          <span className="inline-flex items-center text-green-600">
-                            <CheckCircle className="h-4 w-4 mr-1" />
-                            Sent
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center text-red-600">
-                            <XCircle className="h-4 w-4 mr-1" />
-                            Failed
-                          </span>
-                        )}
+                        {renderDeliveryStatus(email as EmailLogWithStatus)}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm">
                         <button
