@@ -37,7 +37,7 @@ itsdangerous==2.2.0
 Jinja2==3.1.6
 MarkupSafe==3.0.2
 msgpack==1.1.1
-packaging==25.0
+packaging==25.0stalling collected packages: pytz, watchdog, urllib3, typing_extensions, sniffio, qrcode, PyYAML, PyJWT, pycparser, pyasn1, protobuf, pillow, packaging, msgpack, MarkupSafe, itsdangerous, idna, hyperframe, hpack, h11, google-crc32c, click, charset-normalizer, certifi, cachetools, blinker, Werkzeug, uvicorn, rsa, requests, pyasn1_modules, proto-plus, Jinja2, httpcore, h2, gunicorn, grpcio, googleapis-common-protos, google-resumable-media, deprecation, cffi, anyio, uvicorn-worker, starlette, resend, httpx, grpcio-status, google-events, google-auth, Flask, cryptography, cloudevents, CacheControl, google-api-core, functions-framework, flask-cors, googl
 pillow==11.3.0
 proto-plus==1.26.1
 protobuf==6.32.1
