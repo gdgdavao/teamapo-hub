@@ -564,3 +564,38 @@ export interface PaymentProof {
   verifiedBy?: string;
   notes?: string;
 }
+
+// Email Management Types
+export interface EmailLog {
+  id: string;
+  type: 'email_confirmation_sent' | 'payment_notification_sent' | 'certificate_notification_sent' | 'event_reminder_sent' | 'feedback_request_sent' | 'checkin_notification_sent';
+  registrationId?: string;
+  eventId?: string;
+  eventTitle?: string;
+  userEmail: string;
+  userName: string;
+  emailId?: string;
+  success: boolean;
+  timestamp: Timestamp;
+  status?: string;
+  reminderType?: string;
+  certificateUrl?: string;
+  feedbackUrl?: string;
+}
+
+export interface EmailTemplate {
+  id: string;
+  name: string;
+  type: 'registration_confirmation' | 'payment_notification' | 'certificate_notification' | 'event_reminder' | 'feedback_request';
+  description: string;
+}
+
+export interface ResendEmailStatus {
+  id: string;
+  status: 'queued' | 'sent' | 'delivered' | 'delivery_delayed' | 'bounced' | 'complained';
+  created_at: string;
+  last_event: string;
+  to: string[];
+  from: string;
+  subject: string;
+}

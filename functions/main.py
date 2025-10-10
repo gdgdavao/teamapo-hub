@@ -1720,23 +1720,40 @@ def sendConfirmationEmail(req: https_fn.CallableRequest) -> Dict[str, Any]:
             event_date = 'TBD'
             event_location = 'TBD'
             
-            # Extract date from startDate (Firestore Timestamp)
+            # Extract date from startDate (Firestore Timestamp) with proper timezone handling
             start_date = event_data.get('startDate')
+            event_timezone = event_data.get('timezone', 'Asia/Manila')  # Default to Manila timezone
+            
             if start_date:
                 try:
                     from datetime import datetime
+                    import pytz
+                    
+                    # Parse the timezone
+                    try:
+                        tz = pytz.timezone(event_timezone)
+                    except pytz.exceptions.UnknownTimeZoneError:
+                        logger.warning(f"Unknown timezone: {event_timezone}, using Asia/Manila")
+                        tz = pytz.timezone('Asia/Manila')
+                    
                     # Handle Firestore timestamp object
                     if hasattr(start_date, 'seconds'):
-                        dt = datetime.fromtimestamp(start_date.seconds)
-                        event_date = dt.strftime('%B %d, %Y at %I:%M %p')
+                        # Convert UTC timestamp to the event's timezone
+                        dt_utc = datetime.utcfromtimestamp(start_date.seconds).replace(tzinfo=pytz.UTC)
+                        dt_local = dt_utc.astimezone(tz)
+                        event_date = dt_local.strftime('%B %d, %Y at %I:%M %p')
                     elif isinstance(start_date, dict) and 'seconds' in start_date:
                         # Handle serialized timestamp
-                        dt = datetime.fromtimestamp(start_date['seconds'])
-                        event_date = dt.strftime('%B %d, %Y at %I:%M %p')
+                        dt_utc = datetime.utcfromtimestamp(start_date['seconds']).replace(tzinfo=pytz.UTC)
+                        dt_local = dt_utc.astimezone(tz)
+                        event_date = dt_local.strftime('%B %d, %Y at %I:%M %p')
                     elif isinstance(start_date, str):
                         # Handle ISO string
                         dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
-                        event_date = dt.strftime('%B %d, %Y at %I:%M %p')
+                        if dt.tzinfo is None:
+                            dt = pytz.UTC.localize(dt)
+                        dt_local = dt.astimezone(tz)
+                        event_date = dt_local.strftime('%B %d, %Y at %I:%M %p')
                     else:
                         logger.warning(f"Unknown startDate format: {type(start_date)} - {start_date}")
                         event_date = str(start_date)
@@ -1885,6 +1902,25 @@ def sendPaymentNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 message="attendeeEmail is required"
             )
 
+        # Generate QR code for approved payments (for event check-in)
+        qr_code_data = None
+        if status == 'approved' and registration_id:
+            try:
+                import qrcode
+                from io import BytesIO
+                import base64
+                
+                qr = qrcode.QRCode(version=1, box_size=10, border=5)
+                qr.add_data(f"registration:{registration_id}")
+                qr.make(fit=True)
+                
+                img = qr.make_image(fill_color="black", back_color="white")
+                buffer = BytesIO()
+                img.save(buffer, format='PNG')
+                qr_code_data = base64.b64encode(buffer.getvalue()).decode()
+            except Exception as qr_err:
+                logger.warning(f"Failed to generate QR code for payment notification: {str(qr_err)}")
+
         # Send email using Resend
         email_result = email_service.send_payment_notification(
             user_email=attendee_email,
@@ -1892,7 +1928,8 @@ def sendPaymentNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
             event_title=event_title or 'Event',
             registration_id=registration_id,
             status=status,
-            payment_instructions=payment_instructions
+            payment_instructions=payment_instructions,
+            qr_code_data=qr_code_data
         )
 
         # Log activity for traceability
@@ -2178,6 +2215,87 @@ def sendFeedbackRequest(req: https_fn.CallableRequest) -> Dict[str, Any]:
         raise https_fn.HttpsError(
             code=https_fn.FunctionsErrorCode.INTERNAL,
             message="Internal server error sending feedback request"
+        )
+
+
+@https_fn.on_call()
+def getResendEmailStatus(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Get email status from Resend API
+    """
+    try:
+        data: Dict[str, Any] = req.data or {}
+        email_id = data.get('emailId')
+
+        if not email_id:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="emailId is required"
+            )
+
+        # Call Resend API to get email status
+        try:
+            import requests
+            
+            # Get Resend API key from environment
+            resend_api_key = os.getenv('RESEND_API_KEY')
+            if not resend_api_key:
+                raise https_fn.HttpsError(
+                    code=https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
+                    message="Resend API key not configured"
+                )
+            
+            # Make request to Resend API
+            response = requests.get(
+                f"https://api.resend.com/emails/{email_id}",
+                headers={
+                    "Authorization": f"Bearer {resend_api_key}",
+                    "Content-Type": "application/json"
+                }
+            )
+            
+            if response.status_code == 200:
+                email_data = response.json()
+                logger.info(f"Email status retrieved for {email_id}: {email_data.get('last_event')}")
+                return {
+                    'success': True,
+                    'status': {
+                        'id': email_data.get('id'),
+                        'status': email_data.get('last_event', 'unknown'),
+                        'created_at': email_data.get('created_at'),
+                        'last_event': email_data.get('last_event'),
+                        'to': email_data.get('to', []),
+                        'from': email_data.get('from'),
+                        'subject': email_data.get('subject')
+                    }
+                }
+            elif response.status_code == 404:
+                logger.warning(f"Email {email_id} not found in Resend")
+                return {
+                    'success': False,
+                    'message': 'Email not found'
+                }
+            else:
+                logger.error(f"Resend API error: {response.status_code} - {response.text}")
+                return {
+                    'success': False,
+                    'message': f"Failed to fetch email status: {response.text}"
+                }
+                
+        except Exception as api_error:
+            logger.error(f"Error calling Resend API: {str(api_error)}")
+            return {
+                'success': False,
+                'message': f"API error: {str(api_error)}"
+            }
+
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error in getResendEmailStatus: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error fetching email status"
         )
 
 

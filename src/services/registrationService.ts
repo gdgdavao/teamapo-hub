@@ -947,4 +947,59 @@ export class RegistrationService {
       };
     }
   }
+
+  /**
+   * Delete a registration and its associated payment proofs
+   * @param registrationId - Registration ID to delete
+   */
+  static async deleteRegistration(registrationId: string): Promise<void> {
+    try {
+      // Get registration data first to find associated payment proofs
+      const registrationRef = doc(db, 'registrations', registrationId);
+      const registrationSnap = await getDoc(registrationRef);
+      
+      if (!registrationSnap.exists()) {
+        throw new Error('Registration not found');
+      }
+
+      const registrationData = registrationSnap.data();
+      
+      // Delete all associated payment proofs
+      if (registrationData.paymentProofId) {
+        try {
+          const { PaymentService } = await import('./paymentService');
+          await PaymentService.deletePaymentProof(registrationData.paymentProofId);
+        } catch (error) {
+          console.warn('Failed to delete payment proof:', error);
+        }
+      }
+
+      // Also query for any other payment proofs linked to this registration
+      const paymentProofsQuery = query(
+        collection(db, 'paymentProofs'),
+        where('registrationId', '==', registrationId)
+      );
+      const paymentProofsSnap = await getDocs(paymentProofsQuery);
+      
+      // Delete all found payment proofs
+      const deletePromises = paymentProofsSnap.docs.map(async (proofDoc) => {
+        try {
+          const { PaymentService } = await import('./paymentService');
+          await PaymentService.deletePaymentProof(proofDoc.id);
+        } catch (error) {
+          console.warn(`Failed to delete payment proof ${proofDoc.id}:`, error);
+        }
+      });
+      
+      await Promise.all(deletePromises);
+      
+      // Finally, delete the registration document
+      await deleteDoc(registrationRef);
+      
+      console.log(`Registration ${registrationId} and associated payment proofs deleted successfully`);
+    } catch (error) {
+      console.error('Error deleting registration:', error);
+      throw new Error('Failed to delete registration');
+    }
+  }
 } 
