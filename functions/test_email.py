@@ -30,13 +30,48 @@ def test_payment_notification():
     """Test payment notification email."""
     print("Testing payment notification email...")
     
+    # Generate test QR code for approved payment
+    qr_code_data = None
+    try:
+        import qrcode
+        from io import BytesIO
+        import base64
+        from PIL import Image
+        
+        # Create QR code with optimized settings for email
+        qr = qrcode.QRCode(
+            version=1,
+            error_correction=qrcode.constants.ERROR_CORRECT_L,
+            box_size=6,  # Reduced for smaller file size and better email compatibility
+            border=2     # Reduced for smaller file size
+        )
+        qr.add_data("registration:REG123456")
+        qr.make(fit=True)
+        
+        # Generate image with optimization
+        img = qr.make_image(fill_color="black", back_color="white")
+        
+        # Convert to RGB if needed and optimize
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+        
+        # Save with optimization for email clients
+        buffer = BytesIO()
+        img.save(buffer, format='PNG', optimize=True)
+        buffer.seek(0)
+        qr_code_data = base64.b64encode(buffer.getvalue()).decode()
+        print(f"✅ QR code generated successfully. Size: {len(qr_code_data)} bytes")
+    except Exception as qr_err:
+        print(f"⚠️  Failed to generate QR code: {str(qr_err)}")
+    
     result = email_service.send_payment_notification(
         user_email="jaworski.orig+test@gmail.com",
         user_name="John Doe",
         event_title="GDG Davao Meetup 2024",
         registration_id="REG123456",
         status="approved",
-        payment_instructions=None
+        payment_instructions=None,
+        qr_code_data=qr_code_data
     )
     
     print(f"Result: {result}")

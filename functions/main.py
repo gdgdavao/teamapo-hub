@@ -1802,15 +1802,32 @@ def sendConfirmationEmail(req: https_fn.CallableRequest) -> Dict[str, Any]:
                     import qrcode
                     from io import BytesIO
                     import base64
+                    from PIL import Image
                     
-                    qr = qrcode.QRCode(version=1, box_size=10, border=5)
+                    # Create QR code with optimized settings for email
+                    qr = qrcode.QRCode(
+                        version=1,
+                        error_correction=qrcode.constants.ERROR_CORRECT_L,
+                        box_size=6,  # Reduced from 10 for smaller file size
+                        border=2     # Reduced from 5 for smaller file size
+                    )
                     qr.add_data(f"registration:{registration_id}")
                     qr.make(fit=True)
                     
+                    # Generate image with optimization
                     img = qr.make_image(fill_color="black", back_color="white")
+                    
+                    # Convert to RGB if needed and optimize
+                    if img.mode != 'RGB':
+                        img = img.convert('RGB')
+                    
+                    # Save with optimization for email clients
                     buffer = BytesIO()
-                    img.save(buffer, format='PNG')
+                    img.save(buffer, format='PNG', optimize=True)
+                    buffer.seek(0)
                     qr_code_data = base64.b64encode(buffer.getvalue()).decode()
+                    
+                    logger.info(f"QR code generated successfully. Size: {len(qr_code_data)} bytes")
                 except Exception as qr_err:
                     logger.warning(f"Failed to generate QR code: {str(qr_err)}")
 
@@ -1912,15 +1929,32 @@ def sendPaymentNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 import qrcode
                 from io import BytesIO
                 import base64
+                from PIL import Image
                 
-                qr = qrcode.QRCode(version=1, box_size=10, border=5)
+                # Create QR code with optimized settings for email
+                qr = qrcode.QRCode(
+                    version=1,
+                    error_correction=qrcode.constants.ERROR_CORRECT_L,
+                    box_size=6,  # Reduced from 10 for smaller file size
+                    border=2     # Reduced from 5 for smaller file size
+                )
                 qr.add_data(f"registration:{registration_id}")
                 qr.make(fit=True)
                 
+                # Generate image with optimization
                 img = qr.make_image(fill_color="black", back_color="white")
+                
+                # Convert to RGB if needed and optimize
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                # Save with optimization for email clients
                 buffer = BytesIO()
-                img.save(buffer, format='PNG')
+                img.save(buffer, format='PNG', optimize=True)
+                buffer.seek(0)
                 qr_code_data = base64.b64encode(buffer.getvalue()).decode()
+                
+                logger.info(f"QR code generated successfully. Size: {len(qr_code_data)} bytes")
             except Exception as qr_err:
                 logger.warning(f"Failed to generate QR code for payment notification: {str(qr_err)}")
 

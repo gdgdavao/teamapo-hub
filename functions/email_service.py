@@ -119,12 +119,13 @@ class EmailService:
     
     def send_email(
         self,
-        to: str | List[str],
+        to: str,
         subject: str,
         html_content: str,
         text_content: Optional[str] = None,
         reply_to: Optional[str] = None,
-        tags: Optional[List[Dict[str, str]]] = None
+        tags: Optional[List[Dict[str, str]]] = None,
+        attachments: Optional[List[Dict[str, str]]] = None
     ) -> Dict[str, Any]:
         """
         Send an email using Resend.
@@ -136,6 +137,7 @@ class EmailService:
             text_content: Plain text content (optional)
             reply_to: Reply-to email address (optional)
             tags: List of tags for tracking (optional)
+            attachments: List of attachments with filename, content, and optional content_id (optional)
             
         Returns:
             Dict containing success status and message/error
@@ -157,6 +159,9 @@ class EmailService:
             
             if tags:
                 email_data["tags"] = tags
+            
+            if attachments:
+                email_data["attachments"] = attachments
             
             # Send email
             response = resend.Emails.send(email_data)
@@ -258,7 +263,8 @@ class EmailService:
             registration_id=registration_id,
             status=status,
             payment_instructions=payment_instructions,
-            qr_code_data=qr_code_data
+            qr_code_data=qr_code_data,
+            use_cid=bool(qr_code_data)  # Use CID for attachment if QR code exists
         )
         
         text_content = self._create_payment_notification_text(
@@ -276,12 +282,22 @@ class EmailService:
             {"name": "registration_id", "value": sanitize_tag_value(registration_id)}
         ]
         
+        # Prepare attachments if QR code exists
+        attachments = []
+        if qr_code_data and status == 'approved':
+            attachments = [{
+                "filename": "qr_code.png",
+                "content": qr_code_data,
+                "content_id": "qr_code_cid"
+            }]
+        
         return self.send_email(
             to=user_email,
             subject=subject,
             html_content=html_content,
             text_content=text_content,
-            tags=tags
+            tags=tags,
+            attachments=attachments if attachments else None
         )
     
     def send_certificate_notification(
@@ -444,7 +460,8 @@ class EmailService:
         registration_id: str,
         status: str,
         payment_instructions: Optional[str] = None,
-        qr_code_data: Optional[str] = None
+        qr_code_data: Optional[str] = None,
+        use_cid: bool = False
     ) -> str:
         """Create HTML content for payment notification email."""
         
@@ -466,11 +483,14 @@ class EmailService:
         # Handle QR code section for approved payments
         qr_code_section = ""
         if qr_code_data and status == 'approved':
+            # Use CID reference for attachment or base64 inline
+            img_src = "cid:qr_code_cid" if use_cid else f"data:image/png;base64,{qr_code_data}"
+            
             qr_code_section = f"""
             <div style="background-color: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px; padding: 20px; margin: 20px 0; text-align: center;">
                 <h3 style="color: #0369a1; margin-top: 0;">Your Check-In QR Code</h3>
                 <p style="color: #0c4a6e; margin-bottom: 15px;">Present this QR code at the event for check-in</p>
-                <img src="data:image/png;base64,{qr_code_data}" alt="Check-in QR Code" style="max-width: 250px; height: auto; border: 2px solid #0369a1; border-radius: 8px;" />
+                <img src="{img_src}" alt="Check-in QR Code" style="display: block; margin: 0 auto; max-width: 250px; width: 250px; height: auto; border: 2px solid #0369a1; border-radius: 8px;" />
                 <p style="color: #0c4a6e; font-size: 12px; margin-top: 10px;">Registration ID: {registration_id}</p>
             </div>
             """
