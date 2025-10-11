@@ -26,6 +26,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { RegistrationService } from '../../services/registrationService';
 import { EventService } from '../../services/eventService';
 import { PaymentService } from '../../services/paymentService';
+import { EmailService } from '../../services/emailService';
 import { Registration as FirestoreRegistration, Event } from '../../types';
 import { getDownloadUrlFromPath } from '../../utils/storageUtils';
 
@@ -709,14 +710,58 @@ const AdminAttendeesPage: React.FC = () => {
     const selectedRegs = registrations.filter(r => selectedRegistrations.has(r.id));
     const pendingRegs = selectedRegs.filter(r => r.status === 'pending');
     
-    if (pendingRegs.length === 0) {
-      alert('No pending registrations selected. Please select registrations with pending status.');
+    // Also find already-approved registrations with pending payments
+    const approvedRegsWithPendingPayment = selectedRegs.filter(r => 
+      r.status === 'approved' && 
+      r.paymentProof && 
+      r.paymentProof.verificationStatus === 'pending'
+    );
+    
+    // Combine both for processing
+    const regsToProcess = [...pendingRegs, ...approvedRegsWithPendingPayment];
+    
+    if (regsToProcess.length === 0) {
+      const alreadyApproved = selectedRegs.filter(r => 
+        r.status === 'approved' && 
+        (!r.paymentProof || r.paymentProof.verificationStatus === 'approved')
+      );
+      
+      let message = 'No pending registrations or payments found.\n\n';
+      if (alreadyApproved.length > 0) {
+        message += `✓ ${alreadyApproved.length} registration(s) and payment(s) already approved`;
+      }
+      
+      alert(message);
       return;
     }
 
+    // Count registrations with and without payment proof
+    const pendingRegsWithPaymentProof = pendingRegs.filter(r => 
+      r.paymentProof && r.paymentProof.verificationStatus === 'pending'
+    );
+    const pendingRegsWithoutPaymentProof = pendingRegs.filter(r => 
+      !r.paymentProof && r.paymentStatus !== 'paid'
+    );
+    const approvedRegsWithoutPaymentProof = approvedRegsWithPendingPayment.filter(r =>
+      !r.paymentProof && r.paymentStatus !== 'paid'
+    );
+
+    const totalWithoutProof = pendingRegsWithoutPaymentProof.length + approvedRegsWithoutPaymentProof.length;
+
     if (!window.confirm(
-      `Are you sure you want to approve ${pendingRegs.length} registration(s)?\n\n` +
-      `This will change their status to "approved".`
+      `Are you sure you want to approve ${regsToProcess.length} item(s)?\n\n` +
+      `This will:\n` +
+      (pendingRegs.length > 0 ? `• Approve ${pendingRegs.length} registration(s)\n` : '') +
+      (pendingRegsWithPaymentProof.length > 0 
+        ? `• Approve ${pendingRegsWithPaymentProof.length} payment(s) with proof\n`
+        : '') +
+      (approvedRegsWithPendingPayment.length > 0 && approvedRegsWithPendingPayment.filter(r => r.paymentProof).length > 0
+        ? `• Approve ${approvedRegsWithPendingPayment.filter(r => r.paymentProof).length} payment(s) for already-approved registrations\n`
+        : '') +
+      (totalWithoutProof > 0
+        ? `• ⚠️ FORCE approve ${totalWithoutProof} payment(s) WITHOUT proof\n`
+        : '') +
+      `\nContinue?`
     )) {
       return;
     }
@@ -724,46 +769,189 @@ const AdminAttendeesPage: React.FC = () => {
     setIsBulkProcessing(true);
     let successCount = 0;
     let failCount = 0;
+    let paymentSuccessCount = 0;
+    let paymentFailCount = 0;
+    const verifierUid = userProfile?.uid || 'system';
+    const verifierName = (userProfile as any)?.displayName || (userProfile as any)?.email || 'Admin';
 
+    // Track registrations that need payment notification emails
+    const registrationsToNotify: Registration[] = [];
+
+    // Process pending registrations
     for (const reg of pendingRegs) {
       try {
+        // Approve the registration
         await RegistrationService.updateRegistrationStatus(reg.id, 'approved');
         successCount++;
+
+        let paymentApproved = false;
+
+        // FORCE APPROVE PAYMENT - either approve payment proof or force mark as paid
+        if (reg.paymentProof && reg.paymentProof.verificationStatus === 'pending') {
+          // If there's a payment proof, approve it
+          try {
+            await PaymentService.verifyPaymentProof(reg.paymentProof.id, 'approved', verifierUid, verifierName);
+            paymentSuccessCount++;
+            paymentApproved = true;
+          } catch (paymentError) {
+            console.error(`Failed to approve payment for registration ${reg.id}:`, paymentError);
+            paymentFailCount++;
+          }
+        } else if (reg.paymentStatus !== 'paid') {
+          // If no payment proof or payment not paid, FORCE mark as paid
+          try {
+            const registrationRef = doc(db, 'registrations', reg.id);
+            await updateDoc(registrationRef, {
+              paymentStatus: 'paid',
+              'paymentDetails.forceApproved': true,
+              'paymentDetails.forceApprovedBy': verifierUid,
+              'paymentDetails.forceApprovedAt': serverTimestamp(),
+              updatedAt: serverTimestamp()
+            });
+            paymentSuccessCount++;
+            paymentApproved = true;
+          } catch (paymentError) {
+            console.error(`Failed to force approve payment for registration ${reg.id}:`, paymentError);
+            paymentFailCount++;
+          }
+        }
+
+        // Add to notification list if payment was approved
+        if (paymentApproved) {
+          registrationsToNotify.push(reg);
+        }
       } catch (error) {
         console.error(`Failed to approve registration ${reg.id}:`, error);
         failCount++;
       }
     }
 
+    // Process already-approved registrations with pending payments
+    for (const reg of approvedRegsWithPendingPayment) {
+      let paymentApproved = false;
+
+      if (reg.paymentProof && reg.paymentProof.verificationStatus === 'pending') {
+        try {
+          await PaymentService.verifyPaymentProof(reg.paymentProof.id, 'approved', verifierUid, verifierName);
+          paymentSuccessCount++;
+          paymentApproved = true;
+        } catch (paymentError) {
+          console.error(`Failed to approve payment for registration ${reg.id}:`, paymentError);
+          paymentFailCount++;
+        }
+      } else if (reg.paymentStatus !== 'paid') {
+        // Force mark as paid if not already paid
+        try {
+          const registrationRef = doc(db, 'registrations', reg.id);
+          await updateDoc(registrationRef, {
+            paymentStatus: 'paid',
+            'paymentDetails.forceApproved': true,
+            'paymentDetails.forceApprovedBy': verifierUid,
+            'paymentDetails.forceApprovedAt': serverTimestamp(),
+            updatedAt: serverTimestamp()
+          });
+          paymentSuccessCount++;
+          paymentApproved = true;
+        } catch (paymentError) {
+          console.error(`Failed to force approve payment for registration ${reg.id}:`, paymentError);
+          paymentFailCount++;
+        }
+      }
+
+      // Add to notification list if payment was approved
+      if (paymentApproved) {
+        registrationsToNotify.push(reg);
+      }
+    }
+
     // Update local state
     setRegistrations(prev =>
-      prev.map(reg =>
-        pendingRegs.some(pr => pr.id === reg.id)
-          ? { ...reg, status: 'approved' as const }
-          : reg
-      )
+      prev.map(reg => {
+        // Check if this registration was processed
+        const pendingReg = pendingRegs.find(pr => pr.id === reg.id);
+        const approvedRegWithPendingPayment = approvedRegsWithPendingPayment.find(ar => ar.id === reg.id);
+        
+        if (!pendingReg && !approvedRegWithPendingPayment) return reg;
+
+        // Start with current registration data
+        let updated = { ...reg };
+
+        // Update registration status if it was pending
+        if (pendingReg) {
+          updated.status = 'approved' as const;
+        }
+
+        // Update payment status if payment was approved
+        const originalReg = pendingReg || approvedRegWithPendingPayment;
+        if (originalReg && originalReg.paymentProof && originalReg.paymentProof.verificationStatus === 'pending') {
+          updated.paymentStatus = 'paid';
+          updated.paymentProof = {
+            ...originalReg.paymentProof,
+            verificationStatus: 'approved' as const,
+            verifiedAt: new Date().toISOString(),
+            verifiedBy: verifierName
+          };
+        }
+
+        return updated;
+      })
     );
 
     setIsBulkProcessing(false);
     setSelectedRegistrations(new Set());
     
-    alert(
-      `Bulk Approve Complete!\n\n` +
-      `✓ Successfully approved: ${successCount}\n` +
-      (failCount > 0 ? `✗ Failed: ${failCount}` : '')
-    );
+    // Send payment approval notification emails
+    if (registrationsToNotify.length > 0 && currentEvent) {
+      for (const reg of registrationsToNotify) {
+        try {
+          await EmailService.sendPaymentNotification({
+            registrationId: reg.id,
+            status: 'approved',
+            eventTitle: currentEvent.title,
+            attendeeEmail: reg.attendee.email,
+            attendeeName: reg.attendee.name
+          });
+        } catch (emailError) {
+          console.error(`Failed to send payment notification to ${reg.attendee.email}:`, emailError);
+          // Don't fail the whole operation if email fails
+        }
+      }
+    }
+    
+    const message = `Bulk Approve Complete!\n\n` +
+      `✓ Registrations approved: ${successCount}\n` +
+      (failCount > 0 ? `✗ Registrations failed: ${failCount}\n` : '') +
+      (paymentSuccessCount > 0 ? `\n✓ Payments approved: ${paymentSuccessCount}\n` : '') +
+      (paymentFailCount > 0 ? `✗ Payments failed: ${paymentFailCount}\n` : '') +
+      (registrationsToNotify.length > 0 ? `\n📧 Email notifications sent: ${registrationsToNotify.length}` : '');
+    
+    alert(message);
   };
 
   // Bulk approve payments
   const handleBulkApprovePayments = async () => {
     const selectedRegs = registrations.filter(r => selectedRegistrations.has(r.id));
+    // Filter by paymentStatus instead of paymentProof.verificationStatus
     const pendingPayments = selectedRegs.filter(r => 
-      r.paymentProof && 
-      r.paymentProof.verificationStatus === 'pending'
+      r.paymentStatus === 'pending' || 
+      (r.paymentProof && r.paymentProof.verificationStatus === 'pending')
     );
     
     if (pendingPayments.length === 0) {
-      alert('No pending payments selected. Please select registrations with pending payment proofs.');
+      // Provide more detailed feedback
+      const alreadyPaid = selectedRegs.filter(r => r.paymentStatus === 'paid');
+      const withPaymentProof = selectedRegs.filter(r => r.paymentProof);
+      const alreadyApproved = withPaymentProof.filter(r => r.paymentProof?.verificationStatus === 'approved');
+      
+      let message = 'No pending payments found in selected registrations.\n\n';
+      if (alreadyPaid.length > 0) {
+        message += `✓ ${alreadyPaid.length} registration(s) already marked as paid\n`;
+      }
+      if (alreadyApproved.length > 0) {
+        message += `✓ ${alreadyApproved.length} payment proof(s) already approved\n`;
+      }
+      
+      alert(message);
       return;
     }
 
@@ -782,8 +970,21 @@ const AdminAttendeesPage: React.FC = () => {
 
     for (const reg of pendingPayments) {
       try {
-        if (reg.paymentProof) {
+        const regRef = doc(db, 'registrations', reg.id);
+        
+        if (reg.paymentProof && reg.paymentProof.verificationStatus === 'pending') {
+          // If there's a payment proof, verify it through the service
           await PaymentService.verifyPaymentProof(reg.paymentProof.id, 'approved', verifierUid, verifierName);
+          successCount++;
+        } else if (reg.paymentStatus === 'pending') {
+          // If no payment proof but status is pending, force approve the payment
+          await updateDoc(regRef, {
+            paymentStatus: 'paid',
+            'paymentDetails.forceApproved': true,
+            'paymentDetails.forceApprovedBy': verifierUid,
+            'paymentDetails.forceApprovedAt': serverTimestamp(),
+            updatedAt: serverTimestamp()
+          });
           successCount++;
         }
       } catch (error) {
@@ -814,9 +1015,189 @@ const AdminAttendeesPage: React.FC = () => {
     setIsBulkProcessing(false);
     setSelectedRegistrations(new Set());
     
+    // Send payment approval notification emails
+    if (successCount > 0 && currentEvent) {
+      for (const reg of pendingPayments) {
+        try {
+          await EmailService.sendPaymentNotification({
+            registrationId: reg.id,
+            status: 'approved',
+            eventTitle: currentEvent.title,
+            attendeeEmail: reg.attendee.email,
+            attendeeName: reg.attendee.name
+          });
+        } catch (emailError) {
+          console.error(`Failed to send payment notification to ${reg.attendee.email}:`, emailError);
+          // Don't fail the whole operation if email fails
+        }
+      }
+    }
+    
     alert(
       `Bulk Payment Approve Complete!\n\n` +
       `✓ Successfully approved: ${successCount}\n` +
+      (failCount > 0 ? `✗ Failed: ${failCount}\n` : '') +
+      (successCount > 0 ? `📧 Email notifications sent: ${successCount}` : '')
+    );
+  };
+
+  // Force approve registrations (without payment requirement)
+  const handleForceApprove = async () => {
+    const selectedRegs = registrations.filter(r => selectedRegistrations.has(r.id));
+    const notApproved = selectedRegs.filter(r => r.status !== 'approved' && r.status !== 'paid' && r.status !== 'attended');
+    
+    if (notApproved.length === 0) {
+      alert('All selected registrations are already approved or attended.');
+      return;
+    }
+
+    // Count registrations without payment proof
+    const withoutPaymentProof = notApproved.filter(r => !r.paymentProof);
+    
+    if (!window.confirm(
+      `⚠️ FORCE APPROVE ${notApproved.length} REGISTRATION(S)\n\n` +
+      `This will approve registrations regardless of payment status:\n\n` +
+      `• Total to approve: ${notApproved.length}\n` +
+      (withoutPaymentProof.length > 0 
+        ? `• ⚠️ Without payment proof: ${withoutPaymentProof.length}\n`
+        : '') +
+      `\nThis action will mark them as "paid" even without payment verification.\n\n` +
+      `Are you sure you want to continue?`
+    )) {
+      return;
+    }
+
+    setIsBulkProcessing(true);
+    let successCount = 0;
+    let failCount = 0;
+    const verifierUid = userProfile?.uid || 'system';
+
+    for (const reg of notApproved) {
+      try {
+        // Approve the registration
+        await RegistrationService.updateRegistrationStatus(reg.id, 'approved');
+        
+        // Force mark payment as paid in Firestore
+        const registrationRef = doc(db, 'registrations', reg.id);
+        await updateDoc(registrationRef, {
+          paymentStatus: 'paid',
+          'paymentDetails.forceApproved': true,
+          'paymentDetails.forceApprovedBy': verifierUid,
+          'paymentDetails.forceApprovedAt': serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+        
+        successCount++;
+      } catch (error) {
+        console.error(`Failed to force approve registration ${reg.id}:`, error);
+        failCount++;
+      }
+    }
+
+    // Update local state
+    setRegistrations(prev =>
+      prev.map(reg => {
+        const approvedReg = notApproved.find(ar => ar.id === reg.id);
+        if (!approvedReg) return reg;
+
+        return {
+          ...reg,
+          status: 'approved' as const,
+          paymentStatus: 'paid' as const
+        };
+      })
+    );
+
+    setIsBulkProcessing(false);
+    setSelectedRegistrations(new Set());
+    
+    // Send payment approval notification emails
+    if (successCount > 0 && currentEvent) {
+      for (const reg of notApproved) {
+        try {
+          await EmailService.sendPaymentNotification({
+            registrationId: reg.id,
+            status: 'approved',
+            eventTitle: currentEvent.title,
+            attendeeEmail: reg.attendee.email,
+            attendeeName: reg.attendee.name
+          });
+        } catch (emailError) {
+          console.error(`Failed to send payment notification to ${reg.attendee.email}:`, emailError);
+          // Don't fail the whole operation if email fails
+        }
+      }
+    }
+    
+    alert(
+      `Force Approve Complete!\n\n` +
+      `✓ Successfully force approved: ${successCount}\n` +
+      (failCount > 0 ? `✗ Failed: ${failCount}\n` : '') +
+      (successCount > 0 ? `📧 Email notifications sent: ${successCount}\n` : '') +
+      `\n⚠️ These registrations are marked as paid without payment verification.`
+    );
+  };
+
+  // Resend approval emails to already approved registrations
+  const handleResendApprovalEmails = async () => {
+    const selectedRegs = registrations.filter(r => selectedRegistrations.has(r.id));
+    
+    // Filter for registrations with paid payment status
+    const approvedAndPaidRegs = selectedRegs.filter(r => 
+      r.paymentStatus === 'paid' &&
+      r.attendee?.email && // Ensure email exists
+      r.event?.title // Ensure event title exists
+    );
+    
+    if (approvedAndPaidRegs.length === 0) {
+      // Debug: Show what we found
+      const statusBreakdown = selectedRegs.map(r => 
+        `- ${r.attendee?.name || 'Unknown'}: status=${r.status}, paymentStatus=${r.paymentStatus}, hasEmail=${!!r.attendee?.email}, hasEventTitle=${!!r.event?.title}`
+      ).join('\n');
+      
+      alert(
+        `No registrations with paid payment status found in selected items.\n\n` +
+        `Selected registrations breakdown:\n${statusBreakdown}\n\n` +
+        `Please select registrations that have paymentStatus='paid'.`
+      );
+      return;
+    }
+
+    if (!window.confirm(
+      `📧 Resend Approval Email Notifications\n\n` +
+      `This will resend payment approval emails to ${approvedAndPaidRegs.length} attendee(s).\n\n` +
+      `Use this for registrations that were pre-approved before the email service was set up.\n\n` +
+      `Continue?`
+    )) {
+      return;
+    }
+
+    setIsBulkProcessing(true);
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const reg of approvedAndPaidRegs) {
+      try {
+        await EmailService.sendPaymentNotification({
+          registrationId: reg.id,
+          status: 'approved',
+          eventTitle: reg.event.title,
+          attendeeEmail: reg.attendee.email,
+          attendeeName: reg.attendee.name
+        });
+        successCount++;
+      } catch (error) {
+        console.error(`Failed to send email to ${reg.attendee?.email || 'unknown'}:`, error);
+        failCount++;
+      }
+    }
+
+    setIsBulkProcessing(false);
+    setSelectedRegistrations(new Set());
+    
+    alert(
+      `Resend Emails Complete!\n\n` +
+      `✓ Successfully sent: ${successCount}\n` +
       (failCount > 0 ? `✗ Failed: ${failCount}` : '')
     );
   };
@@ -889,17 +1270,37 @@ const AdminAttendeesPage: React.FC = () => {
             onClick={handleBulkApproveRegistrations}
             disabled={isBulkProcessing}
             className="inline-flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Approve registrations and their pending payments"
           >
             <CheckCircleIcon className="w-4 h-4 mr-2" />
-            {isBulkProcessing ? 'Processing...' : `Approve Registrations (${selectedRegistrations.size})`}
+            {isBulkProcessing ? 'Processing...' : `Approve All (${selectedRegistrations.size})`}
           </button>
           <button 
             onClick={handleBulkApprovePayments}
             disabled={isBulkProcessing}
             className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Approve only pending payments"
           >
             <CurrencyDollarIcon className="w-4 h-4 mr-2" />
-            {isBulkProcessing ? 'Processing...' : `Approve Payments (${selectedRegistrations.size})`}
+            {isBulkProcessing ? 'Processing...' : `Approve Payments Only (${selectedRegistrations.size})`}
+          </button>
+          <button 
+            onClick={handleForceApprove}
+            disabled={isBulkProcessing}
+            className="inline-flex items-center px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Force approve registrations without payment verification - USE WITH CAUTION"
+          >
+            <BellIcon className="w-4 h-4 mr-2" />
+            {isBulkProcessing ? 'Processing...' : `Force Approve (${selectedRegistrations.size})`}
+          </button>
+          <button 
+            onClick={handleResendApprovalEmails}
+            disabled={isBulkProcessing}
+            className="inline-flex items-center px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Resend approval emails to already approved registrations"
+          >
+            <EnvelopeIcon className="w-4 h-4 mr-2" />
+            {isBulkProcessing ? 'Processing...' : `Resend Emails (${selectedRegistrations.size})`}
           </button>
         </>
       )}
@@ -922,6 +1323,22 @@ const AdminAttendeesPage: React.FC = () => {
       }
       actions={headerActions}
     >
+      {/* Loading Overlay */}
+      {isBulkProcessing && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-8 shadow-2xl flex flex-col items-center space-y-4">
+            <div className="relative">
+              <div className="w-16 h-16 border-4 border-gray-200 rounded-full"></div>
+              <div className="w-16 h-16 border-4 border-primary-600 border-t-transparent rounded-full animate-spin absolute top-0 left-0"></div>
+            </div>
+            <div className="text-center">
+              <p className="text-lg font-semibold text-gray-900">Processing Bulk Operation</p>
+              <p className="text-sm text-gray-600 mt-1">Please wait while we process your request...</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="space-y-6">
 
 
