@@ -119,6 +119,7 @@ interface Registration {
       discountValue?: number;
     };
   };
+  registrationType?: 'online' | 'walk-in';
 }
 
 const AdminAttendeesPage: React.FC = () => {
@@ -278,7 +279,8 @@ const AdminAttendeesPage: React.FC = () => {
             totalAmount: (reg as any).totalAmount,
             currency: (reg as any).currency,
             ticketTypeId: (reg as any).ticketTypeId || undefined,
-            pricing: (reg as any).pricing
+            pricing: (reg as any).pricing,
+            registrationType: (reg as any).registrationType || 'online'
           };
 
           
@@ -661,7 +663,7 @@ const AdminAttendeesPage: React.FC = () => {
       (priceRangeFilter === 'above-2000' && totalAmount >= 2000);
     
     // Registration type filter
-    const regType = (registration as any).registrationType || 'online';
+    const regType = registration.registrationType || 'online';
     const matchesRegistrationType = 
       registrationTypeFilter === 'all' || 
       regType === registrationTypeFilter;
@@ -1394,7 +1396,7 @@ const AdminAttendeesPage: React.FC = () => {
               <div className="ml-4">
                 <p className="text-sm text-gray-600">Walk-In</p>
                 <p className="text-2xl font-bold text-gray-900">
-                  {filteredRegistrations.filter(r => (r as any).registrationType === 'walk-in').length}
+                  {filteredRegistrations.filter(r => r.registrationType === 'walk-in').length}
                 </p>
               </div>
             </div>
@@ -1648,7 +1650,7 @@ const AdminAttendeesPage: React.FC = () => {
                             </span>
                           )}
                           {/* Registration Type Badge */}
-                          {(registration as any).registrationType === 'walk-in' && (
+                          {registration.registrationType === 'walk-in' && (
                             <span className="px-2 py-1 text-xs font-medium rounded-full bg-purple-100 text-purple-800 flex items-center space-x-1">
                               <span>🚶</span>
                               <span>Walk-In</span>

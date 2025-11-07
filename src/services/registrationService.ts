@@ -868,6 +868,24 @@ export class RegistrationService {
         };
       }
       
+      // Check registration status
+      const registrationStatus = eventData.registrationStatus || 'open';
+      if (registrationStatus === 'closed') {
+        return {
+          isValid: false,
+          pricing: {} as TicketPricing,
+          message: 'Registration is closed for this event'
+        };
+      }
+      
+      if (registrationStatus === 'walk-in-only') {
+        return {
+          isValid: false,
+          pricing: {} as TicketPricing,
+          message: 'This event is accepting walk-ins only. Please register at the venue.'
+        };
+      }
+      
       // Check if event is full
       const currentAttendees = eventData.currentAttendees || 0;
       const maxAttendees = eventData.maxAttendees;

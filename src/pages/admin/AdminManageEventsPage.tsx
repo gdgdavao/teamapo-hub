@@ -14,7 +14,8 @@ import {
   ShareIcon,
   LinkIcon,
   ChatBubbleLeftRightIcon,
-  XMarkIcon
+  XMarkIcon,
+  UserGroupIcon
 } from '@heroicons/react/24/outline';
 import { CheckCircleIcon, XCircleIcon, ClockIcon } from '@heroicons/react/20/solid';
 import { Link, useNavigate } from 'react-router-dom';
@@ -151,6 +152,45 @@ const ManageEventsPage: React.FC = () => {
         return 'bg-red-100 text-red-800';
       default:
         return 'bg-gray-100 text-gray-800';
+    }
+  };
+
+  const getRegistrationStatusIcon = (status: string) => {
+    switch (status) {
+      case 'open':
+        return <CheckCircleIcon className="h-4 w-4 text-green-500" />;
+      case 'closed':
+        return <XCircleIcon className="h-4 w-4 text-red-500" />;
+      case 'walk-in-only':
+        return <UserGroupIcon className="h-4 w-4 text-orange-500" />;
+      default:
+        return <ClockIcon className="h-4 w-4 text-gray-500" />;
+    }
+  };
+
+  const getRegistrationStatusColor = (status: string) => {
+    switch (status) {
+      case 'open':
+        return 'bg-green-100 text-green-800 border-green-200';
+      case 'closed':
+        return 'bg-red-100 text-red-800 border-red-200';
+      case 'walk-in-only':
+        return 'bg-orange-100 text-orange-800 border-orange-200';
+      default:
+        return 'bg-gray-100 text-gray-800 border-gray-200';
+    }
+  };
+
+  const getRegistrationStatusLabel = (status: string) => {
+    switch (status) {
+      case 'open':
+        return 'Open';
+      case 'closed':
+        return 'Closed';
+      case 'walk-in-only':
+        return 'Walk-In Only';
+      default:
+        return 'Unknown';
     }
   };
 
@@ -390,6 +430,29 @@ const ManageEventsPage: React.FC = () => {
     }
   };
 
+  const handleRegistrationStatusChange = async (eventId: string, newRegistrationStatus: 'open' | 'closed' | 'walk-in-only') => {
+    try {
+      console.log('🔄 Updating registration status:', { eventId, newRegistrationStatus });
+      
+      // Call the service to update Firebase
+      await EventService.updateRegistrationStatus(eventId, newRegistrationStatus);
+      console.log('✅ Firebase registration status update successful for event:', eventId);
+      
+      // Update local state
+      setEvents(events.map(e => 
+        e.id === eventId ? { 
+          ...e, 
+          registrationStatus: newRegistrationStatus
+        } : e
+      ));
+      
+      toast.success(`Registration status updated to ${getRegistrationStatusLabel(newRegistrationStatus)}`);
+    } catch (error) {
+      console.error('❌ Error updating registration status:', error);
+      toast.error('Failed to update registration status');
+    }
+  };
+
   const handleStatusChange = async (eventId: string, newStatus: string) => {
     try {
       console.log('🔄 Updating event status:', { eventId, newStatus });
@@ -598,11 +661,15 @@ const ManageEventsPage: React.FC = () => {
                       <CalendarDaysIcon className="h-12 w-12 text-blue-500" />
                     </div>
                   )}
-                  {/* Status Badge */}
-                  <div className="absolute top-3 right-3">
+                  {/* Status Badges */}
+                  <div className="absolute top-3 right-3 flex flex-col gap-2 items-end">
                     <div className={`flex items-center space-x-1 px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(event.status)}`}>
                       {getStatusIcon(event.status)}
                       <span className="capitalize">{event.status}</span>
+                    </div>
+                    <div className={`flex items-center space-x-1 px-2 py-1 rounded-full text-xs font-medium border ${getRegistrationStatusColor(event.registrationStatus || 'open')}`}>
+                      {getRegistrationStatusIcon(event.registrationStatus || 'open')}
+                      <span className="capitalize">{getRegistrationStatusLabel(event.registrationStatus || 'open')}</span>
                     </div>
                   </div>
                   {/* Price Badge */}
@@ -682,19 +749,39 @@ const ManageEventsPage: React.FC = () => {
                     <div className="text-xs text-gray-600">{event.organizer.email}</div>
                   </div>
 
-                  {/* Status Selector */}
-                  <div className="mb-4">
-                    <select
-                      value={event.status}
-                      onChange={(e) => handleStatusChange(event.id, e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                    >
-                      <option value="draft">Draft</option>
-                      <option value="published">Published</option>
-                      <option value="ongoing">Ongoing</option>
-                      <option value="completed">Completed</option>
-                      <option value="cancelled">Cancelled</option>
-                    </select>
+                  {/* Status Selectors */}
+                  <div className="mb-4 space-y-2">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Event Status</label>
+                      <select
+                        value={event.status}
+                        onChange={(e) => handleStatusChange(event.id, e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                      >
+                        <option value="draft">Draft</option>
+                        <option value="published">Published</option>
+                        <option value="ongoing">Ongoing</option>
+                        <option value="completed">Completed</option>
+                        <option value="cancelled">Cancelled</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Registration Status</label>
+                      <select
+                        value={event.registrationStatus || 'open'}
+                        onChange={(e) => handleRegistrationStatusChange(event.id, e.target.value as 'open' | 'closed' | 'walk-in-only')}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                      >
+                        <option value="open">Open</option>
+                        <option value="closed">Closed</option>
+                        <option value="walk-in-only">Walk-In Only</option>
+                      </select>
+                      <div className={`mt-1 px-2 py-1 rounded text-xs font-medium flex items-center space-x-1 ${getRegistrationStatusColor(event.registrationStatus || 'open')}`}>
+                        {getRegistrationStatusIcon(event.registrationStatus || 'open')}
+                        <span>{getRegistrationStatusLabel(event.registrationStatus || 'open')}</span>
+                      </div>
+                    </div>
                   </div>
 
                   {/* Action Buttons */}

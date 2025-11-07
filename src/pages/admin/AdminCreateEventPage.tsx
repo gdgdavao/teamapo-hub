@@ -98,6 +98,7 @@ interface EventFormData {
   tags: string[];
   requirements: string[];
   registrationDeadline?: string;
+  registrationStatus: 'open' | 'closed' | 'walk-in-only';
 }
 
 const CreateEventPage: React.FC = () => {
@@ -166,7 +167,8 @@ const CreateEventPage: React.FC = () => {
     category: 'workshop',
     tags: [],
     requirements: [],
-    paymentConfigs: []
+    paymentConfigs: [],
+    registrationStatus: 'open'
   });
 
   const [activeFormType, setActiveFormType] = useState<'registration' | 'feedback'>('registration');
@@ -323,7 +325,8 @@ const CreateEventPage: React.FC = () => {
           tags: event.tags,
           requirements: event.requirements || [],
           registrationDeadline: registrationDeadline?.toISOString().split('T')[0],
-          paymentConfigs: (event as any).paymentConfigs || []
+          paymentConfigs: (event as any).paymentConfigs || [],
+          registrationStatus: event.registrationStatus || 'open'
         };
         
         // Debug logging for payment configs
@@ -427,8 +430,11 @@ const CreateEventPage: React.FC = () => {
       // Validate dates
       const startDateTime = new Date(`${formData.startDate}T${formData.startTime}`);
       const endDateTime = new Date(`${formData.endDate}T${formData.endTime}`);
+      const now = new Date();
       
-      if (startDateTime < new Date()) {
+      // Only validate past dates for new events
+      // When editing, allow keeping the same date even if it's today or in the past
+      if (!isEditMode && startDateTime < now) {
         toast.error('Event start date must be in the future');
         setLoading(false);
         return;
@@ -789,6 +795,28 @@ const CreateEventPage: React.FC = () => {
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             placeholder="Leave empty for unlimited"
           />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Registration Status
+          </label>
+          <select
+            value={formData.registrationStatus}
+            onChange={(e) => setFormData(prev => ({ ...prev, registrationStatus: e.target.value as 'open' | 'closed' | 'walk-in-only' }))}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          >
+            <option value="open">Open - Accepting online registrations</option>
+            <option value="closed">Closed - No new registrations</option>
+            <option value="walk-in-only">Walk-In Only - On-going event</option>
+          </select>
+          <p className="text-sm text-gray-500 mt-1">
+            {formData.registrationStatus === 'open' && 'Attendees can register online'}
+            {formData.registrationStatus === 'closed' && 'Registration is closed, event details still visible'}
+            {formData.registrationStatus === 'walk-in-only' && 'Event is ongoing, accepting walk-ins only'}
+          </p>
         </div>
       </div>
 

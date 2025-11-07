@@ -75,6 +75,7 @@ export interface EventFormData {
   tags: string[];
   requirements: string[];
   registrationDeadline?: string;
+  registrationStatus?: 'open' | 'closed' | 'walk-in-only';
 }
 
 interface PaymentConfig {
@@ -305,6 +306,7 @@ export class EventService {
         tags: eventData.tags || [],
         category: eventData.category,
         status: 'draft',
+        registrationStatus: eventData.registrationStatus || 'open',
         currentAttendees: 0,
         isPublished: false,
         requirements: eventData.requirements || [],
@@ -1144,8 +1146,10 @@ export class EventService {
 
   /**
    * Validate event data on client side before sending to Firebase
+   * @param eventData - The event data to validate
+   * @param isUpdate - If true, skip past date validation (for editing existing events)
    */
-  static validateEventDataLocal(eventData: EventFormData): { isValid: boolean; errors: string[] } {
+  static validateEventDataLocal(eventData: EventFormData, isUpdate: boolean = false): { isValid: boolean; errors: string[] } {
     const errors: string[] = [];
 
     // Basic validation
@@ -1166,7 +1170,9 @@ export class EventService {
         errors.push('End date/time must be after start date/time');
       }
       
-      if (startDateTime < new Date()) {
+      // Only validate past dates for new events
+      // When updating, allow keeping the same date even if it's today or in the past
+      if (!isUpdate && startDateTime < new Date()) {
         errors.push('Event cannot start in the past');
       }
     }
@@ -1341,6 +1347,27 @@ export class EventService {
     } catch (error) {
       console.error('❌ EventService: Error updating event status:', error);
       throw new Error('Failed to update event status');
+    }
+  }
+
+  /**
+   * Update event registration status
+   */
+  static async updateRegistrationStatus(eventId: string, registrationStatus: 'open' | 'closed' | 'walk-in-only'): Promise<void> {
+    try {
+      console.log('🔥 EventService: Updating registration status in Firebase', { eventId, registrationStatus });
+      
+      const eventRef = doc(db, this.EVENTS_COLLECTION, eventId);
+      const updateData = {
+        registrationStatus: registrationStatus,
+        updatedAt: serverTimestamp()
+      };
+      
+      await updateDoc(eventRef, updateData);
+      console.log('✅ EventService: Registration status updated successfully');
+    } catch (error) {
+      console.error('❌ EventService: Error updating registration status:', error);
+      throw new Error('Failed to update registration status');
     }
   }
 }

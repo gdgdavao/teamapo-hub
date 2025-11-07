@@ -45,6 +45,7 @@ export interface Event {
   tags: string[];
   category: EventCategory;
   status: EventStatus;
+  registrationStatus: RegistrationStatus;
   maxAttendees?: number;
   currentAttendees: number;
   isPublished: boolean;
@@ -399,6 +400,11 @@ export type EventStatus =
   | 'completed' 
   | 'cancelled' 
   | 'postponed';
+
+export type RegistrationStatus = 
+  | 'open'
+  | 'closed'
+  | 'walk-in-only';
 
 export type PaymentStatus = 
   | 'pending' 
