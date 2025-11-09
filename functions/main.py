@@ -1323,6 +1323,97 @@ def submitFeedback(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 'lastUpdated': firestore.SERVER_TIMESTAMP
             })
         
+        # Get event title for email
+        event_ref = get_db().collection('events').document(event_id)
+        event_doc = event_ref.get()
+        event_title = 'Event'
+        if event_doc.exists:
+            event_data = event_doc.to_dict()
+            event_title = event_data.get('title', 'Event')
+        
+        # Check if certificate exists and send notification email
+        certificate_id = registration_data.get('certificateId')
+        if certificate_id:
+            try:
+                cert_ref = get_db().collection('certificates').document(certificate_id)
+                cert_doc = cert_ref.get()
+                
+                if cert_doc.exists:
+                    cert_data = cert_doc.to_dict()
+                    # Check for certificateUrl first (used by custom template system), then downloadUrl (backend placeholder)
+                    certificate_url = cert_data.get('certificateUrl') or cert_data.get('downloadUrl')
+                    
+                    # Only send email if we have a valid, non-placeholder URL
+                    # Placeholder URLs like "https://certificates.apohub.dev/{id}" should be skipped
+                    # unless they're actually accessible
+                    is_placeholder = certificate_url and (
+                        certificate_url.startswith('https://certificates.apohub.dev/') or
+                        certificate_url.startswith('blob:') or
+                        certificate_url.startswith('data:')
+                    )
+                    
+                    # For custom certificates, certificateUrl should be a Firebase Storage URL or similar
+                    # If it's a placeholder, we'll skip sending the email as the certificate may not be ready
+                    if certificate_url and not is_placeholder:
+                        # Get user email and name
+                        user_details = registration_data.get('userDetails', {})
+                        user_email = user_details.get('email')
+                        user_name = user_details.get('name', 'Attendee')
+                        
+                        if user_email:
+                            # Send certificate notification email
+                            try:
+                                email_result = email_service.send_certificate_notification(
+                                    user_email=user_email,
+                                    user_name=user_name,
+                                    event_title=event_title,
+                                    certificate_url=certificate_url,
+                                    registration_id=registration.id
+                                )
+                                
+                                # Log activity
+                                try:
+                                    get_db().collection('activity_logs').add({
+                                        'type': 'certificate_notification_sent',
+                                        'eventId': event_id,
+                                        'userEmail': user_email,
+                                        'userName': user_name,
+                                        'eventTitle': event_title,
+                                        'certificateUrl': certificate_url,
+                                        'registrationId': registration.id,
+                                        'emailId': email_result.get('email_id'),
+                                        'success': email_result.get('success', False),
+                                        'timestamp': firestore.SERVER_TIMESTAMP
+                                    })
+                                except Exception as log_err:
+                                    logger.warning(f"Failed to write activity log for certificate notification: {str(log_err)}")
+                                
+                                # Update registration if email sent successfully
+                                if email_result.get('success'):
+                                    registration.reference.update({
+                                        'certificateEmailSent': True,
+                                        'certificateEmailSentAt': firestore.SERVER_TIMESTAMP,
+                                        'updatedAt': firestore.SERVER_TIMESTAMP
+                                    })
+                                    logger.info(f"Certificate notification sent successfully to {user_email} for event {event_id}")
+                                else:
+                                    logger.warning(f"Failed to send certificate notification to {user_email}: {email_result.get('message')}")
+                                    
+                            except Exception as email_err:
+                                logger.error(f"Error sending certificate notification email: {str(email_err)}")
+                                # Don't fail feedback submission if email fails
+                        else:
+                            logger.warning(f"No email address found for registration {registration.id}, skipping certificate notification")
+                    elif is_placeholder:
+                        logger.info(f"Certificate {certificate_id} has placeholder URL, skipping email notification. Certificate may need to be generated/uploaded first.")
+                    else:
+                        logger.warning(f"Certificate {certificate_id} exists but has no valid certificate URL")
+                else:
+                    logger.info(f"Certificate {certificate_id} not found, skipping certificate notification")
+            except Exception as cert_err:
+                logger.error(f"Error checking certificate for registration {registration.id}: {str(cert_err)}")
+                # Don't fail feedback submission if certificate check fails
+        
         logger.info(f"Feedback submitted for event {event_id} by user {req.auth.uid}")
         return {
             'success': True,
@@ -2212,6 +2303,148 @@ def generate_feedback_url(event_id: str, registration_id: str = None, user_email
     return feedback_url
 
 
+def send_feedback_requests_for_event(event_id: str, event_title: str) -> None:
+    """
+    Send feedback request emails to all checked-in or confirmed attendees for a completed event.
+    """
+    try:
+        db = get_db()
+        
+        # Query registrations for checked-in or confirmed attendees who haven't submitted feedback
+        # Note: Firestore doesn't support 'in' queries directly, so we'll query separately
+        checked_in_query = db.collection('registrations').where(
+            filter=FieldFilter('eventId', '==', event_id)
+        ).where(
+            filter=FieldFilter('attendanceStatus', '==', 'checked_in')
+        ).where(
+            filter=FieldFilter('feedbackSubmitted', '==', False)
+        ).stream()
+        
+        confirmed_query = db.collection('registrations').where(
+            filter=FieldFilter('eventId', '==', event_id)
+        ).where(
+            filter=FieldFilter('attendanceStatus', '==', 'confirmed')
+        ).where(
+            filter=FieldFilter('feedbackSubmitted', '==', False)
+        ).stream()
+        
+        # Combine results (avoid duplicates)
+        registration_ids_seen = set()
+        registrations_to_process = []
+        
+        for reg in checked_in_query:
+            reg_id = reg.id
+            if reg_id not in registration_ids_seen:
+                registration_ids_seen.add(reg_id)
+                registrations_to_process.append(reg)
+        
+        for reg in confirmed_query:
+            reg_id = reg.id
+            if reg_id not in registration_ids_seen:
+                registration_ids_seen.add(reg_id)
+                registrations_to_process.append(reg)
+        
+        logger.info(f"Found {len(registrations_to_process)} registrations to send feedback requests for event {event_id}")
+        
+        # Process each registration
+        for reg in registrations_to_process:
+            reg_data = reg.to_dict()
+            reg_id = reg.id
+            
+            # Skip if already sent
+            if reg_data.get('feedbackRequestSent', False):
+                continue
+            
+            # Get user details
+            user_details = reg_data.get('userDetails', {})
+            user_email = user_details.get('email')
+            user_name = user_details.get('name', 'Attendee')
+            
+            if not user_email:
+                logger.warning(f"Skipping registration {reg_id}: no email address")
+                continue
+            
+            try:
+                # Generate feedback URL
+                feedback_url = generate_feedback_url(
+                    event_id=event_id,
+                    registration_id=reg_id,
+                    user_email=user_email,
+                    user_name=user_name
+                )
+                
+                # Send feedback request email
+                email_result = email_service.send_feedback_request(
+                    user_email=user_email,
+                    user_name=user_name,
+                    event_title=event_title,
+                    feedback_url=feedback_url,
+                    registration_id=reg_id
+                )
+                
+                # Log activity
+                try:
+                    db.collection('activity_logs').add({
+                        'type': 'feedback_request_sent',
+                        'eventId': event_id,
+                        'userEmail': user_email,
+                        'userName': user_name,
+                        'eventTitle': event_title,
+                        'feedbackUrl': feedback_url,
+                        'registrationId': reg_id,
+                        'emailId': email_result.get('email_id'),
+                        'success': email_result.get('success', False),
+                        'timestamp': firestore.SERVER_TIMESTAMP
+                    })
+                except Exception as log_err:
+                    logger.warning(f"Failed to write activity log for feedback request: {str(log_err)}")
+                
+                # Update registration based on result
+                if email_result.get('success'):
+                    update_data = {
+                        'feedbackRequestSent': True,
+                        'feedbackRequestSentAt': firestore.SERVER_TIMESTAMP,
+                        'updatedAt': firestore.SERVER_TIMESTAMP
+                    }
+                    # Remove error field if it exists
+                    if 'feedbackRequestError' in reg_data:
+                        update_data['feedbackRequestError'] = firestore.DELETE_FIELD
+                    reg.reference.update(update_data)
+                    logger.info(f"Feedback request sent successfully to {user_email} for event {event_id}")
+                else:
+                    reg.reference.update({
+                        'feedbackRequestError': email_result.get('message', 'Unknown error'),
+                        'feedbackRequestLastAttemptAt': firestore.SERVER_TIMESTAMP,
+                        'updatedAt': firestore.SERVER_TIMESTAMP
+                    })
+                    logger.warning(f"Failed to send feedback request to {user_email}: {email_result.get('message')}")
+                    
+            except Exception as reg_err:
+                logger.error(f"Error processing registration {reg_id} for feedback request: {str(reg_err)}")
+                # Mark with error but continue processing others
+                try:
+                    reg.reference.update({
+                        'feedbackRequestError': f"Processing error: {str(reg_err)}",
+                        'feedbackRequestLastAttemptAt': firestore.SERVER_TIMESTAMP,
+                        'updatedAt': firestore.SERVER_TIMESTAMP
+                    })
+                except Exception:
+                    pass
+        
+        # Mark event as having sent feedback requests
+        event_ref = db.collection('events').document(event_id)
+        event_ref.update({
+            'feedbackRequestsSentAt': firestore.SERVER_TIMESTAMP,
+            'updatedAt': firestore.SERVER_TIMESTAMP
+        })
+        
+        logger.info(f"Completed sending feedback requests for event {event_id}")
+        
+    except Exception as e:
+        logger.error(f"Error in send_feedback_requests_for_event for event {event_id}: {str(e)}")
+        raise
+
+
 @https_fn.on_call()
 def sendFeedbackRequest(req: https_fn.CallableRequest) -> Dict[str, Any]:
     """
@@ -2649,6 +2882,24 @@ def on_event_updated(event: firestore_fn.Event[firestore_fn.Change[firestore_fn.
                 'timestamp': firestore.SERVER_TIMESTAMP,
                 'eventTitle': after_data.get('title', 'Unknown')
             })
+        
+        # Check if event status changed to 'completed'
+        before_status = before_data.get('status')
+        after_status = after_data.get('status')
+        
+        if before_status != 'completed' and after_status == 'completed':
+            logger.info(f"Event {event_id} status changed to completed")
+            
+            # Skip if feedback requests already sent
+            if after_data.get('feedbackRequestsSentAt'):
+                logger.info(f"Feedback requests already sent for event {event_id}")
+                return
+            
+            # Send feedback requests to checked-in/confirmed attendees
+            try:
+                send_feedback_requests_for_event(event_id, after_data.get('title', 'Event'))
+            except Exception as e:
+                logger.error(f"Error sending feedback requests for event {event_id}: {str(e)}")
         
         # Update analytics if attendee count changed
         before_attendees = before_data.get('currentAttendees', 0)
