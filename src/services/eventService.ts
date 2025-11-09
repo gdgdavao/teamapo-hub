@@ -234,6 +234,22 @@ export class EventService {
   }
 
   /**
+   * Sanitize payment configs to ensure Firestore-serializable values
+   */
+  private static sanitizePaymentConfigs(paymentConfigs: any[] = []): any[] {
+    return paymentConfigs.map((config) => {
+      const sanitized: any = { ...config };
+      // Remove File objects (they can't be stored in Firestore)
+      delete sanitized.qrCodeImage;
+      // Remove base64 data URLs (too large for Firestore)
+      if (sanitized.qrCodeUrl && sanitized.qrCodeUrl.startsWith('data:image/')) {
+        delete sanitized.qrCodeUrl;
+      }
+      return this.removeUndefinedValues(sanitized);
+    });
+  }
+
+  /**
    * Create a new event with proper validation and error handling
    */
   static async createEvent(eventData: EventFormData, organizerUid: string): Promise<string> {
@@ -314,6 +330,20 @@ export class EventService {
         updatedAt: serverTimestamp()
       };
 
+      // Add payment configs if provided (as array in main document)
+      if (eventData.paymentConfigs && eventData.paymentConfigs.length > 0) {
+        // Remove File objects and base64 data URLs before saving
+        const paymentConfigsWithoutFiles = eventData.paymentConfigs.map(config => {
+          const { qrCodeImage, ...configWithoutFile } = config;
+          // Also remove base64 qrCodeUrl if present
+          if (configWithoutFile.qrCodeUrl && configWithoutFile.qrCodeUrl.startsWith('data:image/')) {
+            delete configWithoutFile.qrCodeUrl;
+          }
+          return configWithoutFile;
+        });
+        event.paymentConfigs = this.sanitizePaymentConfigs(paymentConfigsWithoutFiles);
+      }
+
       // Add optional fields only if they have actual values
       if (eventData.imageUrl && eventData.imageUrl.trim()) {
         event.imageUrl = eventData.imageUrl.trim();
@@ -343,16 +373,6 @@ export class EventService {
 
   // Create registration and feedback forms as subcollections (initial)
   await this.createEventForms(eventId, eventData);
-
-      // Create payment configuration if needed
-      if (eventData.paymentConfigs && eventData.paymentConfigs.length > 0) {
-        // Remove File objects from payment configs before saving to Firestore
-        const paymentConfigsWithoutFiles = eventData.paymentConfigs.map(config => {
-          const { qrCodeImage, ...configWithoutFile } = config;
-          return configWithoutFile;
-        });
-        await this.createPaymentConfiguration(eventId, this.removeUndefinedValues(paymentConfigsWithoutFiles[0]));
-      }
 
       // Initialize event via Cloud Function (analytics, defaults). If it overwrites default forms,
       // update forms again immediately after.
@@ -407,6 +427,18 @@ export class EventService {
       if (eventData.speakers) {
         updateData.speakers = this.sanitizeSpeakers(eventData.speakers as any[]);
       }
+      if (eventData.paymentConfigs) {
+        // Remove File objects and base64 data URLs before saving
+        const paymentConfigsWithoutFiles = eventData.paymentConfigs.map(config => {
+          const { qrCodeImage, ...configWithoutFile } = config;
+          // Also remove base64 qrCodeUrl if present
+          if (configWithoutFile.qrCodeUrl && configWithoutFile.qrCodeUrl.startsWith('data:image/')) {
+            delete configWithoutFile.qrCodeUrl;
+          }
+          return configWithoutFile;
+        });
+        updateData.paymentConfigs = this.sanitizePaymentConfigs(paymentConfigsWithoutFiles);
+      }
 
       // Handle date/time updates
       if (eventData.startDate && eventData.startTime) {
@@ -424,16 +456,6 @@ export class EventService {
       // Update forms if provided
       if (eventData.registrationForm || eventData.feedbackForm) {
         await this.updateEventForms(eventId, eventData);
-      }
-
-      // Update payment configuration if provided
-      if (eventData.paymentConfigs && eventData.paymentConfigs.length > 0) {
-        // Remove File objects from payment configs before saving to Firestore
-        const paymentConfigsWithoutFiles = eventData.paymentConfigs.map(config => {
-          const { qrCodeImage, ...configWithoutFile } = config;
-          return configWithoutFile;
-        });
-        await this.updatePaymentConfiguration(eventId, this.removeUndefinedValues(paymentConfigsWithoutFiles[0]));
       }
     } catch (error) {
       console.error('Error updating event:', error);
@@ -930,13 +952,7 @@ export class EventService {
       const snapshot = await uploadBytes(qrRef, qrFile, { contentType: qrFile.type || 'image/jpeg' });
       const downloadURL = await getDownloadURL(snapshot.ref);
 
-      // Update payment configuration with QR URL
-      const paymentRef = doc(db, `${this.EVENTS_COLLECTION}/${eventId}/config/payment`);
-      await updateDoc(paymentRef, {
-        qrCodeUrl: downloadURL,
-        updatedAt: serverTimestamp()
-      });
-
+      // Return the download URL - the caller will update the payment configs array in the event document
       return downloadURL;
     } catch (error) {
       console.error('Error uploading payment QR:', error);

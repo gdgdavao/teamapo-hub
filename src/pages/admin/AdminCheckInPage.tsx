@@ -19,6 +19,8 @@ import { ForceCheckInModal, WalkInRegistrationModal } from '../../components/sha
 import { RegistrationService } from '../../services/registrationService';
 import type { WalkInRegistrationData } from '../../components/shared/UI/WalkInRegistrationModal';
 import toast from 'react-hot-toast';
+import { BrowserQRCodeReader } from '@zxing/browser';
+import { Result } from '@zxing/library';
 
 interface Registration {
   id: string;
@@ -236,6 +238,7 @@ const AdminCheckInPage: React.FC = () => {
   const [registrations, setRegistrations] = useState<Registration[]>([]);
   const [loading, setLoading] = useState(true);
   const [isCameraActive, setIsCameraActive] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
   const [scannedQRCode, setScannedQRCode] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [checkinResult, setCheckinResult] = useState<{
@@ -269,6 +272,8 @@ const AdminCheckInPage: React.FC = () => {
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const codeReaderRef = useRef<BrowserQRCodeReader | null>(null);
+  const scanningRef = useRef<boolean>(false);
 
   // Load registrations and events
   useEffect(() => {
@@ -437,14 +442,26 @@ const AdminCheckInPage: React.FC = () => {
         videoRef.current.srcObject = stream;
         streamRef.current = stream;
         setIsCameraActive(true);
+        
+        // Initialize QR code reader
+        if (!codeReaderRef.current) {
+          codeReaderRef.current = new BrowserQRCodeReader();
+        }
+        
+        // Start continuous scanning
+        startQRScanning();
       }
     } catch (error) {
       log.error('Error accessing camera:', error);
-      alert('Unable to access camera. Please check permissions and try again.');
+      toast.error('Unable to access camera. Please check permissions and try again.');
     }
   };
 
   const stopCamera = () => {
+    // Stop QR scanning
+    scanningRef.current = false;
+    setIsScanning(false);
+    
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
@@ -453,6 +470,56 @@ const AdminCheckInPage: React.FC = () => {
       videoRef.current.srcObject = null;
     }
     setIsCameraActive(false);
+  };
+
+  const startQRScanning = async () => {
+    if (!videoRef.current || !codeReaderRef.current) return;
+    
+    scanningRef.current = true;
+    setIsScanning(true);
+    
+    const scan = async () => {
+      if (!scanningRef.current || !videoRef.current || !codeReaderRef.current) return;
+      
+      try {
+        const result: Result = await codeReaderRef.current.decodeOnceFromVideoDevice(undefined, videoRef.current);
+        
+        if (result && result.getText()) {
+          const qrCode = result.getText();
+          log.info('QR Code detected:', qrCode);
+          
+          // Vibrate if supported (for mobile feedback)
+          if ('vibrate' in navigator) {
+            navigator.vibrate(200);
+          }
+          
+          // Pause scanning while processing
+          setIsScanning(false);
+          
+          // Process the QR code
+          await handleQRCodeScan(qrCode);
+          
+          // Wait a bit before scanning again to avoid duplicate scans
+          setTimeout(() => {
+            if (scanningRef.current) {
+              startQRScanning();
+            }
+          }, 2000);
+        }
+      } catch (error: any) {
+        // NotFoundException is expected when no QR code is in view
+        if (error.name !== 'NotFoundException') {
+          log.warn('QR scanning error:', error);
+        }
+        
+        // Continue scanning
+        if (scanningRef.current) {
+          requestAnimationFrame(scan);
+        }
+      }
+    };
+    
+    scan();
   };
 
   // Cleanup camera on component unmount
@@ -470,26 +537,54 @@ const AdminCheckInPage: React.FC = () => {
       const registration = registrations.find(r => r.id === qrCode || r.attendee.email === qrCode);
       
       if (!registration) {
+        // Show error feedback
         setCheckinResult({
           success: false,
           message: 'Registration not found. Please check the QR code.'
         });
+        toast.error('❌ Registration not found!', {
+          duration: 3000,
+          icon: '🔍',
+        });
+        
+        // Play error sound (short vibration)
+        if ('vibrate' in navigator) {
+          navigator.vibrate([100, 50, 100]);
+        }
         return;
       }
 
       if (registration.status === 'attended') {
+        // Show warning feedback
         setCheckinResult({
           success: false,
           message: `${registration.attendee.name} has already been checked in.`
         });
+        toast.error(`⚠️ ${registration.attendee.name} already checked in!`, {
+          duration: 3000,
+        });
+        
+        // Play warning sound (double vibration)
+        if ('vibrate' in navigator) {
+          navigator.vibrate([100, 100, 100]);
+        }
         return;
       }
 
       if (registration.status !== 'approved' && registration.paymentStatus !== 'paid') {
+        // Show error feedback
         setCheckinResult({
           success: false,
           message: 'Registration must be approved and payment verified before check-in.'
         });
+        toast.error('❌ Registration not approved or payment pending!', {
+          duration: 4000,
+        });
+        
+        // Play error sound
+        if ('vibrate' in navigator) {
+          navigator.vibrate([100, 50, 100]);
+        }
         return;
       }
 
@@ -517,11 +612,22 @@ const AdminCheckInPage: React.FC = () => {
       // Switch to checked-in tab to show the result
       setActiveTab('checkedIn');
 
+      // Show success feedback
       setCheckinResult({
         success: true,
         message: successMessage,
         registration
       });
+      
+      toast.success(`✅ ${registration.attendee.name} checked in!`, {
+        duration: 3000,
+        icon: '🎉',
+      });
+      
+      // Play success sound (long vibration)
+      if ('vibrate' in navigator) {
+        navigator.vibrate(200);
+      }
 
       // Clear QR code input
       setScannedQRCode('');
@@ -531,10 +637,21 @@ const AdminCheckInPage: React.FC = () => {
 
     } catch (error) {
       log.error('Error during check-in:', error);
+      
+      // Show error feedback
       setCheckinResult({
         success: false,
         message: 'Failed to check in attendee. Please try again.'
       });
+      
+      toast.error('❌ Check-in failed! Please try again.', {
+        duration: 4000,
+      });
+      
+      // Play error sound
+      if ('vibrate' in navigator) {
+        navigator.vibrate([100, 50, 100, 50, 100]);
+      }
     }
   };
 
@@ -890,14 +1007,36 @@ const AdminCheckInPage: React.FC = () => {
                     )}
                   </div>
                   {/* Scanning overlay */}
-                  <div className="absolute inset-0 pointer-events-none">
-                    <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-48 h-48 border-2 border-blue-500 rounded-lg">
-                      <div className="absolute -top-1 -left-1 w-4 h-4 border-t-2 border-l-2 border-blue-500 rounded-tl-lg"></div>
-                      <div className="absolute -top-1 -right-1 w-4 h-4 border-t-2 border-r-2 border-blue-500 rounded-tr-lg"></div>
-                      <div className="absolute -bottom-1 -left-1 w-4 h-4 border-b-2 border-l-2 border-blue-500 rounded-bl-lg"></div>
-                      <div className="absolute -bottom-1 -right-1 w-4 h-4 border-b-2 border-r-2 border-blue-500 rounded-br-lg"></div>
+                  {isCameraActive && (
+                    <div className="absolute inset-0 pointer-events-none">
+                      <div className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-48 h-48 border-2 rounded-lg transition-all ${
+                        isScanning ? 'border-blue-500 animate-pulse' : 'border-green-500'
+                      }`}>
+                        <div className={`absolute -top-1 -left-1 w-4 h-4 border-t-2 border-l-2 rounded-tl-lg ${
+                          isScanning ? 'border-blue-500' : 'border-green-500'
+                        }`}></div>
+                        <div className={`absolute -top-1 -right-1 w-4 h-4 border-t-2 border-r-2 rounded-tr-lg ${
+                          isScanning ? 'border-blue-500' : 'border-green-500'
+                        }`}></div>
+                        <div className={`absolute -bottom-1 -left-1 w-4 h-4 border-b-2 border-l-2 rounded-bl-lg ${
+                          isScanning ? 'border-blue-500' : 'border-green-500'
+                        }`}></div>
+                        <div className={`absolute -bottom-1 -right-1 w-4 h-4 border-b-2 border-r-2 rounded-br-lg ${
+                          isScanning ? 'border-blue-500' : 'border-green-500'
+                        }`}></div>
+                      </div>
+                      {/* Scanning status indicator */}
+                      <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2">
+                        <div className={`px-3 py-1 rounded-full text-xs font-medium ${
+                          isScanning 
+                            ? 'bg-blue-500 text-white' 
+                            : 'bg-green-500 text-white'
+                        }`}>
+                          {isScanning ? '🔍 Scanning...' : '✓ Ready'}
+                        </div>
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
                 
                 <div className="mt-4 space-y-2">
