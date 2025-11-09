@@ -24,6 +24,7 @@ import { Result } from '@zxing/library';
 
 interface Registration {
   id: string;
+  qrCode: string;
   attendee: {
     id: string;
     name: string;
@@ -324,6 +325,7 @@ const AdminCheckInPage: React.FC = () => {
         // Map Firestore data to local interface
         regs.push({
           id: doc.id,
+          qrCode: data.qrCode || '', // Include QR code for scanning
           attendee: {
             id: data.userId || doc.id,
             name: data.userDetails?.name || 'Unknown',
@@ -533,8 +535,8 @@ const AdminCheckInPage: React.FC = () => {
     if (!qrCode.trim()) return;
 
     try {
-      // Find registration by QR code (assuming QR code contains registration ID)
-      const registration = registrations.find(r => r.id === qrCode || r.attendee.email === qrCode);
+      // Find registration by QR code field
+      const registration = registrations.find(r => r.qrCode === qrCode.trim());
       
       if (!registration) {
         // Show error feedback

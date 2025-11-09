@@ -174,8 +174,14 @@ export interface Registration {
   attendanceStatus: AttendanceStatus;
   checkInTime?: Timestamp;
   feedbackSubmitted: boolean;
+  feedbackRequestSent?: boolean;
+  feedbackRequestSentAt?: Timestamp;
+  feedbackRequestError?: string;
+  feedbackRequestLastAttemptAt?: Timestamp;
   certificateIssued: boolean;
   certificateId?: string;
+  certificateEmailSent?: boolean;
+  certificateEmailSentAt?: Timestamp;
   qrCode: string;
   registrationDate: Timestamp;
   updatedAt: Timestamp;

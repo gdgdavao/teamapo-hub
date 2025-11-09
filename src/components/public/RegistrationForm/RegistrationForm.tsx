@@ -24,6 +24,20 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Email validation helper
+  const isValidEmail = (value: string): boolean =>  {
+    if (!value || typeof value !== 'string') return false;
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(value.trim());
+  };
+
+  // Normalize and validate email
+  const normalizeEmail = (value: string): string | null => {
+    if (!value || typeof value !== 'string') return null;
+    const normalized = value.trim().toLowerCase();
+    return isValidEmail(normalized) ? normalized : null;
+  };
+
   const handleRegistrationSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -38,17 +52,44 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
       const requiredFields = registrationForm.filter(field => field.required);
       const missingFields = requiredFields.filter(field => 
         !registrationData.customResponses[field.id] || 
-        registrationData.customResponses[field.id].trim() === ''
+        (typeof registrationData.customResponses[field.id] === 'string' && registrationData.customResponses[field.id].trim() === '')
       );
       
       if (missingFields.length > 0) {
         toast.error('Please fill in all required fields');
         return;
       }
+
+      // Validate email in custom form
+      const emailField = registrationForm.find(field => 
+        field.type === 'email' ||
+        field.label.toLowerCase().includes('email') || 
+        field.id.toLowerCase().includes('email')
+      );
+      
+      if (emailField) {
+        const emailValue = registrationData.customResponses[emailField.id];
+        // If email field exists and has a value, validate it
+        if (emailValue && typeof emailValue === 'string' && emailValue.trim()) {
+          const normalizedEmail = normalizeEmail(emailValue);
+          if (!normalizedEmail) {
+            toast.error('Please enter a valid email address');
+            return;
+          }
+        }
+        // If email field is required but empty, the required fields check above will catch it
+      }
     } else {
       // Validate fallback form fields
       if (!registrationData.name || !registrationData.email) {
         toast.error('Please fill in all required fields');
+        return;
+      }
+
+      // Validate email in fallback form
+      const normalizedEmail = normalizeEmail(registrationData.email);
+      if (!normalizedEmail) {
+        toast.error('Please enter a valid email address');
         return;
       }
     }
@@ -65,21 +106,28 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
           field.id.toLowerCase().includes('name')
         );
         const emailField = registrationForm.find(field => 
+          field.type === 'email' ||
           field.label.toLowerCase().includes('email') || 
           field.id.toLowerCase().includes('email')
         );
         
+        // Get and normalize email
+        const emailValue = emailField ? registrationData.customResponses[emailField.id] : '';
+        const normalizedEmail = emailValue ? normalizeEmail(emailValue) : '';
+        
         userDetails = {
           name: nameField ? registrationData.customResponses[nameField.id] : '',
-          email: emailField ? registrationData.customResponses[emailField.id] : '',
+          email: normalizedEmail || '',
           phoneNumber: registrationData.phone,
           organization: registrationData.organization
         };
       } else {
-        // Use fallback form data
+        // Use fallback form data with normalized email
+        const normalizedEmail = normalizeEmail(registrationData.email) || '';
+        
         userDetails = {
           name: registrationData.name,
-          email: registrationData.email,
+          email: normalizedEmail,
           phoneNumber: registrationData.phone,
           organization: registrationData.organization
         };

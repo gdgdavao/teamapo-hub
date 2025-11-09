@@ -260,16 +260,13 @@ const EventRegistrationPage: React.FC = () => {
           <ExclamationTriangleIcon className="w-16 h-16 text-red-500 mx-auto mb-4" />
           <h1 className="text-2xl font-bold text-gray-900 mb-2">Event Not Found</h1>
           <p className="text-gray-600 mb-6">{error || 'The event you are looking for does not exist or is no longer available.'}</p>
-          <button
-            onClick={() => navigate('/')}
-            className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            Go Home
-          </button>
         </div>
       </div>
     );
   }
+
+  // Check if registration is closed
+  const isRegistrationClosed = event.registrationStatus === 'closed';
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -308,13 +305,20 @@ const EventRegistrationPage: React.FC = () => {
                   
                   {/* Action Buttons */}
                   <div className="flex flex-col sm:flex-row gap-3">
-                    <button
-                      onClick={openRegistrationModal}
-                      className="inline-flex items-center px-8 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-all duration-300 font-semibold shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
-                    >
-                      <CheckCircleIcon className="w-5 h-5 mr-2" />
-                      Register Now
-                    </button>
+                    {isRegistrationClosed ? (
+                      <div className="inline-flex items-center px-8 py-3 bg-gray-400 text-white rounded-xl font-semibold shadow-lg cursor-not-allowed">
+                        <ExclamationTriangleIcon className="w-5 h-5 mr-2" />
+                        Registration Closed
+                      </div>
+                    ) : (
+                      <button
+                        onClick={openRegistrationModal}
+                        className="inline-flex items-center px-8 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-all duration-300 font-semibold shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
+                      >
+                        <CheckCircleIcon className="w-5 h-5 mr-2" />
+                        Register Now
+                      </button>
+                    )}
                     <button
                       onClick={copyEventLink}
                       className="inline-flex items-center px-4 py-2 bg-white border border-gray-200 text-gray-600 rounded-xl hover:bg-gray-50 transition-colors"
@@ -374,6 +378,26 @@ const EventRegistrationPage: React.FC = () => {
                 </div>
               </div>
             </div>
+
+            {/* Registration Closed Message */}
+            {isRegistrationClosed && (
+              <div className="bg-gradient-to-r from-orange-50 to-amber-50 border-2 border-orange-200 rounded-xl shadow-lg p-6">
+                <div className="flex items-start space-x-4">
+                  <div className="flex-shrink-0">
+                    <div className="w-12 h-12 bg-orange-100 rounded-full flex items-center justify-center">
+                      <ExclamationTriangleIcon className="w-6 h-6 text-orange-600" />
+                    </div>
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="text-lg font-bold text-gray-900 mb-2">Registration is Closed</h3>
+                    <p className="text-gray-700 leading-relaxed">
+                      We're sorry, but registration for this event has been closed. The event may have reached capacity or the registration deadline has passed. 
+                      You can still view the event details below, but new registrations are no longer being accepted.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Event Description */}
             <div className="bg-white rounded-xl shadow-lg border border-gray-100 p-6">
