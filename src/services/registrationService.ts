@@ -1,19 +1,22 @@
-import { 
-  collection, 
-  doc, 
-  setDoc, 
-  updateDoc, 
-  getDoc, 
-  getDocs, 
-  query, 
-  where, 
-  orderBy, 
-  serverTimestamp,
+import {
+  collection,
   deleteDoc,
-  Timestamp,
+  doc,
+  getDoc,
+  getDocs,
+  increment,
   limit,
-  increment
+  onSnapshot,
+  orderBy,
+  query,
+  runTransaction,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+  where,
+  Timestamp
 } from 'firebase/firestore';
+import type { FirebaseError } from 'firebase/app';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '../config/firebase';
 import { Registration, Event, TicketPricing } from '../types';
@@ -54,6 +57,57 @@ export interface RegistrationStats {
 export class RegistrationService {
   private static readonly REGISTRATIONS_COLLECTION = 'registrations';
   private static readonly EVENTS_COLLECTION = 'events';
+
+  private static async adjustTicketSales(params: {
+    eventId: string;
+    ticketTypeId: string;
+    delta: number;
+  }): Promise<void> {
+    const { eventId, ticketTypeId, delta } = params;
+    if (!delta) {
+      return;
+    }
+
+    const eventRef = doc(db, this.EVENTS_COLLECTION, eventId);
+
+    await runTransaction(db, async transaction => {
+      const eventSnapshot = await transaction.get(eventRef);
+      if (!eventSnapshot.exists()) {
+        throw new Error('Event not found');
+      }
+
+      const eventData = eventSnapshot.data() as Event;
+      const ticketTypes = Array.isArray(eventData.ticketTypes) ? [...eventData.ticketTypes] : [];
+      const ticketIndex = ticketTypes.findIndex(ticket => ticket.id === ticketTypeId);
+
+      if (ticketIndex < 0) {
+        throw new Error('Ticket type not found');
+      }
+
+      const targetTicket = ticketTypes[ticketIndex];
+      const currentSold = Number.isFinite(targetTicket.currentSold) ? targetTicket.currentSold : 0;
+      const maxQuantity = Number.isFinite(targetTicket.maxQuantity) ? targetTicket.maxQuantity : undefined;
+      const updatedSold = currentSold + delta;
+
+      if (updatedSold < 0) {
+        throw new Error('Ticket sales cannot be negative');
+      }
+
+      if (maxQuantity && updatedSold > maxQuantity) {
+        throw new Error('Ticket quantity limit exceeded');
+      }
+
+      ticketTypes[ticketIndex] = {
+        ...targetTicket,
+        currentSold: updatedSold
+      };
+
+      transaction.update(eventRef, {
+        ticketTypes,
+        updatedAt: serverTimestamp()
+      });
+    });
+  }
 
   /**
    * Create a pending registration (before payment)
@@ -140,7 +194,20 @@ export class RegistrationService {
       await setDoc(registrationRef, cleanRegistration);
       console.log('Registration saved successfully with ID:', registrationId);
 
-      // Don't update event attendee count yet - wait for payment confirmation
+      // Update ticket sales immediately to prevent overselling
+      // Even pending registrations should reduce available tickets
+      await this.adjustTicketSales({
+        eventId: registrationData.eventId,
+        ticketTypeId: registrationData.ticketTypeId,
+        delta: registrationData.quantity
+      });
+
+      // Update event attendee count
+      const eventRef = doc(db, this.EVENTS_COLLECTION, registrationData.eventId);
+      await updateDoc(eventRef, {
+        currentAttendees: increment(registrationData.quantity),
+        updatedAt: serverTimestamp()
+      });
 
       return {
         registrationId,
@@ -188,41 +255,38 @@ export class RegistrationService {
   static async completeRegistration(registrationId: string): Promise<void> {
     try {
       const registrationRef = doc(db, this.REGISTRATIONS_COLLECTION, registrationId);
-      
-      // Update registration status to confirmed
+      const registrationSnapshot = await getDoc(registrationRef);
+
+      if (!registrationSnapshot.exists()) {
+        throw new Error('Registration not found');
+      }
+
+      const registrationData = registrationSnapshot.data() as Registration;
+
       await updateDoc(registrationRef, {
         attendanceStatus: 'registered',
         paymentStatus: 'paid',
         updatedAt: serverTimestamp()
       });
 
-      // Get registration data to update event attendee count
-      const registrationDoc = await getDoc(registrationRef);
-      if (registrationDoc.exists()) {
-        const registrationData = registrationDoc.data() as Registration;
-        
-        // Update event attendee count
-        const eventRef = doc(db, this.EVENTS_COLLECTION, registrationData.eventId);
-        await updateDoc(eventRef, {
-          currentAttendees: increment(registrationData.quantity),
-          updatedAt: serverTimestamp()
-        });
+      // Note: We don't update ticket sales or attendee count here anymore
+      // because they are already updated in createPendingRegistration
+      // This prevents double-counting when payment is verified
 
-        // Send approval confirmation email with QR code and registration ID
-        try {
-          const sendConfirmationEmail = httpsCallable(functions, 'sendConfirmationEmail');
-          await sendConfirmationEmail({
-            registrationId,
-            eventId: registrationData.eventId,
-            userEmail: registrationData.userDetails.email,
-            userName: registrationData.userDetails.name,
-            emailType: 'approved', // This will include QR code and registration ID
-            requiresPayment: false // Payment is already completed at this point
-          });
-        } catch (emailError) {
-          console.error('Error sending approval confirmation email:', emailError);
-          // Don't throw - email failure shouldn't break the flow
-        }
+      // Send approval confirmation email with QR code and registration ID
+      try {
+        const sendConfirmationEmail = httpsCallable(functions, 'sendConfirmationEmail');
+        await sendConfirmationEmail({
+          registrationId,
+          eventId: registrationData.eventId,
+          userEmail: registrationData.userDetails.email,
+          userName: registrationData.userDetails.name,
+          emailType: 'approved', // This will include QR code and registration ID
+          requiresPayment: false // Payment is already completed at this point
+        });
+      } catch (emailError) {
+        console.error('Error sending approval confirmation email:', emailError);
+        // Don't throw - email failure shouldn't break the flow
       }
     } catch (error) {
       console.error('Error completing registration:', error);
@@ -296,6 +360,12 @@ export class RegistrationService {
       await updateDoc(eventRef, {
         currentAttendees: increment(registrationData.quantity),
         updatedAt: serverTimestamp()
+      });
+
+      await this.adjustTicketSales({
+        eventId: registrationData.eventId,
+        ticketTypeId: registrationData.ticketTypeId,
+        delta: registrationData.quantity
       });
 
       // Send confirmation email via Firebase Function
@@ -391,6 +461,74 @@ export class RegistrationService {
       console.error('Error fetching event registrations:', error);
       throw new Error('Failed to fetch event registrations');
     }
+  }
+
+  /**
+   * Subscribe to ticket sales counts for an event
+   */
+  static subscribeToEventTicketSales(
+    eventId: string,
+    onUpdate: (sales: Record<string, number>) => void,
+    onError?: (error: Error) => void
+  ): () => void {
+    if (!eventId) {
+      console.warn('RegistrationService.subscribeToEventTicketSales called without an eventId');
+      return () => undefined;
+    }
+
+    const registrationsRef = collection(db, this.REGISTRATIONS_COLLECTION);
+    const registrationsQuery = query(registrationsRef, where('eventId', '==', eventId));
+
+    return onSnapshot(
+      registrationsQuery,
+      snapshot => {
+        const totals: Record<string, number> = {};
+
+        snapshot.forEach(docSnap => {
+          const data = docSnap.data() as Partial<Registration>;
+          const ticketTypeId = typeof data.ticketTypeId === 'string' ? data.ticketTypeId : null;
+          const quantity = typeof data.quantity === 'number' ? data.quantity : 0;
+
+          if (!ticketTypeId || quantity <= 0) {
+            return;
+          }
+
+          const paymentStatus = typeof data.paymentStatus === 'string'
+            ? data.paymentStatus.toLowerCase()
+            : 'pending';
+          const attendanceStatus = typeof data.attendanceStatus === 'string'
+            ? data.attendanceStatus.toLowerCase()
+            : 'registered';
+
+          const paymentExcluded =
+            paymentStatus === 'failed' ||
+            paymentStatus === 'refunded' ||
+            paymentStatus === 'cancelled';
+
+          if (paymentExcluded || attendanceStatus === 'cancelled') {
+            return;
+          }
+
+          totals[ticketTypeId] = (totals[ticketTypeId] || 0) + quantity;
+        });
+
+        onUpdate(totals);
+      },
+      error => {
+        const firebaseError = error as FirebaseError;
+        const isPermissionError = firebaseError?.code === 'permission-denied';
+
+        if (isPermissionError) {
+          console.warn('Permission denied while subscribing to ticket sales. Falling back to event data.');
+        } else {
+          console.error('Error subscribing to event ticket sales:', error);
+        }
+
+        if (onError) {
+          onError(error as Error);
+        }
+      }
+    );
   }
 
   /**
@@ -752,6 +890,14 @@ export class RegistrationService {
         updatedAt: serverTimestamp()
       });
 
+      if (data.ticketTypeId && data.quantity) {
+        await this.adjustTicketSales({
+          eventId: data.eventId,
+          ticketTypeId: data.ticketTypeId,
+          delta: -data.quantity
+        });
+      }
+
       // Process refund if applicable
       if (data.paymentStatus === 'paid' && data.totalAmount > 0) {
         try {
@@ -909,6 +1055,29 @@ export class RegistrationService {
           message: 'Ticket type not found'
         };
       }
+
+      const maxQuantity = Number.isFinite(ticketType.maxQuantity) ? ticketType.maxQuantity as number : undefined;
+      const currentSold = Number.isFinite(ticketType.currentSold) ? ticketType.currentSold as number : 0;
+
+      if (maxQuantity && maxQuantity > 0) {
+        const available = Math.max(0, maxQuantity - currentSold);
+
+        if (available <= 0) {
+          return {
+            isValid: false,
+            pricing: {} as TicketPricing,
+            message: 'Ticket is sold out'
+          };
+        }
+
+        if (registrationData.quantity > available) {
+          return {
+            isValid: false,
+            pricing: {} as TicketPricing,
+            message: `Only ${available} tickets remaining`
+          };
+        }
+      }
       
       // Calculate pricing
       const originalPrice = ticketType.price || 0;
@@ -981,6 +1150,25 @@ export class RegistrationService {
       }
 
       const registrationData = registrationSnap.data();
+      
+      // Return tickets to available pool before deleting
+      // Only adjust if the registration wasn't already cancelled
+      if (registrationData.attendanceStatus !== 'cancelled' && 
+          registrationData.ticketTypeId && 
+          registrationData.quantity) {
+        await this.adjustTicketSales({
+          eventId: registrationData.eventId,
+          ticketTypeId: registrationData.ticketTypeId,
+          delta: -registrationData.quantity // Negative to add back to available
+        });
+
+        // Also decrement attendee count
+        const eventRef = doc(db, this.EVENTS_COLLECTION, registrationData.eventId);
+        await updateDoc(eventRef, {
+          currentAttendees: increment(-registrationData.quantity),
+          updatedAt: serverTimestamp()
+        });
+      }
       
       // Delete all associated payment proofs
       if (registrationData.paymentProofId) {
@@ -1152,20 +1340,11 @@ export class RegistrationService {
         currentAttendees: increment(data.quantity),
         updatedAt: serverTimestamp()
       });
-      
-      // Update ticket type sold count
-      const updatedTicketTypes = event.ticketTypes.map(tt => {
-        if (tt.id === data.ticketTypeId) {
-          return {
-            ...tt,
-            currentSold: tt.currentSold + data.quantity
-          };
-        }
-        return tt;
-      });
-      
-      await updateDoc(eventRef, {
-        ticketTypes: updatedTicketTypes
+
+      await this.adjustTicketSales({
+        eventId: data.eventId,
+        ticketTypeId: data.ticketTypeId,
+        delta: data.quantity
       });
       
       // Send confirmation email (optional for walk-ins)
