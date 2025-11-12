@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { 
   CalendarDaysIcon, 
@@ -28,6 +28,7 @@ const EventRegistrationPage: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [metaImageUrl, setMetaImageUrl] = useState<string>('https://raw.githubusercontent.com/gdgdavao/assets-cdn/main/banner.png');
   const [imageResolved, setImageResolved] = useState(false);
+  const hasLoadedFormRef = useRef(false);
 
   // Set page title
   usePageTitle();
@@ -140,55 +141,76 @@ const EventRegistrationPage: React.FC = () => {
     } : undefined
   });
 
-  // Load event data
+  // Load event data with real-time updates
   useEffect(() => {
-    const loadEvent = async () => {
-      if (!eventId) {
-        setError('Event ID is required');
-        setLoading(false);
-        return;
-      }
+    if (!eventId) {
+      setError('Event ID is required');
+      setLoading(false);
+      return;
+    }
 
-      try {
-        setLoading(true);
-        const eventData = await EventService.getEvent(eventId);
-        
+    setLoading(true);
+
+    const unsubscribe = EventService.subscribeToEvent(
+      eventId,
+      eventData => {
         if (!eventData) {
           setError('Event not found');
+          setEvent(null);
+          setRegistrationForm([]);
+          hasLoadedFormRef.current = false;
+          setLoading(false);
           return;
         }
 
-        // Check if event is published - check both status and isPublished for robustness
-        console.log('🔍 Registration Page: Event status check', {
-          eventId,
-          status: eventData.status,
-          isPublished: eventData.isPublished
-        });
-        
         if (eventData.status !== 'published' || !eventData.isPublished) {
-          console.log('❌ Registration Page: Event not published, blocking access');
           setError('This event is not yet published');
+          setEvent(null);
+          setRegistrationForm([]);
+          hasLoadedFormRef.current = false;
+          setLoading(false);
           return;
         }
-        
-        console.log('✅ Registration Page: Event is published, allowing access');
 
+        setError(null);
         setEvent(eventData);
-        
-        // Load registration form
-        const formFields = await EventService.getEventRegistrationForm(eventId);
-        setRegistrationForm(formFields);
-        
-      } catch (err) {
+        setLoading(false);
+      },
+      err => {
         console.error('Error loading event:', err);
         setError('Failed to load event details');
-      } finally {
         setLoading(false);
+      }
+    );
+
+    return () => {
+      unsubscribe();
+    };
+  }, [eventId]);
+
+  useEffect(() => {
+    hasLoadedFormRef.current = false;
+  }, [eventId]);
+
+  // Load registration form configuration once event is available
+  useEffect(() => {
+    if (!eventId || !event || hasLoadedFormRef.current) {
+      return;
+    }
+
+    const loadRegistrationForm = async () => {
+      try {
+        const formFields = await EventService.getEventRegistrationForm(eventId);
+        setRegistrationForm(formFields);
+        hasLoadedFormRef.current = true;
+      } catch (err) {
+        console.error('Error loading registration form:', err);
+        toast.error('Failed to load registration form');
       }
     };
 
-    loadEvent();
-  }, [eventId]);
+    loadRegistrationForm();
+  }, [eventId, event]);
 
   const copyEventLink = () => {
     const url = `${window.location.origin}/events/${eventId}/register`;

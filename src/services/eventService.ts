@@ -10,7 +10,8 @@ import {
   orderBy, 
   serverTimestamp,
   deleteDoc,
-  Timestamp
+  Timestamp,
+  onSnapshot
 } from 'firebase/firestore';
 import { 
   ref, 
@@ -479,6 +480,40 @@ export class EventService {
       console.error('Error getting event:', error);
       throw new Error('Failed to get event');
     }
+  }
+
+  /**
+   * Subscribe to real-time updates for a single event
+   */
+  static subscribeToEvent(
+    eventId: string,
+    onUpdate: (event: Event | null) => void,
+    onError?: (error: Error) => void
+  ): () => void {
+    if (!eventId) {
+      console.warn('EventService.subscribeToEvent called without an eventId');
+      return () => undefined;
+    }
+
+    const eventRef = doc(db, this.EVENTS_COLLECTION, eventId);
+
+    return onSnapshot(
+      eventRef,
+      snapshot => {
+        if (!snapshot.exists()) {
+          onUpdate(null);
+          return;
+        }
+
+        onUpdate({ id: snapshot.id, ...snapshot.data() } as Event);
+      },
+      error => {
+        console.error('Error subscribing to event:', error);
+        if (onError) {
+          onError(error);
+        }
+      }
+    );
   }
 
   /**

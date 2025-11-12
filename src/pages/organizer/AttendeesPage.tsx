@@ -60,6 +60,7 @@ interface Registration {
     ticketPrice: number;
   };
   status: 'pending' | 'approved' | 'rejected' | 'paid' | 'attended' | 'cancelled';
+  quantity: number;
   registrationDate: string;
   paymentStatus?: 'pending' | 'paid' | 'failed' | 'refunded';
   paymentProof?: {
@@ -95,6 +96,38 @@ const AttendeesPage: React.FC = () => {
   const [showingQRCode, setShowingQRCode] = useState<Registration | null>(null);
   const [verifyingPayment, setVerifyingPayment] = useState<Registration | null>(null);
   const [verificationNotes, setVerificationNotes] = useState('');
+
+  const getSeatCount = (
+    items: Registration[],
+    predicate?: (registration: Registration) => boolean
+  ): number => {
+    if (!items.length) {
+      return 0;
+    }
+
+    return items.reduce((total, registration) => {
+      if (predicate && !predicate(registration)) {
+        return total;
+      }
+
+      const seatCount = registration.quantity && registration.quantity > 0 ? registration.quantity : 1;
+      return total + seatCount;
+    }, 0);
+  };
+
+  const totalAttendeeCount = getSeatCount(registrations);
+  const totalPendingPaymentCount = getSeatCount(
+    registrations,
+    registration => registration.paymentStatus === 'pending'
+  );
+  const totalPaidCount = getSeatCount(
+    registrations,
+    registration => registration.paymentStatus === 'paid'
+  );
+  const totalCheckedInCount = getSeatCount(
+    registrations,
+    registration => registration.status === 'attended'
+  );
 
   // Load registrations and events from Firestore
   useEffect(() => {
@@ -172,6 +205,7 @@ const AttendeesPage: React.FC = () => {
                   ticketPrice: reg.totalAmount || 0
                 },
                 status: getDisplayStatus(reg),
+                quantity: reg.quantity || 1,
                 registrationDate: reg.registrationDate.toDate().toISOString(),
                 paymentStatus: mapPaymentStatus(reg.paymentStatus),
                 paymentProof: reg.paymentProof ? {
@@ -370,6 +404,7 @@ const AttendeesPage: React.FC = () => {
               ticketPrice: reg.totalAmount || 0
             },
             status: getDisplayStatus(reg),
+            quantity: reg.quantity || 1,
             registrationDate: reg.registrationDate.toDate().toISOString(),
             paymentStatus: mapPaymentStatus(reg.paymentStatus),
             qrCode: reg.qrCode,
@@ -405,8 +440,16 @@ const AttendeesPage: React.FC = () => {
     const matchesStatus = statusFilter === 'all' || registration.status === statusFilter;
     const matchesEvent = eventFilter === 'all' || registration.event.id === eventFilter;
     
-    return matchesSearch && matchesStatus && matchesEvent;
+    if (statusFilter === 'attended') {
+      const statusMatch = 
+        registration.status === 'attended' || 
+        registration.checkInTime !== undefined;
+      return matchesSearch && matchesEvent && statusMatch;
+    }
+    
+    return matchesSearch && matchesEvent && matchesStatus;
   });
+  const filteredAttendeeCount = getSeatCount(filteredRegistrations);
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -511,7 +554,7 @@ const AttendeesPage: React.FC = () => {
             >
               All Attendees
               <span className="ml-2 bg-gray-100 text-gray-900 py-0.5 px-2.5 rounded-full text-xs">
-                {registrations.length}
+                {totalAttendeeCount}
               </span>
             </button>
             <button
@@ -527,7 +570,7 @@ const AttendeesPage: React.FC = () => {
             >
               Payment Verification
               <span className="ml-2 bg-yellow-100 text-yellow-800 py-0.5 px-2.5 rounded-full text-xs">
-                {registrations.filter(r => r.paymentStatus === 'pending').length}
+                {totalPendingPaymentCount}
               </span>
             </button>
           </nav>
@@ -575,7 +618,7 @@ const AttendeesPage: React.FC = () => {
                 </div>
                 <div className="ml-4">
                   <p className="text-sm text-gray-600">Total Attendees</p>
-                  <p className="text-2xl font-bold text-gray-900">{registrations.length}</p>
+                  <p className="text-2xl font-bold text-gray-900">{totalAttendeeCount}</p>
                 </div>
               </div>
             </div>
@@ -587,9 +630,7 @@ const AttendeesPage: React.FC = () => {
                 </div>
                 <div className="ml-4">
                   <p className="text-sm text-gray-600">Checked In</p>
-                  <p className="text-2xl font-bold text-gray-900">
-                    {registrations.filter(r => r.status === 'attended').length}
-                  </p>
+                  <p className="text-2xl font-bold text-gray-900">{totalCheckedInCount}</p>
                 </div>
               </div>
             </div>
@@ -601,9 +642,7 @@ const AttendeesPage: React.FC = () => {
                 </div>
                 <div className="ml-4">
                   <p className="text-sm text-gray-600">Paid</p>
-                  <p className="text-2xl font-bold text-gray-900">
-                    {registrations.filter(r => r.paymentStatus === 'paid').length}
-                  </p>
+                  <p className="text-2xl font-bold text-gray-900">{totalPaidCount}</p>
                 </div>
               </div>
             </div>
@@ -664,7 +703,7 @@ const AttendeesPage: React.FC = () => {
               </div>
 
               <div className="text-sm text-gray-600">
-                {filteredRegistrations.length} attendee{filteredRegistrations.length !== 1 ? 's' : ''} found
+                {filteredAttendeeCount} attendee{filteredAttendeeCount !== 1 ? 's' : ''} found
               </div>
             </div>
           </div>
@@ -700,7 +739,7 @@ const AttendeesPage: React.FC = () => {
             </div>
             
             <div className="text-sm text-gray-500">
-              Showing {filteredRegistrations.length} of {registrations.length} attendees
+              Showing {filteredAttendeeCount} of {totalAttendeeCount} attendees
             </div>
           </div>
 

@@ -102,7 +102,7 @@ interface Registration {
   formSubmission?: Record<string, any>;
   priority?: 'low' | 'medium' | 'high';
   promoCode?: string;
-  quantity?: number;
+  quantity: number;
   originalAmount?: number;
   discountAmount?: number;
   totalAmount?: number;
@@ -157,6 +157,24 @@ const AdminAttendeesPage: React.FC = () => {
   const [selectedRegistrations, setSelectedRegistrations] = useState<Set<string>>(new Set());
   const [isSelectAllChecked, setIsSelectAllChecked] = useState(false);
   const [isBulkProcessing, setIsBulkProcessing] = useState(false);
+
+  const getSeatCount = (
+    items: Registration[],
+    predicate?: (registration: Registration) => boolean
+  ): number => {
+    if (!items.length) {
+      return 0;
+    }
+
+    return items.reduce((total, registration) => {
+      if (predicate && !predicate(registration)) {
+        return total;
+      }
+
+      const seatCount = registration.quantity && registration.quantity > 0 ? registration.quantity : 1;
+      return total + seatCount;
+    }, 0);
+  };
 
   // Load registrations from API
   useEffect(() => {
@@ -273,7 +291,7 @@ const AdminAttendeesPage: React.FC = () => {
             formSubmission: (reg as any).customResponses || undefined,
             priority: 'medium', // Default priority
             promoCode: (reg as any).promoCode || undefined,
-            quantity: (reg as any).quantity,
+            quantity: (reg as any).quantity && (reg as any).quantity > 0 ? (reg as any).quantity : 1,
             originalAmount: (reg as any).originalAmount,
             discountAmount: (reg as any).discountAmount,
             totalAmount: (reg as any).totalAmount,
@@ -640,7 +658,6 @@ const AdminAttendeesPage: React.FC = () => {
     const matchesSearch = 
       registration.attendee.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       registration.attendee.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      registration.event.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
       registration.attendee.organization?.toLowerCase().includes(searchTerm.toLowerCase());
     
 
@@ -671,8 +688,15 @@ const AdminAttendeesPage: React.FC = () => {
     return matchesSearch && matchesStatus && matchesEvent && matchesPriority && matchesTicketType && matchesPriceRange && matchesRegistrationType;
   });
 
+  const totalSeatCount = getSeatCount(registrations);
+  const filteredSeatCount = getSeatCount(filteredRegistrations);
+  const filteredPendingSeatCount = getSeatCount(filteredRegistrations, registration => registration.status === 'pending');
+  const filteredApprovedSeatCount = getSeatCount(filteredRegistrations, registration => registration.status === 'approved');
+  const filteredPaidSeatCount = getSeatCount(filteredRegistrations, registration => registration.paymentStatus === 'paid');
+  const filteredWalkInSeatCount = getSeatCount(filteredRegistrations, registration => registration.registrationType === 'walk-in');
+
   // Bulk selection handlers (must be after filteredRegistrations)
-  const handleSelectAll = () => {
+  const selectAllFiltered = () => {
     if (isSelectAllChecked) {
       setSelectedRegistrations(new Set());
       setIsSelectAllChecked(false);
@@ -1353,9 +1377,7 @@ const AdminAttendeesPage: React.FC = () => {
               </div>
               <div className="ml-4">
                 <p className="text-sm text-gray-600">Pending</p>
-                <p className="text-2xl font-bold text-gray-900">
-                  {filteredRegistrations.filter(r => r.status === 'pending').length}
-                </p>
+                <p className="text-2xl font-bold text-gray-900">{filteredPendingSeatCount}</p>
               </div>
             </div>
           </div>
@@ -1367,9 +1389,7 @@ const AdminAttendeesPage: React.FC = () => {
               </div>
               <div className="ml-4">
                 <p className="text-sm text-gray-600">Approved</p>
-                <p className="text-2xl font-bold text-gray-900">
-                  {filteredRegistrations.filter(r => r.status === 'approved').length}
-                </p>
+                <p className="text-2xl font-bold text-gray-900">{filteredApprovedSeatCount}</p>
               </div>
             </div>
           </div>
@@ -1381,9 +1401,7 @@ const AdminAttendeesPage: React.FC = () => {
               </div>
               <div className="ml-4">
                 <p className="text-sm text-gray-600">Paid</p>
-                <p className="text-2xl font-bold text-gray-900">
-                  {filteredRegistrations.filter(r => r.paymentStatus === 'paid').length}
-                </p>
+                <p className="text-2xl font-bold text-gray-900">{filteredPaidSeatCount}</p>
               </div>
             </div>
           </div>
@@ -1395,9 +1413,7 @@ const AdminAttendeesPage: React.FC = () => {
               </div>
               <div className="ml-4">
                 <p className="text-sm text-gray-600">Walk-In</p>
-                <p className="text-2xl font-bold text-gray-900">
-                  {filteredRegistrations.filter(r => r.registrationType === 'walk-in').length}
-                </p>
+                <p className="text-2xl font-bold text-gray-900">{filteredWalkInSeatCount}</p>
               </div>
             </div>
           </div>
@@ -1409,7 +1425,7 @@ const AdminAttendeesPage: React.FC = () => {
               </div>
               <div className="ml-4">
                 <p className="text-sm text-gray-600">Total</p>
-                <p className="text-2xl font-bold text-gray-900">{filteredRegistrations.length}</p>
+                <p className="text-2xl font-bold text-gray-900">{filteredSeatCount}</p>
               </div>
             </div>
           </div>
@@ -1513,8 +1529,13 @@ const AdminAttendeesPage: React.FC = () => {
             </div>
 
             {/* Results Count */}
-            <div className="text-sm text-gray-600 font-medium whitespace-nowrap px-3 py-2 bg-gray-50 rounded-lg border border-gray-200">
-              {filteredRegistrations.length} result{filteredRegistrations.length !== 1 ? 's' : ''}
+            <div className="flex items-center justify-between text-sm text-gray-500">
+              <div>
+                {filteredSeatCount} attendee{filteredSeatCount !== 1 ? 's' : ''}
+              </div>
+              <div>
+                Showing {filteredSeatCount} of {totalSeatCount} attendees
+              </div>
             </div>
           </div>
         </div>
@@ -1560,7 +1581,7 @@ const AdminAttendeesPage: React.FC = () => {
                   <input
                     type="checkbox"
                     checked={isSelectAllChecked}
-                    onChange={handleSelectAll}
+                    onChange={selectAllFiltered}
                     className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
                   />
                   <span className="text-sm font-medium text-gray-700">
@@ -1738,7 +1759,7 @@ const AdminAttendeesPage: React.FC = () => {
                         <input
                           type="checkbox"
                           checked={isSelectAllChecked}
-                          onChange={handleSelectAll}
+                          onChange={selectAllFiltered}
                           className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500 cursor-pointer"
                         />
                       </th>

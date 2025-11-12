@@ -199,17 +199,20 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
     }
   };
 
+  // Filter only active tickets for display
+  const activeTicketTypes = event.ticketTypes?.filter(ticket => ticket.isActive !== false) || [];
+
   return (
     <div className="space-y-6">
       {/* Ticket Selection */}
-      {event.ticketTypes && event.ticketTypes.length > 0 && (
+      {activeTicketTypes.length > 0 && (
         <div className="bg-white rounded-xl shadow-lg border border-gray-100 p-4">
           <h2 className="text-lg font-bold text-gray-900 mb-4 flex items-center">
             <div className="w-1 h-5 bg-red-500 rounded-full mr-2"></div>
             Choose Your Ticket
           </h2>
           <TicketSelector
-            ticketTypes={event.ticketTypes}
+            ticketTypes={activeTicketTypes}
             promoCodes={event.promoCodes || []}
             onSelectionChange={setTicketSelection}
           />
