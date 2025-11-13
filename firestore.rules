@@ -55,16 +55,16 @@ service cloud.firestore {
       allow create: if isAuthenticated() && 
                        (isAdmin() || 
                         (isOrganizer() && resource.data.organizer.uid == request.auth.uid));
-      // Allow anonymous users to update ticket sales and attendee counts during registration
+      // Allow anonymous users to update ticket sales, attendee counts, and promo code usage during registration
       allow update: if (
                         // Authenticated organizers/admins can update anything
                         (isAuthenticated() && 
                          (isAdmin() || 
                           (isOrganizer() && resource.data.organizer.uid == request.auth.uid)))
                        ) || (
-                        // Anonymous users can only update ticketTypes (for currentSold) and currentAttendees
+                        // Anonymous users can only update ticketTypes (for currentSold), currentAttendees, and promoCodes (for usage tracking)
                         !isAuthenticated() &&
-                        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ticketTypes', 'currentAttendees', 'updatedAt'])
+                        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ticketTypes', 'currentAttendees', 'promoCodes', 'updatedAt'])
                        );
       allow delete: if isAuthenticated() && 
                        (isAdmin() || 
