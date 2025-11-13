@@ -126,6 +126,100 @@ export class RegistrationService {
   }
 
   /**
+   * Increment promo code usage counter
+   */
+  private static async incrementPromoCodeUsage(eventId: string, promoCodeId: string): Promise<void> {
+    const eventRef = doc(db, this.EVENTS_COLLECTION, eventId);
+
+    try {
+      await runTransaction(db, async transaction => {
+        const eventSnapshot = await transaction.get(eventRef);
+        if (!eventSnapshot.exists()) {
+          throw new Error('Event not found');
+        }
+
+        const eventData = eventSnapshot.data() as Event;
+        const promoCodes = Array.isArray(eventData.promoCodes) ? [...eventData.promoCodes] : [];
+        const promoIndex = promoCodes.findIndex(pc => pc.id === promoCodeId);
+
+        if (promoIndex < 0) {
+          console.warn(`Promo code ${promoCodeId} not found in event ${eventId}`);
+          return; // Don't fail the transaction if promo code is missing
+        }
+
+        const promoCode = promoCodes[promoIndex];
+        const currentUses = Number.isFinite(promoCode.currentUses) ? promoCode.currentUses : 0;
+        const maxUses = promoCode.maxUses;
+
+        // Double-check usage limit
+        if (maxUses && currentUses >= maxUses) {
+          throw new Error('Promo code usage limit exceeded');
+        }
+
+        // Increment usage counter
+        promoCodes[promoIndex] = {
+          ...promoCode,
+          currentUses: currentUses + 1
+        };
+
+        transaction.update(eventRef, {
+          promoCodes,
+          updatedAt: serverTimestamp()
+        });
+
+        console.log(`Promo code "${promoCode.code}" usage incremented: ${currentUses} -> ${currentUses + 1}`);
+      });
+    } catch (error) {
+      console.error('Error incrementing promo code usage:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Decrement promo code usage counter (used when cancelling a registration)
+   */
+  private static async decrementPromoCodeUsage(eventId: string, promoCodeId: string): Promise<void> {
+    const eventRef = doc(db, this.EVENTS_COLLECTION, eventId);
+
+    try {
+      await runTransaction(db, async transaction => {
+        const eventSnapshot = await transaction.get(eventRef);
+        if (!eventSnapshot.exists()) {
+          throw new Error('Event not found');
+        }
+
+        const eventData = eventSnapshot.data() as Event;
+        const promoCodes = Array.isArray(eventData.promoCodes) ? [...eventData.promoCodes] : [];
+        const promoIndex = promoCodes.findIndex(pc => pc.id === promoCodeId);
+
+        if (promoIndex < 0) {
+          console.warn(`Promo code ${promoCodeId} not found in event ${eventId}`);
+          return; // Don't fail the transaction if promo code is missing
+        }
+
+        const promoCode = promoCodes[promoIndex];
+        const currentUses = Number.isFinite(promoCode.currentUses) ? promoCode.currentUses : 0;
+
+        // Decrement usage counter, but don't go below 0
+        promoCodes[promoIndex] = {
+          ...promoCode,
+          currentUses: Math.max(0, currentUses - 1)
+        };
+
+        transaction.update(eventRef, {
+          promoCodes,
+          updatedAt: serverTimestamp()
+        });
+
+        console.log(`Promo code "${promoCode.code}" usage decremented: ${currentUses} -> ${Math.max(0, currentUses - 1)}`);
+      });
+    } catch (error) {
+      console.error('Error decrementing promo code usage:', error);
+      // Don't throw - this is a cleanup operation
+    }
+  }
+
+  /**
    * Create a pending registration (before payment)
    */
   static async createPendingRegistration(registrationData: RegistrationData): Promise<{
@@ -224,6 +318,11 @@ export class RegistrationService {
         currentAttendees: increment(registrationData.quantity),
         updatedAt: serverTimestamp()
       });
+
+      // Increment promo code usage if a promo code was applied
+      if (validation.pricing.promoCodeId) {
+        await this.incrementPromoCodeUsage(registrationData.eventId, validation.pricing.promoCodeId);
+      }
 
       return {
         registrationId,
@@ -383,6 +482,11 @@ export class RegistrationService {
         ticketTypeId: registrationData.ticketTypeId,
         delta: registrationData.quantity
       });
+
+      // Increment promo code usage if a promo code was applied
+      if (validation.pricing.promoCodeId) {
+        await this.incrementPromoCodeUsage(registrationData.eventId, validation.pricing.promoCodeId);
+      }
 
       // Send confirmation email via Firebase Function
       try {
@@ -914,6 +1018,11 @@ export class RegistrationService {
         });
       }
 
+      // Decrement promo code usage if a promo code was used
+      if (data.promoCodeId) {
+        await this.decrementPromoCodeUsage(data.eventId, data.promoCodeId);
+      }
+
       // Process refund if applicable
       if (data.paymentStatus === 'paid' && data.totalAmount > 0) {
         try {
@@ -1106,7 +1215,7 @@ export class RegistrationService {
         const validPromoCode = promoCodes.find((pc: any) => 
           pc.code === registrationData.promoCode && 
           pc.isActive &&
-          (!pc.usageLimit || pc.usedCount < pc.usageLimit)
+          (!pc.maxUses || pc.currentUses < pc.maxUses)
         );
         
         if (validPromoCode) {
@@ -1184,6 +1293,11 @@ export class RegistrationService {
           currentAttendees: increment(-registrationData.quantity),
           updatedAt: serverTimestamp()
         });
+
+        // Decrement promo code usage if a promo code was used
+        if (registrationData.promoCodeId) {
+          await this.decrementPromoCodeUsage(registrationData.eventId, registrationData.promoCodeId);
+        }
       }
       
       // Delete all associated payment proofs
