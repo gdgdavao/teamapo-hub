@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   TicketIcon, 
   ClockIcon, 
@@ -46,29 +46,29 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
   const [promoCodeError, setPromoCodeError] = useState<string>('');
   const [ticketPricings, setTicketPricings] = useState<Record<string, TicketPricing>>({});
 
+  // Create a stable reference to ticketTypes IDs to prevent infinite loops
+  const ticketTypeIds = useMemo(() => ticketTypes.map(t => t.id).join(','), [ticketTypes]);
+
   // Update pricing when component mounts and every minute for time-limited discounts
   useEffect(() => {
+    const updatePricings = () => {
+      const pricings: Record<string, TicketPricing> = {};
+      ticketTypes.forEach(ticket => {
+        pricings[ticket.id] = getCurrentTicketPricing(ticket);
+      });
+      setTicketPricings(pricings);
+    };
+
     updatePricings();
     const interval = setInterval(updatePricings, 60000); // Update every minute
     return () => clearInterval(interval);
-  }, [ticketTypes]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ticketTypeIds]); // Use stable ticketTypeIds instead of ticketTypes
 
   // Update selection when inputs change
   useEffect(() => {
-    if (selectedTicketType && quantity > 0) {
-      updateSelection();
-    }
-  }, [selectedTicketType, quantity, appliedPromoCode, ticketPricings]);
+    if (!selectedTicketType || quantity <= 0) return;
 
-  const updatePricings = () => {
-    const pricings: Record<string, TicketPricing> = {};
-    ticketTypes.forEach(ticket => {
-      pricings[ticket.id] = getCurrentTicketPricing(ticket);
-    });
-    setTicketPricings(pricings);
-  };
-
-  const updateSelection = () => {
     const ticketType = ticketTypes.find(t => t.id === selectedTicketType);
     if (!ticketType) return;
 
@@ -95,7 +95,8 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
     };
 
     onSelectionChange(selection);
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTicketType, quantity, appliedPromoCode, ticketTypeIds]); // Use stable ticketTypeIds
 
   const handlePromoCodeChange = (code: string) => {
     setPromoCode(code);
