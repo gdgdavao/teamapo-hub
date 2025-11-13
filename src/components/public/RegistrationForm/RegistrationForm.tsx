@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CheckCircleIcon } from '@heroicons/react/24/outline';
 import { EventService } from '../../../services/eventService';
@@ -24,6 +24,11 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Memoize the ticket selection handler to prevent infinite re-renders
+  const handleTicketSelectionChange = useCallback((selection: TicketSelection) => {
+    setTicketSelection(selection);
+  }, []);
+
   // Email validation helper
   const isValidEmail = (value: string): boolean =>  {
     if (!value || typeof value !== 'string') return false;
@@ -40,6 +45,8 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
 
   const handleRegistrationSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    console.log('Form submitted. Event:', event?.id, 'Ticket selection:', ticketSelection);
     
     if (!event || !ticketSelection) {
       toast.error('Please select a ticket type');
@@ -164,6 +171,7 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
         
         sessionStorage.setItem(`temp_registration_${tempRegistrationId}`, JSON.stringify(tempRegistrationData));
         
+        console.log('Navigating to payment page with ID:', tempRegistrationId);
         toast.success('Registration details saved! Please proceed to payment.');
         
         // Navigate to payment page with temporary registration ID
@@ -214,7 +222,7 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
           <TicketSelector
             ticketTypes={activeTicketTypes}
             promoCodes={event.promoCodes || []}
-            onSelectionChange={setTicketSelection}
+            onSelectionChange={handleTicketSelectionChange}
           />
         </div>
       )}

@@ -270,8 +270,29 @@ const PaymentPage: React.FC = () => {
       setSubmitting(true);
       setFormDisabled(true); // Disable the entire form
       
-      // Show progress toast
-      uploadToast = toast.loading('Uploading payment proof...');
+      // STEP 1: Upload payment proof image FIRST (if required)
+      // This ensures we don't create a registration if the upload fails
+      let uploadedImageUrl: string | undefined;
+      if (selectedConfig?.requiresProof && paymentProof.proofImageFile) {
+        uploadToast = toast.loading('Uploading payment proof image...');
+        
+        // Generate a temporary ID for the upload path (will be replaced with actual registrationId)
+        const tempUploadId = registrationId!.startsWith('temp_') 
+          ? `temp_${Date.now()}_${Math.random().toString(36).slice(2)}`
+          : registrationId!;
+        
+        try {
+          uploadedImageUrl = await PaymentService.uploadPaymentProof(tempUploadId, paymentProof.proofImageFile);
+          toast.dismiss(uploadToast);
+          toast.success('Payment proof uploaded successfully!');
+        } catch (uploadError: any) {
+          toast.dismiss(uploadToast);
+          throw new Error(`Failed to upload payment proof: ${uploadError.message}`);
+        }
+      }
+      
+      // STEP 2: Now create the registration (only if upload succeeded or not required)
+      uploadToast = toast.loading('Creating registration...');
       
       // Check if this is a temporary registration that needs to be created in Firestore
       if (registrationId!.startsWith('temp_')) {
@@ -305,7 +326,10 @@ const PaymentPage: React.FC = () => {
         };
         setRegistration(updatedRegistration as any);
         
-        // Submit payment proof with the actual registration ID
+        toast.dismiss(uploadToast);
+        uploadToast = toast.loading('Submitting payment proof...');
+        
+        // STEP 3: Submit payment proof with the actual registration ID
         await PaymentService.submitPaymentProof({
           registrationId: actualRegistration.registrationId,
           attendeeName: tempRegistration.userDetails.name,
@@ -313,7 +337,7 @@ const PaymentPage: React.FC = () => {
           eventTitle: event.title,
           eventId: event.id,
           ticketPrice: tempRegistration.totalAmount,
-          proofImageFile: paymentProof.proofImageFile || undefined,
+          proofImageUrl: uploadedImageUrl, // Use pre-uploaded image URL
           transactionId: paymentProof.transactionId || undefined,
           paymentMethod: selectedConfig.name || paymentProof.paymentMethod,
           notes: paymentProof.notes
@@ -334,6 +358,9 @@ const PaymentPage: React.FC = () => {
         }
       } else {
         // Handle existing Firestore registrations (legacy flow)
+        toast.dismiss(uploadToast);
+        uploadToast = toast.loading('Submitting payment proof...');
+        
         await PaymentService.submitPaymentProof({
           registrationId: registration.id,
           attendeeName: registration.userDetails.name,
@@ -341,7 +368,7 @@ const PaymentPage: React.FC = () => {
           eventTitle: event.title,
           eventId: event.id,
           ticketPrice: registration.totalAmount,
-          proofImageFile: paymentProof.proofImageFile || undefined,
+          proofImageUrl: uploadedImageUrl, // Use pre-uploaded image URL
           transactionId: paymentProof.transactionId || undefined,
           paymentMethod: selectedConfig.name || paymentProof.paymentMethod,
           notes: paymentProof.notes
@@ -384,8 +411,23 @@ const PaymentPage: React.FC = () => {
         toast.dismiss(uploadToast);
       }
       
-      // Show detailed error message
-      const errorMessage = error.message || 'Failed to submit payment proof';
+      // Show detailed error message with user-friendly text
+      let errorMessage = 'Failed to submit payment proof';
+      
+      if (error.message) {
+        if (error.message.includes('permission') || error.message.includes('insufficient')) {
+          errorMessage = 'Unable to complete registration. Please try again or contact support.';
+        } else if (error.message.includes('expired')) {
+          errorMessage = 'Registration session expired. Please start over.';
+        } else if (error.message.includes('not found')) {
+          errorMessage = 'Event or registration not found. Please verify the link.';
+        } else if (error.message.includes('limit exceeded')) {
+          errorMessage = 'Ticket quantity limit exceeded. This event is sold out.';
+        } else {
+          errorMessage = error.message;
+        }
+      }
+      
       toast.error(errorMessage, { duration: 5000 });
       
       setFormDisabled(false); // Re-enable form on error

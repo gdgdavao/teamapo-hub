@@ -68,45 +68,61 @@ export class RegistrationService {
       return;
     }
 
+    console.log(`Adjusting ticket sales: eventId=${eventId}, ticketTypeId=${ticketTypeId}, delta=${delta}`);
     const eventRef = doc(db, this.EVENTS_COLLECTION, eventId);
 
-    await runTransaction(db, async transaction => {
-      const eventSnapshot = await transaction.get(eventRef);
-      if (!eventSnapshot.exists()) {
-        throw new Error('Event not found');
-      }
+    try {
+      await runTransaction(db, async transaction => {
+        const eventSnapshot = await transaction.get(eventRef);
+        if (!eventSnapshot.exists()) {
+          throw new Error('Event not found');
+        }
 
-      const eventData = eventSnapshot.data() as Event;
-      const ticketTypes = Array.isArray(eventData.ticketTypes) ? [...eventData.ticketTypes] : [];
-      const ticketIndex = ticketTypes.findIndex(ticket => ticket.id === ticketTypeId);
+        const eventData = eventSnapshot.data() as Event;
+        const ticketTypes = Array.isArray(eventData.ticketTypes) ? [...eventData.ticketTypes] : [];
+        const ticketIndex = ticketTypes.findIndex(ticket => ticket.id === ticketTypeId);
 
-      if (ticketIndex < 0) {
-        throw new Error('Ticket type not found');
-      }
+        if (ticketIndex < 0) {
+          throw new Error('Ticket type not found');
+        }
 
-      const targetTicket = ticketTypes[ticketIndex];
-      const currentSold = Number.isFinite(targetTicket.currentSold) ? targetTicket.currentSold : 0;
-      const maxQuantity = Number.isFinite(targetTicket.maxQuantity) ? targetTicket.maxQuantity : undefined;
-      const updatedSold = currentSold + delta;
+        const targetTicket = ticketTypes[ticketIndex];
+        const currentSold = Number.isFinite(targetTicket.currentSold) ? targetTicket.currentSold : 0;
+        const maxQuantity = Number.isFinite(targetTicket.maxQuantity) ? targetTicket.maxQuantity : undefined;
+        const updatedSold = currentSold + delta;
 
-      if (updatedSold < 0) {
-        throw new Error('Ticket sales cannot be negative');
-      }
+        console.log(`Ticket "${targetTicket.name}": currentSold=${currentSold}, updatedSold=${updatedSold}, maxQuantity=${maxQuantity}`);
 
-      if (maxQuantity && updatedSold > maxQuantity) {
-        throw new Error('Ticket quantity limit exceeded');
-      }
+        if (updatedSold < 0) {
+          // If trying to decrement and would go negative, set to 0 instead
+          // This handles cases where registrations were created with errors
+          console.warn(`Ticket sales would go negative (${updatedSold}). Setting to 0 instead.`);
+          ticketTypes[ticketIndex] = {
+            ...targetTicket,
+            currentSold: 0
+          };
+        } else {
+          if (maxQuantity && updatedSold > maxQuantity) {
+            throw new Error('Ticket quantity limit exceeded');
+          }
 
-      ticketTypes[ticketIndex] = {
-        ...targetTicket,
-        currentSold: updatedSold
-      };
+          ticketTypes[ticketIndex] = {
+            ...targetTicket,
+            currentSold: updatedSold
+          };
+        }
 
-      transaction.update(eventRef, {
-        ticketTypes,
-        updatedAt: serverTimestamp()
+        transaction.update(eventRef, {
+          ticketTypes,
+          updatedAt: serverTimestamp()
+        });
+        
+        console.log('Ticket sales updated successfully');
       });
-    });
+    } catch (error) {
+      console.error('Error adjusting ticket sales:', error);
+      throw error;
+    }
   }
 
   /**
