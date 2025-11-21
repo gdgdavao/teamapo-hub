@@ -271,6 +271,64 @@ const AdminAnalyticsPage: React.FC<AnalyticsPageProps> = ({ isEventSpecific = fa
 
   // AI features removed
 
+  const ticketCapacityFromTypes = event?.ticketTypes?.reduce((total, ticket) => {
+    if (typeof ticket.maxQuantity !== 'number') {
+      return total;
+    }
+    return total + ticket.maxQuantity;
+  }, 0) ?? 0;
+
+  const normalizedTicketCapacity = ticketCapacityFromTypes > 0 ? ticketCapacityFromTypes : null;
+  const venueCapacity = typeof event?.venue?.capacity === 'number' ? event?.venue?.capacity : null;
+  const totalCapacity = typeof event?.maxAttendees === 'number'
+    ? event.maxAttendees
+    : (normalizedTicketCapacity ?? venueCapacity ?? null);
+
+  const ticketsSold = typeof stats?.registrations === 'number'
+    ? stats.registrations
+    : (typeof event?.currentAttendees === 'number' ? event.currentAttendees : 0);
+
+  const ticketsRemaining = totalCapacity !== null
+    ? Math.max(totalCapacity - ticketsSold, 0)
+    : null;
+
+  const capacityPct = totalCapacity
+    ? Math.min(100, Math.max(0, (ticketsSold / totalCapacity) * 100))
+    : null;
+
+  const promoStats = stats?.promoCodeStats;
+  const activePromoCodes = promoStats?.allCodes?.filter(code => code.isActive && !code.isExpired) ?? [];
+  const topPromoCodes = promoStats?.allCodes?.slice(0, 3) ?? [];
+
+  const ticketBreakdown = event?.ticketTypes?.map(ticket => {
+    const capacity = typeof ticket.maxQuantity === 'number' ? ticket.maxQuantity : null;
+    const sold = typeof ticket.currentSold === 'number' ? ticket.currentSold : 0;
+    const percent = capacity ? Math.min(100, Math.round((sold / capacity) * 100)) : null;
+    return {
+      id: ticket.id,
+      name: ticket.name,
+      sold,
+      capacity,
+      percent
+    };
+  }) ?? [];
+
+  const capacityStatus = (() => {
+    if (capacityPct === null) {
+      return null;
+    }
+
+    if (capacityPct >= 90) {
+      return { label: 'Critical', badge: 'bg-red-100 text-red-700' };
+    }
+
+    if (capacityPct >= 60) {
+      return { label: 'Filling Fast', badge: 'bg-yellow-100 text-yellow-700' };
+    }
+
+    return { label: 'Plenty of Seats', badge: 'bg-green-100 text-green-700' };
+  })();
+
   if (loading) {
     return (
       <AdminLayout>
@@ -496,6 +554,193 @@ const AdminAnalyticsPage: React.FC<AnalyticsPageProps> = ({ isEventSpecific = fa
           </div>
         </div>
 
+        {(capacityPct !== null || promoStats) && (
+          <div className="mb-10 space-y-6" role="region" aria-label="Event health overview">
+            <h2 className="text-xl font-semibold text-gray-900">Event Health Overview</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+              <div className="bg-white rounded-lg border border-gray-100 p-5 shadow-sm">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Capacity Progress</p>
+                    <p className="text-2xl font-bold text-gray-900">{ticketsSold.toLocaleString()}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm text-gray-500">Total Capacity</p>
+                    <p className="text-lg font-semibold text-gray-900">
+                      {totalCapacity !== null ? totalCapacity.toLocaleString() : 'Not Set'}
+                    </p>
+                  </div>
+                </div>
+                <div className="mb-1 flex items-center justify-between text-xs text-gray-500">
+                  <span>Tickets Sold</span>
+                  <span>{capacityPct !== null ? `${capacityPct.toFixed(0)}%` : '—'}</span>
+                </div>
+                <div className="h-2 w-full rounded-full bg-gray-200" aria-hidden="true">
+                  <div
+                    className="h-full rounded-full bg-blue-600 transition-all duration-300"
+                    style={{ width: `${capacityPct ?? 0}%` }}
+                  />
+                </div>
+                {capacityStatus && (
+                  <span className={`inline-flex mt-3 px-3 py-1 text-xs font-semibold rounded-full ${capacityStatus.badge}`}>
+                    {capacityStatus.label}
+                  </span>
+                )}
+              </div>
+
+              <div className="bg-white rounded-lg border border-gray-100 p-5 shadow-sm">
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Tickets Remaining</p>
+                <div className="flex items-end justify-between">
+                  <div>
+                    <p className={`text-3xl font-bold ${ticketsRemaining === 0 ? 'text-red-600' : 'text-gray-900'}`}>
+                      {ticketsRemaining !== null ? ticketsRemaining.toLocaleString() : '—'}
+                    </p>
+                    <p className="text-sm text-gray-500">Available seats</p>
+                  </div>
+                  <span
+                    className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                      ticketsRemaining === 0
+                        ? 'bg-red-50 text-red-700'
+                        : 'bg-emerald-50 text-emerald-700'
+                    }`}
+                  >
+                    {ticketsRemaining === 0 ? 'Sold Out' : 'Open'}
+                  </span>
+                </div>
+                <p className="mt-4 text-xs text-gray-500">
+                  {totalCapacity !== null
+                    ? `${Math.max(0, Math.round((ticketsRemaining ?? 0) / totalCapacity * 100))}% of total seats remain`
+                    : 'Set a capacity to track remaining tickets'}
+                </p>
+              </div>
+
+              <div className="bg-white rounded-lg border border-gray-100 p-5 shadow-sm">
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Promo Code Usage</p>
+                <p className="text-3xl font-bold text-gray-900">{promoStats?.totalUsed ?? 0}</p>
+                <p className="text-sm text-gray-500 mb-3">Total redemptions</p>
+                <div className="space-y-1 text-sm text-gray-600">
+                  <div className="flex items-center justify-between">
+                    <span>Active codes</span>
+                    <span className="font-semibold text-gray-900">{activePromoCodes.length}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Discounts granted</span>
+                    <span className="font-semibold text-gray-900">
+                      {formatCurrency(promoStats?.totalDiscount ?? 0)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-lg border border-gray-100 p-5 shadow-sm">
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Revenue Composition</p>
+                <p className="text-3xl font-bold text-gray-900">
+                  {formatCurrency((promoStats?.revenueWithPromo ?? 0) + (promoStats?.revenueWithoutPromo ?? 0))}
+                </p>
+                <p className="text-sm text-gray-500 mb-3">Total revenue</p>
+                <div className="space-y-2">
+                  <div>
+                    <div className="flex justify-between text-xs text-gray-500">
+                      <span>With promo</span>
+                      <span>{promoStats ? `${Math.round((promoStats.revenueWithPromo / Math.max(promoStats.revenueWithPromo + promoStats.revenueWithoutPromo, 1)) * 100)}%` : '—'}</span>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-gray-200">
+                      <div
+                        className="h-full rounded-full bg-purple-500"
+                        style={{
+                          width: promoStats
+                            ? `${Math.min(100, Math.round((promoStats.revenueWithPromo / Math.max(promoStats.revenueWithPromo + promoStats.revenueWithoutPromo, 1)) * 100))}%`
+                            : '0%'
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="flex justify-between text-xs text-gray-500">
+                      <span>Without promo</span>
+                      <span>{promoStats ? `${Math.round((promoStats.revenueWithoutPromo / Math.max(promoStats.revenueWithPromo + promoStats.revenueWithoutPromo, 1)) * 100)}%` : '—'}</span>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-gray-200">
+                      <div
+                        className="h-full rounded-full bg-amber-500"
+                        style={{
+                          width: promoStats
+                            ? `${Math.min(100, Math.round((promoStats.revenueWithoutPromo / Math.max(promoStats.revenueWithPromo + promoStats.revenueWithoutPromo, 1)) * 100))}%`
+                            : '0%'
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {capacityPct !== null && (
+          <div className="bg-white rounded-lg shadow mb-8 p-6" role="region" aria-label="Ticket inventory breakdown">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-6">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Ticket Inventory Breakdown</h3>
+                <p className="text-sm text-gray-500">
+                  Track ticket allocations per type to anticipate sell-outs.
+                </p>
+              </div>
+              {capacityStatus && (
+                <span className={`inline-flex px-4 py-2 rounded-full text-sm font-semibold ${capacityStatus.badge}`}>
+                  Overall Status: {capacityStatus.label}
+                </span>
+              )}
+            </div>
+
+            <div className="mb-6">
+              <div className="flex items-center justify-between text-sm text-gray-600 mb-2">
+                <span>Total Capacity Utilization</span>
+                <span>{capacityPct.toFixed(0)}%</span>
+              </div>
+              <div className="h-3 rounded-full bg-gray-100" aria-hidden="true">
+                <div
+                  className="h-full rounded-full bg-blue-600"
+                  style={{ width: `${capacityPct}%` }}
+                />
+              </div>
+              <div className="mt-2 text-xs text-gray-500">
+                {ticketsSold.toLocaleString()} sold • {ticketsRemaining?.toLocaleString()} remaining
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {ticketBreakdown.length > 0 ? (
+                ticketBreakdown.map(ticket => (
+                  <div key={ticket.id} className="border border-gray-100 rounded-lg p-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <div>
+                        <p className="font-semibold text-gray-900">{ticket.name}</p>
+                        <p className="text-xs text-gray-500">
+                          {ticket.capacity !== null
+                            ? `${ticket.sold}/${ticket.capacity} sold`
+                            : `${ticket.sold} sold`}
+                        </p>
+                      </div>
+                      {ticket.percent !== null && (
+                        <span className="text-xs font-semibold text-gray-500">{ticket.percent}%</span>
+                      )}
+                    </div>
+                    <div className="h-2 rounded-full bg-gray-200" aria-hidden="true">
+                      <div
+                        className="h-full rounded-full bg-indigo-500"
+                        style={{ width: `${ticket.percent ?? 0}%` }}
+                      />
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <p className="text-sm text-gray-500">Ticket type data not available.</p>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Additional Stats */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           <div className="bg-white rounded-lg shadow p-6">
@@ -530,13 +775,34 @@ const AdminAnalyticsPage: React.FC<AnalyticsPageProps> = ({ isEventSpecific = fa
         </div>
 
         {/* Promo Code Usage */}
-        {stats?.promoCodeStats && (
+        {promoStats && (
           <div className="bg-white rounded-lg shadow mb-8">
             <div className="px-6 py-4 border-b border-gray-200">
               <h3 className="text-lg font-semibold text-gray-900">Promo Code Usage</h3>
             </div>
             <div className="p-6">
-              {stats.promoCodeStats.totalUsed > 0 ? (
+              {topPromoCodes.length > 0 && (
+                <div className="mb-6">
+                  <h4 className="text-md font-medium text-gray-900 mb-3">Top Performing Codes</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    {topPromoCodes.map((promo) => (
+                      <div key={promo.code} className="border border-gray-100 rounded-lg p-4 bg-gray-50">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-sm font-semibold text-gray-900">{promo.code}</span>
+                          <span className="text-xs text-gray-500">{promo.usageCount} uses</span>
+                        </div>
+                        <p className="text-xs text-gray-500 truncate">
+                          {promo.name}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-2">
+                          {formatCurrency(promo.revenue)}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {promoStats.totalUsed > 0 ? (
                 <>
                   {/* Promo Code Summary Cards */}
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
