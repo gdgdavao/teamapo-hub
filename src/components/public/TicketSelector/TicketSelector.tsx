@@ -363,31 +363,41 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
         <div className="bg-gray-50 rounded-lg p-4">
           <h4 className="font-medium text-gray-900 mb-3">Pricing Summary</h4>
           <div className="space-y-2 text-sm">
-            <div className="flex justify-between">
-              <span>
-                {ticketTypes.find(t => t.id === selectedTicketType)?.name} × {quantity}
-              </span>
-              <span>₱{((ticketPricings[selectedTicketType]?.originalPrice || 0) * quantity).toLocaleString()}</span>
-            </div>
-            
-            
-            {promoCodeValid && appliedPromoCode && (
-              <div className="flex justify-between text-green-600">
-                <span>Promo Code ({appliedPromoCode.code})</span>
-                <span>-₱{(() => {
-                  const ticketType = ticketTypes.find(t => t.id === selectedTicketType);
-                  if (!ticketType) return 0;
-                  const calc = calculateTicketPricing({ ticketType, quantity, promoCode: appliedPromoCode });
-                  return calc.discountAmount.toLocaleString();
-                })()}</span>
-              </div>
-            )}
-            
-            <hr className="border-gray-300" />
-            <div className="flex justify-between font-semibold text-lg">
-              <span>Total</span>
-              <span>₱{((ticketPricings[selectedTicketType]?.currentPrice || 0) * quantity).toLocaleString()}</span>
-            </div>
+            {(() => {
+              const ticketType = ticketTypes.find(t => t.id === selectedTicketType);
+              const summaryCalc = ticketType
+                ? calculateTicketPricing({ ticketType, quantity, promoCode: appliedPromoCode })
+                : null;
+              const originalTotal = summaryCalc
+                ? summaryCalc.originalPrice * quantity
+                : (ticketPricings[selectedTicketType]?.originalPrice || 0) * quantity;
+              const discountAmount = summaryCalc?.discountAmount || 0;
+              const totalAmount = summaryCalc?.totalAmount ?? (ticketPricings[selectedTicketType]?.currentPrice || 0) * quantity;
+
+              return (
+                <>
+                  <div className="flex justify-between">
+                    <span>
+                      {ticketType?.name} × {quantity}
+                    </span>
+                    <span>₱{originalTotal.toLocaleString()}</span>
+                  </div>
+                  
+                  {promoCodeValid && appliedPromoCode && discountAmount > 0 && (
+                    <div className="flex justify-between text-green-600">
+                      <span>Promo Code ({appliedPromoCode.code})</span>
+                      <span>-₱{discountAmount.toLocaleString()}</span>
+                    </div>
+                  )}
+                  
+                  <hr className="border-gray-300" />
+                  <div className="flex justify-between font-semibold text-lg">
+                    <span>Total</span>
+                    <span>₱{totalAmount.toLocaleString()}</span>
+                  </div>
+                </>
+              );
+            })()}
           </div>
         </div>
       )}

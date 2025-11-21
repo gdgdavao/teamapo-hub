@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { 
   MagnifyingGlassIcon, 
@@ -15,7 +15,9 @@ import {
   DocumentTextIcon,
   FunnelIcon,
   UserGroupIcon,
-  CameraIcon
+  CameraIcon,
+  TicketIcon,
+  TagIcon
 } from '@heroicons/react/24/outline';
 import { CheckCircleIcon, XCircleIcon, ClockIcon, CurrencyDollarIcon } from '@heroicons/react/20/solid';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
@@ -158,23 +160,73 @@ const AdminAttendeesPage: React.FC = () => {
   const [isSelectAllChecked, setIsSelectAllChecked] = useState(false);
   const [isBulkProcessing, setIsBulkProcessing] = useState(false);
 
-  const getSeatCount = (
-    items: Registration[],
-    predicate?: (registration: Registration) => boolean
-  ): number => {
-    if (!items.length) {
-      return 0;
+  const getTicketTypeName = useCallback((registration: Registration): string => {
+    const matchingEvent = events.find(event => event.id === registration.event.id);
+    const ticketType = matchingEvent?.ticketTypes?.find(tt => tt.id === registration.ticketTypeId);
+    if (ticketType?.name) {
+      return ticketType.name;
+    }
+    if (typeof registration.pricing?.ticketTypeName === 'string' && registration.pricing.ticketTypeName.trim().length > 0) {
+      return registration.pricing.ticketTypeName;
+    }
+    return registration.ticketTypeId || DEFAULT_TICKET_TYPE_LABEL;
+  }, [events]);
+
+const getSeatCount = (
+  items: Registration[],
+  predicate?: (registration: Registration) => boolean
+): number => {
+  if (!items.length) {
+    return 0;
+  }
+
+  return items.reduce((total, registration) => {
+    if (predicate && !predicate(registration)) {
+      return total;
     }
 
-    return items.reduce((total, registration) => {
-      if (predicate && !predicate(registration)) {
-        return total;
-      }
+    const seatCount = registration.quantity && registration.quantity > 0 ? registration.quantity : 1;
+    return total + seatCount;
+  }, 0);
+};
 
-      const seatCount = registration.quantity && registration.quantity > 0 ? registration.quantity : 1;
-      return total + seatCount;
-    }, 0);
-  };
+const getRegistrationQuantity = (registration: Registration): number => {
+  if (typeof registration.quantity === 'number' && registration.quantity > 0) {
+    return registration.quantity;
+  }
+  return 1;
+};
+
+const getRegistrationTotalAmount = (registration: Registration): number => {
+  if (typeof registration.totalAmount === 'number') {
+    return registration.totalAmount;
+  }
+  if (typeof registration.pricing?.currentPrice === 'number') {
+    return registration.pricing.currentPrice * getRegistrationQuantity(registration);
+  }
+  return (registration.event.ticketPrice || 0) * getRegistrationQuantity(registration);
+};
+
+const getRegistrationPromoCode = (registration: Registration): string | undefined => {
+  if (registration.promoCode) {
+    return registration.promoCode;
+  }
+  const pricingPromo = registration.pricing?.promoCode;
+  if (!pricingPromo) {
+    return undefined;
+  }
+  if (typeof pricingPromo === 'string') {
+    return pricingPromo;
+  }
+  return pricingPromo?.code;
+};
+
+const formatCurrency = (amount?: number): string => {
+  const value = typeof amount === 'number' && !isNaN(amount) ? amount : 0;
+  return `₱${value.toLocaleString()}`;
+};
+
+const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
 
   // Load registrations from API
   useEffect(() => {
@@ -1617,7 +1669,13 @@ const AdminAttendeesPage: React.FC = () => {
             </div>
           ) : (
             <div className="divide-y divide-gray-200">
-              {filteredRegistrations.map((registration) => (
+              {filteredRegistrations.map((registration) => {
+                const ticketQuantity = getRegistrationQuantity(registration);
+                const totalAmount = getRegistrationTotalAmount(registration);
+                const promoCodeValue = getRegistrationPromoCode(registration);
+                const ticketTypeName = getTicketTypeName(registration);
+
+                return (
                 <div key={registration.id} className="p-6 hover:bg-gray-50 transition-colors">
                   <div className="flex items-start space-x-4">
 
@@ -1680,7 +1738,7 @@ const AdminAttendeesPage: React.FC = () => {
                         </div>
                       </div>
                       
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-600">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-gray-600">
                         <div className="space-y-1">
                           <div className="flex items-center space-x-2">
                             <EnvelopeIcon className="h-4 w-4" />
@@ -1716,6 +1774,27 @@ const AdminAttendeesPage: React.FC = () => {
                             </div>
                           )}
                         </div>
+                        <div className="space-y-1">
+                          {ticketTypeName && (
+                            <div className="flex items-center space-x-2">
+                              <TagIcon className="h-4 w-4" />
+                              <span>{ticketTypeName}</span>
+                            </div>
+                          )}
+                          <div className="flex items-center space-x-2">
+                            <TicketIcon className="h-4 w-4" />
+                            <span>{ticketQuantity} ticket{ticketQuantity !== 1 ? 's' : ''}</span>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <CurrencyDollarIcon className="h-4 w-4" />
+                            <span>{formatCurrency(totalAmount)}</span>
+                          </div>
+                          {promoCodeValue && (
+                            <span className="inline-flex items-center px-2 py-1 text-xs font-medium rounded-full bg-indigo-100 text-indigo-800">
+                              Promo: {promoCodeValue}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1730,7 +1809,8 @@ const AdminAttendeesPage: React.FC = () => {
                     </button>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -1778,6 +1858,18 @@ const AdminAttendeesPage: React.FC = () => {
                       <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Event
                       </th>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Ticket Type
+                      </th>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Tickets
+                      </th>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Total
+                      </th>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Promo Code
+                      </th>
                       <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Actions
                       </th>
@@ -1786,6 +1878,10 @@ const AdminAttendeesPage: React.FC = () => {
                   <tbody className="bg-white divide-y divide-gray-200">
                     {filteredRegistrations.map((registration) => {
                       const isEditing = editingAttendee === registration.id;
+                      const ticketQuantity = getRegistrationQuantity(registration);
+                      const totalAmount = getRegistrationTotalAmount(registration);
+                      const promoCodeValue = getRegistrationPromoCode(registration);
+                      const ticketTypeName = getTicketTypeName(registration);
                       
                       return (
                         <tr key={registration.id} className={isEditing ? 'bg-blue-50' : 'hover:bg-gray-50'}>
@@ -1861,6 +1957,24 @@ const AdminAttendeesPage: React.FC = () => {
                           <td className="px-6 py-4 whitespace-nowrap">
                             <div className="text-sm text-gray-900">{registration.event.title}</div>
                             <div className="text-xs text-gray-500">{formatDate(registration.event.date)}</div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {ticketTypeName}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {ticketQuantity}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {formatCurrency(totalAmount)}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {promoCodeValue ? (
+                              <span className="inline-flex px-2 py-1 rounded-full bg-indigo-50 text-indigo-700 text-xs font-medium">
+                                {promoCodeValue}
+                              </span>
+                            ) : (
+                              '-'
+                            )}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                             {isEditing ? (

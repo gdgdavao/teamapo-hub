@@ -21,6 +21,7 @@ import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '../config/firebase';
 import { Registration, Event, TicketPricing } from '../types';
 import { NotificationService } from './notificationService';
+import { EmailService } from './emailService';
 
 export interface RegistrationData {
   eventId: string;
@@ -839,6 +840,11 @@ export class RegistrationService {
         registrationStatus: status,
         updatedAt: serverTimestamp()
       };
+      let freeApprovalDetails: {
+        eventId: string;
+        attendeeEmail?: string;
+        attendeeName?: string;
+      } | null = null;
 
       if (notes) {
         updateData.adminNotes = notes;
@@ -852,11 +858,38 @@ export class RegistrationService {
           // If it's a free event, mark as paid
           if (data.totalAmount === 0) {
             updateData.paymentStatus = 'paid';
+            freeApprovalDetails = {
+              eventId: data.eventId,
+              attendeeEmail: data.userDetails?.email,
+              attendeeName: data.userDetails?.name
+            };
           }
         }
       }
 
       await updateDoc(registrationRef, updateData);
+
+      if (
+        freeApprovalDetails &&
+        freeApprovalDetails.attendeeEmail &&
+        freeApprovalDetails.attendeeName &&
+        status === 'approved'
+      ) {
+        try {
+          const eventRef = doc(db, this.EVENTS_COLLECTION, freeApprovalDetails.eventId);
+          const eventSnap = await getDoc(eventRef);
+          const eventTitle = eventSnap.exists() ? (eventSnap.data() as Event).title : 'Event';
+          await EmailService.sendPaymentNotification({
+            registrationId,
+            status: 'approved',
+            eventTitle,
+            attendeeEmail: freeApprovalDetails.attendeeEmail,
+            attendeeName: freeApprovalDetails.attendeeName
+          });
+        } catch (notificationError) {
+          console.warn('Failed to send payment notification for free registration:', notificationError);
+        }
+      }
     } catch (error) {
       console.error('Error updating registration status:', error);
       throw new Error('Failed to update registration status');
