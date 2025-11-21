@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import toast from 'react-hot-toast';
 import {
   PlusIcon,
   PencilIcon,
@@ -147,6 +148,11 @@ const PromoCodeManager: React.FC<PromoCodeManagerProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (editingPromoCode && formData.maxUses && formData.maxUses < editingPromoCode.currentUses) {
+      toast.error(`Max uses cannot be less than the ${editingPromoCode.currentUses} claimed uses.`);
+      return;
+    }
     
     const promoCodeData = {
       ...formData,
@@ -178,6 +184,21 @@ const PromoCodeManager: React.FC<PromoCodeManagerProps> = ({
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
     // You might want to show a toast notification here
+  };
+
+  const handleMaxUsesChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const { value, valueAsNumber } = event.target;
+    if (!value.length) {
+      setFormData(prev => ({ ...prev, maxUses: undefined }));
+      return;
+    }
+
+    if (!Number.isFinite(valueAsNumber)) {
+      return;
+    }
+
+    const normalizedLimit = Math.max(1, Math.floor(valueAsNumber));
+    setFormData(prev => ({ ...prev, maxUses: normalizedLimit }));
   };
 
   const getUsagePercentage = (promoCode: PromoCode): number => {
@@ -479,8 +500,8 @@ const PromoCodeManager: React.FC<PromoCodeManagerProps> = ({
                       </label>
                       <input
                         type="number"
-                        value={formData.maxUses || ''}
-                        onChange={(e) => setFormData(prev => ({ ...prev, maxUses: e.target.value ? parseInt(e.target.value) : undefined }))}
+                        value={formData.maxUses ?? ''}
+                        onChange={handleMaxUsesChange}
                         className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                         min="1"
                         placeholder="Unlimited"
