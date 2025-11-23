@@ -114,6 +114,7 @@ interface Registration {
     originalPrice?: number;
     currentPrice?: number;
     discountAmount?: number;
+    ticketTypeName?: string;
     promoCode?: {
       code?: string;
       name?: string;
@@ -276,22 +277,44 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
           const event = eventsCache.get(reg.eventId);
           if (!event) continue; // Skip if event not found (shouldn't happen for organizers)
           
+          const seatQuantity = (() => {
+            const rawQuantity = (reg as any).quantity;
+            if (typeof rawQuantity === 'number' && rawQuantity > 0) {
+              return rawQuantity;
+            }
+            const fallbackQuantity = (reg as any).ticketQuantity;
+            if (typeof fallbackQuantity === 'number' && fallbackQuantity > 0) {
+              return fallbackQuantity;
+            }
+            return 1;
+          })();
+
           // Map status from Firestore to expected format
           const getDisplayStatus = (fsReg: FirestoreRegistration): Registration['status'] => {
-            // First check registrationStatus if it exists
+            // Attendance takes priority so checked-in attendees always show as attended
+            if (fsReg.attendanceStatus === 'checked-in') {
+              return 'attended';
+            }
+            if (fsReg.attendanceStatus === 'cancelled') {
+              return 'cancelled';
+            }
+
+            // Registration status is next priority
             if ((fsReg as any).registrationStatus) {
               const regStatus = (fsReg as any).registrationStatus;
               if (regStatus === 'approved') return 'approved';
               if (regStatus === 'rejected') return 'rejected';
               if (regStatus === 'pending') return 'pending';
             }
-            
-            // Fall back to other status fields
-            if (fsReg.attendanceStatus === 'checked-in') return 'attended';
-            if (fsReg.attendanceStatus === 'cancelled') return 'cancelled';
-            if (fsReg.paymentStatus === 'paid') return 'paid';
-            if (fsReg.paymentStatus === 'pending') return 'pending';
-            
+
+            // Fall back to payment status
+            if (fsReg.paymentStatus === 'paid') {
+              return 'paid';
+            }
+            if (fsReg.paymentStatus === 'pending') {
+              return 'pending';
+            }
+
             return 'pending'; // Default status
           };
 
@@ -322,7 +345,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
               title: event.title,
               date: toISOStringSafe((event as any)?.startDate ?? (event as any)?.startDateTime ?? (event as any)?.date),
               venue: event.venue?.name || event.venue?.address || 'TBA',
-              ticketPrice: (reg as any).pricing?.currentPrice || (reg.totalAmount && reg.quantity ? (reg.totalAmount / reg.quantity) : 0)
+              ticketPrice: (reg as any).pricing?.currentPrice || (reg.totalAmount && seatQuantity ? (reg.totalAmount / seatQuantity) : 0)
             },
             status: getDisplayStatus(reg),
             registrationDate: reg.registrationDate.toDate().toISOString(),
@@ -343,7 +366,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
             formSubmission: (reg as any).customResponses || undefined,
             priority: 'medium', // Default priority
             promoCode: (reg as any).promoCode || undefined,
-            quantity: (reg as any).quantity && (reg as any).quantity > 0 ? (reg as any).quantity : 1,
+            quantity: seatQuantity,
             originalAmount: (reg as any).originalAmount,
             discountAmount: (reg as any).discountAmount,
             totalAmount: (reg as any).totalAmount,
@@ -740,12 +763,52 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
     return matchesSearch && matchesStatus && matchesEvent && matchesPriority && matchesTicketType && matchesPriceRange && matchesRegistrationType;
   });
 
-  const totalSeatCount = getSeatCount(registrations);
-  const filteredSeatCount = getSeatCount(filteredRegistrations);
-  const filteredPendingSeatCount = getSeatCount(filteredRegistrations, registration => registration.status === 'pending');
-  const filteredApprovedSeatCount = getSeatCount(filteredRegistrations, registration => registration.status === 'approved');
-  const filteredPaidSeatCount = getSeatCount(filteredRegistrations, registration => registration.paymentStatus === 'paid');
-  const filteredWalkInSeatCount = getSeatCount(filteredRegistrations, registration => registration.registrationType === 'walk-in');
+  const registrationStats = React.useMemo(() => {
+    const createBucket = () => ({ registrations: 0, seats: 0 });
+    const filteredSummary = {
+      totals: { registrations: filteredRegistrations.length, seats: 0 },
+      pending: createBucket(),
+      approved: createBucket(),
+      attended: createBucket(),
+      paid: createBucket(),
+      walkIn: createBucket()
+    };
+    const incrementBucket = (bucket: { registrations: number; seats: number }, seats: number) => {
+      bucket.registrations += 1;
+      bucket.seats += seats;
+    };
+
+    filteredRegistrations.forEach(registration => {
+      const seats = getRegistrationQuantity(registration);
+      filteredSummary.totals.seats += seats;
+
+      if (registration.status === 'pending') {
+        incrementBucket(filteredSummary.pending, seats);
+      }
+      if (registration.status === 'approved') {
+        incrementBucket(filteredSummary.approved, seats);
+      }
+      if (registration.status === 'attended') {
+        incrementBucket(filteredSummary.attended, seats);
+      }
+      if (registration.paymentStatus === 'paid') {
+        incrementBucket(filteredSummary.paid, seats);
+      }
+      if ((registration.registrationType || 'online') === 'walk-in') {
+        incrementBucket(filteredSummary.walkIn, seats);
+      }
+    });
+
+    return {
+      filtered: filteredSummary,
+      overall: {
+        registrations: registrations.length,
+        seats: getSeatCount(registrations)
+      }
+    };
+  }, [filteredRegistrations, registrations]);
+
+  const { filtered: filteredStats, overall: overallStats } = registrationStats;
 
   // Bulk selection handlers (must be after filteredRegistrations)
   const selectAllFiltered = () => {
@@ -1421,7 +1484,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
 
 
         {/* Quick Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 md:gap-6">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 md:gap-6">
           <div className="bg-white rounded-xl border border-gray-200 p-6">
             <div className="flex items-center">
               <div className="p-3 bg-orange-100 rounded-lg">
@@ -1429,7 +1492,8 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
               </div>
               <div className="ml-4">
                 <p className="text-sm text-gray-600">Pending</p>
-                <p className="text-2xl font-bold text-gray-900">{filteredPendingSeatCount}</p>
+                <p className="text-2xl font-bold text-gray-900">{filteredStats.pending.registrations}</p>
+                <p className="text-xs text-gray-500">Seats: {filteredStats.pending.seats}</p>
               </div>
             </div>
           </div>
@@ -1441,7 +1505,8 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
               </div>
               <div className="ml-4">
                 <p className="text-sm text-gray-600">Approved</p>
-                <p className="text-2xl font-bold text-gray-900">{filteredApprovedSeatCount}</p>
+                <p className="text-2xl font-bold text-gray-900">{filteredStats.approved.registrations}</p>
+                <p className="text-xs text-gray-500">Seats: {filteredStats.approved.seats}</p>
               </div>
             </div>
           </div>
@@ -1453,7 +1518,21 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
               </div>
               <div className="ml-4">
                 <p className="text-sm text-gray-600">Paid</p>
-                <p className="text-2xl font-bold text-gray-900">{filteredPaidSeatCount}</p>
+                <p className="text-2xl font-bold text-gray-900">{filteredStats.paid.registrations}</p>
+                <p className="text-xs text-gray-500">Seats: {filteredStats.paid.seats}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl border border-gray-200 p-6">
+            <div className="flex items-center">
+              <div className="p-3 bg-teal-100 rounded-lg">
+                <EyeIcon className="w-6 h-6 text-teal-600" />
+              </div>
+              <div className="ml-4">
+                <p className="text-sm text-gray-600">Attended</p>
+                <p className="text-2xl font-bold text-gray-900">{filteredStats.attended.registrations}</p>
+                <p className="text-xs text-gray-500">Seats: {filteredStats.attended.seats}</p>
               </div>
             </div>
           </div>
@@ -1465,7 +1544,8 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
               </div>
               <div className="ml-4">
                 <p className="text-sm text-gray-600">Walk-In</p>
-                <p className="text-2xl font-bold text-gray-900">{filteredWalkInSeatCount}</p>
+                <p className="text-2xl font-bold text-gray-900">{filteredStats.walkIn.registrations}</p>
+                <p className="text-xs text-gray-500">Seats: {filteredStats.walkIn.seats}</p>
               </div>
             </div>
           </div>
@@ -1477,7 +1557,8 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
               </div>
               <div className="ml-4">
                 <p className="text-sm text-gray-600">Total</p>
-                <p className="text-2xl font-bold text-gray-900">{filteredSeatCount}</p>
+                <p className="text-2xl font-bold text-gray-900">{filteredStats.totals.registrations}</p>
+                <p className="text-xs text-gray-500">Seats: {filteredStats.totals.seats}</p>
               </div>
             </div>
           </div>
@@ -1583,10 +1664,16 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
             {/* Results Count */}
             <div className="flex items-center justify-between text-sm text-gray-500">
               <div>
-                {filteredSeatCount} attendee{filteredSeatCount !== 1 ? 's' : ''}
+                {filteredStats.totals.registrations} attendee{filteredStats.totals.registrations !== 1 ? 's' : ''}
+                <span className="ml-2 text-xs text-gray-400">
+                  (Seats: {filteredStats.totals.seats})
+                </span>
               </div>
-              <div>
-                Showing {filteredSeatCount} of {totalSeatCount} attendees
+              <div className="text-right">
+                Showing {filteredStats.totals.registrations} of {overallStats.registrations} attendees
+                <div className="text-xs text-gray-400">
+                  Seats: {filteredStats.totals.seats} / {overallStats.seats}
+                </div>
               </div>
             </div>
           </div>
