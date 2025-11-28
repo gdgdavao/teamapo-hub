@@ -120,8 +120,16 @@ service cloud.firestore {
     // Feedback collection
     match /feedback/{feedbackId} {
       allow read: if isAuthenticated();
-      allow create: if isValidEmail(resource.data.userDetails.email) &&
-                       resource.data.eventId is string;
+      allow create: if (
+                        // Allow if userEmail is valid
+                        (request.resource.data.userEmail is string && 
+                         isValidEmail(request.resource.data.userEmail)) ||
+                        // Also support legacy userDetails.email structure
+                        (request.resource.data.userDetails is map &&
+                         request.resource.data.userDetails.email is string &&
+                         isValidEmail(request.resource.data.userDetails.email))
+                      ) &&
+                      request.resource.data.eventId is string;
       allow update: if false; // Feedback is immutable
       allow delete: if isAuthenticated();
     }
