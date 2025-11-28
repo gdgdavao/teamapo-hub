@@ -2310,7 +2310,7 @@ def generate_feedback_url(event_id: str, registration_id: str = None, user_email
     Generate a secure feedback URL with a token that hides personal information.
     Creates a feedbackToken document in Firestore to store the mapping.
     """
-    base_url = "https://gdgdavao.org"  # Production URL
+    base_url = "https://apohub.gdgdavao.org"  # Production URL (app domain)
     
     # Generate a secure token
     token = generate_feedback_token()
