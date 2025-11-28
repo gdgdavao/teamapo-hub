@@ -663,7 +663,7 @@ export class CertificateService {
       const certificateRef = doc(collection(db, this.CERTIFICATES_COLLECTION));
       const certificateId = certificateRef.id;
       
-      const verificationUrl = `${window.location.origin}/verify/${data.verificationCode}`;
+      const verificationUrl = `https://apohub.gdgdavao.org/verify/${data.verificationCode}`;
       
       await setDoc(certificateRef, {
         credentialId: data.verificationCode,

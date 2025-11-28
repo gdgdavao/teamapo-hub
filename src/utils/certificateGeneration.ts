@@ -278,7 +278,7 @@ export class CertificateGenerationService {
         verificationCode = this.generateVerificationCode();
       }
     }
-    const verificationUrl = `${window.location.origin}/verify/${verificationCode}`;
+    const verificationUrl = `https://apohub.gdgdavao.org/verify/${verificationCode}`;
 
     try {
       // Create a canvas to generate the certificate
