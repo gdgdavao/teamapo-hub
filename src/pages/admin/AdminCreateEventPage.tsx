@@ -404,7 +404,7 @@ const CreateEventPage: React.FC = () => {
       // Server-side validation via callable function with fallback to client-side checks
       try {
         const validateEventData = httpsCallable(functions, 'validate_event_data');
-        const validation: any = await validateEventData({ eventData: formData });
+        const validation: any = await validateEventData({ eventData: formData, isEditMode });
         if (!validation?.data?.isValid) {
           const errs = validation?.data?.errors || ['Validation failed'];
           toast.error(errs.join(', '));
