@@ -1,5 +1,6 @@
 import { ref, getDownloadURL } from 'firebase/storage';
 import { storage } from '../config/firebase';
+import { logger } from './logger';
 
 /**
  * Convert a Firebase Storage path to a download URL
@@ -18,7 +19,7 @@ export const getDownloadUrlFromPath = async (storagePath: string): Promise<strin
     const downloadUrl = await getDownloadURL(storageRef);
     return downloadUrl;
   } catch (error) {
-    console.error('Failed to get download URL for storage path:', storagePath, error);
+    logger.error('Failed to get download URL for storage path:', storagePath, error);
     return null;
   }
 };

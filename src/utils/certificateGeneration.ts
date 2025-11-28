@@ -1,4 +1,5 @@
 import { CertificateTemplate, Certificate } from '../types';
+import { logger } from './logger';
 
 export interface CertificateGenerationRequest {
   templateId: string;
@@ -92,7 +93,7 @@ export class CertificateGenerationService {
         if (attempt < maxRetries - 1) {
           // Exponential backoff: 1s, 2s, 4s
           const delay = Math.pow(2, attempt) * 1000;
-          console.warn(`Image load attempt ${attempt + 1} failed, retrying in ${delay}ms...`);
+          logger.warn(`Image load attempt ${attempt + 1} failed, retrying in ${delay}ms...`);
           await new Promise(resolve => setTimeout(resolve, delay));
         }
       }
@@ -114,7 +115,7 @@ export class CertificateGenerationService {
     scaleFactor: number = 1
   ): Promise<void> {
     if (!template.elements || template.elements.length === 0) {
-      console.warn('No elements found in enhanced template');
+      logger.warn('No elements found in enhanced template');
       return;
     }
 
@@ -157,7 +158,7 @@ export class CertificateGenerationService {
           
           ctx.drawImage(qrImg, qrX, qrY, qrSize, qrSize);
         } catch (error) {
-          console.warn('Failed to load QR code, skipping:', error);
+          logger.warn('Failed to load QR code, skipping:', error);
           // Draw a placeholder rectangle if QR fails
           const size = Math.round((element.position.width || 100) * scaleFactor);
           ctx.fillStyle = '#f0f0f0';
@@ -186,7 +187,7 @@ export class CertificateGenerationService {
     scaleFactor: number = 1
   ): Promise<void> {
     if (!template.textPositions) {
-      console.warn('No textPositions found in legacy template');
+      logger.warn('No textPositions found in legacy template');
       return;
     }
 
@@ -255,7 +256,7 @@ export class CertificateGenerationService {
 
         ctx.drawImage(qrImg, qrX, qrY, qrSize, qrSize);
       } catch (error) {
-        console.warn('Failed to load QR code in legacy template:', error);
+        logger.warn('Failed to load QR code in legacy template:', error);
       }
     }
   }
@@ -342,7 +343,7 @@ export class CertificateGenerationService {
       const certificateUrl = URL.createObjectURL(blob);
       return { certificateUrl, verificationCode, blob };
     } catch (error) {
-      console.error('Error generating certificate:', error);
+      logger.error('Error generating certificate:', error);
       throw error;
     }
   }
@@ -376,7 +377,7 @@ export class CertificateGenerationService {
           verificationCode: result.verificationCode
         });
       } catch (error) {
-        console.error(`Failed to generate certificate for ${recipient.name}:`, error);
+        logger.error(`Failed to generate certificate for ${recipient.name}:`, error);
         results.push({
           recipient: recipient.name,
           certificateUrl: '',

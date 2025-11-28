@@ -15,6 +15,7 @@ import {
   ShieldCheckIcon
 } from '@heroicons/react/24/outline';
 import { CertificateService } from '../../services/certificateService';
+import { logger } from '../../utils/logger';
 
 interface CertificateVerificationData {
   isValid: boolean;
@@ -117,7 +118,7 @@ const CertificateVerificationPage: React.FC = () => {
         const videoDevices = devices.filter(device => device.kind === 'videoinput');
         setHasCamera(videoDevices.length > 0);
       } catch (error) {
-        console.error('Error checking camera availability:', error);
+        logger.error('Error checking camera availability:', error);
         setHasCamera(false);
       }
     };
@@ -158,7 +159,7 @@ const CertificateVerificationPage: React.FC = () => {
         verificationCount: result.verificationCount
       });
     } catch (error) {
-      console.error('Error verifying certificate:', error);
+      logger.error('Error verifying certificate:', error);
       setErrorMessage('An error occurred while verifying the certificate. Please try again.');
       setVerificationData({
         isValid: false
@@ -187,7 +188,7 @@ const CertificateVerificationPage: React.FC = () => {
         (result, error) => {
           if (result) {
             const qrText = result.getText();
-            console.log('QR Code detected:', qrText);
+            logger.log('QR Code detected:', qrText);
             
             // Vibrate if supported (for mobile feedback)
             if ('vibrate' in navigator) {
@@ -209,12 +210,12 @@ const CertificateVerificationPage: React.FC = () => {
           }
           
           if (error && error.name !== 'NotFoundException') {
-            console.warn('QR scanning error:', error);
+            logger.warn('QR scanning error:', error);
           }
         }
       );
     } catch (error) {
-      console.error('Error accessing camera:', error);
+      logger.error('Error accessing camera:', error);
       setScanError('Unable to access camera. Please check permissions and try again.');
       setIsCameraActive(false);
       setIsScanning(false);

@@ -12,6 +12,7 @@ import {
   DocumentTextIcon
 } from '@heroicons/react/24/outline';
 import { NotificationService } from '../../services/notificationService';
+import { logger } from '../../utils/logger';
 import { Notification } from '../../types';
 
 interface NotificationDropdownProps {
@@ -57,7 +58,7 @@ const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ userId }) =
     try {
       await NotificationService.markAsRead(notificationId);
     } catch (error) {
-      console.error('Error marking notification as read:', error);
+      logger.error('Error marking notification as read:', error);
     }
   };
 
@@ -65,7 +66,7 @@ const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ userId }) =
     try {
       await NotificationService.markAllAsRead(userId);
     } catch (error) {
-      console.error('Error marking all notifications as read:', error);
+      logger.error('Error marking all notifications as read:', error);
     }
   };
 
@@ -73,7 +74,7 @@ const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ userId }) =
     try {
       await NotificationService.deleteNotification(notificationId);
     } catch (error) {
-      console.error('Error deleting notification:', error);
+      logger.error('Error deleting notification:', error);
     }
   };
 

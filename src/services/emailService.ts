@@ -11,6 +11,7 @@ import {
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '../config/firebase';
+import { logger } from '../utils/logger';
 
 export interface EmailLog {
   id: string;
@@ -127,7 +128,7 @@ export class EmailService {
           ...doc.data()
         } as EmailLog));
     } catch (error) {
-      console.error('Error fetching event emails:', error);
+      logger.error('Error fetching event emails:', error);
       throw new Error('Failed to fetch event emails');
     }
   }
@@ -162,7 +163,7 @@ export class EmailService {
           ...doc.data()
         } as EmailLog));
     } catch (error) {
-      console.error('Error fetching all emails:', error);
+      logger.error('Error fetching all emails:', error);
       throw new Error('Failed to fetch all emails');
     }
   }
@@ -193,7 +194,7 @@ export class EmailService {
         ...doc.data()
       } as EmailLog));
     } catch (error) {
-      console.error('Error fetching attendee emails:', error);
+      logger.error('Error fetching attendee emails:', error);
       throw new Error('Failed to fetch attendee emails');
     }
   }
@@ -219,7 +220,7 @@ export class EmailService {
         emailId: result.data.emailId
       };
     } catch (error: any) {
-      console.error('Error sending confirmation email:', error);
+      logger.error('Error sending confirmation email:', error);
       return {
         success: false,
         message: error.message || 'Failed to send confirmation email'
@@ -248,7 +249,7 @@ export class EmailService {
         emailId: result.data.emailId
       };
     } catch (error: any) {
-      console.error('Error sending payment notification:', error);
+      logger.error('Error sending payment notification:', error);
       return {
         success: false,
         message: error.message || 'Failed to send payment notification'
@@ -278,7 +279,7 @@ export class EmailService {
         emailId: result.data.emailId
       };
     } catch (error: any) {
-      console.error('Error sending event reminder:', error);
+      logger.error('Error sending event reminder:', error);
       return {
         success: false,
         message: error.message || 'Failed to send event reminder'
@@ -307,7 +308,7 @@ export class EmailService {
         emailId: result.data.emailId
       };
     } catch (error: any) {
-      console.error('Error sending feedback request:', error);
+      logger.error('Error sending feedback request:', error);
       return {
         success: false,
         message: error.message || 'Failed to send feedback request'
@@ -335,7 +336,7 @@ export class EmailService {
         emailId: result.data.emailId
       };
     } catch (error: any) {
-      console.error('Error sending certificate notification:', error);
+      logger.error('Error sending certificate notification:', error);
       return {
         success: false,
         message: error.message || 'Failed to send certificate notification'
@@ -357,7 +358,7 @@ export class EmailService {
       
       return null;
     } catch (error) {
-      console.error('Error fetching email status:', error);
+      logger.error('Error fetching email status:', error);
       return null;
     }
   }
@@ -424,7 +425,7 @@ export class EmailService {
           };
       }
     } catch (error: any) {
-      console.error('Error resending email:', error);
+      logger.error('Error resending email:', error);
       return {
         success: false,
         message: error.message || 'Failed to resend email'
@@ -517,7 +518,7 @@ export class EmailService {
 
       return { success, failed, results };
     } catch (error) {
-      console.error('Error sending bulk emails:', error);
+      logger.error('Error sending bulk emails:', error);
       throw new Error('Failed to send bulk emails');
     }
   }
@@ -550,7 +551,7 @@ export class EmailService {
 
       return stats;
     } catch (error) {
-      console.error('Error fetching email stats:', error);
+      logger.error('Error fetching email stats:', error);
       throw new Error('Failed to fetch email statistics');
     }
   }
@@ -583,7 +584,7 @@ export class EmailService {
       
       return null;
     } catch (error) {
-      console.error('Error fetching all Resend emails:', error);
+      logger.error('Error fetching all Resend emails:', error);
       return null;
     }
   }
@@ -627,7 +628,7 @@ export class EmailService {
 
       return csvContent;
     } catch (error) {
-      console.error('Error exporting email logs:', error);
+      logger.error('Error exporting email logs:', error);
       throw new Error('Failed to export email logs');
     }
   }

@@ -12,6 +12,7 @@ import {
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
+import { logger } from '../utils/logger';
 import { User } from '../types';
 import toast from 'react-hot-toast';
 import { initializeApp } from 'firebase/app';
@@ -50,12 +51,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const createUserProfile = async (user: FirebaseUser, additionalData?: any) => {
     if (!user) return;
 
-    console.log('Creating user profile for:', user.uid, user.email);
+    logger.log('Creating user profile for:', user.uid, user.email);
     const userRef = doc(db, 'users', user.uid);
     const userSnap = await getDoc(userRef);
 
     if (!userSnap.exists()) {
-      console.log('User document does not exist, creating new one');
+      logger.log('User document does not exist, creating new one');
       const { displayName, email, photoURL } = user;
       
       // Default role is organizer for authenticated users
@@ -73,22 +74,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
 
       try {
-        console.log('Saving user document to Firestore:', newUser);
+        logger.log('Saving user document to Firestore:', newUser);
         await setDoc(userRef, newUser);
         const fullUser: User = { uid: user.uid, ...newUser } as User;
         setUserProfile(fullUser);
-        console.log('User profile created successfully:', fullUser);
+        logger.log('User profile created successfully:', fullUser);
         return fullUser;
       } catch (error) {
-        console.error('Error creating user profile:', error);
+        logger.error('Error creating user profile:', error);
         throw error;
       }
     } else {
-      console.log('User document exists, loading profile');
+      logger.log('User document exists, loading profile');
       const userData = userSnap.data() as Omit<User, 'uid'>;
       const fullUser: User = { uid: user.uid, ...userData };
       setUserProfile(fullUser);
-      console.log('User profile loaded:', fullUser);
+      logger.log('User profile loaded:', fullUser);
       return fullUser;
     }
   };
@@ -100,7 +101,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await createUserProfile(result.user);
       toast.success(`Welcome back, ${result.user.displayName || email}!`);
     } catch (error: any) {
-      console.error('Sign in error:', error);
+      logger.error('Sign in error:', error);
       toast.error(error.message || 'Sign in failed');
       throw error;
     } finally {
@@ -121,7 +122,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       toast.success('Account created successfully!');
     } catch (error: any) {
-      console.error('Sign up error:', error);
+      logger.error('Sign up error:', error);
       toast.error(error.message || 'Sign up failed');
       throw error;
     } finally {
@@ -137,7 +138,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await createUserProfile(result.user);
       toast.success(`Welcome, ${result.user.displayName}!`);
     } catch (error: any) {
-      console.error('Google sign in error:', error);
+      logger.error('Google sign in error:', error);
       toast.error(error.message || 'Google sign in failed');
       throw error;
     } finally {
@@ -151,7 +152,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUserProfile(null);
       toast.success('Signed out successfully');
     } catch (error: any) {
-      console.error('Sign out error:', error);
+      logger.error('Sign out error:', error);
       toast.error('Sign out failed');
       throw error;
     }
@@ -162,7 +163,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await sendPasswordResetEmail(auth, email);
       toast.success('Password reset email sent!');
     } catch (error: any) {
-      console.error('Password reset error:', error);
+      logger.error('Password reset error:', error);
       toast.error(error.message || 'Password reset failed');
       throw error;
     }
@@ -187,7 +188,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       toast.success('Profile updated successfully!');
     } catch (error: any) {
-      console.error('Profile update error:', error);
+      logger.error('Profile update error:', error);
       toast.error('Profile update failed');
       throw error;
     }
@@ -206,7 +207,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUserProfile(fullUser);
       }
     } catch (error) {
-      console.error('Error refreshing user profile:', error);
+      logger.error('Error refreshing user profile:', error);
     }
   };
 
@@ -226,7 +227,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await updateDoc(userRef, updateData);
       toast.success('User profile updated successfully!');
     } catch (error: any) {
-      console.error('User profile update error:', error);
+      logger.error('User profile update error:', error);
       toast.error('User profile update failed');
       throw error;
     }
@@ -293,7 +294,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         (secondaryApp as any).delete?.();
       } catch (cleanupError) {
-        console.warn('Failed to clean up secondary app:', cleanupError);
+        logger.warn('Failed to clean up secondary app:', cleanupError);
       }
       
       const fullUser: User = { uid: newUser.uid, ...newUserProfile } as User;
@@ -302,7 +303,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return fullUser;
       
     } catch (error: any) {
-      console.error('User creation error:', error);
+      logger.error('User creation error:', error);
       
       // Handle specific Firebase Auth errors
       if (error.code === 'auth/email-already-in-use') {
@@ -321,13 +322,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      console.log('Auth state changed:', user ? `User: ${user.uid} (${user.email})` : 'No user');
+      logger.log('Auth state changed:', user ? `User: ${user.uid} (${user.email})` : 'No user');
       if (user) {
         setCurrentUser(user);
         try {
           await createUserProfile(user);
         } catch (error) {
-          console.error('Failed to create/load user profile:', error);
+          logger.error('Failed to create/load user profile:', error);
         }
       } else {
         setCurrentUser(null);

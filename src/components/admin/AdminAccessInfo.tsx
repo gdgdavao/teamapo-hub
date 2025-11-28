@@ -4,6 +4,7 @@ import { ExclamationTriangleIcon, UserPlusIcon, EyeIcon, EyeSlashIcon } from '@h
 import { useAuth } from '../../contexts/AuthContext';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../config/firebase';
+import { logger } from '../../utils/logger';
 import toast from 'react-hot-toast';
 
 const AdminAccessInfo: React.FC = () => {
@@ -24,7 +25,7 @@ const AdminAccessInfo: React.FC = () => {
       await refreshUserProfile();
       toast.success('User role updated to admin!');
     } catch (error) {
-      console.error('Error updating user role:', error);
+      logger.error('Error updating user role:', error);
       toast.error('Failed to update user role');
     } finally {
       setUpdating(false);

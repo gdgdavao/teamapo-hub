@@ -22,6 +22,7 @@ import AdminLayout from '../../components/admin/AdminLayout';
 import LoadingSpinner from '../../components/shared/UI/LoadingSpinner';
 import { useAuth } from '../../contexts/AuthContext';
 import toast from 'react-hot-toast';
+import { logger } from '../../utils/logger';
 // AI imports removed
 
 interface AnalyticsPageProps {
@@ -167,11 +168,11 @@ const AdminAnalyticsPage: React.FC<AnalyticsPageProps> = ({ isEventSpecific = fa
             bucketRegistrations(allRegs, days);
             bucketRevenue(allRegs, days);
           } catch (error) {
-            console.error('Error loading dashboard stats:', error);
+            logger.error('Error loading dashboard stats:', error);
           }
         }
       } catch (error) {
-        console.error('Error loading analytics:', error);
+        logger.error('Error loading analytics:', error);
         toast.error('Failed to load analytics data');
       } finally {
         setLoading(false);
@@ -218,7 +219,7 @@ const AdminAnalyticsPage: React.FC<AnalyticsPageProps> = ({ isEventSpecific = fa
     
     // Check if the date is valid
     if (isNaN(date.getTime())) {
-      console.warn('Invalid date:', timestamp);
+      logger.warn('Invalid date:', timestamp);
       return 'Invalid Date';
     }
     

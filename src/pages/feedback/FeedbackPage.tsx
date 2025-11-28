@@ -11,6 +11,7 @@ import { CertificateService } from '../../services/certificateService';
 import { CertificateGenerationService } from '../../utils/certificateGeneration';
 import { RegistrationService } from '../../services/registrationService';
 import { Event, FormField, CertificateTemplate } from '../../types';
+import { logger } from '../../utils/logger';
 
 const FeedbackPage: React.FC = () => {
   const { eventId } = useParams<{ eventId: string }>();
@@ -68,7 +69,7 @@ const FeedbackPage: React.FC = () => {
     }
     
     // Fallback to current date if all else fails
-    console.warn('Unable to parse date:', dateValue);
+    logger.warn('Unable to parse date:', dateValue);
     return new Date();
   };
 
@@ -138,7 +139,7 @@ const FeedbackPage: React.FC = () => {
       setCertificateUrl(result.certificateUrl);
       setVerificationCode(result.verificationCode);
     } catch (err) {
-      console.error('Error generating certificate:', err);
+      logger.error('Error generating certificate:', err);
       setCertificateError('Failed to generate certificate. You can try again or contact support.');
     } finally {
       setGeneratingCertificate(false);
@@ -168,7 +169,7 @@ const FeedbackPage: React.FC = () => {
         setUserName(tokenData.name);
         setTokenResolved(true);
       } catch (err) {
-        console.error('Error resolving feedback token:', err);
+        logger.error('Error resolving feedback token:', err);
         setError('Invalid or expired feedback link. Please contact the organizer for a new link.');
         setTokenResolved(true);
         setLoading(false);
@@ -240,7 +241,7 @@ const FeedbackPage: React.FC = () => {
         const formData = await EventService.getFeedbackForm(eventId);
         setFeedbackForm(formData.fields);
       } catch (err) {
-        console.error('Error loading event or feedback form:', err);
+        logger.error('Error loading event or feedback form:', err);
         setError('Failed to load feedback form. Please try again.');
       } finally {
         setLoading(false);
@@ -295,7 +296,7 @@ const FeedbackPage: React.FC = () => {
         }
       }
     } catch (err) {
-      console.error('Error submitting feedback:', err);
+      logger.error('Error submitting feedback:', err);
       setError('Failed to submit feedback. Please try again.');
     } finally {
       setSubmitting(false);

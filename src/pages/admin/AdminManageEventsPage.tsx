@@ -24,6 +24,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { EventService } from '../../services/eventService';
 import { RegistrationService } from '../../services/registrationService';
 import { Event } from '../../types';
+import { logger } from '../../utils/logger';
 import toast from 'react-hot-toast';
 import AdminLayout from '../../components/admin/AdminLayout';
 // OrganizerLayout import removed - this page is now admin-only
@@ -53,7 +54,7 @@ const ManageEventsPage: React.FC = () => {
       if (!isDevEnv) return;
       // Use groupCollapsed to avoid noisy consoles but keep data accessible
       console.groupCollapsed(`[AdminManageEventsPage] ${label}`);
-      console.log(payload);
+      logger.log(payload);
       console.groupEnd();
     },
     [isDevEnv]
@@ -155,7 +156,7 @@ const ManageEventsPage: React.FC = () => {
                 currentAttendees: approvedAttendees
               };
             } catch (error) {
-              console.warn(`Failed to get attendee count for event ${event.id}:`, error);
+              logger.warn(`Failed to get attendee count for event ${event.id}:`, error);
               return event; // Return original event if count fails
             }
           })
@@ -172,7 +173,7 @@ const ManageEventsPage: React.FC = () => {
           }))
         );
       } catch (error) {
-        console.error('Error fetching events:', error);
+        logger.error('Error fetching events:', error);
         toast.error('Failed to load events');
         setEvents([]);
       } finally {
@@ -363,7 +364,7 @@ const ManageEventsPage: React.FC = () => {
     
     // Check if the date is valid
     if (isNaN(date.getTime())) {
-      console.warn('Invalid date:', timestamp);
+      logger.warn('Invalid date:', timestamp);
       return 'Invalid Date';
     }
     
@@ -424,9 +425,9 @@ const ManageEventsPage: React.FC = () => {
       if (currentUser) {
         try {
           await currentUser.getIdToken(true); // Force token refresh
-          console.log('Auth token refreshed for delete operation');
+          logger.log('Auth token refreshed for delete operation');
         } catch (authError) {
-          console.error('Auth token refresh failed:', authError);
+          logger.error('Auth token refresh failed:', authError);
           toast.error('Authentication expired. Please sign in again.');
           setDeleteModal(prev => ({ ...prev, isLoading: false }));
           return;
@@ -439,7 +440,7 @@ const ManageEventsPage: React.FC = () => {
       toast.success('Event deleted successfully');
       closeDeleteModal();
     } catch (error: any) {
-      console.error('Error deleting event:', error);
+      logger.error('Error deleting event:', error);
       
       // Check if the error is due to registrations
       if (error.message && error.message.includes('registrations')) {
@@ -468,9 +469,9 @@ const ManageEventsPage: React.FC = () => {
       if (currentUser) {
         try {
           await currentUser.getIdToken(true); // Force token refresh
-          console.log('Auth token refreshed for force delete operation');
+          logger.log('Auth token refreshed for force delete operation');
         } catch (authError) {
-          console.error('Auth token refresh failed:', authError);
+          logger.error('Auth token refresh failed:', authError);
           toast.error('Authentication expired. Please sign in again.');
           setDeleteModal(prev => ({ ...prev, isLoading: false }));
           return;
@@ -482,7 +483,7 @@ const ManageEventsPage: React.FC = () => {
       toast.success('Event deleted successfully');
       closeDeleteModal();
     } catch (error) {
-      console.error('Error force deleting event:', error);
+      logger.error('Error force deleting event:', error);
       toast.error('Failed to delete event');
       setDeleteModal(prev => ({ ...prev, isLoading: false }));
     }
@@ -490,11 +491,11 @@ const ManageEventsPage: React.FC = () => {
 
   const handleRegistrationStatusChange = async (eventId: string, newRegistrationStatus: 'open' | 'closed' | 'walk-in-only') => {
     try {
-      console.log('🔄 Updating registration status:', { eventId, newRegistrationStatus });
+      logger.log('🔄 Updating registration status:', { eventId, newRegistrationStatus });
       
       // Call the service to update Firebase
       await EventService.updateRegistrationStatus(eventId, newRegistrationStatus);
-      console.log('✅ Firebase registration status update successful for event:', eventId);
+      logger.log('✅ Firebase registration status update successful for event:', eventId);
       
       // Update local state
       setEvents(events.map(e => 
@@ -506,18 +507,18 @@ const ManageEventsPage: React.FC = () => {
       
       toast.success(`Registration status updated to ${getRegistrationStatusLabel(newRegistrationStatus)}`);
     } catch (error) {
-      console.error('❌ Error updating registration status:', error);
+      logger.error('❌ Error updating registration status:', error);
       toast.error('Failed to update registration status');
     }
   };
 
   const handleStatusChange = async (eventId: string, newStatus: string) => {
     try {
-      console.log('🔄 Updating event status:', { eventId, newStatus });
+      logger.log('🔄 Updating event status:', { eventId, newStatus });
       
       // Call the service to update Firebase
       await EventService.updateEventStatus(eventId, newStatus);
-      console.log('✅ Firebase update successful for event:', eventId, 'new status:', newStatus);
+      logger.log('✅ Firebase update successful for event:', eventId, 'new status:', newStatus);
       
       // Update local state - update both status and isPublished
       const updatedIsPublished = newStatus === 'published';
@@ -529,7 +530,7 @@ const ManageEventsPage: React.FC = () => {
         } : e
       ));
       
-      console.log('✅ Local state updated successfully', {
+      logger.log('✅ Local state updated successfully', {
         eventId,
         newStatus,
         isPublished: updatedIsPublished
@@ -550,13 +551,13 @@ const ManageEventsPage: React.FC = () => {
               : refreshedEvent?.updatedAt ?? null
           });
         } catch (snapshotError) {
-          console.warn('Unable to fetch event snapshot after status update:', snapshotError);
+          logger.warn('Unable to fetch event snapshot after status update:', snapshotError);
         }
       }
       
       toast.success('Event status updated successfully');
     } catch (error) {
-      console.error('❌ Error updating event status:', error);
+      logger.error('❌ Error updating event status:', error);
       toast.error('Failed to update event status');
     }
   };
@@ -594,7 +595,7 @@ const ManageEventsPage: React.FC = () => {
         toast.error(result.data.message || 'Failed to send feedback requests');
       }
     } catch (error: any) {
-      console.error('Error resending feedback requests:', error);
+      logger.error('Error resending feedback requests:', error);
       toast.error(error.message || 'Failed to send feedback requests');
     } finally {
       setResendingFeedback(null);

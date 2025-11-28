@@ -26,6 +26,7 @@ import { RegistrationService } from '../../services/registrationService';
 import { EventService } from '../../services/eventService';
 import { PaymentService } from '../../services/paymentService';
 import { Registration as FirestoreRegistration, Event } from '../../types';
+import { logger } from '../../utils/logger';
 
 // Utility function to format dates
 const formatDate = (dateString: string): string => {
@@ -229,14 +230,14 @@ const AttendeesPage: React.FC = () => {
             
             allRegistrations.push(...transformedRegs);
           } catch (error) {
-            console.warn(`Failed to fetch registrations for event ${event.id}:`, error);
+            logger.warn(`Failed to fetch registrations for event ${event.id}:`, error);
           }
         }
         
         setRegistrations(allRegistrations);
         setLoading(false);
       } catch (error) {
-        console.error('Error fetching attendee data:', error);
+        logger.error('Error fetching attendee data:', error);
         setRegistrations([]);
         setEvents([]);
         setLoading(false);
@@ -248,9 +249,9 @@ const AttendeesPage: React.FC = () => {
 
   // Debug logging
   useEffect(() => {
-    console.log('Current registrations:', registrations);
-    console.log('View mode:', viewMode);
-    console.log('Viewing registration:', viewingRegistration);
+    logger.log('Current registrations:', registrations);
+    logger.log('View mode:', viewMode);
+    logger.log('Viewing registration:', viewingRegistration);
   }, [registrations, viewMode, viewingRegistration]);
 
   const handleCheckIn = async (registrationId: string) => {
@@ -266,9 +267,9 @@ const AttendeesPage: React.FC = () => {
         )
       );
       
-      console.log(`Attendee checked in successfully: ${registrationId}`);
+      logger.log(`Attendee checked in successfully: ${registrationId}`);
     } catch (error: any) {
-      console.error('Failed to check in attendee:', error);
+      logger.error('Failed to check in attendee:', error);
       alert(`Failed to check in attendee: ${error.message || 'Please try again.'}`);
     }
   };
@@ -293,9 +294,9 @@ const AttendeesPage: React.FC = () => {
       );
 
       setSelectedRegistrations([]);
-      console.log(`Bulk check-in completed for ${selectedRegistrations.length} attendees`);
+      logger.log(`Bulk check-in completed for ${selectedRegistrations.length} attendees`);
     } catch (error: any) {
-      console.error('Failed to bulk check in attendees:', error);
+      logger.error('Failed to bulk check in attendees:', error);
       alert(`Failed to bulk check in attendees: ${error.message || 'Please try again.'}`);
     }
   };
@@ -323,9 +324,9 @@ const AttendeesPage: React.FC = () => {
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
       
-      console.log('Attendee data exported successfully');
+      logger.log('Attendee data exported successfully');
     } catch (error) {
-      console.error('Failed to export data:', error);
+      logger.error('Failed to export data:', error);
       alert('Failed to export data. Please try again.');
     }
   };
@@ -418,9 +419,9 @@ const AttendeesPage: React.FC = () => {
       setVerifyingPayment(null);
       setVerificationNotes('');
       
-      console.log(`Payment ${status} successfully`);
+      logger.log(`Payment ${status} successfully`);
     } catch (error) {
-      console.error('Error verifying payment:', error);
+      logger.error('Error verifying payment:', error);
       alert('Failed to verify payment. Please try again.');
     }
   };
@@ -897,7 +898,7 @@ const AttendeesPage: React.FC = () => {
                             )}
                             <button
                               onClick={() => {
-                                console.log('View Payment clicked for:', registration);
+                                logger.log('View Payment clicked for:', registration);
                                 setViewingRegistration(registration);
                               }}
                               className="inline-flex items-center px-3 py-1.5 bg-white border border-gray-300 text-gray-700 text-sm rounded-md hover:bg-gray-50 transition-colors"

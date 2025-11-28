@@ -16,6 +16,7 @@ import AdminLayout from '../../components/admin/AdminLayout';
 import { FeedbackService } from '../../services/feedbackService';
 import { EventService } from '../../services/eventService';
 import { Feedback, Event } from '../../types';
+import { logger } from '../../utils/logger';
 import toast from 'react-hot-toast';
 
 const AdminEventFeedbackPage: React.FC = () => {
@@ -47,7 +48,7 @@ const AdminEventFeedbackPage: React.FC = () => {
         setFeedbackList(feedbackData);
         setFeedbackFormFields(feedbackForm.fields || []);
       } catch (error) {
-        console.error('Error fetching feedback data:', error);
+        logger.error('Error fetching feedback data:', error);
         toast.error('Failed to load feedback data');
       } finally {
         setLoading(false);

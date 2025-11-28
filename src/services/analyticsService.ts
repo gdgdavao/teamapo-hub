@@ -14,6 +14,7 @@ import {
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '../config/firebase';
+import { logger } from '../utils/logger';
 import { EventAnalytics } from '../types';
 
 export interface DashboardStats {
@@ -224,7 +225,7 @@ export class AnalyticsService {
         pendingPayments
       };
     } catch (error) {
-      console.error('Error fetching dashboard stats:', error);
+      logger.error('Error fetching dashboard stats:', error);
       throw new Error('Failed to fetch dashboard stats');
     }
   }
@@ -460,7 +461,7 @@ export class AnalyticsService {
         }
       };
     } catch (error) {
-      console.error('Error fetching event stats:', error);
+      logger.error('Error fetching event stats:', error);
       throw new Error('Failed to fetch event stats');
     }
   }
@@ -480,7 +481,7 @@ export class AnalyticsService {
       
       return response.analytics;
     } catch (error) {
-      console.error('Error getting event analytics:', error);
+      logger.error('Error getting event analytics:', error);
       // Fallback to basic stats if function fails
       const basicStats = await this.getEventStats(eventId);
       return {
@@ -536,7 +537,7 @@ export class AnalyticsService {
         return acc;
       }, {} as Record<string, EventStats>);
     } catch (error) {
-      console.error('Error fetching multiple event analytics:', error);
+      logger.error('Error fetching multiple event analytics:', error);
       throw new Error('Failed to fetch multiple event analytics');
     }
   }
@@ -581,7 +582,7 @@ export class AnalyticsService {
         .sort((a, b) => b.registrations - a.registrations)
         .slice(0, limitCount);
     } catch (error) {
-      console.error('Error fetching top performing events:', error);
+      logger.error('Error fetching top performing events:', error);
       throw new Error('Failed to fetch top performing events');
     }
   }
@@ -640,7 +641,7 @@ export class AnalyticsService {
         revenueByDate
       };
     } catch (error) {
-      console.error('Error fetching revenue analytics:', error);
+      logger.error('Error fetching revenue analytics:', error);
       throw new Error('Failed to fetch revenue analytics');
     }
   }
@@ -684,7 +685,7 @@ export class AnalyticsService {
         averageEventsPerUser: Math.round(averageEventsPerUser * 100) / 100
       };
     } catch (error) {
-      console.error('Error fetching user engagement analytics:', error);
+      logger.error('Error fetching user engagement analytics:', error);
       throw new Error('Failed to fetch user engagement analytics');
     }
   }
@@ -703,7 +704,7 @@ export class AnalyticsService {
         lastUpdated: serverTimestamp()
       });
     } catch (error) {
-      console.error('Error caching event analytics:', error);
+      logger.error('Error caching event analytics:', error);
       // Don't throw error for caching failure
     }
   }

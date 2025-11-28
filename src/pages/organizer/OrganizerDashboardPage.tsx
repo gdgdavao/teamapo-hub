@@ -17,6 +17,7 @@ import EventService from '../../services/eventService';
 import { Event } from '../../types';
 import LoadingSpinner from '../../components/shared/UI/LoadingSpinner';
 import usePageTitle from '../../hooks/usePageTitle';
+import { logger } from '../../utils/logger';
 
 // Utility function to safely convert various date formats to Date object
 const getDateFromTimestamp = (timestamp: any): Date => {
@@ -48,7 +49,7 @@ const OrganizerDashboardPage: React.FC = () => {
         const userEvents = await EventService.getAllEvents();
         setEvents(userEvents);
       } catch (error) {
-        console.error('Error fetching organizer events:', error);
+        logger.error('Error fetching organizer events:', error);
       } finally {
         setLoading(false);
       }

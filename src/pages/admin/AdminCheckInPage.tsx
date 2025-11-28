@@ -19,6 +19,7 @@ import { ForceCheckInModal, WalkInRegistrationModal } from '../../components/sha
 import { RegistrationService } from '../../services/registrationService';
 import type { WalkInRegistrationData } from '../../components/shared/UI/WalkInRegistrationModal';
 import toast from 'react-hot-toast';
+import { logger } from '../../utils/logger';
 import { BrowserQRCodeReader } from '@zxing/browser';
 import { Result } from '@zxing/library';
 
@@ -43,13 +44,12 @@ interface Registration {
   paymentStatus?: 'pending' | 'paid' | 'failed' | 'refunded';
 }
 
-// Scoped logger for this page
-const DEBUG = Boolean((import.meta as any)?.env?.DEV) || ((import.meta as any)?.env?.VITE_DEBUG_CHECKIN === 'true');
+// Scoped logger for this page - uses global logger utility
 const log = {
-  debug: (...args: unknown[]) => { if (DEBUG) console.debug('[AdminCheckIn]', ...args); },
-  info: (...args: unknown[]) => { if (DEBUG) console.info('[AdminCheckIn]', ...args); },
-  warn: (...args: unknown[]) => console.warn('[AdminCheckIn]', ...args),
-  error: (...args: unknown[]) => console.error('[AdminCheckIn]', ...args),
+  debug: (...args: unknown[]) => logger.debug('[AdminCheckIn]', ...args),
+  info: (...args: unknown[]) => logger.info('[AdminCheckIn]', ...args),
+  warn: (...args: unknown[]) => logger.warn('[AdminCheckIn]', ...args),
+  error: (...args: unknown[]) => logger.error('[AdminCheckIn]', ...args),
 };
 
 // Date awareness helper functions
@@ -840,7 +840,7 @@ const AdminCheckInPage: React.FC = () => {
 
       toast.success(`Walk-in registration completed! QR Code: ${result.qrCode}`);
     } catch (error: any) {
-      console.error('Walk-in registration error:', error);
+      logger.error('Walk-in registration error:', error);
       throw error;
     }
   };

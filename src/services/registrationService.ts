@@ -19,6 +19,7 @@ import {
 import type { FirebaseError } from 'firebase/app';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '../config/firebase';
+import { logger } from '../utils/logger';
 import { Registration, Event, TicketPricing } from '../types';
 import { NotificationService } from './notificationService';
 import { EmailService } from './emailService';
@@ -69,7 +70,7 @@ export class RegistrationService {
       return;
     }
 
-    console.log(`Adjusting ticket sales: eventId=${eventId}, ticketTypeId=${ticketTypeId}, delta=${delta}`);
+    logger.log(`Adjusting ticket sales: eventId=${eventId}, ticketTypeId=${ticketTypeId}, delta=${delta}`);
     const eventRef = doc(db, this.EVENTS_COLLECTION, eventId);
 
     try {
@@ -92,12 +93,12 @@ export class RegistrationService {
         const maxQuantity = Number.isFinite(targetTicket.maxQuantity) ? targetTicket.maxQuantity : undefined;
         const updatedSold = currentSold + delta;
 
-        console.log(`Ticket "${targetTicket.name}": currentSold=${currentSold}, updatedSold=${updatedSold}, maxQuantity=${maxQuantity}`);
+        logger.log(`Ticket "${targetTicket.name}": currentSold=${currentSold}, updatedSold=${updatedSold}, maxQuantity=${maxQuantity}`);
 
         if (updatedSold < 0) {
           // If trying to decrement and would go negative, set to 0 instead
           // This handles cases where registrations were created with errors
-          console.warn(`Ticket sales would go negative (${updatedSold}). Setting to 0 instead.`);
+          logger.warn(`Ticket sales would go negative (${updatedSold}). Setting to 0 instead.`);
           ticketTypes[ticketIndex] = {
             ...targetTicket,
             currentSold: 0
@@ -118,10 +119,10 @@ export class RegistrationService {
           updatedAt: serverTimestamp()
         });
         
-        console.log('Ticket sales updated successfully');
+        logger.log('Ticket sales updated successfully');
       });
     } catch (error) {
-      console.error('Error adjusting ticket sales:', error);
+      logger.error('Error adjusting ticket sales:', error);
       throw error;
     }
   }
@@ -144,7 +145,7 @@ export class RegistrationService {
         const promoIndex = promoCodes.findIndex(pc => pc.id === promoCodeId);
 
         if (promoIndex < 0) {
-          console.warn(`Promo code ${promoCodeId} not found in event ${eventId}`);
+          logger.warn(`Promo code ${promoCodeId} not found in event ${eventId}`);
           return; // Don't fail the transaction if promo code is missing
         }
 
@@ -168,10 +169,10 @@ export class RegistrationService {
           updatedAt: serverTimestamp()
         });
 
-        console.log(`Promo code "${promoCode.code}" usage incremented: ${currentUses} -> ${currentUses + 1}`);
+        logger.log(`Promo code "${promoCode.code}" usage incremented: ${currentUses} -> ${currentUses + 1}`);
       });
     } catch (error) {
-      console.error('Error incrementing promo code usage:', error);
+      logger.error('Error incrementing promo code usage:', error);
       throw error;
     }
   }
@@ -194,7 +195,7 @@ export class RegistrationService {
         const promoIndex = promoCodes.findIndex(pc => pc.id === promoCodeId);
 
         if (promoIndex < 0) {
-          console.warn(`Promo code ${promoCodeId} not found in event ${eventId}`);
+          logger.warn(`Promo code ${promoCodeId} not found in event ${eventId}`);
           return; // Don't fail the transaction if promo code is missing
         }
 
@@ -212,10 +213,10 @@ export class RegistrationService {
           updatedAt: serverTimestamp()
         });
 
-        console.log(`Promo code "${promoCode.code}" usage decremented: ${currentUses} -> ${Math.max(0, currentUses - 1)}`);
+        logger.log(`Promo code "${promoCode.code}" usage decremented: ${currentUses} -> ${Math.max(0, currentUses - 1)}`);
       });
     } catch (error) {
-      console.error('Error decrementing promo code usage:', error);
+      logger.error('Error decrementing promo code usage:', error);
       // Don't throw - this is a cleanup operation
     }
   }
@@ -301,9 +302,9 @@ export class RegistrationService {
       );
 
       // Save pending registration
-      console.log('Saving registration with data:', cleanRegistration);
+      logger.log('Saving registration with data:', cleanRegistration);
       await setDoc(registrationRef, cleanRegistration);
-      console.log('Registration saved successfully with ID:', registrationId);
+      logger.log('Registration saved successfully with ID:', registrationId);
 
       // Update ticket sales immediately to prevent overselling
       // Even pending registrations should reduce available tickets
@@ -333,7 +334,7 @@ export class RegistrationService {
         paymentLinkToken: token
       };
     } catch (error) {
-      console.error('Error creating pending registration:', error);
+      logger.error('Error creating pending registration:', error);
       throw new Error('Failed to create registration');
     }
   }
@@ -358,9 +359,9 @@ export class RegistrationService {
         requiresPayment,
         emailType: 'submitted' // This is the immediate confirmation without QR code or registration ID
       });
-      console.log('Registration submission confirmation email sent successfully');
+      logger.log('Registration submission confirmation email sent successfully');
     } catch (error) {
-      console.error('Error sending registration confirmation email:', error);
+      logger.error('Error sending registration confirmation email:', error);
       throw new Error('Failed to send confirmation email');
     }
   }
@@ -401,11 +402,11 @@ export class RegistrationService {
           requiresPayment: false // Payment is already completed at this point
         });
       } catch (emailError) {
-        console.error('Error sending approval confirmation email:', emailError);
+        logger.error('Error sending approval confirmation email:', emailError);
         // Don't throw - email failure shouldn't break the flow
       }
     } catch (error) {
-      console.error('Error completing registration:', error);
+      logger.error('Error completing registration:', error);
       throw new Error('Failed to complete registration');
     }
   }
@@ -500,7 +501,7 @@ export class RegistrationService {
           requiresPayment
         });
       } catch (error) {
-        console.warn('Failed to send registration confirmation email:', error);
+        logger.warn('Failed to send registration confirmation email:', error);
       }
 
       // Send notification for successful registration (for admin/organizer)
@@ -522,7 +523,7 @@ export class RegistrationService {
           }
         }
       } catch (error) {
-        console.warn('Failed to create registration notification:', error);
+        logger.warn('Failed to create registration notification:', error);
       }
 
       return {
@@ -532,7 +533,7 @@ export class RegistrationService {
         requiresPayment
       };
     } catch (error) {
-      console.error('Error registering for event:', error);
+      logger.error('Error registering for event:', error);
       throw new Error('Failed to register for event');
     }
   }
@@ -557,10 +558,10 @@ export class RegistrationService {
     } catch (error: any) {
       // Handle permission errors gracefully (expected for anonymous users)
       if (error?.code === 'permission-denied' || error?.message?.includes('permission')) {
-        console.warn('Registration read permission denied (expected for anonymous users)');
+        logger.warn('Registration read permission denied (expected for anonymous users)');
         return null;
       }
-      console.error('Error fetching registration:', error);
+      logger.error('Error fetching registration:', error);
       throw new Error('Failed to fetch registration');
     }
   }
@@ -582,7 +583,7 @@ export class RegistrationService {
         ...doc.data()
       } as Registration));
     } catch (error) {
-      console.error('Error fetching event registrations:', error);
+      logger.error('Error fetching event registrations:', error);
       throw new Error('Failed to fetch event registrations');
     }
   }
@@ -596,7 +597,7 @@ export class RegistrationService {
     onError?: (error: Error) => void
   ): () => void {
     if (!eventId) {
-      console.warn('RegistrationService.subscribeToEventTicketSales called without an eventId');
+      logger.warn('RegistrationService.subscribeToEventTicketSales called without an eventId');
       return () => undefined;
     }
 
@@ -643,9 +644,9 @@ export class RegistrationService {
         const isPermissionError = firebaseError?.code === 'permission-denied';
 
         if (isPermissionError) {
-          console.warn('Permission denied while subscribing to ticket sales. Falling back to event data.');
+          logger.warn('Permission denied while subscribing to ticket sales. Falling back to event data.');
         } else {
-          console.error('Error subscribing to event ticket sales:', error);
+          logger.error('Error subscribing to event ticket sales:', error);
         }
 
         if (onError) {
@@ -671,7 +672,7 @@ export class RegistrationService {
         ...doc.data()
       } as Registration));
     } catch (error) {
-      console.error('Error fetching all registrations:', error);
+      logger.error('Error fetching all registrations:', error);
       throw new Error('Failed to fetch all registrations');
     }
   }
@@ -693,7 +694,7 @@ export class RegistrationService {
         ...doc.data()
       } as Registration));
     } catch (error) {
-      console.error('Error fetching user registrations:', error);
+      logger.error('Error fetching user registrations:', error);
       throw new Error('Failed to fetch user registrations');
     }
   }
@@ -750,7 +751,7 @@ export class RegistrationService {
           userName: data.userDetails.name
         });
       } catch (error) {
-        console.warn('Failed to send check-in notification:', error);
+        logger.warn('Failed to send check-in notification:', error);
       }
 
       // Send notification to organizer about successful check-in
@@ -770,10 +771,10 @@ export class RegistrationService {
           }
         }
       } catch (error) {
-        console.warn('Failed to create check-in notification:', error);
+        logger.warn('Failed to create check-in notification:', error);
       }
     } catch (error) {
-      console.error('Error checking in attendee:', error);
+      logger.error('Error checking in attendee:', error);
       throw error; // Re-throw the original error with its message
     }
   }
@@ -821,10 +822,10 @@ export class RegistrationService {
           userName: data.userDetails.name
         });
       } catch (error) {
-        console.warn('Failed to send check-in notification:', error);
+        logger.warn('Failed to send check-in notification:', error);
       }
     } catch (error) {
-      console.error('Error checking in attendee:', error);
+      logger.error('Error checking in attendee:', error);
       throw error; // Re-throw the original error with its message
     }
   }
@@ -890,11 +891,11 @@ export class RegistrationService {
             attendeeName: freeApprovalDetails.attendeeName
           });
         } catch (notificationError) {
-          console.warn('Failed to send payment notification for free registration:', notificationError);
+          logger.warn('Failed to send payment notification for free registration:', notificationError);
         }
       }
     } catch (error) {
-      console.error('Error updating registration status:', error);
+      logger.error('Error updating registration status:', error);
       throw new Error('Failed to update registration status');
     }
   }
@@ -945,7 +946,7 @@ export class RegistrationService {
         revenue
       };
     } catch (error) {
-      console.error('Error fetching registration stats:', error);
+      logger.error('Error fetching registration stats:', error);
       throw new Error('Failed to fetch registration stats');
     }
   }
@@ -1012,7 +1013,7 @@ export class RegistrationService {
         message: 'QR code verified successfully' 
       };
     } catch (error) {
-      console.error('Error verifying QR code:', error);
+      logger.error('Error verifying QR code:', error);
       return { isValid: false, message: 'Failed to verify QR code' };
     }
   }
@@ -1068,11 +1069,11 @@ export class RegistrationService {
             reason: reason || 'User cancellation'
           });
         } catch (error) {
-          console.warn('Failed to process refund:', error);
+          logger.warn('Failed to process refund:', error);
         }
       }
     } catch (error) {
-      console.error('Error cancelling registration:', error);
+      logger.error('Error cancelling registration:', error);
       throw new Error('Failed to cancel registration');
     }
   }
@@ -1137,7 +1138,7 @@ export class RegistrationService {
 
       return csvContent;
     } catch (error) {
-      console.error('Error exporting registrations:', error);
+      logger.error('Error exporting registrations:', error);
       throw new Error('Failed to export registrations');
     }
   }
@@ -1263,7 +1264,7 @@ export class RegistrationService {
           }
         } else {
           // Invalid promo code - reset it
-          console.warn('Invalid promo code provided:', registrationData.promoCode);
+          logger.warn('Invalid promo code provided:', registrationData.promoCode);
         }
       }
       
@@ -1287,7 +1288,7 @@ export class RegistrationService {
       };
       
     } catch (error) {
-      console.error('Error validating registration locally:', error);
+      logger.error('Error validating registration locally:', error);
       return {
         isValid: false,
         pricing: {} as TicketPricing,
@@ -1342,7 +1343,7 @@ export class RegistrationService {
           const { PaymentService } = await import('./paymentService');
           await PaymentService.deletePaymentProof(registrationData.paymentProofId);
         } catch (error) {
-          console.warn('Failed to delete payment proof:', error);
+          logger.warn('Failed to delete payment proof:', error);
         }
       }
 
@@ -1359,7 +1360,7 @@ export class RegistrationService {
           const { PaymentService } = await import('./paymentService');
           await PaymentService.deletePaymentProof(proofDoc.id);
         } catch (error) {
-          console.warn(`Failed to delete payment proof ${proofDoc.id}:`, error);
+          logger.warn(`Failed to delete payment proof ${proofDoc.id}:`, error);
         }
       });
       
@@ -1368,9 +1369,9 @@ export class RegistrationService {
       // Finally, delete the registration document
       await deleteDoc(registrationRef);
       
-      console.log(`Registration ${registrationId} and associated payment proofs deleted successfully`);
+      logger.log(`Registration ${registrationId} and associated payment proofs deleted successfully`);
     } catch (error) {
-      console.error('Error deleting registration:', error);
+      logger.error('Error deleting registration:', error);
       throw new Error('Failed to delete registration');
     }
   }
@@ -1523,18 +1524,18 @@ export class RegistrationService {
           false // Walk-ins are already processed
         );
       } catch (emailError) {
-        console.warn('Failed to send confirmation email for walk-in:', emailError);
+        logger.warn('Failed to send confirmation email for walk-in:', emailError);
         // Don't throw error if email fails
       }
       
-      console.log('Walk-in registration created:', registrationId);
+      logger.log('Walk-in registration created:', registrationId);
       
       return {
         registrationId,
         qrCode
       };
     } catch (error) {
-      console.error('Error creating walk-in registration:', error);
+      logger.error('Error creating walk-in registration:', error);
       throw error;
     }
   }
