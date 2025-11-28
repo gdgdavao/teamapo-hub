@@ -2344,14 +2344,8 @@ def send_feedback_requests_for_event(event_id: str, event_title: str) -> None:
             ).stream()
             _collect_registrations(checked_in_query)
         
-        confirmed_query = db.collection('registrations').where(
-            filter=FieldFilter('eventId', '==', event_id)
-        ).where(
-            filter=FieldFilter('attendanceStatus', '==', 'confirmed')
-        ).where(
-            filter=FieldFilter('feedbackSubmitted', '==', False)
-        ).stream()
-        _collect_registrations(confirmed_query)
+        # Only attendees who actually attended (i.e., checked-in) should receive feedback requests.
+        # No additional query for 'registered' or other statuses.
         
         logger.info(f"Found {len(registrations_to_process)} registrations to send feedback requests for event {event_id}")
         
@@ -2460,6 +2454,77 @@ def send_feedback_requests_for_event(event_id: str, event_title: str) -> None:
     except Exception as e:
         logger.error(f"Error in send_feedback_requests_for_event for event {event_id}: {str(e)}")
         raise
+
+
+@https_fn.on_call()
+def resendEventFeedbackRequests(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Manually resend feedback requests for a completed event.
+    This can be used when the automatic trigger failed or needs to be re-run.
+    """
+    try:
+        data: Dict[str, Any] = req.data or {}
+        event_id = data.get('eventId')
+        force = data.get('force', False)  # Force resend even if already sent
+        
+        if not event_id:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="eventId is required"
+            )
+        
+        # Get event data
+        db = get_db()
+        event_ref = db.collection('events').document(event_id)
+        event_doc = event_ref.get()
+        
+        if not event_doc.exists:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.NOT_FOUND,
+                message=f"Event {event_id} not found"
+            )
+        
+        event_data = event_doc.to_dict()
+        event_title = event_data.get('title', 'Event')
+        
+        # Check if already sent (unless force=True)
+        if not force and event_data.get('feedbackRequestsSentAt'):
+            return {
+                'success': False,
+                'message': 'Feedback requests already sent for this event. Use force=true to resend.',
+                'sentAt': event_data.get('feedbackRequestsSentAt')
+            }
+        
+        # Clear the timestamp if forcing resend
+        if force and event_data.get('feedbackRequestsSentAt'):
+            event_ref.update({
+                'feedbackRequestsSentAt': firestore.DELETE_FIELD,
+                'feedbackRequestsSentCount': firestore.DELETE_FIELD,
+                'updatedAt': firestore.SERVER_TIMESTAMP
+            })
+            logger.info(f"Cleared feedback request timestamp for event {event_id} (force resend)")
+        
+        # Send feedback requests
+        send_feedback_requests_for_event(event_id, event_title)
+        
+        # Re-fetch to get the updated count
+        updated_event = event_ref.get().to_dict()
+        sent_count = updated_event.get('feedbackRequestsSentCount', 0)
+        
+        return {
+            'success': True,
+            'message': f'Feedback requests sent to {sent_count} attendee(s)',
+            'emailsSentCount': sent_count
+        }
+        
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error in resendEventFeedbackRequests: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message=f"Internal server error: {str(e)}"
+        )
 
 
 @https_fn.on_call()

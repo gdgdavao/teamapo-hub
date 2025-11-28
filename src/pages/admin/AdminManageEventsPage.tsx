@@ -15,7 +15,8 @@ import {
   LinkIcon,
   ChatBubbleLeftRightIcon,
   XMarkIcon,
-  UserGroupIcon
+  UserGroupIcon,
+  ArrowPathIcon
 } from '@heroicons/react/24/outline';
 import { CheckCircleIcon, XCircleIcon, ClockIcon } from '@heroicons/react/20/solid';
 import { Link, useNavigate } from 'react-router-dom';
@@ -65,6 +66,7 @@ const ManageEventsPage: React.FC = () => {
   const [sortBy, setSortBy] = useState('startDate');
   const [events, setEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
+  const [resendingFeedback, setResendingFeedback] = useState<string | null>(null);
   const [deleteModal, setDeleteModal] = useState<DeleteModalState>({
     isOpen: false,
     eventId: null,
@@ -559,6 +561,46 @@ const ManageEventsPage: React.FC = () => {
     }
   };
 
+  const handleResendFeedbackRequests = async (eventId: string, eventTitle: string) => {
+    if (resendingFeedback) return;
+    
+    const confirmed = window.confirm(
+      `Send feedback request emails to all checked-in attendees for "${eventTitle}"?\n\nThis will send emails to attendees who have not yet submitted feedback.`
+    );
+    
+    if (!confirmed) return;
+    
+    setResendingFeedback(eventId);
+    
+    try {
+      const { httpsCallable } = await import('firebase/functions');
+      const { functions } = await import('../../config/firebase');
+      const resendFeedback = httpsCallable(functions, 'resendEventFeedbackRequests');
+      
+      const result = await resendFeedback({ eventId, force: true }) as any;
+      
+      if (result.data.success) {
+        toast.success(`${result.data.message}`, {
+          duration: 5000,
+          icon: '✉️'
+        });
+        
+        // Refresh event data
+        const refreshedEvent = await EventService.getEvent(eventId);
+        if (refreshedEvent) {
+          setEvents(events.map(e => e.id === eventId ? refreshedEvent : e));
+        }
+      } else {
+        toast.error(result.data.message || 'Failed to send feedback requests');
+      }
+    } catch (error: any) {
+      console.error('Error resending feedback requests:', error);
+      toast.error(error.message || 'Failed to send feedback requests');
+    } finally {
+      setResendingFeedback(null);
+    }
+  };
+
   const handleShareEvent = (eventId: string, eventTitle: string) => {
     const shareUrl = `${window.location.origin}/events/${eventId}/register`;
     
@@ -895,6 +937,20 @@ const ManageEventsPage: React.FC = () => {
                       >
                         <ChatBubbleLeftRightIcon className="h-4 w-4" />
                       </button>
+                      {event.status === 'completed' && (
+                        <button
+                          onClick={() => handleResendFeedbackRequests(event.id, event.title)}
+                          disabled={resendingFeedback === event.id}
+                          className={`flex items-center justify-center w-8 h-8 rounded-lg transition-colors ${
+                            resendingFeedback === event.id
+                              ? 'text-gray-400 bg-gray-50 cursor-not-allowed'
+                              : 'text-purple-600 hover:text-purple-900 hover:bg-purple-50 cursor-pointer'
+                          }`}
+                          title="Resend Feedback Request Emails"
+                        >
+                          <ArrowPathIcon className={`h-4 w-4 ${resendingFeedback === event.id ? 'animate-spin' : ''}`} />
+                        </button>
+                      )}
                     </div>
                     <div className="flex items-center space-x-2">
                       <Link
@@ -1054,6 +1110,20 @@ const ManageEventsPage: React.FC = () => {
                             >
                               <ChatBubbleLeftRightIcon className="h-4 w-4" />
                             </button>
+                            {event.status === 'completed' && (
+                              <button
+                                onClick={() => handleResendFeedbackRequests(event.id, event.title)}
+                                disabled={resendingFeedback === event.id}
+                                className={`${
+                                  resendingFeedback === event.id
+                                    ? 'text-gray-400 cursor-not-allowed'
+                                    : 'text-purple-600 hover:text-purple-900 cursor-pointer'
+                                }`}
+                                title="Resend Feedback Request Emails"
+                              >
+                                <ArrowPathIcon className={`h-4 w-4 ${resendingFeedback === event.id ? 'animate-spin' : ''}`} />
+                              </button>
+                            )}
                             <Link
                               to={`/admin/analytics?eventId=${event.id}`}
                               className="text-purple-600 hover:text-purple-900"
