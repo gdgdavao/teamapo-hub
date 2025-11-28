@@ -45,6 +45,19 @@ const ManageEventsPage: React.FC = () => {
   const navigate = useNavigate();
   const { userProfile, loading: authLoading, currentUser } = useAuth();
 
+  // Dev diagnostics helper (no-ops in production)
+  const isDevEnv = process.env.NODE_ENV !== 'production';
+  const logDiagnostics = React.useCallback(
+    (label: string, payload: any) => {
+      if (!isDevEnv) return;
+      // Use groupCollapsed to avoid noisy consoles but keep data accessible
+      console.groupCollapsed(`[AdminManageEventsPage] ${label}`);
+      console.log(payload);
+      console.groupEnd();
+    },
+    [isDevEnv]
+  );
+
   // This page is now admin-only
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [searchTerm, setSearchTerm] = useState('');
@@ -89,6 +102,19 @@ const ManageEventsPage: React.FC = () => {
         setLoading(true);
         // Admin can see all events
         const eventsData = await EventService.getAllEvents();
+
+        logDiagnostics(
+          'Fetched events snapshot',
+          eventsData.map(event => ({
+            id: event.id,
+            status: event.status,
+            registrationStatus: event.registrationStatus,
+            feedbackRequestsSentAt: event.feedbackRequestsSentAt?.toDate
+              ? event.feedbackRequestsSentAt.toDate().toISOString()
+              : event.feedbackRequestsSentAt ?? null,
+            currentAttendees: event.currentAttendees
+          }))
+        );
         
         // Calculate real attendee counts from approved registrations
         const eventsWithRealCounts = await Promise.all(
@@ -96,6 +122,27 @@ const ManageEventsPage: React.FC = () => {
             try {
               // Get registrations for this event
               const registrations = await RegistrationService.getEventRegistrations(event.id);
+
+              if (registrations.length && isDevEnv) {
+                const attendanceBreakdown = registrations.reduce<Record<string, number>>((acc, reg) => {
+                  const attendanceStatus = reg.attendanceStatus ?? 'unknown';
+                  acc[attendanceStatus] = (acc[attendanceStatus] || 0) + 1;
+                  return acc;
+                }, {});
+
+                const registrationStatusBreakdown = registrations.reduce<Record<string, number>>((acc, reg) => {
+                  const regStatus = (reg as any).registrationStatus ?? 'unset';
+                  acc[regStatus] = (acc[regStatus] || 0) + 1;
+                  return acc;
+                }, {});
+
+                logDiagnostics(`Registration breakdown for event ${event.id}`, {
+                  eventTitle: event.title,
+                  attendanceBreakdown,
+                  registrationStatusBreakdown
+                });
+              }
+
               // Count approved registrations only
               const approvedAttendees = registrations
                 .filter(reg => (reg as any).registrationStatus === 'approved')
@@ -113,6 +160,15 @@ const ManageEventsPage: React.FC = () => {
         );
         
         setEvents(eventsWithRealCounts);
+        logDiagnostics(
+          'Events state updated',
+          eventsWithRealCounts.map(event => ({
+            id: event.id,
+            status: event.status,
+            registrationStatus: event.registrationStatus,
+            currentAttendees: event.currentAttendees
+          }))
+        );
       } catch (error) {
         console.error('Error fetching events:', error);
         toast.error('Failed to load events');
@@ -476,6 +532,25 @@ const ManageEventsPage: React.FC = () => {
         newStatus,
         isPublished: updatedIsPublished
       });
+
+      if (isDevEnv) {
+        try {
+          const refreshedEvent = await EventService.getEvent(eventId);
+          logDiagnostics('Post-status update snapshot', {
+            eventId,
+            newStatus,
+            refreshedStatus: refreshedEvent?.status,
+            feedbackRequestsSentAt: refreshedEvent?.feedbackRequestsSentAt?.toDate
+              ? refreshedEvent.feedbackRequestsSentAt.toDate().toISOString()
+              : refreshedEvent?.feedbackRequestsSentAt ?? null,
+            updatedAt: refreshedEvent?.updatedAt?.toDate
+              ? refreshedEvent.updatedAt.toDate().toISOString()
+              : refreshedEvent?.updatedAt ?? null
+          });
+        } catch (snapshotError) {
+          console.warn('Unable to fetch event snapshot after status update:', snapshotError);
+        }
+      }
       
       toast.success('Event status updated successfully');
     } catch (error) {

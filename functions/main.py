@@ -2355,6 +2355,9 @@ def send_feedback_requests_for_event(event_id: str, event_title: str) -> None:
         
         logger.info(f"Found {len(registrations_to_process)} registrations to send feedback requests for event {event_id}")
         
+        # Track how many emails were successfully sent so we only stamp the event when ≥1 succeeds
+        emails_sent_count = 0
+
         # Process each registration
         for reg in registrations_to_process:
             reg_data = reg.to_dict()
@@ -2410,6 +2413,7 @@ def send_feedback_requests_for_event(event_id: str, event_title: str) -> None:
                 
                 # Update registration based on result
                 if email_result.get('success'):
+                    emails_sent_count += 1
                     update_data = {
                         'feedbackRequestSent': True,
                         'feedbackRequestSentAt': firestore.SERVER_TIMESTAMP,
@@ -2440,14 +2444,18 @@ def send_feedback_requests_for_event(event_id: str, event_title: str) -> None:
                 except Exception:
                     pass
         
-        # Mark event as having sent feedback requests
-        event_ref = db.collection('events').document(event_id)
-        event_ref.update({
-            'feedbackRequestsSentAt': firestore.SERVER_TIMESTAMP,
-            'updatedAt': firestore.SERVER_TIMESTAMP
-        })
-        
-        logger.info(f"Completed sending feedback requests for event {event_id}")
+        # Only stamp the event if at least one email was successfully sent
+        # This prevents an empty run (no checked-in attendees yet) from blocking future attempts
+        if emails_sent_count > 0:
+            event_ref = db.collection('events').document(event_id)
+            event_ref.update({
+                'feedbackRequestsSentAt': firestore.SERVER_TIMESTAMP,
+                'feedbackRequestsSentCount': emails_sent_count,
+                'updatedAt': firestore.SERVER_TIMESTAMP
+            })
+            logger.info(f"Completed sending {emails_sent_count} feedback requests for event {event_id}")
+        else:
+            logger.warning(f"No feedback emails sent for event {event_id} (0 eligible registrations found or all failed)")
         
     except Exception as e:
         logger.error(f"Error in send_feedback_requests_for_event for event {event_id}: {str(e)}")
