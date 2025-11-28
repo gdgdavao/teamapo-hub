@@ -9,6 +9,13 @@ export interface CertificateGenerationRequest {
   verificationCode?: string;
 }
 
+// High resolution settings for 300 PPI certificate generation
+const CERTIFICATE_DPI = 300;
+const DEFAULT_WIDTH_INCHES = 11; // Letter landscape width
+const DEFAULT_HEIGHT_INCHES = 8.5; // Letter landscape height
+const HIGH_RES_WIDTH = Math.round(DEFAULT_WIDTH_INCHES * CERTIFICATE_DPI); // 3300px
+const HIGH_RES_HEIGHT = Math.round(DEFAULT_HEIGHT_INCHES * CERTIFICATE_DPI); // 2550px
+
 export class CertificateGenerationService {
   private static generateVerificationCode(): string {
     const timestamp = Date.now().toString(36);
@@ -16,10 +23,10 @@ export class CertificateGenerationService {
     return `CERT-${timestamp}-${random}`.toUpperCase();
   }
 
-  private static generateQRCode(verificationUrl: string): Promise<string> {
-    // In a real implementation, this would use a QR code library like qrcode
-    // For now, return a placeholder
-    return Promise.resolve(`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(verificationUrl)}`);
+  private static generateQRCode(verificationUrl: string, size: number = 300): Promise<string> {
+    // Generate high resolution QR code for better quality at 300 DPI
+    const qrSize = Math.max(size, 300); // Minimum 300px for good quality
+    return Promise.resolve(`https://api.qrserver.com/v1/create-qr-code/?size=${qrSize}x${qrSize}&data=${encodeURIComponent(verificationUrl)}`);
   }
 
   /**
@@ -65,7 +72,8 @@ export class CertificateGenerationService {
     template: CertificateTemplate,
     request: CertificateGenerationRequest,
     verificationCode: string,
-    verificationUrl: string
+    verificationUrl: string,
+    scaleFactor: number = 1
   ): Promise<void> {
     if (!template.elements || template.elements.length === 0) {
       console.warn('No elements found in enhanced template');
@@ -79,7 +87,9 @@ export class CertificateGenerationService {
       ctx.save();
 
       if (element.type === 'text') {
-        const fontSize = element.style.fontSize || 16;
+        // Scale font size for high resolution
+        const baseFontSize = element.style.fontSize || 16;
+        const fontSize = Math.round(baseFontSize * scaleFactor);
         const fontFamily = element.style.fontFamily || 'Arial';
         const fontWeight = element.style.fontWeight || 'normal';
         const fontStyle = element.style.fontStyle || 'normal';
@@ -99,22 +109,23 @@ export class CertificateGenerationService {
         ctx.fillText(text, x, y);
       } else if (element.type === 'qrcode') {
         try {
-          const qrCodeUrl = await this.generateQRCode(verificationUrl);
+          // Scale QR code size for high resolution
+          const qrSize = Math.round((element.position.width || 150) * scaleFactor);
+          const qrCodeUrl = await this.generateQRCode(verificationUrl, qrSize);
           const qrImg = await this.loadImageWithRetry(qrCodeUrl);
           
-          const size = element.position.width || 100;
-          const qrX = x - size / 2;
-          const qrY = y - size / 2;
+          const qrX = x - qrSize / 2;
+          const qrY = y - qrSize / 2;
           
-          ctx.drawImage(qrImg, qrX, qrY, size, size);
+          ctx.drawImage(qrImg, qrX, qrY, qrSize, qrSize);
         } catch (error) {
           console.warn('Failed to load QR code, skipping:', error);
           // Draw a placeholder rectangle if QR fails
-          const size = element.position.width || 100;
+          const size = Math.round((element.position.width || 100) * scaleFactor);
           ctx.fillStyle = '#f0f0f0';
           ctx.fillRect(x - size/2, y - size/2, size, size);
           ctx.fillStyle = '#999';
-          ctx.font = '12px Arial';
+          ctx.font = `${Math.round(12 * scaleFactor)}px Arial`;
           ctx.textAlign = 'center';
           ctx.fillText('QR Code', x, y);
         }
@@ -133,7 +144,8 @@ export class CertificateGenerationService {
     template: CertificateTemplate,
     request: CertificateGenerationRequest,
     verificationCode: string,
-    verificationUrl: string
+    verificationUrl: string,
+    scaleFactor: number = 1
   ): Promise<void> {
     if (!template.textPositions) {
       console.warn('No textPositions found in legacy template');
@@ -143,7 +155,8 @@ export class CertificateGenerationService {
     // Draw recipient name
     if (template.textPositions.recipientName) {
       const namePos = template.textPositions.recipientName;
-      ctx.font = `${namePos.fontStyle || 'normal'} ${namePos.fontWeight || 'normal'} ${namePos.fontSize}px ${namePos.fontFamily}`;
+      const fontSize = Math.round(namePos.fontSize * scaleFactor);
+      ctx.font = `${namePos.fontStyle || 'normal'} ${namePos.fontWeight || 'normal'} ${fontSize}px ${namePos.fontFamily}`;
       ctx.fillStyle = namePos.color;
       ctx.textAlign = namePos.align as CanvasTextAlign;
 
@@ -155,7 +168,8 @@ export class CertificateGenerationService {
     // Draw verification code
     if (template.textPositions.verificationCode) {
       const codePos = template.textPositions.verificationCode;
-      ctx.font = `${codePos.fontStyle || 'normal'} ${codePos.fontWeight || 'normal'} ${codePos.fontSize}px ${codePos.fontFamily}`;
+      const fontSize = Math.round(codePos.fontSize * scaleFactor);
+      ctx.font = `${codePos.fontStyle || 'normal'} ${codePos.fontWeight || 'normal'} ${fontSize}px ${codePos.fontFamily}`;
       ctx.fillStyle = codePos.color;
       ctx.textAlign = codePos.align as CanvasTextAlign;
 
@@ -167,7 +181,8 @@ export class CertificateGenerationService {
     // Draw event title if position is defined
     if (template.textPositions.eventTitle) {
       const eventPos = template.textPositions.eventTitle;
-      ctx.font = `${eventPos.fontStyle || 'normal'} ${eventPos.fontWeight || 'normal'} ${eventPos.fontSize}px ${eventPos.fontFamily}`;
+      const fontSize = Math.round(eventPos.fontSize * scaleFactor);
+      ctx.font = `${eventPos.fontStyle || 'normal'} ${eventPos.fontWeight || 'normal'} ${fontSize}px ${eventPos.fontFamily}`;
       ctx.fillStyle = eventPos.color;
       ctx.textAlign = eventPos.align as CanvasTextAlign;
 
@@ -179,7 +194,8 @@ export class CertificateGenerationService {
     // Draw event date if position is defined
     if (template.textPositions.eventDate) {
       const datePos = template.textPositions.eventDate;
-      ctx.font = `${datePos.fontStyle || 'normal'} ${datePos.fontWeight || 'normal'} ${datePos.fontSize}px ${datePos.fontFamily}`;
+      const fontSize = Math.round(datePos.fontSize * scaleFactor);
+      ctx.font = `${datePos.fontStyle || 'normal'} ${datePos.fontWeight || 'normal'} ${fontSize}px ${datePos.fontFamily}`;
       ctx.fillStyle = datePos.color;
       ctx.textAlign = datePos.align as CanvasTextAlign;
 
@@ -191,14 +207,15 @@ export class CertificateGenerationService {
     // Draw QR code
     if (template.textPositions.qrCode) {
       try {
-        const qrCodeUrl = await this.generateQRCode(verificationUrl);
+        const qrPos = template.textPositions.qrCode;
+        const qrSize = Math.round(qrPos.size * scaleFactor);
+        const qrCodeUrl = await this.generateQRCode(verificationUrl, qrSize);
         const qrImg = await this.loadImageWithRetry(qrCodeUrl);
 
-        const qrPos = template.textPositions.qrCode;
-        const qrX = (qrPos.x / 100) * canvas.width - (qrPos.size / 2);
-        const qrY = (qrPos.y / 100) * canvas.height - (qrPos.size / 2);
+        const qrX = (qrPos.x / 100) * canvas.width - (qrSize / 2);
+        const qrY = (qrPos.y / 100) * canvas.height - (qrSize / 2);
 
-        ctx.drawImage(qrImg, qrX, qrY, qrPos.size, qrPos.size);
+        ctx.drawImage(qrImg, qrX, qrY, qrSize, qrSize);
       } catch (error) {
         console.warn('Failed to load QR code in legacy template:', error);
       }
@@ -221,24 +238,46 @@ export class CertificateGenerationService {
         throw new Error('Could not get canvas context');
       }
 
-      // Set canvas size from template dimensions or default
-      canvas.width = template.dimensions?.width || 1200;
-      canvas.height = template.dimensions?.height || 800;
+      // Set high resolution canvas size for 300 DPI output
+      // Use template dimensions as base, then scale up for high DPI
+      const baseWidth = template.dimensions?.width || 1200;
+      const baseHeight = template.dimensions?.height || 800;
+      
+      // Calculate scale factor to achieve 300 DPI
+      // Assuming template dimensions were designed for 72-96 DPI display
+      const scaleFactor = CERTIFICATE_DPI / 96; // Scale from 96 DPI to 300 DPI (~3.125x)
+      
+      canvas.width = Math.round(baseWidth * scaleFactor);
+      canvas.height = Math.round(baseHeight * scaleFactor);
+      
+      // Ensure minimum high resolution dimensions
+      if (canvas.width < HIGH_RES_WIDTH) {
+        const aspectRatio = baseHeight / baseWidth;
+        canvas.width = HIGH_RES_WIDTH;
+        canvas.height = Math.round(HIGH_RES_WIDTH * aspectRatio);
+      }
+
+      // Enable high-quality image rendering
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
 
       // Load template image with retry
       const templateImg = await this.loadImageWithRetry(template.templateImageUrl);
 
-      // Draw the template image
+      // Draw the template image at high resolution
       ctx.drawImage(templateImg, 0, 0, canvas.width, canvas.height);
 
       // Generate content based on template mode
+      // Scale factor for text and element positions
+      const textScaleFactor = canvas.width / baseWidth;
+      
       if (template.templateMode === 'enhanced' && template.elements) {
-        await this.generateFromEnhancedTemplate(canvas, ctx, template, request, verificationCode, verificationUrl);
+        await this.generateFromEnhancedTemplate(canvas, ctx, template, request, verificationCode, verificationUrl, textScaleFactor);
       } else if (template.textPositions) {
-        await this.generateFromLegacyTemplate(canvas, ctx, template, request, verificationCode, verificationUrl);
+        await this.generateFromLegacyTemplate(canvas, ctx, template, request, verificationCode, verificationUrl, textScaleFactor);
       }
 
-      // Convert to blob
+      // Convert to high-quality PNG blob
       const blob = await new Promise<Blob>((resolve, reject) => {
         canvas.toBlob((b) => {
           if (b) {
@@ -246,7 +285,7 @@ export class CertificateGenerationService {
           } else {
             reject(new Error('Failed to create certificate blob'));
           }
-        }, 'image/png');
+        }, 'image/png', 1.0); // Maximum quality
       });
 
       const certificateUrl = URL.createObjectURL(blob);
