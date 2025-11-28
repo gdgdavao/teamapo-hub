@@ -539,24 +539,27 @@ export class RegistrationService {
 
   /**
    * Get registration by ID
+   * Returns null if registration not found or if user lacks permission (anonymous users)
    */
   static async getRegistrationById(registrationId: string): Promise<Registration | null> {
     try {
-      console.log('Fetching registration with ID:', registrationId);
       const registrationRef = doc(db, this.REGISTRATIONS_COLLECTION, registrationId);
       const registrationSnap = await getDoc(registrationRef);
       
       if (registrationSnap.exists()) {
-        console.log('Registration found:', registrationSnap.data());
         return {
           id: registrationSnap.id,
           ...registrationSnap.data()
         } as Registration;
       }
       
-      console.log('Registration not found');
       return null;
-    } catch (error) {
+    } catch (error: any) {
+      // Handle permission errors gracefully (expected for anonymous users)
+      if (error?.code === 'permission-denied' || error?.message?.includes('permission')) {
+        console.warn('Registration read permission denied (expected for anonymous users)');
+        return null;
+      }
       console.error('Error fetching registration:', error);
       throw new Error('Failed to fetch registration');
     }

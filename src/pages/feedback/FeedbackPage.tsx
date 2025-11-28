@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { CheckCircleIcon, ExclamationTriangleIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
 import usePageTitle from '../../hooks/usePageTitle';
@@ -9,6 +9,7 @@ import { EventService } from '../../services/eventService';
 import { FeedbackService } from '../../services/feedbackService';
 import { CertificateService } from '../../services/certificateService';
 import { CertificateGenerationService } from '../../utils/certificateGeneration';
+import { RegistrationService } from '../../services/registrationService';
 import { Event, FormField, CertificateTemplate } from '../../types';
 
 const FeedbackPage: React.FC = () => {
@@ -71,6 +72,79 @@ const FeedbackPage: React.FC = () => {
     return new Date();
   };
 
+  // Generate or retrieve certificate for user (extracted for reuse)
+  const generateCertificateForUser = useCallback(async (
+    certTemplate: CertificateTemplate,
+    eventData: Event,
+    regId: string,
+    email: string,
+    name: string
+  ) => {
+    if (!eventId) return;
+
+    setGeneratingCertificate(true);
+    setCertificateError(null);
+
+    try {
+      // Check if certificate already exists for this registration (consistent code per attendee)
+      const existingCert = await CertificateService.getCertificateByRegistrationId(regId);
+      
+      if (existingCert?.certificateUrl && existingCert?.credentialId) {
+        // Certificate already exists, use existing data
+        setCertificateUrl(existingCert.certificateUrl);
+        setVerificationCode(existingCert.credentialId);
+        return;
+      }
+
+      // Get consistent verification code for this attendee (deterministic based on eventId + email + name)
+      const consistentVerificationCode = await CertificateService.getConsistentVerificationCode(
+        eventId,
+        regId,
+        email,
+        name
+      );
+
+      // Generate certificate client-side with consistent verification code
+      const result = await CertificateGenerationService.generateCertificate(certTemplate, {
+        templateId: certTemplate.id,
+        recipientName: name,
+        recipientEmail: email,
+        eventTitle: eventData.title,
+        eventDate: toDate(eventData.startDate).toISOString(),
+        eventId,
+        verificationCode: consistentVerificationCode
+      });
+
+      // Upload certificate to Firebase Storage
+      const storageUrl = await CertificateService.saveCertificateToStorage(
+        result.blob,
+        eventId,
+        result.verificationCode
+      );
+
+      // Save certificate record to Firestore
+      await CertificateService.createCertificateRecord({
+        recipientName: name,
+        recipientEmail: email,
+        eventId,
+        eventTitle: eventData.title,
+        eventDate: toDate(eventData.startDate).toISOString(),
+        registrationId: regId,
+        certificateUrl: storageUrl,
+        verificationCode: result.verificationCode,
+        templateId: certTemplate.id
+      });
+
+      setCertificateUrl(result.certificateUrl);
+      setVerificationCode(result.verificationCode);
+    } catch (err) {
+      console.error('Error generating certificate:', err);
+      setCertificateError('Failed to generate certificate. You can try again or contact support.');
+    } finally {
+      setGeneratingCertificate(false);
+    }
+  }, [eventId]);
+
   // Set page title and SEO
   usePageTitle({ title: `Event Feedback${event ? ` - ${event.title}` : ''}` });
   useSEO({
@@ -122,7 +196,47 @@ const FeedbackPage: React.FC = () => {
         const eventData = await EventService.getEvent(eventId);
         setEvent(eventData);
 
-        // Load feedback form
+        // Check if feedback was already submitted for this registration
+        if (registrationId && userEmail && userName) {
+          // First try to get registration (returns null for anonymous users due to permissions)
+          const registration = await RegistrationService.getRegistrationById(registrationId);
+          
+          if (registration?.feedbackSubmitted) {
+            // Feedback already submitted - skip to certificate generation/display
+            setSubmitted(true);
+            
+            // Check for certificate template and generate/retrieve certificate
+            const certTemplate = await CertificateService.getTemplateForEvent(eventId);
+            if (certTemplate) {
+              setTemplate(certTemplate);
+              // This will either retrieve existing certificate or generate new one
+              await generateCertificateForUser(certTemplate, eventData, registrationId, userEmail, userName);
+            }
+            setLoading(false);
+            return;
+          }
+          
+          // If registration is null (permission denied for anonymous users), check certificate instead
+          if (!registration) {
+            const existingCert = await CertificateService.getCertificateByRegistrationId(registrationId);
+            if (existingCert?.certificateUrl && existingCert?.credentialId) {
+              // Certificate exists means feedback was already submitted
+              setSubmitted(true);
+              setCertificateUrl(existingCert.certificateUrl);
+              setVerificationCode(existingCert.credentialId);
+              
+              // Try to load template for retry functionality
+              const certTemplate = await CertificateService.getTemplateForEvent(eventId);
+              if (certTemplate) {
+                setTemplate(certTemplate);
+              }
+              setLoading(false);
+              return;
+            }
+          }
+        }
+
+        // Load feedback form (only if feedback not yet submitted)
         const formData = await EventService.getFeedbackForm(eventId);
         setFeedbackForm(formData.fields);
       } catch (err) {
@@ -134,73 +248,12 @@ const FeedbackPage: React.FC = () => {
     };
 
     loadEventAndForm();
-  }, [eventId, tokenResolved]);
+  }, [eventId, tokenResolved, registrationId, userEmail, userName, generateCertificateForUser]);
 
   // Generate certificate after feedback submission
   const generateCertificate = async (certTemplate: CertificateTemplate) => {
-    if (!event || !eventId || !registrationId || !userEmail || !userName) return;
-
-    setGeneratingCertificate(true);
-    setCertificateError(null);
-
-    try {
-      // Check if certificate already exists for this registration (consistent code per attendee)
-      const existingCert = await CertificateService.getCertificateByRegistrationId(registrationId);
-      
-      if (existingCert?.certificateUrl && existingCert?.credentialId) {
-        // Certificate already exists, use existing data
-        setCertificateUrl(existingCert.certificateUrl);
-        setVerificationCode(existingCert.credentialId);
-        return;
-      }
-
-      // Get consistent verification code for this attendee (deterministic based on eventId + email + name)
-      const consistentVerificationCode = await CertificateService.getConsistentVerificationCode(
-        eventId,
-        registrationId,
-        userEmail,
-        userName
-      );
-
-      // Generate certificate client-side with consistent verification code
-      const result = await CertificateGenerationService.generateCertificate(certTemplate, {
-        templateId: certTemplate.id,
-        recipientName: userName,
-        recipientEmail: userEmail,
-        eventTitle: event.title,
-        eventDate: toDate(event.startDate).toISOString(),
-        eventId,
-        verificationCode: consistentVerificationCode
-      });
-
-      // Upload certificate to Firebase Storage
-      const storageUrl = await CertificateService.saveCertificateToStorage(
-        result.blob,
-        eventId,
-        result.verificationCode
-      );
-
-      // Save certificate record to Firestore
-      await CertificateService.createCertificateRecord({
-        recipientName: userName,
-        recipientEmail: userEmail,
-        eventId,
-        eventTitle: event.title,
-        eventDate: toDate(event.startDate).toISOString(),
-        registrationId,
-        certificateUrl: storageUrl,
-        verificationCode: result.verificationCode,
-        templateId: certTemplate.id
-      });
-
-      setCertificateUrl(result.certificateUrl);
-      setVerificationCode(result.verificationCode);
-    } catch (err) {
-      console.error('Error generating certificate:', err);
-      setCertificateError('Failed to generate certificate. You can try again or contact support.');
-    } finally {
-      setGeneratingCertificate(false);
-    }
+    if (!event || !registrationId || !userEmail || !userName) return;
+    await generateCertificateForUser(certTemplate, event, registrationId, userEmail, userName);
   };
 
   const handleFeedbackSubmit = async (formData: Record<string, any>) => {
@@ -271,7 +324,8 @@ const FeedbackPage: React.FC = () => {
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading feedback form...</p>
+          <p className="text-gray-600 font-medium">Just a moment...</p>
+          <p className="text-gray-400 text-sm mt-1">Preparing your feedback form</p>
         </div>
       </div>
     );
@@ -279,30 +333,39 @@ const FeedbackPage: React.FC = () => {
 
   if (error) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
         <div className="max-w-md w-full bg-white rounded-lg shadow-sm p-8 text-center">
           <ExclamationTriangleIcon className="h-12 w-12 text-red-500 mx-auto mb-4" />
-          <h1 className="text-2xl font-bold text-gray-900 mb-4">Error</h1>
+          <h1 className="text-2xl font-bold text-gray-900 mb-2">Oops! Something went wrong</h1>
           <p className="text-gray-600 mb-6">{error}</p>
           <button
             onClick={() => window.location.reload()}
-            className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
           >
-            Try Again
+            Refresh Page
           </button>
+          <p className="text-xs text-gray-400 mt-4">If this problem persists, please contact the event organizer.</p>
         </div>
       </div>
     );
   }
 
   if (submitted) {
+    // Check if this is a returning user (certificate already exists)
+    const isReturningUser = certificateUrl && !generatingCertificate;
+    
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center py-12 px-4">
         <div className="max-w-lg w-full bg-white rounded-lg shadow-sm p-8 text-center">
           <CheckCircleIcon className="h-16 w-16 text-green-500 mx-auto mb-6" />
-          <h1 className="text-2xl font-bold text-gray-900 mb-4">Thank You!</h1>
+          <h1 className="text-2xl font-bold text-gray-900 mb-4">
+            {isReturningUser ? 'Welcome Back!' : 'Thank You!'}
+          </h1>
           <p className="text-gray-600 mb-6">
-            Your feedback has been submitted successfully. We appreciate your time and input!
+            {isReturningUser 
+              ? 'Your feedback was already submitted. Here\'s your certificate of participation!'
+              : 'Your feedback has been submitted successfully. We truly appreciate your time and input!'
+            }
           </p>
           
           {/* Certificate Section */}
@@ -315,11 +378,51 @@ const FeedbackPage: React.FC = () => {
                 Certificate of Participation
               </p>
               
-              {/* Loading State */}
+              {/* Loading State with Skeleton */}
               {generatingCertificate && (
-                <div className="py-8">
-                  <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600 mx-auto mb-4"></div>
-                  <p className="text-sm text-gray-600">Generating your certificate...</p>
+                <div className="space-y-4">
+                  {/* Certificate Skeleton */}
+                  <div className="relative border border-gray-200 rounded-lg overflow-hidden shadow-sm bg-gray-100 aspect-[11/8.5]">
+                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer" 
+                         style={{ backgroundSize: '200% 100%', animation: 'shimmer 1.5s infinite' }} />
+                    <div className="absolute inset-0 flex flex-col items-center justify-center p-6">
+                      {/* Decorative border skeleton */}
+                      <div className="absolute inset-4 border-2 border-gray-200 rounded-lg opacity-50" />
+                      
+                      {/* Logo placeholder */}
+                      <div className="w-16 h-16 bg-gray-200 rounded-full mb-4" />
+                      
+                      {/* Title skeleton */}
+                      <div className="h-6 w-48 bg-gray-200 rounded mb-2" />
+                      
+                      {/* Subtitle skeleton */}
+                      <div className="h-4 w-32 bg-gray-200 rounded mb-6" />
+                      
+                      {/* Name skeleton */}
+                      <div className="h-8 w-56 bg-gray-200 rounded mb-4" />
+                      
+                      {/* Description skeleton */}
+                      <div className="h-3 w-64 bg-gray-200 rounded mb-2" />
+                      <div className="h-3 w-48 bg-gray-200 rounded mb-6" />
+                      
+                      {/* QR code placeholder */}
+                      <div className="w-16 h-16 bg-gray-200 rounded" />
+                    </div>
+                  </div>
+                  
+                  {/* Verification code skeleton */}
+                  <div className="bg-white/70 rounded-lg px-4 py-3">
+                    <div className="h-3 w-24 bg-gray-200 rounded mx-auto mb-2" />
+                    <div className="h-6 w-40 bg-gray-200 rounded mx-auto" />
+                  </div>
+                  
+                  {/* Button skeleton */}
+                  <div className="h-12 w-full bg-gray-200 rounded-lg" />
+                  
+                  <div className="text-center">
+                    <p className="text-sm font-medium text-gray-600">Creating your certificate...</p>
+                    <p className="text-xs text-gray-400 mt-1">This may take a few seconds</p>
+                  </div>
                 </div>
               )}
               
@@ -327,14 +430,17 @@ const FeedbackPage: React.FC = () => {
               {certificateError && !generatingCertificate && (
                 <div className="py-4">
                   <ExclamationTriangleIcon className="h-10 w-10 text-yellow-500 mx-auto mb-3" />
-                  <p className="text-sm text-red-600 mb-4">{certificateError}</p>
+                  <p className="text-sm font-medium text-gray-700 mb-2">Certificate Generation Failed</p>
+                  <p className="text-xs text-gray-500 mb-4">Don't worry, your feedback was saved. You can try generating again.</p>
                   {template && (
                     <button
                       onClick={handleRetryCertificate}
-                      className="inline-flex items-center px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+                      className="inline-flex items-center px-5 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
                     >
-                      <ArrowDownTrayIcon className="h-4 w-4 mr-2" />
-                      Retry Generation
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                      Try Again
                     </button>
                   )}
                 </div>
@@ -355,9 +461,9 @@ const FeedbackPage: React.FC = () => {
                   {/* Verification Code */}
                   {verificationCode && (
                     <div className="bg-white/70 rounded-lg px-4 py-3">
-                      <p className="text-xs text-gray-500 mb-1">Verification Code</p>
+                      <p className="text-xs text-gray-500 mb-1">Certificate Verification Code</p>
                       <div className="flex items-center justify-center gap-2">
-                        <code className="text-sm font-mono font-semibold text-blue-700 bg-blue-50 px-3 py-1 rounded">
+                        <code className="text-sm font-mono font-semibold text-blue-700 bg-blue-50 px-3 py-1.5 rounded">
                           {verificationCode}
                         </code>
                         <button
@@ -365,7 +471,7 @@ const FeedbackPage: React.FC = () => {
                             navigator.clipboard.writeText(verificationCode);
                           }}
                           className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
-                          title="Copy verification code"
+                          title="Copy to clipboard"
                           aria-label="Copy verification code"
                         >
                           <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -373,6 +479,7 @@ const FeedbackPage: React.FC = () => {
                           </svg>
                         </button>
                       </div>
+                      <p className="text-xs text-gray-400 mt-2">Use this code to verify your certificate authenticity</p>
                     </div>
                   )}
                   
@@ -393,34 +500,41 @@ const FeedbackPage: React.FC = () => {
               {/* No Template Available */}
               {!template && !generatingCertificate && !certificateUrl && !certificateError && (
                 <div className="py-4">
-                  <p className="text-sm text-gray-600">
-                    Certificate generation is not available for this event at the moment.
+                  <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <p className="text-sm font-medium text-gray-600 mb-1">
+                    Certificate Coming Soon
+                  </p>
+                  <p className="text-xs text-gray-400">
+                    The organizer hasn't set up certificates for this event yet. Check back later!
                   </p>
                 </div>
               )}
             </div>
           )}
           
-          <div className="space-y-4">
-            <p className="text-sm text-gray-500">
-              Your feedback helps us improve our future events.
-            </p>
-            {event && (
-              <div className="bg-blue-50 p-4 rounded-lg">
-                <p className="text-sm font-medium text-blue-900">
-                  Event: {event.title}
-                </p>
-                <p className="text-sm text-blue-700">
-                  {toDate(event.startDate).toLocaleDateString('en-US', {
-                    weekday: 'long',
-                    year: 'numeric',
-                    month: 'long',
-                    day: 'numeric'
-                  })}
-                </p>
-              </div>
-            )}
-          </div>
+          {event && (
+            <div className="bg-blue-50 p-4 rounded-lg">
+              <p className="text-sm font-medium text-blue-900">
+                {event.title}
+              </p>
+              <p className="text-sm text-blue-700">
+                {toDate(event.startDate).toLocaleDateString('en-US', {
+                  weekday: 'long',
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric'
+                })}
+              </p>
+            </div>
+          )}
+          
+          <p className="text-xs text-gray-400 mt-6">
+            Thank you for being part of our community! 💙
+          </p>
         </div>
       </div>
     );
@@ -431,7 +545,8 @@ const FeedbackPage: React.FC = () => {
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         {/* Header */}
         <div className="text-center mb-12">
-          <h1 className="text-3xl font-bold text-gray-900 mb-4">Event Feedback</h1>
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">Share Your Feedback</h1>
+          <p className="text-gray-500 mb-6">We'd love to hear about your experience!</p>
           {event && (
             <div className="bg-white rounded-lg shadow-sm p-6 mb-8">
               <h2 className="text-xl font-semibold text-gray-800 mb-2">{event.title}</h2>
@@ -443,9 +558,11 @@ const FeedbackPage: React.FC = () => {
                   day: 'numeric'
                 })} • {event.venue.type === 'online' ? 'Online Event' : event.venue.name || 'TBA'}
               </p>
-              <p className="text-sm text-gray-500 mt-2">
-                Your feedback is valuable and helps us improve our future events.
-              </p>
+              {userName && (
+                <p className="text-sm text-blue-600 mt-3 font-medium">
+                  👋 Hi {userName.split(' ')[0]}! Thanks for attending.
+                </p>
+              )}
             </div>
           )}
         </div>

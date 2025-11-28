@@ -277,3 +277,19 @@
     padding: 0 !important;
   }
 }
+
+/* Skeleton Loading Shimmer Animation */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.animate-shimmer {
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.6), transparent);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
