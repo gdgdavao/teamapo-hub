@@ -23,6 +23,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { EventService } from '../../services/eventService';
 import { RegistrationService } from '../../services/registrationService';
+import { CertificateService } from '../../services/certificateService';
 import { Event } from '../../types';
 import { logger } from '../../utils/logger';
 import toast from 'react-hot-toast';
@@ -39,6 +40,13 @@ interface DeleteModalState {
   confirmText: string;
   type: 'danger' | 'warning' | 'info';
   isForceDelete: boolean;
+}
+
+interface CertificateWarningModalState {
+  isOpen: boolean;
+  eventId: string | null;
+  eventTitle: string;
+  action: 'complete' | 'resend' | null;
 }
 
 // Removed FeedbackModalState - now using dedicated page
@@ -68,6 +76,13 @@ const ManageEventsPage: React.FC = () => {
   const [events, setEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
   const [resendingFeedback, setResendingFeedback] = useState<string | null>(null);
+  const [eventCertificateStatus, setEventCertificateStatus] = useState<Record<string, boolean>>({});
+  const [certificateWarningModal, setCertificateWarningModal] = useState<CertificateWarningModalState>({
+    isOpen: false,
+    eventId: null,
+    eventTitle: '',
+    action: null
+  });
   const [deleteModal, setDeleteModal] = useState<DeleteModalState>({
     isOpen: false,
     eventId: null,
@@ -172,6 +187,22 @@ const ManageEventsPage: React.FC = () => {
             currentAttendees: event.currentAttendees
           }))
         );
+        
+        // Check certificate template status for each event
+        const certificateStatusMap: Record<string, boolean> = {};
+        await Promise.all(
+          eventsWithRealCounts.map(async (event) => {
+            try {
+              const template = await CertificateService.getTemplateForEvent(event.id);
+              certificateStatusMap[event.id] = template !== null;
+            } catch (error) {
+              logger.warn(`Failed to check certificate template for event ${event.id}:`, error);
+              certificateStatusMap[event.id] = false;
+            }
+          })
+        );
+        setEventCertificateStatus(certificateStatusMap);
+        logDiagnostics('Certificate template status', certificateStatusMap);
       } catch (error) {
         logger.error('Error fetching events:', error);
         toast.error('Failed to load events');
@@ -513,6 +544,21 @@ const ManageEventsPage: React.FC = () => {
   };
 
   const handleStatusChange = async (eventId: string, newStatus: string) => {
+    // Check for certificate template if trying to set status to "completed"
+    if (newStatus === 'completed') {
+      const hasCertificate = eventCertificateStatus[eventId];
+      if (!hasCertificate) {
+        const event = events.find(e => e.id === eventId);
+        setCertificateWarningModal({
+          isOpen: true,
+          eventId,
+          eventTitle: event?.title || 'Event',
+          action: 'complete'
+        });
+        return; // Don't proceed with status change
+      }
+    }
+    
     try {
       logger.log('🔄 Updating event status:', { eventId, newStatus });
       
@@ -564,6 +610,18 @@ const ManageEventsPage: React.FC = () => {
 
   const handleResendFeedbackRequests = async (eventId: string, eventTitle: string) => {
     if (resendingFeedback) return;
+    
+    // Check for certificate template before allowing resend
+    const hasCertificate = eventCertificateStatus[eventId];
+    if (!hasCertificate) {
+      setCertificateWarningModal({
+        isOpen: true,
+        eventId,
+        eventTitle,
+        action: 'resend'
+      });
+      return; // Don't proceed with resend
+    }
     
     const confirmed = window.confirm(
       `Send feedback request emails to all checked-in attendees for "${eventTitle}"?\n\nThis will send emails to attendees who have not yet submitted feedback.`
@@ -874,14 +932,26 @@ const ManageEventsPage: React.FC = () => {
                       <select
                         value={event.status}
                         onChange={(e) => handleStatusChange(event.id, e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                        className={`w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm ${
+                          !eventCertificateStatus[event.id] && event.status !== 'completed'
+                            ? 'border-yellow-300 bg-yellow-50'
+                            : 'border-gray-300'
+                        }`}
                       >
                         <option value="draft">Draft</option>
                         <option value="published">Published</option>
                         <option value="ongoing">Ongoing</option>
-                        <option value="completed">Completed</option>
+                        <option value="completed">Completed {!eventCertificateStatus[event.id] ? '⚠️' : ''}</option>
                         <option value="cancelled">Cancelled</option>
                       </select>
+                      {!eventCertificateStatus[event.id] && (
+                        <div className="mt-1 px-2 py-1 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-700 flex items-center space-x-1">
+                          <svg className="h-3 w-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                          </svg>
+                          <span>No certificate template</span>
+                        </div>
+                      )}
                     </div>
 
                     <div>
@@ -942,14 +1012,22 @@ const ManageEventsPage: React.FC = () => {
                         <button
                           onClick={() => handleResendFeedbackRequests(event.id, event.title)}
                           disabled={resendingFeedback === event.id}
-                          className={`flex items-center justify-center w-8 h-8 rounded-lg transition-colors ${
+                          className={`relative flex items-center justify-center w-8 h-8 rounded-lg transition-colors ${
                             resendingFeedback === event.id
                               ? 'text-gray-400 bg-gray-50 cursor-not-allowed'
-                              : 'text-purple-600 hover:text-purple-900 hover:bg-purple-50 cursor-pointer'
+                              : !eventCertificateStatus[event.id]
+                                ? 'text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 cursor-pointer'
+                                : 'text-purple-600 hover:text-purple-900 hover:bg-purple-50 cursor-pointer'
                           }`}
-                          title="Resend Feedback Request Emails"
+                          title={!eventCertificateStatus[event.id] ? "No Certificate Template - Click to learn more" : "Resend Feedback Request Emails"}
                         >
                           <ArrowPathIcon className={`h-4 w-4 ${resendingFeedback === event.id ? 'animate-spin' : ''}`} />
+                          {!eventCertificateStatus[event.id] && (
+                            <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-yellow-400 opacity-75"></span>
+                              <span className="relative inline-flex rounded-full h-3 w-3 bg-yellow-500"></span>
+                            </span>
+                          )}
                         </button>
                       )}
                     </div>
@@ -1115,14 +1193,21 @@ const ManageEventsPage: React.FC = () => {
                               <button
                                 onClick={() => handleResendFeedbackRequests(event.id, event.title)}
                                 disabled={resendingFeedback === event.id}
-                                className={`${
+                                className={`relative ${
                                   resendingFeedback === event.id
                                     ? 'text-gray-400 cursor-not-allowed'
-                                    : 'text-purple-600 hover:text-purple-900 cursor-pointer'
+                                    : !eventCertificateStatus[event.id]
+                                      ? 'text-yellow-600 hover:text-yellow-900 cursor-pointer'
+                                      : 'text-purple-600 hover:text-purple-900 cursor-pointer'
                                 }`}
-                                title="Resend Feedback Request Emails"
+                                title={!eventCertificateStatus[event.id] ? "No Certificate Template - Click to learn more" : "Resend Feedback Request Emails"}
                               >
                                 <ArrowPathIcon className={`h-4 w-4 ${resendingFeedback === event.id ? 'animate-spin' : ''}`} />
+                                {!eventCertificateStatus[event.id] && (
+                                  <span className="absolute -top-1 -right-1 flex h-2 w-2">
+                                    <span className="relative inline-flex rounded-full h-2 w-2 bg-yellow-500"></span>
+                                  </span>
+                                )}
                               </button>
                             )}
                             <Link
@@ -1311,6 +1396,78 @@ const ManageEventsPage: React.FC = () => {
           type={deleteModal.type}
           isLoading={deleteModal.isLoading}
         />
+
+        {/* Certificate Template Warning Modal */}
+        {certificateWarningModal.isOpen && (
+          <div className="fixed inset-0 z-50 overflow-y-auto">
+            <div className="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+              {/* Background overlay */}
+              <div 
+                className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
+                onClick={() => setCertificateWarningModal({ isOpen: false, eventId: null, eventTitle: '', action: null })}
+              />
+              
+              {/* Modal panel */}
+              <div className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+                <div className="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                  <div className="sm:flex sm:items-start">
+                    <div className="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-yellow-100 sm:mx-0 sm:h-10 sm:w-10">
+                      <svg className="h-6 w-6 text-yellow-600" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                      </svg>
+                    </div>
+                    <div className="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left">
+                      <h3 className="text-lg leading-6 font-medium text-gray-900">
+                        Certificate Template Required
+                      </h3>
+                      <div className="mt-2">
+                        <p className="text-sm text-gray-500">
+                          {certificateWarningModal.action === 'complete' ? (
+                            <>
+                              You cannot mark <strong>"{certificateWarningModal.eventTitle}"</strong> as completed because there is no certificate template configured for this event.
+                              <br /><br />
+                              Feedback emails are only sent to attendees when a certificate template exists, so they can receive their certificates after submitting feedback.
+                            </>
+                          ) : (
+                            <>
+                              You cannot send feedback request emails for <strong>"{certificateWarningModal.eventTitle}"</strong> because there is no certificate template configured for this event.
+                              <br /><br />
+                              Attendees need a certificate template to receive their certificates after submitting feedback.
+                            </>
+                          )}
+                        </p>
+                        <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
+                          <p className="text-sm text-yellow-800">
+                            <strong>To fix this:</strong> Go to the Certificates page and create a certificate template for this event first.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCertificateWarningModal({ isOpen: false, eventId: null, eventTitle: '', action: null });
+                      navigate('/admin/certificates');
+                    }}
+                    className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-blue-600 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:ml-3 sm:w-auto sm:text-sm"
+                  >
+                    Go to Certificates
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCertificateWarningModal({ isOpen: false, eventId: null, eventTitle: '', action: null })}
+                    className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:mt-0 sm:w-auto sm:text-sm"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Feedback modal removed - now using dedicated page */}
       </LayoutComponent>
