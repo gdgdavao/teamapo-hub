@@ -116,7 +116,12 @@ service cloud.firestore {
     // Certificates collection
     match /certificates/{certificateId} {
       allow read: if true; // Certificates are publicly verifiable
-      allow write: if isAuthenticated();
+      // Allow anonymous create for certificates generated after feedback submission
+      allow create: if request.resource.data.eventId is string &&
+                       request.resource.data.registrationId is string &&
+                       request.resource.data.verificationCode is string &&
+                       request.resource.data.recipientName is string;
+      allow update, delete: if isAuthenticated();
     }
     
     // Feedback collection

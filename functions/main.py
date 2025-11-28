@@ -2318,9 +2318,29 @@ def generate_feedback_url(event_id: str, registration_id: str = None, user_email
 def send_feedback_requests_for_event(event_id: str, event_title: str) -> None:
     """
     Send feedback request emails to all checked-in or confirmed attendees for a completed event.
+    Only sends emails if the event has a certificate template configured (since certificates
+    are now generated client-side after feedback submission).
     """
     try:
         db = get_db()
+        
+        # Check if event has a certificate template - skip feedback emails if no template exists
+        # Since certificates are now generated after feedback submission, we only want to
+        # send feedback requests for events that have certificates configured
+        template_query = db.collection('certificateTemplates').where(
+            filter=FieldFilter('eventId', '==', event_id)
+        ).where(
+            filter=FieldFilter('isActive', '==', True)
+        ).limit(1).stream()
+        
+        has_template = False
+        for _ in template_query:
+            has_template = True
+            break
+        
+        if not has_template:
+            logger.info(f"Skipping feedback requests for event {event_id}: no active certificate template found")
+            return
         
         # Query registrations for checked-in or confirmed attendees who haven't submitted feedback
         # Note: Firestore doesn't support 'in' queries directly, so we'll query separately
@@ -2531,6 +2551,7 @@ def resendEventFeedbackRequests(req: https_fn.CallableRequest) -> Dict[str, Any]
 def sendFeedbackRequest(req: https_fn.CallableRequest) -> Dict[str, Any]:
     """
     Send feedback request email using Resend.
+    Only sends if the event has a certificate template configured.
     """
     try:
         data: Dict[str, Any] = req.data or {}
@@ -2555,6 +2576,27 @@ def sendFeedbackRequest(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
                 message="userEmail, eventTitle, and either feedbackUrl or eventId are required"
             )
+        
+        # Check if event has a certificate template before sending feedback request
+        if event_id:
+            db = get_db()
+            template_query = db.collection('certificateTemplates').where(
+                filter=FieldFilter('eventId', '==', event_id)
+            ).where(
+                filter=FieldFilter('isActive', '==', True)
+            ).limit(1).stream()
+            
+            has_template = False
+            for _ in template_query:
+                has_template = True
+                break
+            
+            if not has_template:
+                logger.info(f"Skipping feedback request for event {event_id}: no active certificate template found")
+                return {
+                    'success': False,
+                    'message': 'No certificate template configured for this event. Feedback requests are only sent for events with certificates.'
+                }
 
         # Send email using Resend
         email_result = email_service.send_feedback_request(

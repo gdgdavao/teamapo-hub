@@ -113,13 +113,22 @@ service firebase.storage {
                         firestore.get(/databases/(default)/documents/events/$(eventId)).data.organizer.uid == request.auth.uid);
     }
     
-    // Certificates - Generated certificates
+    // Certificates - Generated certificates (legacy path)
     match /certificates/{certificateId} {
       allow read: if true; // Certificates are publicly accessible for verification
       allow write: if isAdmin() || 
                       (isAuthenticated() && 
                        isValidDocumentType() && 
                        (request.resource != null ? request.resource.size : resource.size) < 2 * 1024 * 1024); // 2MB limit
+      allow delete: if isAdmin();
+    }
+    
+    // Certificates - Generated certificates by event (for anonymous users after feedback)
+    match /certificates/{eventId}/{filename} {
+      allow read: if true; // Certificates are publicly accessible for verification
+      // Allow anonymous uploads for certificates generated after feedback submission
+      allow write: if isValidImageType() && 
+                      (request.resource != null ? request.resource.size : resource.size) < 2 * 1024 * 1024; // 2MB limit
       allow delete: if isAdmin();
     }
     
