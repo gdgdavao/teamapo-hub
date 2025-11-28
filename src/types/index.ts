@@ -182,6 +182,7 @@ export interface Registration {
   feedbackRequestLastAttemptAt?: Timestamp;
   certificateIssued: boolean;
   certificateId?: string;
+  certificateVerificationCode?: string; // Consistent verification code tied to attendee identity
   certificateEmailSent?: boolean;
   certificateEmailSentAt?: Timestamp;
   qrCode: string;

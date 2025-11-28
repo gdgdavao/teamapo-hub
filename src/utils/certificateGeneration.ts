@@ -6,6 +6,7 @@ export interface CertificateGenerationRequest {
   recipientEmail: string;
   eventTitle: string;
   eventDate: string;
+  eventId?: string;
   verificationCode?: string;
 }
 
@@ -17,6 +18,43 @@ const HIGH_RES_WIDTH = Math.round(DEFAULT_WIDTH_INCHES * CERTIFICATE_DPI); // 33
 const HIGH_RES_HEIGHT = Math.round(DEFAULT_HEIGHT_INCHES * CERTIFICATE_DPI); // 2550px
 
 export class CertificateGenerationService {
+  /**
+   * Generate a SHA-256 hash using Web Crypto API (browser-native)
+   * Returns first 12 characters of the hex hash
+   */
+  private static async generateSHA256Hash(input: string): Promise<string> {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(input);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    return hashHex.substring(0, 12).toUpperCase();
+  }
+
+  /**
+   * Generate a deterministic verification code based on attendee identity
+   * The same eventId + email + name will always produce the same code
+   */
+  static async generateConsistentVerificationCode(
+    eventId: string,
+    email: string,
+    name: string
+  ): Promise<string> {
+    // Normalize inputs for consistency
+    const normalizedEmail = email.toLowerCase().trim();
+    const normalizedName = name.trim().toLowerCase();
+    
+    // Create a deterministic hash from identity
+    const input = `${eventId}:${normalizedEmail}:${normalizedName}`;
+    const hash = await this.generateSHA256Hash(input);
+    
+    return `CERT-${hash}`;
+  }
+
+  /**
+   * @deprecated Use generateConsistentVerificationCode for new certificates
+   * Kept for backward compatibility with existing code paths
+   */
   private static generateVerificationCode(): string {
     const timestamp = Date.now().toString(36);
     const random = Math.random().toString(36).substring(2, 8);
@@ -226,7 +264,20 @@ export class CertificateGenerationService {
     template: CertificateTemplate,
     request: CertificateGenerationRequest
   ): Promise<{ certificateUrl: string; verificationCode: string; blob: Blob }> {
-    const verificationCode = request.verificationCode || this.generateVerificationCode();
+    // Use provided code, or generate consistent code if eventId is available, otherwise fallback to random
+    let verificationCode = request.verificationCode;
+    if (!verificationCode) {
+      if (request.eventId) {
+        verificationCode = await this.generateConsistentVerificationCode(
+          request.eventId,
+          request.recipientEmail,
+          request.recipientName
+        );
+      } else {
+        // Fallback for legacy calls without eventId
+        verificationCode = this.generateVerificationCode();
+      }
+    }
     const verificationUrl = `${window.location.origin}/verify/${verificationCode}`;
 
     try {
@@ -303,6 +354,7 @@ export class CertificateGenerationService {
       email: string;
       eventTitle: string;
       eventDate: string;
+      eventId?: string;
     }>
   ): Promise<Array<{ recipient: string; certificateUrl: string; verificationCode: string }>> {
     const results: Array<{ recipient: string; certificateUrl: string; verificationCode: string }> = [];
@@ -314,7 +366,8 @@ export class CertificateGenerationService {
           recipientName: recipient.name,
           recipientEmail: recipient.email,
           eventTitle: recipient.eventTitle,
-          eventDate: recipient.eventDate
+          eventDate: recipient.eventDate,
+          eventId: recipient.eventId || template.eventId
         });
         
         results.push({

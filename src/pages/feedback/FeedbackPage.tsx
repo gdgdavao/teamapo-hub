@@ -144,13 +144,33 @@ const FeedbackPage: React.FC = () => {
     setCertificateError(null);
 
     try {
-      // Generate certificate client-side
+      // Check if certificate already exists for this registration (consistent code per attendee)
+      const existingCert = await CertificateService.getCertificateByRegistrationId(registrationId);
+      
+      if (existingCert?.certificateUrl && existingCert?.credentialId) {
+        // Certificate already exists, use existing data
+        setCertificateUrl(existingCert.certificateUrl);
+        setVerificationCode(existingCert.credentialId);
+        return;
+      }
+
+      // Get consistent verification code for this attendee (deterministic based on eventId + email + name)
+      const consistentVerificationCode = await CertificateService.getConsistentVerificationCode(
+        eventId,
+        registrationId,
+        userEmail,
+        userName
+      );
+
+      // Generate certificate client-side with consistent verification code
       const result = await CertificateGenerationService.generateCertificate(certTemplate, {
         templateId: certTemplate.id,
         recipientName: userName,
         recipientEmail: userEmail,
         eventTitle: event.title,
-        eventDate: toDate(event.startDate).toISOString()
+        eventDate: toDate(event.startDate).toISOString(),
+        eventId,
+        verificationCode: consistentVerificationCode
       });
 
       // Upload certificate to Firebase Storage

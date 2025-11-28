@@ -46,6 +46,65 @@ export class CertificateService {
   private static readonly CERTIFICATES_PATH = 'certificates';
 
   /**
+   * Get certificate by registration ID
+   * Used to check if a certificate already exists for an attendee
+   */
+  static async getCertificateByRegistrationId(registrationId: string): Promise<Certificate | null> {
+    try {
+      const certificatesQuery = query(
+        collection(db, this.CERTIFICATES_COLLECTION),
+        where('registrationId', '==', registrationId),
+        limit(1)
+      );
+      const snapshot = await getDocs(certificatesQuery);
+      
+      if (snapshot.empty) {
+        return null;
+      }
+      
+      return {
+        id: snapshot.docs[0].id,
+        ...snapshot.docs[0].data()
+      } as Certificate;
+    } catch (error) {
+      console.error('Error fetching certificate by registration ID:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Get consistent verification code for an attendee
+   * - First checks if a certificate already exists (returns existing code)
+   * - Otherwise generates a deterministic code based on attendee identity
+   */
+  static async getConsistentVerificationCode(
+    eventId: string,
+    registrationId: string,
+    email: string,
+    name: string
+  ): Promise<string> {
+    // Check if certificate already exists for this registration
+    const existingCert = await this.getCertificateByRegistrationId(registrationId);
+    if (existingCert?.credentialId) {
+      return existingCert.credentialId;
+    }
+    
+    // Generate deterministic code from identity using Web Crypto API
+    const normalizedEmail = email.toLowerCase().trim();
+    const normalizedName = name.trim().toLowerCase();
+    const input = `${eventId}:${normalizedEmail}:${normalizedName}`;
+    
+    const encoder = new TextEncoder();
+    const data = encoder.encode(input);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    const hash = hashHex.substring(0, 12).toUpperCase();
+    
+    return `CERT-${hash}`;
+  }
+
+  /**
    * Upload certificate template image to Firebase Storage
    */
   static async uploadTemplateImage(templateId: string, imageFile: File): Promise<string> {
