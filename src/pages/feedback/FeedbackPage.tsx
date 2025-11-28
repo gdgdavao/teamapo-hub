@@ -23,6 +23,36 @@ const FeedbackPage: React.FC = () => {
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Helper function to safely convert Firestore Timestamp or Date to Date object
+  const toDate = (dateValue: any): Date => {
+    if (!dateValue) return new Date();
+    
+    // Handle Firestore Timestamp object
+    if (dateValue.toDate && typeof dateValue.toDate === 'function') {
+      return dateValue.toDate();
+    }
+    
+    // Handle Date object
+    if (dateValue instanceof Date) {
+      return dateValue;
+    }
+    
+    // Handle Firestore Timestamp serialized as object with seconds/nanoseconds
+    if (dateValue.seconds !== undefined) {
+      return new Date(dateValue.seconds * 1000);
+    }
+    
+    // Handle ISO string or timestamp
+    const parsed = new Date(dateValue);
+    if (!isNaN(parsed.getTime())) {
+      return parsed;
+    }
+    
+    // Fallback to current date if all else fails
+    console.warn('Unable to parse date:', dateValue);
+    return new Date();
+  };
+
   // Set page title and SEO
   usePageTitle({ title: `Event Feedback${event ? ` - ${event.title}` : ''}` });
   useSEO({
@@ -143,7 +173,7 @@ const FeedbackPage: React.FC = () => {
                   Event: {event.title}
                 </p>
                 <p className="text-sm text-blue-700">
-                  {new Date(event.startDate.toDate()).toLocaleDateString('en-US', {
+                  {toDate(event.startDate).toLocaleDateString('en-US', {
                     weekday: 'long',
                     year: 'numeric',
                     month: 'long',
@@ -168,7 +198,7 @@ const FeedbackPage: React.FC = () => {
             <div className="bg-white rounded-lg shadow-sm p-6 mb-8">
               <h2 className="text-xl font-semibold text-gray-800 mb-2">{event.title}</h2>
               <p className="text-gray-600">
-                {new Date(event.startDate.toDate()).toLocaleDateString('en-US', {
+                {toDate(event.startDate).toLocaleDateString('en-US', {
                   weekday: 'long',
                   year: 'numeric',
                   month: 'long',

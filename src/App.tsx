@@ -3,6 +3,8 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import AdminLayout from './components/admin/AdminLayout';
 import LoadingSpinner from './components/shared/UI/LoadingSpinner';
+import ErrorBoundary from './components/shared/ErrorBoundary';
+import RouteErrorElement from './components/shared/RouteErrorElement';
 import { FirebaseConnectionStatus } from './components/shared/FirebaseConnectionStatus';
 import RoleBasedDashboard from './components/shared/RoleBasedDashboard';
 import usePageTitle from './hooks/usePageTitle';
@@ -100,13 +102,14 @@ const AppContent: React.FC = () => {
 
   return (
     <DomainCheck>
-      <Routes>
-      {/* Authentication Routes */}
-      <Route path="/login" element={
-        <PublicRoute>
-          <LoginPage />
-        </PublicRoute>
-      } />
+      <ErrorBoundary>
+        <Routes>
+        {/* Authentication Routes */}
+        <Route path="/login" element={
+          <PublicRoute>
+            <LoginPage />
+          </PublicRoute>
+        } />
       <Route path="/auth/login" element={
         <PublicRoute>
           <LoginPage />
@@ -276,7 +279,11 @@ const AppContent: React.FC = () => {
       <Route path="/payment/success" element={<PaymentSuccessPage />} />
 
       {/* Feedback Route - Keep for admin/organizer access */}
-      <Route path="/feedback/:eventId" element={<FeedbackPage />} />
+      <Route path="/feedback/:eventId" element={
+        <ErrorBoundary>
+          <FeedbackPage />
+        </ErrorBoundary>
+      } />
 
       {/* Certificate Verification Route */}
       <Route path="/verify/:code" element={<CertificateVerificationPage />} />
@@ -288,6 +295,7 @@ const AppContent: React.FC = () => {
       {/* 404 Route */}
       <Route path="*" element={<NotFoundPage />} />
       </Routes>
+      </ErrorBoundary>
     </DomainCheck>
   );
 };
