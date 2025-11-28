@@ -453,11 +453,18 @@ export class CertificateService {
         };
       }
       
-      // Increment verification count
-      const newVerificationCount = (certificate.verificationCount || 0) + 1;
-      await updateDoc(snapshot.docs[0].ref, {
-        verificationCount: newVerificationCount
-      });
+      // Try to increment verification count (may fail for anonymous users, which is ok)
+      let newVerificationCount = (certificate.verificationCount || 0) + 1;
+      try {
+        await updateDoc(snapshot.docs[0].ref, {
+          verificationCount: newVerificationCount
+        });
+      } catch (updateError) {
+        // Silently ignore update errors for anonymous users
+        // The verification still succeeds, just without incrementing the count
+        console.log('Could not update verification count (likely anonymous user)');
+        newVerificationCount = certificate.verificationCount || 0;
+      }
       
       return {
         isValid: true,
