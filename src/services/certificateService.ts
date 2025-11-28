@@ -82,7 +82,38 @@ export class CertificateService {
   }
 
   /**
+   * Upload template image from external URL to Firebase Storage for CORS compliance
+   * This ensures all template images are served from Firebase Storage with proper CORS headers
+   */
+  static async uploadImageFromUrl(url: string, templateId: string): Promise<string> {
+    try {
+      // Fetch the external image
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch image: ${response.status}`);
+      }
+      
+      const blob = await response.blob();
+      
+      // Determine file extension from content type
+      const contentType = response.headers.get('content-type') || 'image/png';
+      const extension = contentType.includes('jpeg') || contentType.includes('jpg') ? 'jpg' : 'png';
+      
+      // Upload to Firebase Storage
+      const timestamp = Date.now();
+      const imageRef = ref(storage, `${this.TEMPLATE_IMAGES_PATH}/${templateId}/template-${timestamp}.${extension}`);
+      
+      const snapshot = await uploadBytes(imageRef, blob, { contentType });
+      return await getDownloadURL(snapshot.ref);
+    } catch (error) {
+      console.error('Error uploading image from URL:', error);
+      throw new Error('Failed to upload image from URL to Firebase Storage');
+    }
+  }
+
+  /**
    * Create a new certificate template
+   * All template images are uploaded to Firebase Storage for CORS compliance
    */
   static async createTemplate(templateData: Omit<CertificateTemplate, 'id' | 'createdAt' | 'updatedAt' | 'usageCount'>): Promise<string> {
     try {
@@ -90,10 +121,17 @@ export class CertificateService {
       const templateRef = doc(collection(db, this.TEMPLATES_COLLECTION));
       const templateId = templateRef.id;
 
-      // Upload image if it's a data URL
+      // Process template image URL - always upload to Firebase Storage for CORS compliance
       let templateImageUrl = templateData.templateImageUrl;
-      if (templateImageUrl && templateImageUrl.startsWith('data:')) {
-        templateImageUrl = await this.uploadTemplateImageFromDataUrl(templateId, templateImageUrl);
+      if (templateImageUrl) {
+        if (templateImageUrl.startsWith('data:')) {
+          // Upload data URL
+          templateImageUrl = await this.uploadTemplateImageFromDataUrl(templateId, templateImageUrl);
+        } else if (!this.isFirebaseStorageUrl(templateImageUrl)) {
+          // Upload external URL to Firebase Storage for CORS compliance
+          templateImageUrl = await this.uploadImageFromUrl(templateImageUrl, templateId);
+        }
+        // If already a Firebase Storage URL, keep as is
       }
 
       // Create the template document

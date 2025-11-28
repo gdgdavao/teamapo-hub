@@ -14,9 +14,18 @@ import { Event, FormField, CertificateTemplate } from '../../types';
 const FeedbackPage: React.FC = () => {
   const { eventId } = useParams<{ eventId: string }>();
   const [searchParams] = useSearchParams();
-  const registrationId = searchParams.get('registrationId');
-  const userEmail = searchParams.get('email');
-  const userName = searchParams.get('name');
+  
+  // Support both token-based (secure) and legacy query params
+  const token = searchParams.get('token');
+  const legacyRegistrationId = searchParams.get('registrationId');
+  const legacyEmail = searchParams.get('email');
+  const legacyName = searchParams.get('name');
+
+  // Resolved user data (from token or legacy params)
+  const [registrationId, setRegistrationId] = useState<string | null>(legacyRegistrationId);
+  const [userEmail, setUserEmail] = useState<string | null>(legacyEmail);
+  const [userName, setUserName] = useState<string | null>(legacyName);
+  const [tokenResolved, setTokenResolved] = useState(!token); // If no token, already resolved
 
   const [event, setEvent] = useState<Event | null>(null);
   const [feedbackForm, setFeedbackForm] = useState<FormField[]>([]);
@@ -70,11 +79,41 @@ const FeedbackPage: React.FC = () => {
     keywords: 'event feedback, survey, gdg davao'
   });
 
+  // Resolve feedback token if present
+  useEffect(() => {
+    const resolveToken = async () => {
+      if (!token || !eventId) {
+        setTokenResolved(true);
+        return;
+      }
+
+      try {
+        const tokenData = await FeedbackService.resolveFeedbackToken(token, eventId);
+        setRegistrationId(tokenData.registrationId);
+        setUserEmail(tokenData.email);
+        setUserName(tokenData.name);
+        setTokenResolved(true);
+      } catch (err) {
+        console.error('Error resolving feedback token:', err);
+        setError('Invalid or expired feedback link. Please contact the organizer for a new link.');
+        setTokenResolved(true);
+        setLoading(false);
+      }
+    };
+
+    resolveToken();
+  }, [token, eventId]);
+
   useEffect(() => {
     const loadEventAndForm = async () => {
       if (!eventId) {
         setError('Event ID is required');
         setLoading(false);
+        return;
+      }
+
+      // Wait for token resolution before loading
+      if (!tokenResolved) {
         return;
       }
 
@@ -95,7 +134,7 @@ const FeedbackPage: React.FC = () => {
     };
 
     loadEventAndForm();
-  }, [eventId]);
+  }, [eventId, tokenResolved]);
 
   // Generate certificate after feedback submission
   const generateCertificate = async (certTemplate: CertificateTemplate) => {

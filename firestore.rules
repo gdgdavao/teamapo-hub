@@ -124,6 +124,14 @@ service cloud.firestore {
       allow update, delete: if isAuthenticated();
     }
     
+    // Feedback tokens collection - secure tokens for feedback URLs
+    match /feedbackTokens/{tokenId} {
+      // Only allow reading via Cloud Functions (resolveFeedbackToken)
+      // Direct client access is not allowed to prevent token enumeration
+      allow read: if false;
+      allow write: if false; // Only created by Cloud Functions
+    }
+    
     // Feedback collection
     match /feedback/{feedbackId} {
       allow read: if isAuthenticated();

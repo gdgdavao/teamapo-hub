@@ -2293,26 +2293,39 @@ def sendEventReminder(req: https_fn.CallableRequest) -> Dict[str, Any]:
         )
 
 
+def generate_feedback_token() -> str:
+    """
+    Generate a secure random token for feedback URLs
+    """
+    import secrets
+    return secrets.token_urlsafe(32)  # 256-bit token, URL-safe
+
+
 def generate_feedback_url(event_id: str, registration_id: str = None, user_email: str = None, user_name: str = None) -> str:
     """
-    Generate systematic feedback URL with optional parameters
+    Generate a secure feedback URL with a token that hides personal information.
+    Creates a feedbackToken document in Firestore to store the mapping.
     """
     base_url = "https://gdgdavao.org"  # Production URL
-    feedback_url = f"{base_url}/feedback/{event_id}"
     
-    # Add query parameters for better UX
-    params = []
-    if registration_id:
-        params.append(f"registrationId={registration_id}")
-    if user_email:
-        params.append(f"email={user_email}")
-    if user_name:
-        params.append(f"name={user_name}")
+    # Generate a secure token
+    token = generate_feedback_token()
     
-    if params:
-        feedback_url += "?" + "&".join(params)
+    # Store token mapping in Firestore
+    db = get_db()
+    token_ref = db.collection('feedbackTokens').document(token)
+    token_ref.set({
+        'eventId': event_id,
+        'registrationId': registration_id,
+        'email': user_email,
+        'name': user_name,
+        'createdAt': firestore.SERVER_TIMESTAMP,
+        'expiresAt': None,  # No expiry for now, but can be added
+        'used': False
+    })
     
-    return feedback_url
+    # Return clean URL with just the token
+    return f"{base_url}/feedback/{event_id}?token={token}"
 
 
 def send_feedback_requests_for_event(event_id: str, event_title: str) -> None:
@@ -2645,6 +2658,71 @@ def sendFeedbackRequest(req: https_fn.CallableRequest) -> Dict[str, Any]:
         raise https_fn.HttpsError(
             code=https_fn.FunctionsErrorCode.INTERNAL,
             message="Internal server error sending feedback request"
+        )
+
+
+@https_fn.on_call()
+def resolveFeedbackToken(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Resolve a feedback token to get the associated registration data.
+    This allows the feedback page to retrieve user info without exposing it in the URL.
+    """
+    try:
+        data: Dict[str, Any] = req.data or {}
+        token = data.get('token')
+        event_id = data.get('eventId')
+
+        if not token:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="token is required"
+            )
+
+        db = get_db()
+        token_ref = db.collection('feedbackTokens').document(token)
+        token_doc = token_ref.get()
+
+        if not token_doc.exists:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.NOT_FOUND,
+                message="Invalid or expired feedback token"
+            )
+
+        token_data = token_doc.to_dict()
+
+        # Verify event ID matches if provided
+        if event_id and token_data.get('eventId') != event_id:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="Token does not match this event"
+            )
+
+        # Check if token has expired (if expiry is set)
+        expires_at = token_data.get('expiresAt')
+        if expires_at:
+            from datetime import datetime, timezone
+            if isinstance(expires_at, datetime):
+                if expires_at < datetime.now(timezone.utc):
+                    raise https_fn.HttpsError(
+                        code=https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
+                        message="Feedback token has expired"
+                    )
+
+        return {
+            'success': True,
+            'registrationId': token_data.get('registrationId'),
+            'email': token_data.get('email'),
+            'name': token_data.get('name'),
+            'eventId': token_data.get('eventId')
+        }
+
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error in resolveFeedbackToken: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error resolving feedback token"
         )
 
 

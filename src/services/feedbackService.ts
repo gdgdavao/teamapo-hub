@@ -40,19 +40,61 @@ export interface FeedbackAnalytics {
   topComplaints: string[];
 }
 
+export interface FeedbackTokenData {
+  registrationId: string | null;
+  email: string | null;
+  name: string | null;
+  eventId: string;
+}
+
 export class FeedbackService {
   private static readonly FEEDBACK_COLLECTION = 'feedback';
   private static readonly EVENTS_COLLECTION = 'events';
   private static readonly REGISTRATIONS_COLLECTION = 'registrations';
 
   /**
-   * Generate feedback URL for an event
+   * Resolve a feedback token to get registration data
+   * This allows the feedback page to retrieve user info without exposing it in the URL
+   */
+  static async resolveFeedbackToken(token: string, eventId?: string): Promise<FeedbackTokenData> {
+    try {
+      const resolveFeedbackToken = httpsCallable(functions, 'resolveFeedbackToken');
+      const result = await resolveFeedbackToken({ token, eventId });
+      
+      const data = result.data as { 
+        success: boolean; 
+        registrationId?: string; 
+        email?: string; 
+        name?: string;
+        eventId: string;
+      };
+      
+      if (!data.success) {
+        throw new Error('Failed to resolve feedback token');
+      }
+      
+      return {
+        registrationId: data.registrationId || null,
+        email: data.email || null,
+        name: data.name || null,
+        eventId: data.eventId
+      };
+    } catch (error) {
+      console.error('Error resolving feedback token:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Generate feedback URL for an event (admin/organizer preview use only)
+   * Note: Actual email feedback URLs are generated server-side with secure tokens
+   * @deprecated Use server-side token-based URLs for production emails
    */
   static generateFeedbackUrl(eventId: string, registrationId?: string, userEmail?: string, userName?: string): string {
     const baseUrl = window.location.origin;
     const feedbackUrl = `${baseUrl}/feedback/${eventId}`;
     
-    // Add query parameters for better UX
+    // Add query parameters for admin preview - actual emails use tokens
     const params = new URLSearchParams();
     if (registrationId) params.append('registrationId', registrationId);
     if (userEmail) params.append('email', userEmail);
@@ -62,13 +104,15 @@ export class FeedbackService {
   }
 
   /**
-   * Generate feedback URL for server-side use
+   * Generate feedback URL for server-side use (legacy - kept for backward compatibility)
+   * Note: The main.py now generates token-based URLs instead
+   * @deprecated Server-side now uses token-based URLs via generate_feedback_url()
    */
   static generateServerFeedbackUrl(eventId: string, registrationId?: string, userEmail?: string, userName?: string): string {
     const baseUrl = 'https://gdgdavao.org'; // Production URL
     const feedbackUrl = `${baseUrl}/feedback/${eventId}`;
     
-    // Add query parameters for better UX
+    // Legacy query params - actual production uses tokens
     const params = new URLSearchParams();
     if (registrationId) params.append('registrationId', registrationId);
     if (userEmail) params.append('email', userEmail);
