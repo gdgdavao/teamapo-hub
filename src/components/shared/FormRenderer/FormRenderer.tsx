@@ -227,22 +227,28 @@ const FormRenderer: React.FC<FormRendererProps> = ({
       
       case 'rating':
         return (
-          <div className={`flex space-x-1 ${disabled ? 'opacity-50' : ''}`}>
+          <div className="flex space-x-1">
             {[1, 2, 3, 4, 5].map((star) => (
               <button
                 key={star}
                 type="button"
-                onClick={() => !disabled && handleInputChange(field.id, star)}
+                onClick={() => handleInputChange(field.id, star)}
                 disabled={disabled}
-                className={`text-3xl transition-colors ${
-                  disabled ? 'cursor-not-allowed' : 'hover:text-yellow-400'
+                className={`text-3xl transition-colors focus:outline-none ${
+                  disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:scale-110'
                 } ${
                   value >= star ? 'text-yellow-400' : 'text-gray-300'
                 }`}
+                aria-label={`Rate ${star} out of 5`}
               >
-                ⭐
+                ★
               </button>
             ))}
+            {value > 0 && (
+              <span className="ml-3 text-sm text-gray-600 self-center">
+                {value} out of 5
+              </span>
+            )}
           </div>
         );
       

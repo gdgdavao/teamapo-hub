@@ -38,6 +38,16 @@ except Exception as e:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+CHECKED_IN_CANONICAL = 'checked-in'
+CHECKED_IN_ALIASES = frozenset({CHECKED_IN_CANONICAL, 'checked_in'})
+
+
+def normalize_attendance_status(status: Optional[str]) -> Optional[str]:
+    """Convert any checked-in alias to the canonical string; otherwise return the original status."""
+    if status in CHECKED_IN_ALIASES:
+        return CHECKED_IN_CANONICAL
+    return status
+
 def get_db():
     """Lazy initialization of Firestore client"""
     global _app, _db
@@ -240,9 +250,10 @@ class EventService:
                 registration_stats[status] = registration_stats.get(status, 0) + 1
                 
                 # Attendance
-                if reg_data.get('attendanceStatus') == 'checked_in':
+                attendance_status = normalize_attendance_status(reg_data.get('attendanceStatus'))
+                if attendance_status == CHECKED_IN_CANONICAL:
                     attendance_stats['checkedIn'] += 1
-                elif reg_data.get('attendanceStatus') == 'no_show':
+                elif attendance_status == 'no_show':
                     attendance_stats['noShows'] += 1
                 
                 # Feedback
@@ -1628,9 +1639,10 @@ def checkInAttendee(req: https_fn.CallableRequest) -> Dict[str, Any]:
         
         registration = registrations[0]
         registration_data = registration.to_dict()
+        current_attendance_status = normalize_attendance_status(registration_data.get('attendanceStatus'))
         
         # Check if already checked in
-        if registration_data.get('attendanceStatus') == 'checked_in':
+        if current_attendance_status == CHECKED_IN_CANONICAL:
             return {
                 'success': True,
                 'message': 'Attendee already checked in',
@@ -1640,7 +1652,7 @@ def checkInAttendee(req: https_fn.CallableRequest) -> Dict[str, Any]:
         
         # Update registration with check-in info
         registration.reference.update({
-            'attendanceStatus': 'checked_in',
+            'attendanceStatus': CHECKED_IN_CANONICAL,
             'checkedInAt': firestore.SERVER_TIMESTAMP,
             'checkedInBy': req.auth.uid,
             'updatedAt': firestore.SERVER_TIMESTAMP
@@ -2281,71 +2293,98 @@ def sendEventReminder(req: https_fn.CallableRequest) -> Dict[str, Any]:
         )
 
 
+def generate_feedback_token() -> str:
+    """
+    Generate a secure random token for feedback URLs
+    """
+    import secrets
+    return secrets.token_urlsafe(32)  # 256-bit token, URL-safe
+
+
 def generate_feedback_url(event_id: str, registration_id: str = None, user_email: str = None, user_name: str = None) -> str:
     """
-    Generate systematic feedback URL with optional parameters
+    Generate a secure feedback URL with a token that hides personal information.
+    Creates a feedbackToken document in Firestore to store the mapping.
     """
     base_url = "https://gdgdavao.org"  # Production URL
-    feedback_url = f"{base_url}/feedback/{event_id}"
     
-    # Add query parameters for better UX
-    params = []
-    if registration_id:
-        params.append(f"registrationId={registration_id}")
-    if user_email:
-        params.append(f"email={user_email}")
-    if user_name:
-        params.append(f"name={user_name}")
+    # Generate a secure token
+    token = generate_feedback_token()
     
-    if params:
-        feedback_url += "?" + "&".join(params)
+    # Store token mapping in Firestore
+    db = get_db()
+    token_ref = db.collection('feedbackTokens').document(token)
+    token_ref.set({
+        'eventId': event_id,
+        'registrationId': registration_id,
+        'email': user_email,
+        'name': user_name,
+        'createdAt': firestore.SERVER_TIMESTAMP,
+        'expiresAt': None,  # No expiry for now, but can be added
+        'used': False
+    })
     
-    return feedback_url
+    # Return clean URL with just the token
+    return f"{base_url}/feedback/{event_id}?token={token}"
 
 
 def send_feedback_requests_for_event(event_id: str, event_title: str) -> None:
     """
     Send feedback request emails to all checked-in or confirmed attendees for a completed event.
+    Only sends emails if the event has a certificate template configured (since certificates
+    are now generated client-side after feedback submission).
     """
     try:
         db = get_db()
         
+        # Check if event has a certificate template - skip feedback emails if no template exists
+        # Since certificates are now generated after feedback submission, we only want to
+        # send feedback requests for events that have certificates configured
+        template_query = db.collection('certificateTemplates').where(
+            filter=FieldFilter('eventId', '==', event_id)
+        ).where(
+            filter=FieldFilter('isActive', '==', True)
+        ).limit(1).stream()
+        
+        has_template = False
+        for _ in template_query:
+            has_template = True
+            break
+        
+        if not has_template:
+            logger.info(f"Skipping feedback requests for event {event_id}: no active certificate template found")
+            return
+        
         # Query registrations for checked-in or confirmed attendees who haven't submitted feedback
         # Note: Firestore doesn't support 'in' queries directly, so we'll query separately
-        checked_in_query = db.collection('registrations').where(
-            filter=FieldFilter('eventId', '==', event_id)
-        ).where(
-            filter=FieldFilter('attendanceStatus', '==', 'checked_in')
-        ).where(
-            filter=FieldFilter('feedbackSubmitted', '==', False)
-        ).stream()
-        
-        confirmed_query = db.collection('registrations').where(
-            filter=FieldFilter('eventId', '==', event_id)
-        ).where(
-            filter=FieldFilter('attendanceStatus', '==', 'confirmed')
-        ).where(
-            filter=FieldFilter('feedbackSubmitted', '==', False)
-        ).stream()
-        
-        # Combine results (avoid duplicates)
         registration_ids_seen = set()
         registrations_to_process = []
+
+        def _collect_registrations(query_stream):
+            for registration in query_stream:
+                reg_id = registration.id
+                if reg_id not in registration_ids_seen:
+                    registration_ids_seen.add(reg_id)
+                    registrations_to_process.append(registration)
+
+        for status in CHECKED_IN_ALIASES:
+            checked_in_query = db.collection('registrations').where(
+                filter=FieldFilter('eventId', '==', event_id)
+            ).where(
+                filter=FieldFilter('attendanceStatus', '==', status)
+            ).where(
+                filter=FieldFilter('feedbackSubmitted', '==', False)
+            ).stream()
+            _collect_registrations(checked_in_query)
         
-        for reg in checked_in_query:
-            reg_id = reg.id
-            if reg_id not in registration_ids_seen:
-                registration_ids_seen.add(reg_id)
-                registrations_to_process.append(reg)
-        
-        for reg in confirmed_query:
-            reg_id = reg.id
-            if reg_id not in registration_ids_seen:
-                registration_ids_seen.add(reg_id)
-                registrations_to_process.append(reg)
+        # Only attendees who actually attended (i.e., checked-in) should receive feedback requests.
+        # No additional query for 'registered' or other statuses.
         
         logger.info(f"Found {len(registrations_to_process)} registrations to send feedback requests for event {event_id}")
         
+        # Track how many emails were successfully sent so we only stamp the event when ≥1 succeeds
+        emails_sent_count = 0
+
         # Process each registration
         for reg in registrations_to_process:
             reg_data = reg.to_dict()
@@ -2401,6 +2440,7 @@ def send_feedback_requests_for_event(event_id: str, event_title: str) -> None:
                 
                 # Update registration based on result
                 if email_result.get('success'):
+                    emails_sent_count += 1
                     update_data = {
                         'feedbackRequestSent': True,
                         'feedbackRequestSentAt': firestore.SERVER_TIMESTAMP,
@@ -2431,14 +2471,18 @@ def send_feedback_requests_for_event(event_id: str, event_title: str) -> None:
                 except Exception:
                     pass
         
-        # Mark event as having sent feedback requests
-        event_ref = db.collection('events').document(event_id)
-        event_ref.update({
-            'feedbackRequestsSentAt': firestore.SERVER_TIMESTAMP,
-            'updatedAt': firestore.SERVER_TIMESTAMP
-        })
-        
-        logger.info(f"Completed sending feedback requests for event {event_id}")
+        # Only stamp the event if at least one email was successfully sent
+        # This prevents an empty run (no checked-in attendees yet) from blocking future attempts
+        if emails_sent_count > 0:
+            event_ref = db.collection('events').document(event_id)
+            event_ref.update({
+                'feedbackRequestsSentAt': firestore.SERVER_TIMESTAMP,
+                'feedbackRequestsSentCount': emails_sent_count,
+                'updatedAt': firestore.SERVER_TIMESTAMP
+            })
+            logger.info(f"Completed sending {emails_sent_count} feedback requests for event {event_id}")
+        else:
+            logger.warning(f"No feedback emails sent for event {event_id} (0 eligible registrations found or all failed)")
         
     except Exception as e:
         logger.error(f"Error in send_feedback_requests_for_event for event {event_id}: {str(e)}")
@@ -2446,9 +2490,81 @@ def send_feedback_requests_for_event(event_id: str, event_title: str) -> None:
 
 
 @https_fn.on_call()
+def resendEventFeedbackRequests(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Manually resend feedback requests for a completed event.
+    This can be used when the automatic trigger failed or needs to be re-run.
+    """
+    try:
+        data: Dict[str, Any] = req.data or {}
+        event_id = data.get('eventId')
+        force = data.get('force', False)  # Force resend even if already sent
+        
+        if not event_id:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="eventId is required"
+            )
+        
+        # Get event data
+        db = get_db()
+        event_ref = db.collection('events').document(event_id)
+        event_doc = event_ref.get()
+        
+        if not event_doc.exists:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.NOT_FOUND,
+                message=f"Event {event_id} not found"
+            )
+        
+        event_data = event_doc.to_dict()
+        event_title = event_data.get('title', 'Event')
+        
+        # Check if already sent (unless force=True)
+        if not force and event_data.get('feedbackRequestsSentAt'):
+            return {
+                'success': False,
+                'message': 'Feedback requests already sent for this event. Use force=true to resend.',
+                'sentAt': event_data.get('feedbackRequestsSentAt')
+            }
+        
+        # Clear the timestamp if forcing resend
+        if force and event_data.get('feedbackRequestsSentAt'):
+            event_ref.update({
+                'feedbackRequestsSentAt': firestore.DELETE_FIELD,
+                'feedbackRequestsSentCount': firestore.DELETE_FIELD,
+                'updatedAt': firestore.SERVER_TIMESTAMP
+            })
+            logger.info(f"Cleared feedback request timestamp for event {event_id} (force resend)")
+        
+        # Send feedback requests
+        send_feedback_requests_for_event(event_id, event_title)
+        
+        # Re-fetch to get the updated count
+        updated_event = event_ref.get().to_dict()
+        sent_count = updated_event.get('feedbackRequestsSentCount', 0)
+        
+        return {
+            'success': True,
+            'message': f'Feedback requests sent to {sent_count} attendee(s)',
+            'emailsSentCount': sent_count
+        }
+        
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error in resendEventFeedbackRequests: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message=f"Internal server error: {str(e)}"
+        )
+
+
+@https_fn.on_call()
 def sendFeedbackRequest(req: https_fn.CallableRequest) -> Dict[str, Any]:
     """
     Send feedback request email using Resend.
+    Only sends if the event has a certificate template configured.
     """
     try:
         data: Dict[str, Any] = req.data or {}
@@ -2473,6 +2589,27 @@ def sendFeedbackRequest(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
                 message="userEmail, eventTitle, and either feedbackUrl or eventId are required"
             )
+        
+        # Check if event has a certificate template before sending feedback request
+        if event_id:
+            db = get_db()
+            template_query = db.collection('certificateTemplates').where(
+                filter=FieldFilter('eventId', '==', event_id)
+            ).where(
+                filter=FieldFilter('isActive', '==', True)
+            ).limit(1).stream()
+            
+            has_template = False
+            for _ in template_query:
+                has_template = True
+                break
+            
+            if not has_template:
+                logger.info(f"Skipping feedback request for event {event_id}: no active certificate template found")
+                return {
+                    'success': False,
+                    'message': 'No certificate template configured for this event. Feedback requests are only sent for events with certificates.'
+                }
 
         # Send email using Resend
         email_result = email_service.send_feedback_request(
@@ -2521,6 +2658,71 @@ def sendFeedbackRequest(req: https_fn.CallableRequest) -> Dict[str, Any]:
         raise https_fn.HttpsError(
             code=https_fn.FunctionsErrorCode.INTERNAL,
             message="Internal server error sending feedback request"
+        )
+
+
+@https_fn.on_call()
+def resolveFeedbackToken(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Resolve a feedback token to get the associated registration data.
+    This allows the feedback page to retrieve user info without exposing it in the URL.
+    """
+    try:
+        data: Dict[str, Any] = req.data or {}
+        token = data.get('token')
+        event_id = data.get('eventId')
+
+        if not token:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="token is required"
+            )
+
+        db = get_db()
+        token_ref = db.collection('feedbackTokens').document(token)
+        token_doc = token_ref.get()
+
+        if not token_doc.exists:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.NOT_FOUND,
+                message="Invalid or expired feedback token"
+            )
+
+        token_data = token_doc.to_dict()
+
+        # Verify event ID matches if provided
+        if event_id and token_data.get('eventId') != event_id:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="Token does not match this event"
+            )
+
+        # Check if token has expired (if expiry is set)
+        expires_at = token_data.get('expiresAt')
+        if expires_at:
+            from datetime import datetime, timezone
+            if isinstance(expires_at, datetime):
+                if expires_at < datetime.now(timezone.utc):
+                    raise https_fn.HttpsError(
+                        code=https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
+                        message="Feedback token has expired"
+                    )
+
+        return {
+            'success': True,
+            'registrationId': token_data.get('registrationId'),
+            'email': token_data.get('email'),
+            'name': token_data.get('name'),
+            'eventId': token_data.get('eventId')
+        }
+
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error in resolveFeedbackToken: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error resolving feedback token"
         )
 
 

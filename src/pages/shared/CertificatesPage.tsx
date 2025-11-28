@@ -14,7 +14,9 @@ import {
   DocumentTextIcon,
   ArrowDownTrayIcon,
   MapPinIcon,
-  SparklesIcon
+  SparklesIcon,
+  ArrowPathIcon,
+  ExclamationTriangleIcon
 } from '@heroicons/react/24/outline';
 import AdminLayout from '../../components/admin/AdminLayout';
 import OrganizerLayout from '../../components/organizer/OrganizerLayout';
@@ -546,6 +548,38 @@ const CertificatesPage: React.FC = () => {
     }
   };
 
+  // Re-upload template image to Firebase Storage for CORS compliance
+  const handleReuploadImage = async (template: CertificateTemplate) => {
+    if (!template.templateImageUrl) {
+      toast.error('No image URL to re-upload');
+      return;
+    }
+
+    if (CertificateService.isFirebaseStorageUrl(template.templateImageUrl)) {
+      toast.success('Image is already hosted on Firebase Storage');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      toast.loading('Re-uploading image to Firebase Storage...', { id: 'reupload' });
+      
+      const newUrl = await CertificateService.reuploadTemplateImage(template.id, template.templateImageUrl);
+      
+      // Update local state
+      setTemplates(templates.map(t => 
+        t.id === template.id ? { ...t, templateImageUrl: newUrl } : t
+      ));
+      
+      toast.success('Image re-uploaded successfully! Template is now CORS-compliant.', { id: 'reupload' });
+    } catch (error) {
+      console.error('Error re-uploading image:', error);
+      toast.error('Failed to re-upload image. The external URL may be blocked.', { id: 'reupload' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
 
   const generateCertificate = async (templateId: string, recipientData: {
     recipientName: string;
@@ -668,9 +702,22 @@ const CertificatesPage: React.FC = () => {
                   <p className="text-sm text-gray-600 mb-2">{template.description}</p>
                 )}
                 {template.eventId && (
-                  <p className="text-xs text-blue-600 mb-3">
+                  <p className="text-xs text-blue-600 mb-2">
                     {events.find(e => e.id === template.eventId)?.title || 'Unknown Event'}
                   </p>
+                )}
+                
+                {/* CORS Warning for external URLs */}
+                {template.templateImageUrl && !CertificateService.isFirebaseStorageUrl(template.templateImageUrl) && (
+                  <div className="mb-3 p-2 bg-yellow-50 border border-yellow-200 rounded-lg">
+                    <div className="flex items-start gap-2">
+                      <ExclamationTriangleIcon className="w-4 h-4 text-yellow-600 flex-shrink-0 mt-0.5" />
+                      <div className="text-xs text-yellow-700">
+                        <p className="font-medium">External image URL</p>
+                        <p>Re-upload to Firebase for CORS compliance</p>
+                      </div>
+                    </div>
+                  </div>
                 )}
                 
                 <div className="flex gap-2">
@@ -681,6 +728,17 @@ const CertificatesPage: React.FC = () => {
                     <EyeIcon className="w-4 h-4" />
                     Preview
                   </button>
+                  {/* Re-upload button for external URLs */}
+                  {template.templateImageUrl && !CertificateService.isFirebaseStorageUrl(template.templateImageUrl) && (
+                    <button
+                      onClick={() => handleReuploadImage(template)}
+                      disabled={loading}
+                      className="px-3 py-2 text-sm bg-yellow-100 text-yellow-700 rounded-lg hover:bg-yellow-200 transition-colors disabled:opacity-50"
+                      title="Re-upload to Firebase Storage"
+                    >
+                      <ArrowPathIcon className="w-4 h-4" />
+                    </button>
+                  )}
                   <button
                     onClick={() => deleteTemplate(template.id)}
                     className="px-3 py-2 text-sm bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors"

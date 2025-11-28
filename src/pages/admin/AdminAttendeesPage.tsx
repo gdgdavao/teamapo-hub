@@ -227,6 +227,81 @@ const formatCurrency = (amount?: number): string => {
   return `₱${value.toLocaleString()}`;
 };
 
+const escapeCSVCell = (value: string | number | null | undefined): string => {
+  const normalized = value === null || value === undefined ? '' : String(value);
+  const sanitized = normalized.replace(/"/g, '""');
+  return `"${sanitized}"`;
+};
+
+const humanizeLabel = (value: string): string => {
+  if (!value) {
+    return 'Field';
+  }
+
+  const spaced = value
+    .replace(/[_-]+/g, ' ')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!spaced) {
+    return 'Field';
+  }
+
+  return spaced
+    .split(' ')
+    .map(part => (part ? part[0].toUpperCase() + part.slice(1) : ''))
+    .join(' ')
+    .trim();
+};
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> => {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+};
+
+const formatFormResponseValue = (value: unknown): string => {
+  if (value === null || value === undefined) {
+    return '';
+  }
+
+  if (Array.isArray(value)) {
+    if (!value.length) {
+      return '';
+    }
+    return value
+      .map(item => formatFormResponseValue(item))
+      .filter(Boolean)
+      .join('; ');
+  }
+
+  if (typeof value === 'boolean') {
+    return value ? 'Yes' : 'No';
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  if (isPlainObject(value)) {
+    const entries = Object.entries(value);
+    if (!entries.length) {
+      return '';
+    }
+    return entries
+      .map(([key, entryValue]) => {
+        const formattedValue = formatFormResponseValue(entryValue);
+        if (!formattedValue) {
+          return '';
+        }
+        return `${humanizeLabel(key)}: ${formattedValue}`;
+      })
+      .filter(Boolean)
+      .join('; ');
+  }
+
+  return String(value);
+};
+
 const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
 
   // Load registrations from API
@@ -668,28 +743,61 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
   }, [viewingRegistration?.id, viewingRegistration?.paymentProof?.proofImageUrl, convertedImageUrls, imageLoadingStates]);
 
   const exportToCSV = () => {
-    // Define CSV headers
+    const getFormFieldLabel = (fieldId: string, registrationEventId: string): string => {
+      const targetEvent = events.find(event => event.id === registrationEventId);
+      const matchedField = targetEvent?.registrationForm?.find((field: any) => field.id === fieldId);
+      if (matchedField?.label && matchedField.label.trim().length > 0) {
+        return matchedField.label;
+      }
+      return humanizeLabel(fieldId);
+    };
+
+    const formFieldMap = new Map<string, string>();
+
+    filteredRegistrations.forEach(registration => {
+      const submission = registration.formSubmission;
+      if (!submission) {
+        return;
+      }
+
+      Object.keys(submission).forEach(fieldId => {
+        if (formFieldMap.has(fieldId)) {
+          return;
+        }
+        formFieldMap.set(fieldId, getFormFieldLabel(fieldId, registration.event.id));
+      });
+    });
+
+    const formFieldEntries = Array.from(formFieldMap.entries()).sort((a, b) => {
+      return a[1].localeCompare(b[1]);
+    });
+
     const headers = [
       'Attendee Name',
       'Email',
       'Phone',
-      'Organization'
+      'Organization',
+      ...formFieldEntries.map(([, label]) => label)
     ];
 
-    // Convert registrations to CSV rows
-    const csvRows = [headers.join(',')];
+    const csvRows = [headers.map(header => escapeCSVCell(header)).join(',')];
     
     filteredRegistrations.forEach(registration => {
       const row = [
-        `"${registration.attendee.name}"`,
-        `"${registration.attendee.email}"`,
-        `"${registration.attendee.phone || ''}"`,
-        `"${registration.attendee.organization || ''}"`
+        escapeCSVCell(registration.attendee.name),
+        escapeCSVCell(registration.attendee.email),
+        escapeCSVCell(registration.attendee.phone || ''),
+        escapeCSVCell(registration.attendee.organization || '')
       ];
+
+      formFieldEntries.forEach(([fieldId]) => {
+        const submissionValue = registration.formSubmission?.[fieldId];
+        row.push(escapeCSVCell(formatFormResponseValue(submissionValue)));
+      });
+
       csvRows.push(row.join(','));
     });
 
-    // Create and download CSV file
     const csvContent = csvRows.join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');

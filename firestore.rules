@@ -98,30 +98,54 @@ service cloud.firestore {
                      resource.data.paymentStatus == 'pending' && 
                      (!('paymentLinkStatus' in resource.data) || resource.data.paymentLinkStatus == 'active');
       allow create: if true; // Allow anonymous registrations
-      // Allow anonymous updates for payment status changes (limited fields)
+      // Allow anonymous updates for payment status changes and feedback submission (limited fields)
       allow update: if isAuthenticated() || 
                        (resource.data.paymentStatus == 'pending' && 
-                        request.resource.data.paymentStatus in ['pending', 'processing']);
+                        request.resource.data.paymentStatus in ['pending', 'processing']) ||
+                       // Allow updating feedback status for anonymous users
+                       (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['feedbackSubmitted', 'feedbackId', 'updatedAt']));
       allow delete: if isAuthenticated();
     }
     
     // Certificate templates collection
     match /certificateTemplates/{templateId} {
-      allow read: if isAuthenticated();
+      // Allow public read so anonymous users can generate certificates after feedback submission
+      allow read: if true;
       allow write: if isAdminOrOrganizer();
     }
     
     // Certificates collection
     match /certificates/{certificateId} {
       allow read: if true; // Certificates are publicly verifiable
-      allow write: if isAuthenticated();
+      // Allow anonymous create for certificates generated after feedback submission
+      allow create: if request.resource.data.eventId is string &&
+                       request.resource.data.registrationId is string &&
+                       request.resource.data.verificationCode is string &&
+                       request.resource.data.recipientName is string;
+      allow update, delete: if isAuthenticated();
+    }
+    
+    // Feedback tokens collection - secure tokens for feedback URLs
+    match /feedbackTokens/{tokenId} {
+      // Only allow reading via Cloud Functions (resolveFeedbackToken)
+      // Direct client access is not allowed to prevent token enumeration
+      allow read: if false;
+      allow write: if false; // Only created by Cloud Functions
     }
     
     // Feedback collection
     match /feedback/{feedbackId} {
       allow read: if isAuthenticated();
-      allow create: if isValidEmail(resource.data.userDetails.email) &&
-                       resource.data.eventId is string;
+      allow create: if (
+                        // Allow if userEmail is valid
+                        (request.resource.data.userEmail is string && 
+                         isValidEmail(request.resource.data.userEmail)) ||
+                        // Also support legacy userDetails.email structure
+                        (request.resource.data.userDetails is map &&
+                         request.resource.data.userDetails.email is string &&
+                         isValidEmail(request.resource.data.userDetails.email))
+                      ) &&
+                      request.resource.data.eventId is string;
       allow update: if false; // Feedback is immutable
       allow delete: if isAuthenticated();
     }

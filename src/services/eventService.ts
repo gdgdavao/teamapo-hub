@@ -1371,7 +1371,7 @@ export class EventService {
       console.log('🔥 EventService: Updating event status in Firebase', { eventId, status });
       
       const eventRef = doc(db, this.EVENTS_COLLECTION, eventId);
-      const updateData = {
+      const updateData: any = {
         status: status,
         isPublished: status === 'published', // Update isPublished based on status
         updatedAt: serverTimestamp()
