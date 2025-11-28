@@ -109,7 +109,8 @@ service cloud.firestore {
     
     // Certificate templates collection
     match /certificateTemplates/{templateId} {
-      allow read: if isAuthenticated();
+      // Allow public read so anonymous users can generate certificates after feedback submission
+      allow read: if true;
       allow write: if isAdminOrOrganizer();
     }
     
