@@ -98,10 +98,12 @@ service cloud.firestore {
                      resource.data.paymentStatus == 'pending' && 
                      (!('paymentLinkStatus' in resource.data) || resource.data.paymentLinkStatus == 'active');
       allow create: if true; // Allow anonymous registrations
-      // Allow anonymous updates for payment status changes (limited fields)
+      // Allow anonymous updates for payment status changes and feedback submission (limited fields)
       allow update: if isAuthenticated() || 
                        (resource.data.paymentStatus == 'pending' && 
-                        request.resource.data.paymentStatus in ['pending', 'processing']);
+                        request.resource.data.paymentStatus in ['pending', 'processing']) ||
+                       // Allow updating feedback status for anonymous users
+                       (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['feedbackSubmitted', 'feedbackId', 'updatedAt']));
       allow delete: if isAuthenticated();
     }
     

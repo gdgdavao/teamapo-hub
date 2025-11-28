@@ -178,13 +178,8 @@ export class FeedbackService {
         }
       }
 
-      // Trigger analytics update via Cloud Function
-      try {
-        const updateFeedbackAnalytics = httpsCallable(functions, 'updateFeedbackAnalytics');
-        await updateFeedbackAnalytics({ eventId: feedbackData.eventId });
-      } catch (error) {
-        console.warn('Could not update feedback analytics:', error);
-      }
+      // Note: Analytics update is handled by Firestore triggers on the backend
+      // The feedback count and stats are automatically updated when feedback documents are created
 
       return feedbackId;
     } catch (error) {

@@ -7,6 +7,7 @@ import useSEO from '../../hooks/useSEO';
 import FormRenderer from '../../components/shared/FormRenderer/FormRenderer';
 import { EventService } from '../../services/eventService';
 import { FeedbackService } from '../../services/feedbackService';
+import { CertificateService } from '../../services/certificateService';
 import { Event, FormField } from '../../types';
 
 const FeedbackPage: React.FC = () => {
@@ -22,6 +23,8 @@ const FeedbackPage: React.FC = () => {
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [certificateId, setCertificateId] = useState<string | null>(null);
+  const [generatingCertificate, setGeneratingCertificate] = useState(false);
 
   // Helper function to safely convert Firestore Timestamp or Date to Date object
   const toDate = (dateValue: any): Date => {
@@ -117,6 +120,31 @@ const FeedbackPage: React.FC = () => {
 
       await FeedbackService.submitFeedback(feedbackData);
       setSubmitted(true);
+
+      // Note: Certificate generation will be handled by the backend
+      // The certificate will be automatically generated and sent via email
+      // by a Cloud Function triggered when feedback is submitted
+      
+      /* Disabled client-side certificate generation - requires authentication
+      if (registrationId && userEmail && userName) {
+        setGeneratingCertificate(true);
+        try {
+          const certificateData = await CertificateService.generateCertificate({
+            templateId: 'default',
+            recipientName: userName,
+            recipientEmail: userEmail,
+            eventId,
+            eventTitle: event.title,
+            registrationId
+          });
+          setCertificateId(certificateData);
+        } catch (certError) {
+          console.error('Error generating certificate:', certError);
+        } finally {
+          setGeneratingCertificate(false);
+        }
+      }
+      */
     } catch (err) {
       console.error('Error submitting feedback:', err);
       setError('Failed to submit feedback. Please try again.');
@@ -163,6 +191,27 @@ const FeedbackPage: React.FC = () => {
           <p className="text-gray-600 mb-6">
             Your feedback has been submitted successfully. We appreciate your time and input!
           </p>
+          
+          {/* Certificate Information */}
+          {registrationId && (
+            <div className="mb-6 bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-200 rounded-lg p-4">
+              <div className="flex items-center justify-center mb-2">
+                <span className="text-3xl">🎓</span>
+              </div>
+              <p className="text-sm font-semibold text-gray-900 mb-2">
+                Certificate of Participation
+              </p>
+              <p className="text-sm text-gray-700 mb-3">
+                Your certificate will be automatically generated and sent to your email address within the next few minutes.
+              </p>
+              <div className="bg-white/50 rounded px-3 py-2">
+                <p className="text-xs text-gray-600">
+                  📧 {userEmail}
+                </p>
+              </div>
+            </div>
+          )}
+          
           <div className="space-y-4">
             <p className="text-sm text-gray-500">
               Your feedback helps us improve our future events.
