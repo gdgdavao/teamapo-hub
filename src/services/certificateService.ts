@@ -586,6 +586,7 @@ export class CertificateService {
       
       await setDoc(certificateRef, {
         credentialId: data.verificationCode,
+        verificationCode: data.verificationCode, // Required by Firestore rules for anonymous create
         recipientName: data.recipientName,
         recipientEmail: data.recipientEmail,
         eventId: data.eventId,
