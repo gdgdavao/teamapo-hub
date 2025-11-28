@@ -38,6 +38,16 @@ except Exception as e:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+CHECKED_IN_CANONICAL = 'checked-in'
+CHECKED_IN_ALIASES = frozenset({CHECKED_IN_CANONICAL, 'checked_in'})
+
+
+def normalize_attendance_status(status: Optional[str]) -> Optional[str]:
+    """Convert any checked-in alias to the canonical string; otherwise return the original status."""
+    if status in CHECKED_IN_ALIASES:
+        return CHECKED_IN_CANONICAL
+    return status
+
 def get_db():
     """Lazy initialization of Firestore client"""
     global _app, _db
@@ -240,9 +250,10 @@ class EventService:
                 registration_stats[status] = registration_stats.get(status, 0) + 1
                 
                 # Attendance
-                if reg_data.get('attendanceStatus') == 'checked_in':
+                attendance_status = normalize_attendance_status(reg_data.get('attendanceStatus'))
+                if attendance_status == CHECKED_IN_CANONICAL:
                     attendance_stats['checkedIn'] += 1
-                elif reg_data.get('attendanceStatus') == 'no_show':
+                elif attendance_status == 'no_show':
                     attendance_stats['noShows'] += 1
                 
                 # Feedback
@@ -1628,9 +1639,10 @@ def checkInAttendee(req: https_fn.CallableRequest) -> Dict[str, Any]:
         
         registration = registrations[0]
         registration_data = registration.to_dict()
+        current_attendance_status = normalize_attendance_status(registration_data.get('attendanceStatus'))
         
         # Check if already checked in
-        if registration_data.get('attendanceStatus') == 'checked_in':
+        if current_attendance_status == CHECKED_IN_CANONICAL:
             return {
                 'success': True,
                 'message': 'Attendee already checked in',
@@ -1640,7 +1652,7 @@ def checkInAttendee(req: https_fn.CallableRequest) -> Dict[str, Any]:
         
         # Update registration with check-in info
         registration.reference.update({
-            'attendanceStatus': 'checked_in',
+            'attendanceStatus': CHECKED_IN_CANONICAL,
             'checkedInAt': firestore.SERVER_TIMESTAMP,
             'checkedInBy': req.auth.uid,
             'updatedAt': firestore.SERVER_TIMESTAMP
@@ -2312,13 +2324,25 @@ def send_feedback_requests_for_event(event_id: str, event_title: str) -> None:
         
         # Query registrations for checked-in or confirmed attendees who haven't submitted feedback
         # Note: Firestore doesn't support 'in' queries directly, so we'll query separately
-        checked_in_query = db.collection('registrations').where(
-            filter=FieldFilter('eventId', '==', event_id)
-        ).where(
-            filter=FieldFilter('attendanceStatus', '==', 'checked_in')
-        ).where(
-            filter=FieldFilter('feedbackSubmitted', '==', False)
-        ).stream()
+        registration_ids_seen = set()
+        registrations_to_process = []
+
+        def _collect_registrations(query_stream):
+            for registration in query_stream:
+                reg_id = registration.id
+                if reg_id not in registration_ids_seen:
+                    registration_ids_seen.add(reg_id)
+                    registrations_to_process.append(registration)
+
+        for status in CHECKED_IN_ALIASES:
+            checked_in_query = db.collection('registrations').where(
+                filter=FieldFilter('eventId', '==', event_id)
+            ).where(
+                filter=FieldFilter('attendanceStatus', '==', status)
+            ).where(
+                filter=FieldFilter('feedbackSubmitted', '==', False)
+            ).stream()
+            _collect_registrations(checked_in_query)
         
         confirmed_query = db.collection('registrations').where(
             filter=FieldFilter('eventId', '==', event_id)
@@ -2327,22 +2351,7 @@ def send_feedback_requests_for_event(event_id: str, event_title: str) -> None:
         ).where(
             filter=FieldFilter('feedbackSubmitted', '==', False)
         ).stream()
-        
-        # Combine results (avoid duplicates)
-        registration_ids_seen = set()
-        registrations_to_process = []
-        
-        for reg in checked_in_query:
-            reg_id = reg.id
-            if reg_id not in registration_ids_seen:
-                registration_ids_seen.add(reg_id)
-                registrations_to_process.append(reg)
-        
-        for reg in confirmed_query:
-            reg_id = reg.id
-            if reg_id not in registration_ids_seen:
-                registration_ids_seen.add(reg_id)
-                registrations_to_process.append(reg)
+        _collect_registrations(confirmed_query)
         
         logger.info(f"Found {len(registrations_to_process)} registrations to send feedback requests for event {event_id}")
         
