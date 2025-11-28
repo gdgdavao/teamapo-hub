@@ -113,7 +113,7 @@ service firebase.storage {
                         firestore.get(/databases/(default)/documents/events/$(eventId)).data.organizer.uid == request.auth.uid);
     }
     
-    // Certificates - Generated certificates (legacy path)
+    // Certificates - Generated certificates (legacy path - single file)
     match /certificates/{certificateId} {
       allow read: if true; // Certificates are publicly accessible for verification
       allow write: if isAdmin() || 
@@ -124,11 +124,11 @@ service firebase.storage {
     }
     
     // Certificates - Generated certificates by event (for anonymous users after feedback)
+    // Allow anonymous uploads for certificates generated after feedback submission
     match /certificates/{eventId}/{filename} {
       allow read: if true; // Certificates are publicly accessible for verification
-      // Allow anonymous uploads for certificates generated after feedback submission
-      allow write: if isValidImageType() && 
-                      (request.resource != null ? request.resource.size : resource.size) < 2 * 1024 * 1024; // 2MB limit
+      // Allow anonymous uploads - permissive rule for certificate generation
+      allow write: if true;
       allow delete: if isAdmin();
     }
     

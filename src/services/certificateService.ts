@@ -421,11 +421,13 @@ export class CertificateService {
    */
   static async verifyCertificate(verificationCode: string): Promise<{
     isValid: boolean;
+    isRevoked?: boolean;
     recipientName?: string;
     eventTitle?: string;
     eventDate?: string;
     issuedDate?: string;
     certificateUrl?: string;
+    verificationCount?: number;
   }> {
     try {
       const certificatesQuery = query(
@@ -441,18 +443,31 @@ export class CertificateService {
       
       const certificate = snapshot.docs[0].data();
       
+      // Check if certificate is revoked (isVerified === false means revoked)
+      if (certificate.isVerified === false) {
+        return {
+          isValid: false,
+          isRevoked: true,
+          recipientName: certificate.recipientName,
+          eventTitle: certificate.eventTitle
+        };
+      }
+      
       // Increment verification count
+      const newVerificationCount = (certificate.verificationCount || 0) + 1;
       await updateDoc(snapshot.docs[0].ref, {
-        verificationCount: (certificate.verificationCount || 0) + 1
+        verificationCount: newVerificationCount
       });
       
       return {
         isValid: true,
+        isRevoked: false,
         recipientName: certificate.recipientName,
         eventTitle: certificate.eventTitle,
         eventDate: certificate.eventDate,
         issuedDate: certificate.issuedAt?.toDate?.()?.toISOString(),
-        certificateUrl: certificate.certificateUrl
+        certificateUrl: certificate.certificateUrl,
+        verificationCount: newVerificationCount
       };
     } catch (error) {
       console.error('Error verifying certificate:', error);
