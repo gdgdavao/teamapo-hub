@@ -16,6 +16,7 @@ import toast from 'react-hot-toast';
 import usePageTitle from '../../hooks/usePageTitle';
 import useSEO from '../../hooks/useSEO';
 import { getDownloadUrlFromPath } from '../../utils/storageUtils';
+import { logger } from '../../utils/logger';
 
 const EventRegistrationPage: React.FC = () => {
   const { eventId } = useParams<{ eventId: string }>();
@@ -36,14 +37,14 @@ const EventRegistrationPage: React.FC = () => {
   // Resolve public URL for social sharing image when event changes
   useEffect(() => {
     const resolveImage = async () => {
-      console.log('🖼️ Image Resolution: Starting...', {
+      logger.log('🖼️ Image Resolution: Starting...', {
         hasEvent: !!event,
         eventImageUrl: event?.imageUrl,
         eventBannerUrl: event?.bannerUrl
       });
 
       if (!event) {
-        console.log('⚠️ Image Resolution: No event, using default banner');
+        logger.log('⚠️ Image Resolution: No event, using default banner');
         setMetaImageUrl('https://raw.githubusercontent.com/gdgdavao/assets-cdn/main/banner.png');
         setImageResolved(true);
         return;
@@ -51,7 +52,7 @@ const EventRegistrationPage: React.FC = () => {
 
       const raw = event.imageUrl || event.bannerUrl;
       if (!raw) {
-        console.log('⚠️ Image Resolution: No image URL in event, using default banner');
+        logger.log('⚠️ Image Resolution: No image URL in event, using default banner');
         setMetaImageUrl('https://raw.githubusercontent.com/gdgdavao/assets-cdn/main/banner.png');
         setImageResolved(true);
         return;
@@ -59,26 +60,26 @@ const EventRegistrationPage: React.FC = () => {
 
       // If already an absolute URL, use it; otherwise resolve from storage path
       if (/^https?:\/\//i.test(raw)) {
-        console.log('✅ Image Resolution: Using absolute URL', { url: raw });
+        logger.log('✅ Image Resolution: Using absolute URL', { url: raw });
         setMetaImageUrl(raw);
         setImageResolved(true);
         return;
       }
 
       // This is a Firebase Storage path, resolve it to a public URL
-      console.log('🔄 Image Resolution: Resolving Firebase Storage path', { path: raw });
+      logger.log('🔄 Image Resolution: Resolving Firebase Storage path', { path: raw });
       try {
         const url = await getDownloadUrlFromPath(raw);
         if (url) {
-          console.log('✅ Image Resolution: Successfully resolved Firebase Storage URL', { url });
+          logger.log('✅ Image Resolution: Successfully resolved Firebase Storage URL', { url });
           setMetaImageUrl(url);
         } else {
-          console.warn('⚠️ Image Resolution: Failed to resolve, using default banner');
+          logger.warn('⚠️ Image Resolution: Failed to resolve, using default banner');
           setMetaImageUrl('https://raw.githubusercontent.com/gdgdavao/assets-cdn/main/banner.png');
         }
         setImageResolved(true);
       } catch (error) {
-        console.error('❌ Image Resolution: Error resolving Firebase Storage URL', error);
+        logger.error('❌ Image Resolution: Error resolving Firebase Storage URL', error);
         setMetaImageUrl('https://raw.githubusercontent.com/gdgdavao/assets-cdn/main/banner.png');
         setImageResolved(true);
       }
@@ -92,7 +93,7 @@ const EventRegistrationPage: React.FC = () => {
     // Only set SEO meta tags after image resolution is complete
     if (!imageResolved) return;
 
-    console.log('🎨 SEO Update: Setting meta tags with resolved image', {
+    logger.log('🎨 SEO Update: Setting meta tags with resolved image', {
       eventTitle: event?.title,
       metaImageUrl,
       isEventImage: metaImageUrl !== 'https://raw.githubusercontent.com/gdgdavao/assets-cdn/main/banner.png'
@@ -177,7 +178,7 @@ const EventRegistrationPage: React.FC = () => {
         setLoading(false);
       },
       err => {
-        console.error('Error loading event:', err);
+        logger.error('Error loading event:', err);
         setError('Failed to load event details');
         setLoading(false);
       }
@@ -204,7 +205,7 @@ const EventRegistrationPage: React.FC = () => {
         setRegistrationForm(formFields);
         hasLoadedFormRef.current = true;
       } catch (err) {
-        console.error('Error loading registration form:', err);
+        logger.error('Error loading registration form:', err);
         toast.error('Failed to load registration form');
       }
     };

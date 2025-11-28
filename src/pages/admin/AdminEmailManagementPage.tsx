@@ -20,6 +20,7 @@ import { EmailService, EmailLog, EmailTemplate } from '../../services/emailServi
 import { EventService } from '../../services/eventService';
 import { RegistrationService } from '../../services/registrationService';
 import { Event, Registration } from '../../types';
+import { logger } from '../../utils/logger';
 import AdminLayout from '../../components/admin/AdminLayout';
 
 type DeliveryStatus = 'queued' | 'sent' | 'delivered' | 'delivery_delayed' | 'bounced' | 'complained' | 'unknown';
@@ -107,7 +108,7 @@ const AdminEmailManagementPage = () => {
       setEmails(initialEmails);
       setEmailStats(computeStats(initialEmails));
     } catch (error) {
-      console.error('Error loading email data:', error);
+      logger.error('Error loading email data:', error);
     } finally {
       setLoading(false);
     }
@@ -118,11 +119,11 @@ const AdminEmailManagementPage = () => {
     
     setFetchingFromResend(true);
     try {
-      console.log('Fetching ALL emails directly from Resend API...');
+      logger.log('Fetching ALL emails directly from Resend API...');
       const resendData = await EmailService.getAllResendEmails();
       
       if (resendData && resendData.success) {
-        console.log(`📧 Resend API Summary:
+        logger.log(`📧 Resend API Summary:
           Total: ${resendData.total}
           ✅ Delivered: ${resendData.delivered_count}
           ❌ Bounced: ${resendData.bounced_count}
@@ -131,9 +132,9 @@ const AdminEmailManagementPage = () => {
         
         // Log bounced emails
         if (resendData.bounced_emails.length > 0) {
-          console.log('\n🚫 BOUNCED EMAILS FROM RESEND:');
+          logger.log('\n🚫 BOUNCED EMAILS FROM RESEND:');
           resendData.bounced_emails.forEach((email, index) => {
-            console.log(`  ${index + 1}. ${email.to.join(', ')} - ${email.subject} (${email.id})`);
+            logger.log(`  ${index + 1}. ${email.to.join(', ')} - ${email.subject} (${email.id})`);
           });
         }
         
@@ -149,7 +150,7 @@ const AdminEmailManagementPage = () => {
         alert('Failed to fetch emails from Resend API');
       }
     } catch (error) {
-      console.error('Error fetching from Resend:', error);
+      logger.error('Error fetching from Resend:', error);
       alert('Error fetching emails from Resend. Check console for details.');
     } finally {
       setFetchingFromResend(false);
@@ -162,7 +163,7 @@ const AdminEmailManagementPage = () => {
     setRefreshingStatuses(true);
     try {
       const emailsWithIds = emails.filter(e => e.emailId);
-      console.log(`Refreshing delivery status for ${emailsWithIds.length} emails with emailIds...`);
+      logger.log(`Refreshing delivery status for ${emailsWithIds.length} emails with emailIds...`);
       
       let successCount = 0;
       let bouncedCount = 0;
@@ -185,7 +186,7 @@ const AdminEmailManagementPage = () => {
                 let deliveryStatus: DeliveryStatus;
                 const resendStatus = status.status?.toLowerCase() || status.last_event?.toLowerCase() || 'unknown';
                 
-                console.log(`Email ${email.emailId}: Resend status = ${resendStatus}`);
+                logger.log(`Email ${email.emailId}: Resend status = ${resendStatus}`);
                 
                 if (resendStatus === 'delivered') {
                   deliveryStatus = 'delivered';
@@ -196,7 +197,7 @@ const AdminEmailManagementPage = () => {
                 } else if (resendStatus === 'bounced' || resendStatus === 'bounce') {
                   deliveryStatus = 'bounced';
                   bouncedCount++;
-                  console.warn(`⚠️ BOUNCED email detected: ${email.userEmail} (${email.emailId})`);
+                  logger.warn(`⚠️ BOUNCED email detected: ${email.userEmail} (${email.emailId})`);
                 } else if (resendStatus === 'complained' || resendStatus === 'complaint') {
                   deliveryStatus = 'complained';
                   bouncedCount++;
@@ -215,11 +216,11 @@ const AdminEmailManagementPage = () => {
                 }
               } else {
                 failedFetchCount++;
-                console.warn(`No status returned for email ${email.emailId}`);
+                logger.warn(`No status returned for email ${email.emailId}`);
               }
             } catch (error) {
               failedFetchCount++;
-              console.error(`Error fetching status for ${email.emailId}:`, error);
+              logger.error(`Error fetching status for ${email.emailId}:`, error);
             }
           })
         );
@@ -230,7 +231,7 @@ const AdminEmailManagementPage = () => {
         }
       }
 
-      console.log(`✅ Status refresh complete: ${successCount} successful, ${bouncedCount} bounced/complained, ${failedFetchCount} failed to fetch`);
+      logger.log(`✅ Status refresh complete: ${successCount} successful, ${bouncedCount} bounced/complained, ${failedFetchCount} failed to fetch`);
 
       setEmails(enrichedEmails as EmailLogWithStatus[]);
       
@@ -257,7 +258,7 @@ const AdminEmailManagementPage = () => {
       
       alert(`Status updated!\n✅ Successful: ${successCount}\n❌ Bounced: ${bouncedCount}\n⚠️ Failed to fetch: ${failedFetchCount}`);
     } catch (error) {
-      console.error('Error refreshing delivery statuses:', error);
+      logger.error('Error refreshing delivery statuses:', error);
       alert('Failed to refresh delivery statuses. Check console for details.');
     } finally {
       setRefreshingStatuses(false);
@@ -315,7 +316,7 @@ const AdminEmailManagementPage = () => {
         alert(`Failed to resend email: ${result.message}`);
       }
     } catch (error: any) {
-      console.error('Error resending email:', error);
+      logger.error('Error resending email:', error);
       alert(`Error resending email: ${error.message}`);
     } finally {
       setResendingEmail(null);
@@ -364,7 +365,7 @@ const AdminEmailManagementPage = () => {
       setShowBulkSendModal(false);
       loadData();
     } catch (error: any) {
-      console.error('Error sending bulk emails:', error);
+      logger.error('Error sending bulk emails:', error);
       alert(`Error: ${error.message}`);
     }
   };
@@ -380,7 +381,7 @@ const AdminEmailManagementPage = () => {
       a.click();
       window.URL.revokeObjectURL(url);
     } catch (error: any) {
-      console.error('Error exporting emails:', error);
+      logger.error('Error exporting emails:', error);
       alert(`Error exporting: ${error.message}`);
     }
   };

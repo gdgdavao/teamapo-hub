@@ -21,6 +21,7 @@ import {
 } from 'firebase/storage';
 import { httpsCallable } from 'firebase/functions';
 import { db, storage, functions } from '../config/firebase';
+import { logger } from '../utils/logger';
 import { Event, TicketType, PromoCode, FormField } from '../types';
 
 // Interface for event form data
@@ -362,9 +363,9 @@ export class EventService {
       const cleanedEvent = this.removeUndefinedValues(event);
       
       // Debug logging
-      console.log('Original event object keys:', Object.keys(event));
-      console.log('Cleaned event object keys:', Object.keys(cleanedEvent));
-      console.log('Event data being sent to Firestore:', JSON.stringify(cleanedEvent, null, 2));
+      logger.log('Original event object keys:', Object.keys(event));
+      logger.log('Cleaned event object keys:', Object.keys(cleanedEvent));
+      logger.log('Event data being sent to Firestore:', JSON.stringify(cleanedEvent, null, 2));
       
       // Create the event document
       await setDoc(eventRef, cleanedEvent);
@@ -378,22 +379,22 @@ export class EventService {
       // Initialize event via Cloud Function (analytics, defaults). If it overwrites default forms,
       // update forms again immediately after.
       try {
-        console.log('Calling initialize_event function for eventId:', eventId);
+        logger.log('Calling initialize_event function for eventId:', eventId);
         const initializeEvent = httpsCallable(functions, 'initialize_event');
         const result = await initializeEvent({ eventId });
-        console.log('initialize_event result:', result);
+        logger.log('initialize_event result:', result);
         // Ensure our provided forms remain in place
         await this.updateEventForms(eventId, {
           registrationForm: eventData.registrationForm,
           feedbackForm: eventData.feedbackForm
         });
       } catch (initErr) {
-        console.warn('Event initialization function failed; continuing without it:', initErr);
+        logger.warn('Event initialization function failed; continuing without it:', initErr);
       }
 
       return eventId;
     } catch (error) {
-      console.error('Error creating event:', error);
+      logger.error('Error creating event:', error);
       throw new Error(`Failed to create event: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
@@ -459,7 +460,7 @@ export class EventService {
         await this.updateEventForms(eventId, eventData);
       }
     } catch (error) {
-      console.error('Error updating event:', error);
+      logger.error('Error updating event:', error);
       throw new Error('Failed to update event');
     }
   }
@@ -477,7 +478,7 @@ export class EventService {
       }
       return null;
     } catch (error) {
-      console.error('Error getting event:', error);
+      logger.error('Error getting event:', error);
       throw new Error('Failed to get event');
     }
   }
@@ -491,7 +492,7 @@ export class EventService {
     onError?: (error: Error) => void
   ): () => void {
     if (!eventId) {
-      console.warn('EventService.subscribeToEvent called without an eventId');
+      logger.warn('EventService.subscribeToEvent called without an eventId');
       return () => undefined;
     }
 
@@ -508,7 +509,7 @@ export class EventService {
         onUpdate({ id: snapshot.id, ...snapshot.data() } as Event);
       },
       error => {
-        console.error('Error subscribing to event:', error);
+        logger.error('Error subscribing to event:', error);
         if (onError) {
           onError(error);
         }
@@ -531,7 +532,7 @@ export class EventService {
       const querySnapshot = await getDocs(q);
       return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Event));
     } catch (error) {
-      console.error('Error getting events by organizer:', error);
+      logger.error('Error getting events by organizer:', error);
       throw new Error('Failed to get events');
     }
   }
@@ -552,7 +553,7 @@ export class EventService {
       const querySnapshot = await getDocs(q);
       return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Event));
     } catch (error) {
-      console.error('Error getting published events:', error);
+      logger.error('Error getting published events:', error);
       throw new Error('Failed to get published events');
     }
   }
@@ -608,7 +609,7 @@ export class EventService {
 
       return results;
     } catch (error) {
-      console.error('Error getting events for social media:', error);
+      logger.error('Error getting events for social media:', error);
       throw new Error('Failed to get events for social media');
     }
   }
@@ -620,16 +621,16 @@ export class EventService {
     try {
       // Try Cloud Function first
       try {
-        console.log('Calling publish_event function for eventId:', eventId);
+        logger.log('Calling publish_event function for eventId:', eventId);
         const publishEventFn = httpsCallable(functions, 'publish_event');
         const result = await publishEventFn({ eventId });
-        console.log('publish_event result:', result);
+        logger.log('publish_event result:', result);
         const data = result.data as { success?: boolean; message?: string };
         if (!data?.success) {
           throw new Error(data?.message || 'Publish function returned failure');
         }
       } catch (fnErr) {
-        console.warn('Publish function failed; falling back to direct Firestore update:', fnErr);
+        logger.warn('Publish function failed; falling back to direct Firestore update:', fnErr);
         // Fallback to direct Firestore update
         const eventRef = doc(db, this.EVENTS_COLLECTION, eventId);
         await updateDoc(eventRef, {
@@ -640,7 +641,7 @@ export class EventService {
         });
       }
     } catch (error) {
-      console.error('Error publishing event:', error);
+      logger.error('Error publishing event:', error);
       throw new Error('Failed to publish event');
     }
   }
@@ -650,18 +651,18 @@ export class EventService {
    */
   static async deleteEvent(eventId: string, forceDelete: boolean = false): Promise<void> {
     try {
-      console.log('Starting delete event for eventId:', eventId, 'forceDelete:', forceDelete);
+      logger.log('Starting delete event for eventId:', eventId, 'forceDelete:', forceDelete);
       
       const eventRef = doc(db, this.EVENTS_COLLECTION, eventId);
-      console.log('Deleting event document from Firestore');
+      logger.log('Deleting event document from Firestore');
       await deleteDoc(eventRef);
-      console.log('Successfully deleted event document');
+      logger.log('Successfully deleted event document');
 
       // Delete associated subcollections and files
       await this.deleteEventData(eventId, forceDelete);
-      console.log('Event deletion completed successfully');
+      logger.log('Event deletion completed successfully');
     } catch (error) {
-      console.error('Error deleting event:', error);
+      logger.error('Error deleting event:', error);
       throw new Error('Failed to delete event');
     }
   }
@@ -671,14 +672,14 @@ export class EventService {
    */
   static async uploadEventImage(eventId: string, imageFile: File): Promise<string> {
     try {
-      console.log('Uploading event image for eventId:', eventId, 'fileName:', imageFile.name);
+      logger.log('Uploading event image for eventId:', eventId, 'fileName:', imageFile.name);
       const imageRef = ref(storage, `${this.EVENT_IMAGES_PATH}/${eventId}/${imageFile.name}`);
-      console.log('Storage path:', `${this.EVENT_IMAGES_PATH}/${eventId}/${imageFile.name}`);
+      logger.log('Storage path:', `${this.EVENT_IMAGES_PATH}/${eventId}/${imageFile.name}`);
       
       // Check current auth state before upload
       const { auth } = await import('../config/firebase');
       const currentUser = auth.currentUser;
-      console.log('Current user during upload:', currentUser?.uid, currentUser?.email);
+      logger.log('Current user during upload:', currentUser?.uid, currentUser?.email);
       
       const snapshot = await uploadBytes(imageRef, imageFile, { contentType: imageFile.type || 'image/jpeg' });
       const downloadURL = await getDownloadURL(snapshot.ref);
@@ -692,7 +693,7 @@ export class EventService {
 
       return downloadURL;
     } catch (error) {
-      console.error('Error uploading event image:', error);
+      logger.error('Error uploading event image:', error);
       throw new Error('Failed to upload event image');
     }
   }
@@ -702,22 +703,22 @@ export class EventService {
    */
   static async uploadSpeakerPhoto(eventId: string, speakerId: string, imageFile: File): Promise<string> {
     try {
-      console.log('Uploading speaker photo for eventId:', eventId, 'speakerId:', speakerId, 'fileName:', imageFile.name);
+      logger.log('Uploading speaker photo for eventId:', eventId, 'speakerId:', speakerId, 'fileName:', imageFile.name);
       const timestamp = Date.now();
       const imageRef = ref(storage, `${this.SPEAKER_PHOTOS_PATH}/${eventId}/${speakerId}/photo-${timestamp}.jpg`);
-      console.log('Storage path:', `${this.SPEAKER_PHOTOS_PATH}/${eventId}/${speakerId}/photo-${timestamp}.jpg`);
+      logger.log('Storage path:', `${this.SPEAKER_PHOTOS_PATH}/${eventId}/${speakerId}/photo-${timestamp}.jpg`);
       
       // Check current auth state before upload
       const { auth } = await import('../config/firebase');
       const currentUser = auth.currentUser;
-      console.log('Current user during speaker photo upload:', currentUser?.uid, currentUser?.email);
+      logger.log('Current user during speaker photo upload:', currentUser?.uid, currentUser?.email);
       
       const snapshot = await uploadBytes(imageRef, imageFile, { contentType: imageFile.type || 'image/jpeg' });
       const downloadURL = await getDownloadURL(snapshot.ref);
 
       return downloadURL;
     } catch (error) {
-      console.error('Error uploading speaker photo:', error);
+      logger.error('Error uploading speaker photo:', error);
       throw new Error('Failed to upload speaker photo');
     }
   }
@@ -745,7 +746,7 @@ export class EventService {
         updatedAt: serverTimestamp()
       });
     } catch (error) {
-      console.error('Error creating event forms:', error);
+      logger.error('Error creating event forms:', error);
       throw error;
     }
   }
@@ -771,7 +772,7 @@ export class EventService {
         });
       }
     } catch (error) {
-      console.error('Error updating event forms:', error);
+      logger.error('Error updating event forms:', error);
       throw error;
     }
   }
@@ -784,7 +785,7 @@ export class EventService {
       // Remove qrCodeUrl if it's a base64 string (too large for Firestore)
       const cleanedConfig = { ...paymentConfig };
       if (cleanedConfig.qrCodeUrl && cleanedConfig.qrCodeUrl.startsWith('data:image/')) {
-        console.log('Removing base64 qrCodeUrl from payment config (too large for Firestore)');
+        logger.log('Removing base64 qrCodeUrl from payment config (too large for Firestore)');
         delete cleanedConfig.qrCodeUrl;
       }
       
@@ -795,7 +796,7 @@ export class EventService {
         updatedAt: serverTimestamp()
       });
     } catch (error) {
-      console.error('Error creating payment configuration:', error);
+      logger.error('Error creating payment configuration:', error);
       throw error;
     }
   }
@@ -808,7 +809,7 @@ export class EventService {
       // Remove qrCodeUrl if it's a base64 string (too large for Firestore)
       const cleanedConfig = { ...paymentConfig };
       if (cleanedConfig.qrCodeUrl && cleanedConfig.qrCodeUrl.startsWith('data:image/')) {
-        console.log('Removing base64 qrCodeUrl from payment config update (too large for Firestore)');
+        logger.log('Removing base64 qrCodeUrl from payment config update (too large for Firestore)');
         delete cleanedConfig.qrCodeUrl;
       }
       
@@ -818,7 +819,7 @@ export class EventService {
         updatedAt: serverTimestamp()
       });
     } catch (error) {
-      console.error('Error updating payment configuration:', error);
+      logger.error('Error updating payment configuration:', error);
       throw error;
     }
   }
@@ -828,26 +829,26 @@ export class EventService {
    */
   private static async deleteEventData(eventId: string, forceDelete: boolean = false): Promise<void> {
     try {
-      console.log('Deleting event data for eventId:', eventId, 'forceDelete:', forceDelete);
+      logger.log('Deleting event data for eventId:', eventId, 'forceDelete:', forceDelete);
       
       // Delete event images from storage
       const imagesRef = ref(storage, `${this.EVENT_IMAGES_PATH}/${eventId}`);
-      console.log('Deleting storage folder:', `${this.EVENT_IMAGES_PATH}/${eventId}`);
+      logger.log('Deleting storage folder:', `${this.EVENT_IMAGES_PATH}/${eventId}`);
       try {
         await deleteObject(imagesRef);
-        console.log('Successfully deleted event images folder');
+        logger.log('Successfully deleted event images folder');
       } catch (error) {
-        console.log('Error deleting event images folder (may not exist):', error);
+        logger.log('Error deleting event images folder (may not exist):', error);
         // Ignore if files don't exist
       }
 
       // Call cloud function to delete subcollections
-      console.log('Calling deleteEventData Cloud Function');
+      logger.log('Calling deleteEventData Cloud Function');
       const deleteEventData = httpsCallable(functions, 'deleteEventData');
       const result = await deleteEventData({ eventId, forceDelete });
-      console.log('deleteEventData result:', result);
+      logger.log('deleteEventData result:', result);
     } catch (error) {
-      console.error('Error deleting event data:', error);
+      logger.error('Error deleting event data:', error);
       // Don't throw error here as main event is already deleted
     }
   }
@@ -894,23 +895,23 @@ export class EventService {
       
       if (userSnap.exists()) {
         const userData = userSnap.data();
-        console.log('User data from Firestore:', userData);
-        console.log('User role:', userData.role);
-        console.log('User UID:', organizerUid);
+        logger.log('User data from Firestore:', userData);
+        logger.log('User role:', userData.role);
+        logger.log('User UID:', organizerUid);
         
         return {
           name: userData.displayName || 'Unknown Organizer',
           email: userData.email || ''
         };
       } else {
-        console.error('❌ User document not found in Firestore users collection');
-        console.log('Searched for UID:', organizerUid);
-        console.log('This user needs to be created in the users collection with proper role');
+        logger.error('❌ User document not found in Firestore users collection');
+        logger.log('Searched for UID:', organizerUid);
+        logger.log('This user needs to be created in the users collection with proper role');
       }
       
       return { name: 'Unknown Organizer', email: '' };
     } catch (error) {
-      console.error('Error getting organizer info:', error);
+      logger.error('Error getting organizer info:', error);
       return { name: 'Unknown Organizer', email: '' };
     }
   }
@@ -941,7 +942,7 @@ export class EventService {
 
       return downloadURL;
     } catch (error) {
-      console.error('Error uploading event image from data URL:', error);
+      logger.error('Error uploading event image from data URL:', error);
       throw new Error('Failed to upload event image');
     }
   }
@@ -952,12 +953,12 @@ export class EventService {
   static async uploadPaymentQR(eventId: string, qrFile: File): Promise<string> {
     try {
       // Debug logging
-      console.log('uploadPaymentQR - qrFile:', qrFile);
-      console.log('uploadPaymentQR - qrFile.type:', qrFile?.type);
-      console.log('uploadPaymentQR - qrFile.size:', qrFile?.size);
-      console.log('uploadPaymentQR - qrFile.name:', qrFile?.name);
-      console.log('uploadPaymentQR - qrFile instanceof File:', qrFile instanceof File);
-      console.log('uploadPaymentQR - qrFile constructor:', qrFile?.constructor?.name);
+      logger.log('uploadPaymentQR - qrFile:', qrFile);
+      logger.log('uploadPaymentQR - qrFile.type:', qrFile?.type);
+      logger.log('uploadPaymentQR - qrFile.size:', qrFile?.size);
+      logger.log('uploadPaymentQR - qrFile.name:', qrFile?.name);
+      logger.log('uploadPaymentQR - qrFile instanceof File:', qrFile instanceof File);
+      logger.log('uploadPaymentQR - qrFile constructor:', qrFile?.constructor?.name);
       
       // Validate file
       if (!qrFile || !(qrFile instanceof File)) {
@@ -976,13 +977,13 @@ export class EventService {
       const fileExtension = qrFile.name.split('.').pop() || 'jpg';
       const qrRef = ref(storage, `${this.PAYMENT_QR_PATH}/${eventId}/payment-qr-${timestamp}.${fileExtension}`);
       
-      console.log('Uploading payment QR for eventId:', eventId, 'fileName:', qrFile.name);
-      console.log('Storage path:', `${this.PAYMENT_QR_PATH}/${eventId}/payment-qr-${timestamp}.${fileExtension}`);
+      logger.log('Uploading payment QR for eventId:', eventId, 'fileName:', qrFile.name);
+      logger.log('Storage path:', `${this.PAYMENT_QR_PATH}/${eventId}/payment-qr-${timestamp}.${fileExtension}`);
       
       // Check current auth state before upload
       const { auth } = await import('../config/firebase');
       const currentUser = auth.currentUser;
-      console.log('Current user during QR upload:', currentUser?.uid, currentUser?.email);
+      logger.log('Current user during QR upload:', currentUser?.uid, currentUser?.email);
       
       const snapshot = await uploadBytes(qrRef, qrFile, { contentType: qrFile.type || 'image/jpeg' });
       const downloadURL = await getDownloadURL(snapshot.ref);
@@ -990,7 +991,7 @@ export class EventService {
       // Return the download URL - the caller will update the payment configs array in the event document
       return downloadURL;
     } catch (error) {
-      console.error('Error uploading payment QR:', error);
+      logger.error('Error uploading payment QR:', error);
       throw new Error(`Failed to upload payment QR: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
@@ -1010,7 +1011,7 @@ export class EventService {
       
       return [];
     } catch (error) {
-      console.error('Error getting registration form:', error);
+      logger.error('Error getting registration form:', error);
       return [];
     }
   }
@@ -1030,7 +1031,7 @@ export class EventService {
       
       return [];
     } catch (error) {
-      console.error('Error getting feedback form:', error);
+      logger.error('Error getting feedback form:', error);
       return [];
     }
   }
@@ -1087,7 +1088,7 @@ export class EventService {
         ]
       };
     } catch (error) {
-      console.error('Error getting feedback form:', error);
+      logger.error('Error getting feedback form:', error);
       // Return default form on error
       return {
         fields: [
@@ -1125,7 +1126,7 @@ export class EventService {
       
       return null;
     } catch (error) {
-      console.error('Error getting payment config:', error);
+      logger.error('Error getting payment config:', error);
       return null;
     }
   }
@@ -1190,7 +1191,7 @@ export class EventService {
 
       return events;
     } catch (error) {
-      console.error('Error searching events:', error);
+      logger.error('Error searching events:', error);
       throw new Error('Failed to search events');
     }
   }
@@ -1258,7 +1259,7 @@ export class EventService {
         updatedAt: serverTimestamp()
       });
     } catch (error) {
-      console.error('Error incrementing event views:', error);
+      logger.error('Error incrementing event views:', error);
       // Don't throw error as this is not critical
     }
   }
@@ -1272,7 +1273,7 @@ export class EventService {
       const result = await getEventAnalytics({ eventId });
       return result.data;
     } catch (error) {
-      console.error('Error getting event analytics:', error);
+      logger.error('Error getting event analytics:', error);
       throw new Error('Failed to get event analytics');
     }
   }
@@ -1299,7 +1300,7 @@ export class EventService {
       
       return response.newEventId;
     } catch (error) {
-      console.error('Error duplicating event:', error);
+      logger.error('Error duplicating event:', error);
       throw new Error(`Failed to duplicate event: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
@@ -1319,7 +1320,7 @@ export class EventService {
       
       return response.statistics;
     } catch (error) {
-      console.error('Error getting event statistics:', error);
+      logger.error('Error getting event statistics:', error);
       throw new Error(`Failed to get event statistics: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
@@ -1329,14 +1330,14 @@ export class EventService {
    */
   static async validateEventDataRemote(eventData: EventFormData): Promise<{ isValid: boolean; errors: string[] }> {
     try {
-      console.log('Calling validate_event_data Cloud Function');
+      logger.log('Calling validate_event_data Cloud Function');
       const validateEventData = httpsCallable(functions, 'validate_event_data');
       const result = await validateEventData({ eventData });
-      console.log('validate_event_data result:', result);
+      logger.log('validate_event_data result:', result);
       
       return result.data as { isValid: boolean; errors: string[] };
     } catch (error) {
-      console.error('Error validating event data:', error);
+      logger.error('Error validating event data:', error);
       return {
         isValid: false,
         errors: ['Failed to validate event data remotely']
@@ -1358,7 +1359,7 @@ export class EventService {
       const querySnapshot = await getDocs(q);
       return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Event));
     } catch (error) {
-      console.error('Error getting all events:', error);
+      logger.error('Error getting all events:', error);
       throw new Error('Failed to get events');
     }
   }
@@ -1368,7 +1369,7 @@ export class EventService {
    */
   static async updateEventStatus(eventId: string, status: string): Promise<void> {
     try {
-      console.log('🔥 EventService: Updating event status in Firebase', { eventId, status });
+      logger.log('🔥 EventService: Updating event status in Firebase', { eventId, status });
       
       const eventRef = doc(db, this.EVENTS_COLLECTION, eventId);
       const updateData: any = {
@@ -1377,26 +1378,26 @@ export class EventService {
         updatedAt: serverTimestamp()
       };
       
-      console.log('🔥 EventService: Update data:', updateData);
+      logger.log('🔥 EventService: Update data:', updateData);
       
       await updateDoc(eventRef, updateData);
       
-      console.log('✅ EventService: Firebase update completed successfully');
+      logger.log('✅ EventService: Firebase update completed successfully');
       
       // Verify the update by reading the document back
       try {
         const updatedDoc = await getDoc(eventRef);
         if (updatedDoc.exists()) {
           const data = updatedDoc.data();
-          console.log('🔍 EventService: Verified Firebase update - current status:', data.status);
+          logger.log('🔍 EventService: Verified Firebase update - current status:', data.status);
         } else {
-          console.warn('⚠️ EventService: Document not found after update');
+          logger.warn('⚠️ EventService: Document not found after update');
         }
       } catch (verifyError) {
-        console.warn('⚠️ EventService: Could not verify update:', verifyError);
+        logger.warn('⚠️ EventService: Could not verify update:', verifyError);
       }
     } catch (error) {
-      console.error('❌ EventService: Error updating event status:', error);
+      logger.error('❌ EventService: Error updating event status:', error);
       throw new Error('Failed to update event status');
     }
   }
@@ -1406,7 +1407,7 @@ export class EventService {
    */
   static async updateRegistrationStatus(eventId: string, registrationStatus: 'open' | 'closed' | 'walk-in-only'): Promise<void> {
     try {
-      console.log('🔥 EventService: Updating registration status in Firebase', { eventId, registrationStatus });
+      logger.log('🔥 EventService: Updating registration status in Firebase', { eventId, registrationStatus });
       
       const eventRef = doc(db, this.EVENTS_COLLECTION, eventId);
       const updateData = {
@@ -1415,9 +1416,9 @@ export class EventService {
       };
       
       await updateDoc(eventRef, updateData);
-      console.log('✅ EventService: Registration status updated successfully');
+      logger.log('✅ EventService: Registration status updated successfully');
     } catch (error) {
-      console.error('❌ EventService: Error updating registration status:', error);
+      logger.error('❌ EventService: Error updating registration status:', error);
       throw new Error('Failed to update registration status');
     }
   }

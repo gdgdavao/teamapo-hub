@@ -4,6 +4,7 @@ import { connectAuthEmulator } from 'firebase/auth';
 import { connectFirestoreEmulator } from 'firebase/firestore';
 import { connectStorageEmulator } from 'firebase/storage';
 import { connectFunctionsEmulator } from 'firebase/functions';
+import { logger } from '../../utils/logger';
 
 interface FirebaseStatus {
   auth: boolean;
@@ -35,7 +36,7 @@ export const FirebaseConnectionStatus: React.FC = () => {
             connectStorageEmulator(storage, 'localhost', 9199);
             connectFunctionsEmulator(functions, 'localhost', 5001);
           } catch (error) {
-            console.log('Emulators already connected or not available');
+            logger.log('Emulators already connected or not available');
           }
         }
 

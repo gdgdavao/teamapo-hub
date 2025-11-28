@@ -21,6 +21,7 @@ import { RegistrationService } from '../../services/registrationService';
 import usePageTitle from '../../hooks/usePageTitle';
 import { NotificationService } from '../../services/notificationService';
 import { useAuth } from '../../contexts/AuthContext';
+import { logger } from '../../utils/logger';
 import toast from 'react-hot-toast';
 
 // Reusable components for better organization
@@ -219,10 +220,10 @@ const AdminDashboardPage: React.FC = () => {
     if (timestamp instanceof Date) return timestamp;
     if (typeof timestamp === 'number') return new Date(timestamp);
     if (timestamp?._methodName === 'serverTimestamp') {
-      console.warn('Unresolved serverTimestamp found, using current date');
+      logger.warn('Unresolved serverTimestamp found, using current date');
       return new Date();
     }
-    console.warn('Invalid timestamp format:', timestamp);
+    logger.warn('Invalid timestamp format:', timestamp);
     return new Date();
   }, []);
 
@@ -239,7 +240,7 @@ const AdminDashboardPage: React.FC = () => {
       };
       localStorage.setItem(REMINDER_STORAGE_KEY, JSON.stringify(reminderData));
     } catch (error) {
-      console.warn('Failed to save reminder state:', error);
+      logger.warn('Failed to save reminder state:', error);
     }
   }, []);
 
@@ -263,7 +264,7 @@ const AdminDashboardPage: React.FC = () => {
         };
       }
     } catch (error) {
-      console.warn('Failed to load reminder state:', error);
+      logger.warn('Failed to load reminder state:', error);
     }
     return { dismissed: false, reminderTime: null };
   }, []);
@@ -304,7 +305,7 @@ const AdminDashboardPage: React.FC = () => {
               eventTitle: event?.title || 'Unknown Event'
             };
           } catch (error) {
-            console.warn(`Could not fetch event details for ${registration.eventId}:`, error);
+            logger.warn(`Could not fetch event details for ${registration.eventId}:`, error);
             return {
               ...registration,
               eventTitle: 'Unknown Event'
@@ -326,9 +327,9 @@ const AdminDashboardPage: React.FC = () => {
       );
 
       await Promise.all(notificationPromises);
-      console.log(`Created ${notificationPromises.length} notifications for new pending attendees`);
+      logger.log(`Created ${notificationPromises.length} notifications for new pending attendees`);
     } catch (error) {
-      console.error('Error creating notifications for new attendees:', error);
+      logger.error('Error creating notifications for new attendees:', error);
     }
   }, [currentUser?.uid, userProfile?.role]);
 
@@ -342,9 +343,9 @@ const AdminDashboardPage: React.FC = () => {
         currentUser.uid,
         pendingCount
       );
-      console.log(`Created high priority notification for ${pendingCount} pending attendees`);
+      logger.log(`Created high priority notification for ${pendingCount} pending attendees`);
     } catch (error) {
-      console.error('Error creating high priority notification:', error);
+      logger.error('Error creating high priority notification:', error);
     }
   }, [currentUser?.uid, userProfile?.role]);
 
@@ -412,7 +413,7 @@ const AdminDashboardPage: React.FC = () => {
         setPreviousPendingCount(currentPendingCount);
         
       } catch (error) {
-        console.error('Error fetching dashboard data:', error);
+        logger.error('Error fetching dashboard data:', error);
         toast.error('Failed to load dashboard data');
         // Revert to previous state on error
         setStats(prev => ({ ...prev }));

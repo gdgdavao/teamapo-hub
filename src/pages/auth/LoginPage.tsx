@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline';
 import usePageTitle from '../../hooks/usePageTitle';
+import { logger } from '../../utils/logger';
 import apohubTitle from '@assets/apohub-title.svg';
 
 
@@ -24,7 +25,7 @@ const LoginPage: React.FC = () => {
       await signIn(email, password);
       navigate('/dashboard');
     } catch (error) {
-      console.error('Login error:', error);
+      logger.error('Login error:', error);
     } finally {
       setLoading(false);
     }
@@ -36,7 +37,7 @@ const LoginPage: React.FC = () => {
       await signInWithGoogle();
       navigate('/dashboard');
     } catch (error) {
-      console.error('Google sign-in error:', error);
+      logger.error('Google sign-in error:', error);
     } finally {
       setLoading(false);
     }

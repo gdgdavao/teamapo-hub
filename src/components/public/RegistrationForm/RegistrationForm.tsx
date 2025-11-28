@@ -5,6 +5,7 @@ import { EventService } from '../../../services/eventService';
 import { RegistrationService } from '../../../services/registrationService';
 import TicketSelector, { TicketSelection } from '../TicketSelector';
 import { Event, FormField } from '../../../types';
+import { logger } from '../../../utils/logger';
 import toast from 'react-hot-toast';
 
 interface RegistrationFormProps {
@@ -46,7 +47,7 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
   const handleRegistrationSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    console.log('Form submitted. Event:', event?.id, 'Ticket selection:', ticketSelection);
+    logger.log('Form submitted. Event:', event?.id, 'Ticket selection:', ticketSelection);
     
     if (!event || !ticketSelection) {
       toast.error('Please select a ticket type');
@@ -171,7 +172,7 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
         
         sessionStorage.setItem(`temp_registration_${tempRegistrationId}`, JSON.stringify(tempRegistrationData));
         
-        console.log('Navigating to payment page with ID:', tempRegistrationId);
+        logger.log('Navigating to payment page with ID:', tempRegistrationId);
         toast.success('Registration details saved! Please proceed to payment.');
         
         // Navigate to payment page with temporary registration ID
@@ -190,7 +191,7 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
             registration.requiresPayment
           );
         } catch (emailError) {
-          console.warn('Failed to send confirmation email:', emailError);
+          logger.warn('Failed to send confirmation email:', emailError);
           // Don't block the flow if email fails
         }
         
@@ -200,7 +201,7 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
         navigate('/payment/success');
       }
     } catch (err: any) {
-      console.error('Registration error:', err);
+      logger.error('Registration error:', err);
       toast.error(err.message || 'Registration failed. Please try again.');
     } finally {
       setIsSubmitting(false);

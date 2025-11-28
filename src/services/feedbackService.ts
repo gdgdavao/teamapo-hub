@@ -15,6 +15,7 @@ import {
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '../config/firebase';
+import { logger } from '../utils/logger';
 import { Feedback, FormField } from '../types';
 
 export interface FeedbackSubmission {
@@ -80,7 +81,7 @@ export class FeedbackService {
         eventId: data.eventId
       };
     } catch (error) {
-      console.error('Error resolving feedback token:', error);
+      logger.error('Error resolving feedback token:', error);
       throw error;
     }
   }
@@ -151,7 +152,7 @@ export class FeedbackService {
         feedbackUrl: feedbackUrl
       });
     } catch (error) {
-      console.error('Error sending feedback request:', error);
+      logger.error('Error sending feedback request:', error);
       throw new Error('Failed to send feedback request');
     }
   }
@@ -218,7 +219,7 @@ export class FeedbackService {
             updatedAt: serverTimestamp()
           });
         } catch (error) {
-          console.warn('Could not update registration with feedback status:', error);
+          logger.warn('Could not update registration with feedback status:', error);
         }
       }
 
@@ -227,7 +228,7 @@ export class FeedbackService {
 
       return feedbackId;
     } catch (error) {
-      console.error('Error submitting feedback:', error);
+      logger.error('Error submitting feedback:', error);
       throw new Error('Failed to submit feedback');
     }
   }
@@ -249,7 +250,7 @@ export class FeedbackService {
         ...doc.data()
       } as Feedback));
     } catch (error) {
-      console.error('Error fetching event feedback:', error);
+      logger.error('Error fetching event feedback:', error);
       throw new Error('Failed to fetch event feedback');
     }
   }
@@ -322,7 +323,7 @@ export class FeedbackService {
         topComplaints: complaints.slice(0, 5)
       };
     } catch (error) {
-      console.error('Error fetching feedback analytics:', error);
+      logger.error('Error fetching feedback analytics:', error);
       throw new Error('Failed to fetch feedback analytics');
     }
   }
@@ -343,7 +344,7 @@ export class FeedbackService {
       // Return default feedback form if none exists
       return this.getDefaultFeedbackForm();
     } catch (error) {
-      console.error('Error fetching feedback form:', error);
+      logger.error('Error fetching feedback form:', error);
       return this.getDefaultFeedbackForm();
     }
   }
@@ -360,7 +361,7 @@ export class FeedbackService {
         updatedAt: serverTimestamp()
       }, { merge: true });
     } catch (error) {
-      console.error('Error updating feedback form:', error);
+      logger.error('Error updating feedback form:', error);
       throw new Error('Failed to update feedback form');
     }
   }
@@ -382,7 +383,7 @@ export class FeedbackService {
         ...doc.data()
       } as Feedback));
     } catch (error) {
-      console.error('Error fetching user feedback:', error);
+      logger.error('Error fetching user feedback:', error);
       throw new Error('Failed to fetch user feedback');
     }
   }
@@ -431,7 +432,7 @@ export class FeedbackService {
         recommendationRate: Math.round(recommendationRate * 10) / 10
       };
     } catch (error) {
-      console.error('Error fetching overall feedback stats:', error);
+      logger.error('Error fetching overall feedback stats:', error);
       throw new Error('Failed to fetch overall feedback stats');
     }
   }
@@ -444,7 +445,7 @@ export class FeedbackService {
       const feedbackRef = doc(db, this.FEEDBACK_COLLECTION, feedbackId);
       await deleteDoc(feedbackRef);
     } catch (error) {
-      console.error('Error deleting feedback:', error);
+      logger.error('Error deleting feedback:', error);
       throw new Error('Failed to delete feedback');
     }
   }

@@ -25,6 +25,7 @@ import { CertificateTemplate, Certificate, TemplateElement } from '../../types';
 import { CertificateGenerationService } from '../../utils/certificateGeneration';
 import { CertificateService, IssuedCertificate } from '../../services/certificateService';
 import { EventService } from '../../services/eventService';
+import { logger } from '../../utils/logger';
 import toast from 'react-hot-toast';
 
 const CertificatesPage: React.FC = () => {
@@ -114,7 +115,7 @@ const CertificatesPage: React.FC = () => {
         setTemplates(templatesData);
         setIssuedCertificates(certificatesData);
       } catch (error) {
-        console.error('Error fetching data:', error);
+        logger.error('Error fetching data:', error);
         toast.error('Failed to load certificate data');
         // Set empty arrays as fallback
         setEvents([]);
@@ -482,7 +483,7 @@ const CertificatesPage: React.FC = () => {
       setActiveTab('templates');
       
     } catch (error) {
-      console.error('Error creating template:', error);
+      logger.error('Error creating template:', error);
       toast.error('Failed to create certificate template');
     } finally {
       setLoading(false);
@@ -528,7 +529,7 @@ const CertificatesPage: React.FC = () => {
       setActiveTab('templates');
       
     } catch (error) {
-      console.error('Error updating template:', error);
+      logger.error('Error updating template:', error);
       toast.error('Failed to update certificate template');
     } finally {
       setLoading(false);
@@ -543,7 +544,7 @@ const CertificatesPage: React.FC = () => {
       setTemplates(templates.filter(t => t.id !== templateId));
       toast.success('Template deleted successfully');
     } catch (error) {
-      console.error('Error deleting template:', error);
+      logger.error('Error deleting template:', error);
       toast.error('Failed to delete template');
     }
   };
@@ -573,7 +574,7 @@ const CertificatesPage: React.FC = () => {
       
       toast.success('Image re-uploaded successfully! Template is now CORS-compliant.', { id: 'reupload' });
     } catch (error) {
-      console.error('Error re-uploading image:', error);
+      logger.error('Error re-uploading image:', error);
       toast.error('Failed to re-upload image. The external URL may be blocked.', { id: 'reupload' });
     } finally {
       setLoading(false);
@@ -601,7 +602,7 @@ const CertificatesPage: React.FC = () => {
       const updatedCertificates = await CertificateService.getAllIssuedCertificates();
       setIssuedCertificates(updatedCertificates);
     } catch (error) {
-      console.error('Error generating certificate:', error);
+      logger.error('Error generating certificate:', error);
       toast.error('Failed to generate certificate');
     } finally {
       setLoading(false);

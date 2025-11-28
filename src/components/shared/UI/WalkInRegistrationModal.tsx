@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { XMarkIcon, UserPlusIcon } from '@heroicons/react/24/outline';
 import { Event, TicketType, FormField } from '../../../types';
 import { EventService } from '../../../services/eventService';
+import { logger } from '../../../utils/logger';
 import toast from 'react-hot-toast';
 
 interface WalkInRegistrationModalProps {
@@ -83,7 +84,7 @@ const WalkInRegistrationModal: React.FC<WalkInRegistrationModalProps> = ({
         });
         setFormData(prev => ({ ...prev, customFormData: initialCustomData }));
       } catch (error) {
-        console.error('Failed to load registration form:', error);
+        logger.error('Failed to load registration form:', error);
         toast.error('Failed to load registration form');
       } finally {
         setLoadingForm(false);
@@ -198,7 +199,7 @@ const WalkInRegistrationModal: React.FC<WalkInRegistrationModalProps> = ({
       onClose();
       toast.success('Walk-in registration completed successfully!');
     } catch (error: any) {
-      console.error('Walk-in registration error:', error);
+      logger.error('Walk-in registration error:', error);
       toast.error(error.message || 'Failed to register walk-in attendee');
     } finally {
       setIsSubmitting(false);

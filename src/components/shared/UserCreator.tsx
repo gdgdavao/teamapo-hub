@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../../config/firebase';
+import { logger } from '../../utils/logger';
 import toast from 'react-hot-toast';
 
 const UserCreator: React.FC = () => {
@@ -56,7 +57,7 @@ const UserCreator: React.FC = () => {
       await setDoc(userRef, newUser);
 
       toast.success('Admin user created successfully!');
-      console.log('✅ User created:', {
+      logger.log('✅ User created:', {
         email: formData.email,
         displayName: formData.displayName,
         role: formData.role,
@@ -67,7 +68,7 @@ const UserCreator: React.FC = () => {
       setFormData({ email: '', password: '', displayName: '', role: 'organizer' });
 
     } catch (error: any) {
-      console.error('Error creating admin user:', error);
+      logger.error('Error creating admin user:', error);
       toast.error(error.message || 'Failed to create admin user');
     } finally {
       setLoading(false);

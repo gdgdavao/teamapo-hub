@@ -26,6 +26,7 @@ import {
 import { FormBuilder, FormField } from '../../components/shared/FormBuilder';
 import { PhotoUpload } from '../../components/shared';
 import { TicketType, PromoCode } from '../../types';
+import { logger } from '../../utils/logger';
 import PromoCodeManager from '../../components/public/PromoCodeManager';
 
 interface PaymentConfig {
@@ -330,12 +331,12 @@ const CreateEventPage: React.FC = () => {
         };
         
         // Debug logging for payment configs
-        console.log('Loading event data - paymentConfigs from Firestore:', (event as any).paymentConfigs);
+        logger.log('Loading event data - paymentConfigs from Firestore:', (event as any).paymentConfigs);
         if ((event as any).paymentConfigs) {
           (event as any).paymentConfigs.forEach((config: any, index: number) => {
-            console.log(`Payment config ${index}:`, config);
-            console.log(`  - qrCodeImage:`, config.qrCodeImage);
-            console.log(`  - qrCodeUrl:`, config.qrCodeUrl);
+            logger.log(`Payment config ${index}:`, config);
+            logger.log(`  - qrCodeImage:`, config.qrCodeImage);
+            logger.log(`  - qrCodeUrl:`, config.qrCodeUrl);
           });
         }
         setFormData(eventFormData);
@@ -403,7 +404,7 @@ const CreateEventPage: React.FC = () => {
       // Server-side validation via callable function with fallback to client-side checks
       try {
         const validateEventData = httpsCallable(functions, 'validate_event_data');
-        const validation: any = await validateEventData({ eventData: formData });
+        const validation: any = await validateEventData({ eventData: formData, isEditMode });
         if (!validation?.data?.isValid) {
           const errs = validation?.data?.errors || ['Validation failed'];
           toast.error(errs.join(', '));
@@ -512,11 +513,11 @@ const CreateEventPage: React.FC = () => {
           if (config.qrCodeImage && (config.qrCodeImage as any) instanceof File) {
             try {
               // Debug logging
-              console.log(`Processing QR upload for config ${i}:`, config.name);
-              console.log('config.qrCodeImage:', config.qrCodeImage);
-              console.log('config.qrCodeImage instanceof File:', config.qrCodeImage instanceof File);
-              console.log('config.qrCodeImage type:', typeof config.qrCodeImage);
-              console.log('config.qrCodeImage constructor:', config.qrCodeImage?.constructor?.name);
+              logger.log(`Processing QR upload for config ${i}:`, config.name);
+              logger.log('config.qrCodeImage:', config.qrCodeImage);
+              logger.log('config.qrCodeImage instanceof File:', config.qrCodeImage instanceof File);
+              logger.log('config.qrCodeImage type:', typeof config.qrCodeImage);
+              logger.log('config.qrCodeImage constructor:', config.qrCodeImage?.constructor?.name);
               
               const qrCodeUrl = await EventService.uploadPaymentQR(savedEventId, config.qrCodeImage);
               updatedPaymentConfigs[i] = {
@@ -524,12 +525,12 @@ const CreateEventPage: React.FC = () => {
                 qrCodeUrl
               };
             } catch (error) {
-              console.error(`QR upload error for ${config.name}:`, error);
+              logger.error(`QR upload error for ${config.name}:`, error);
               warnings.push(`Payment QR upload failed for ${config.name}`);
             }
           } else if (config.qrCodeImage && !((config.qrCodeImage as any) instanceof File)) {
             // Clean up invalid qrCodeImage objects (from existing data)
-            console.log(`Skipping QR upload for ${config.name} - no new file provided`);
+            logger.log(`Skipping QR upload for ${config.name} - no new file provided`);
             updatedPaymentConfigs[i] = {
               ...config,
               qrCodeImage: undefined // Remove the invalid object

@@ -1,5 +1,6 @@
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '../config/firebase';
+import { logger } from './logger';
 import EventService from '../services/eventService';
 import { EventFormData } from '../services/eventService';
 
@@ -80,7 +81,7 @@ export const createEventWithValidation = async (
 
     return eventId;
   } catch (error) {
-    console.error('Error creating event with validation:', error);
+    logger.error('Error creating event with validation:', error);
     throw error;
   }
 };
@@ -94,7 +95,7 @@ export const getEventStatistics = async (eventId: string): Promise<any> => {
     const result = await getEventStatistics({ eventId });
     return result.data;
   } catch (error) {
-    console.error('Error getting event statistics:', error);
+    logger.error('Error getting event statistics:', error);
     throw new Error('Failed to get event statistics');
   }
 };
@@ -122,7 +123,7 @@ export const duplicateEventComplete = async (
     
     return newEventId;
   } catch (error) {
-    console.error('Error duplicating event:', error);
+    logger.error('Error duplicating event:', error);
     throw new Error('Failed to duplicate event');
   }
 };
@@ -169,7 +170,7 @@ export const searchEventsAdvanced = async (filters: {
     
     return filteredEvents;
   } catch (error) {
-    console.error('Error searching events:', error);
+    logger.error('Error searching events:', error);
     throw new Error('Failed to search events');
   }
 };
@@ -201,7 +202,7 @@ export const validateEventComplete = async (eventData: EventFormData): Promise<{
       allErrors: allErrors
     };
   } catch (error) {
-    console.error('Error validating event:', error);
+    logger.error('Error validating event:', error);
     return {
       isValid: false,
       clientErrors: [],
@@ -239,7 +240,7 @@ export const getEventAnalyticsWithCache = async (eventId: string): Promise<any> 
     
     return analytics;
   } catch (error) {
-    console.error('Error getting cached analytics:', error);
+    logger.error('Error getting cached analytics:', error);
     throw error;
   }
 };

@@ -12,6 +12,7 @@ import { EventService } from '../../services/eventService';
 import { PaymentService } from '../../services/paymentService';
 import { RegistrationService } from '../../services/registrationService';
 import { Event, Registration, PaymentConfig } from '../../types';
+import { logger } from '../../utils/logger';
 import toast from 'react-hot-toast';
 
 const PaymentPage: React.FC = () => {
@@ -194,7 +195,7 @@ const PaymentPage: React.FC = () => {
       }
       
     } catch (error) {
-      console.error('Error loading registration data:', error);
+      logger.error('Error loading registration data:', error);
       toast.error('Failed to load payment information');
       window.location.replace('/');
     } finally {
@@ -353,7 +354,7 @@ const PaymentPage: React.FC = () => {
             true // requiresPayment
           );
         } catch (emailError) {
-          console.warn('Failed to send confirmation email:', emailError);
+          logger.warn('Failed to send confirmation email:', emailError);
           // Don't block the flow if email fails
         }
       } else {
@@ -384,7 +385,7 @@ const PaymentPage: React.FC = () => {
             true // requiresPayment
           );
         } catch (emailError) {
-          console.warn('Failed to send confirmation email:', emailError);
+          logger.warn('Failed to send confirmation email:', emailError);
           // Don't block the flow if email fails
         }
       }
@@ -404,7 +405,7 @@ const PaymentPage: React.FC = () => {
       }, 1500);
       
     } catch (error: any) {
-      console.error('Error submitting payment proof:', error);
+      logger.error('Error submitting payment proof:', error);
       
       // Dismiss loading toast
       if (uploadToast) {

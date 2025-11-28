@@ -21,6 +21,7 @@ import {
 } from 'firebase/storage';
 import { httpsCallable } from 'firebase/functions';
 import { db, storage, functions } from '../config/firebase';
+import { logger } from '../utils/logger';
 import { PaymentProof, PaymentDetails } from '../types';
 import { NotificationService } from './notificationService';
 
@@ -76,7 +77,7 @@ export class PaymentService {
         contentType = typeMap[safeExtension] || 'image/jpeg';
       }
 
-      console.log(`[PaymentService] Uploading payment proof: ${imageRef.fullPath}, type: ${contentType}`);
+      logger.log(`[PaymentService] Uploading payment proof: ${imageRef.fullPath}, type: ${contentType}`);
       
       const snapshot = await uploadBytes(imageRef, imageFile, { 
         contentType,
@@ -86,19 +87,19 @@ export class PaymentService {
         }
       });
 
-      console.log(`[PaymentService] Upload successful: ${snapshot.ref.fullPath}`);
+      logger.log(`[PaymentService] Upload successful: ${snapshot.ref.fullPath}`);
 
       // Try to obtain a download URL (for authenticated users or if rules allow)
       try {
         const downloadUrl = await getDownloadURL(snapshot.ref);
         return downloadUrl;
       } catch (urlError) {
-        console.warn('[PaymentService] Could not get download URL, using storage path:', urlError);
+        logger.warn('[PaymentService] Could not get download URL, using storage path:', urlError);
         // Fallback: return storage path for server-side access
         return snapshot.ref.fullPath;
       }
     } catch (error: any) {
-      console.error('[PaymentService] Error uploading payment proof:', error);
+      logger.error('[PaymentService] Error uploading payment proof:', error);
       
       // Provide more specific error messages
       if (error?.code === 'storage/unauthorized') {
@@ -204,11 +205,11 @@ export class PaymentService {
 
         if (!emailOk || !eventIdOk || !statusOk) {
           // eslint-disable-next-line no-console
-          console.error('[PaymentService] submitPaymentProof validation failed', { emailOk, eventIdOk, statusOk, cleanProofData });
+          logger.error('[PaymentService] submitPaymentProof validation failed', { emailOk, eventIdOk, statusOk, cleanProofData });
         }
       } catch (debugErr) {
         // eslint-disable-next-line no-console
-        console.warn('[PaymentService] submitPaymentProof debug failed:', debugErr);
+        logger.warn('[PaymentService] submitPaymentProof debug failed:', debugErr);
       }
 
       await setDoc(proofRef, cleanProofData);
@@ -224,7 +225,7 @@ export class PaymentService {
         });
       } catch (e) {
         // Likely unauthenticated update; ignore and proceed
-        console.warn('Skipping registration update (unauthenticated):', e);
+        logger.warn('Skipping registration update (unauthenticated):', e);
       }
 
       // Send notification to admin about new payment proof
@@ -252,12 +253,12 @@ export class PaymentService {
           );
         });
       } catch (error) {
-        console.warn('Failed to create payment proof notification:', error);
+        logger.warn('Failed to create payment proof notification:', error);
       }
 
       return proofId;
     } catch (error) {
-      console.error('Error submitting payment proof:', error);
+      logger.error('Error submitting payment proof:', error);
       throw new Error('Failed to submit payment proof');
     }
   }
@@ -293,7 +294,7 @@ export class PaymentService {
         } as PaymentVerificationData;
       });
     } catch (error) {
-      console.error('Error fetching payment proofs:', error);
+      logger.error('Error fetching payment proofs:', error);
       throw new Error('Failed to fetch payment proofs');
     }
   }
@@ -330,7 +331,7 @@ export class PaymentService {
         } as PaymentVerificationData;
       });
     } catch (error) {
-      console.error('Error fetching payment proofs by status:', error);
+      logger.error('Error fetching payment proofs by status:', error);
       throw new Error('Failed to fetch payment proofs by status');
     }
   }
@@ -399,7 +400,7 @@ export class PaymentService {
             attendeeName: proofData.attendeeName
           });
         } catch (notificationError) {
-          console.warn('Failed to send payment notification:', notificationError);
+          logger.warn('Failed to send payment notification:', notificationError);
           // Don't throw error for notification failure
         }
 
@@ -434,11 +435,11 @@ export class PaymentService {
             }
           }
         } catch (error) {
-          console.warn('Failed to create payment verification notification:', error);
+          logger.warn('Failed to create payment verification notification:', error);
         }
       }
     } catch (error) {
-      console.error('Error verifying payment proof:', error);
+      logger.error('Error verifying payment proof:', error);
       throw new Error('Failed to verify payment proof');
     }
   }
@@ -473,7 +474,7 @@ export class PaymentService {
       
       return null;
     } catch (error) {
-      console.error('Error fetching payment proof:', error);
+      logger.error('Error fetching payment proof:', error);
       throw new Error('Failed to fetch payment proof');
     }
   }
@@ -514,7 +515,7 @@ export class PaymentService {
     } catch (error: any) {
       // Check if it's an index error
       if (error?.code === 'failed-precondition' || error?.message?.includes('index')) {
-        console.warn('[PaymentService] Firestore index required. Falling back to client-side sorting.');
+        logger.warn('[PaymentService] Firestore index required. Falling back to client-side sorting.');
         
         // Fallback: Get all proofs for this registration and sort client-side
         try {
@@ -553,12 +554,12 @@ export class PaymentService {
             notes: data.notes
           } as PaymentVerificationData;
         } catch (fallbackError) {
-          console.error('[PaymentService] Fallback query also failed:', fallbackError);
+          logger.error('[PaymentService] Fallback query also failed:', fallbackError);
           throw new Error('Failed to fetch payment proof - please contact support');
         }
       }
       
-      console.error('Error fetching latest payment proof by registration:', error);
+      logger.error('Error fetching latest payment proof by registration:', error);
       throw new Error('Failed to fetch payment proof');
     }
   }
@@ -607,7 +608,7 @@ export class PaymentService {
         totalRevenue
       };
     } catch (error) {
-      console.error('Error fetching payment stats:', error);
+      logger.error('Error fetching payment stats:', error);
       throw new Error('Failed to fetch payment stats');
     }
   }
@@ -630,7 +631,7 @@ export class PaymentService {
             const imageRef = ref(storage, proofData.proofImageUrl);
             await deleteObject(imageRef);
           } catch (error) {
-            console.warn('Proof image not found or already deleted');
+            logger.warn('Proof image not found or already deleted');
           }
         }
         
@@ -648,7 +649,7 @@ export class PaymentService {
         }
       }
     } catch (error) {
-      console.error('Error deleting payment proof:', error);
+      logger.error('Error deleting payment proof:', error);
       throw new Error('Failed to delete payment proof');
     }
   }
@@ -670,7 +671,7 @@ export class PaymentService {
       
       await Promise.all(verificationPromises);
     } catch (error) {
-      console.error('Error bulk verifying payment proofs:', error);
+      logger.error('Error bulk verifying payment proofs:', error);
       throw new Error('Failed to bulk verify payment proofs');
     }
   }
@@ -707,7 +708,7 @@ export class PaymentService {
         } as PaymentVerificationData;
       });
     } catch (error) {
-      console.error('Error fetching payment proofs by event:', error);
+      logger.error('Error fetching payment proofs by event:', error);
       throw new Error('Failed to fetch payment proofs by event');
     }
   }

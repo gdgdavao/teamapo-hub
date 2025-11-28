@@ -3,6 +3,7 @@ import { getAuth, connectAuthEmulator } from 'firebase/auth';
 import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
 import { getFunctions, connectFunctionsEmulator } from 'firebase/functions';
 import { getStorage, connectStorageEmulator } from 'firebase/storage';
+import { logger } from '../utils/logger';
 
 // Firebase configuration
 const firebaseConfig = {
@@ -33,33 +34,33 @@ const shouldUseEmulator = import.meta.env.VITE_USE_EMULATOR === 'true' ||
 let emulatorsConnected = false;
 
 if (shouldUseEmulator && !emulatorsConnected) {
-  console.log('🔧 Connecting to Firebase Emulators...');
+  logger.log('🔧 Connecting to Firebase Emulators...');
   
   try {
     // Connect to Auth emulator
     connectAuthEmulator(auth, 'http://localhost:9099', { disableWarnings: true });
-    console.log('✅ Connected to Auth Emulator');
+    logger.log('✅ Connected to Auth Emulator');
     
     // Connect to Firestore emulator
     connectFirestoreEmulator(db, 'localhost', 8080);
-    console.log('✅ Connected to Firestore Emulator');
+    logger.log('✅ Connected to Firestore Emulator');
     
     // Connect to Functions emulator
     connectFunctionsEmulator(functions, 'localhost', 5001);
-    console.log('✅ Connected to Functions Emulator');
+    logger.log('✅ Connected to Functions Emulator');
     
     // Connect to Storage emulator
     connectStorageEmulator(storage, 'localhost', 9199);
-    console.log('✅ Connected to Storage Emulator');
+    logger.log('✅ Connected to Storage Emulator');
     
     emulatorsConnected = true;
-    console.log('🚀 All Firebase services connected to emulators');
-    console.log('📊 Emulator UI available at: http://localhost:4000');
+    logger.log('🚀 All Firebase services connected to emulators');
+    logger.log('📊 Emulator UI available at: http://localhost:4000');
   } catch (error) {
-    console.warn('⚠️ Some emulators may already be connected:', error);
+    logger.warn('⚠️ Some emulators may already be connected:', error);
   }
 } else if (!shouldUseEmulator) {
-  console.log('☁️ Using Firebase production services');
+  logger.log('☁️ Using Firebase production services');
 }
 
 export default app; 

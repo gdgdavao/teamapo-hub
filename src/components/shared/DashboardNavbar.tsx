@@ -23,6 +23,7 @@ import { Fragment } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import NotificationDropdown from './NotificationDropdown';
 import { NotificationService } from '../../services/notificationService';
+import { logger } from '../../utils/logger';
 import apohubTitle2 from '@assets/apohub-title2.svg';
 
 const DashboardNavbar: React.FC = () => {
@@ -39,7 +40,7 @@ const DashboardNavbar: React.FC = () => {
     try {
       await logout();
     } catch (error) {
-      console.error('Logout error:', error);
+      logger.error('Logout error:', error);
     }
   };
 
@@ -59,9 +60,9 @@ const DashboardNavbar: React.FC = () => {
         'This is a test notification to verify the notification system is working correctly!',
         { test: true, timestamp: new Date().toISOString() }
       );
-      console.log('🔔 Test notification sent!');
+      logger.log('🔔 Test notification sent!');
     } catch (error) {
-      console.error('❌ Failed to send test notification:', error);
+      logger.error('❌ Failed to send test notification:', error);
     }
   };
 

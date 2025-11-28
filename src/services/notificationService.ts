@@ -13,6 +13,7 @@ import {
   writeBatch
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
+import { logger } from '../utils/logger';
 import { Notification, NotificationType } from '../types';
 
 export class NotificationService {
@@ -78,7 +79,7 @@ export class NotificationService {
       
       // Check for duplicates
       if (this.isDuplicateNotification(notificationKey)) {
-        console.log('Skipping duplicate notification:', notificationKey);
+        logger.log('Skipping duplicate notification:', notificationKey);
         return ''; // Return empty string for duplicates
       }
 
@@ -100,7 +101,7 @@ export class NotificationService {
       
       return docRef.id;
     } catch (error) {
-      console.error('Error creating notification:', error);
+      logger.error('Error creating notification:', error);
       throw error;
     }
   }
@@ -115,7 +116,7 @@ export class NotificationService {
         isRead: true,
       });
     } catch (error) {
-      console.error('Error marking notification as read:', error);
+      logger.error('Error marking notification as read:', error);
       throw error;
     }
   }
@@ -142,7 +143,7 @@ export class NotificationService {
 
       await batch.commit();
     } catch (error) {
-      console.error('Error marking all notifications as read:', error);
+      logger.error('Error marking all notifications as read:', error);
       throw error;
     }
   }
@@ -154,7 +155,7 @@ export class NotificationService {
     try {
       await deleteDoc(doc(db, this.COLLECTION, notificationId));
     } catch (error) {
-      console.error('Error deleting notification:', error);
+      logger.error('Error deleting notification:', error);
       throw error;
     }
   }
@@ -184,7 +185,7 @@ export class NotificationService {
       });
       callback(notifications);
     }, (error) => {
-      console.error('Error subscribing to notifications:', error);
+      logger.error('Error subscribing to notifications:', error);
     });
   }
 
@@ -204,7 +205,7 @@ export class NotificationService {
     return onSnapshot(q, (snapshot) => {
       callback(snapshot.size);
     }, (error) => {
-      console.error('Error subscribing to unread count:', error);
+      logger.error('Error subscribing to unread count:', error);
     });
   }
 
@@ -500,7 +501,7 @@ export class NotificationService {
       });
       callback(notifications);
     }, (error) => {
-      console.error('Error subscribing to admin notifications:', error);
+      logger.error('Error subscribing to admin notifications:', error);
     });
   }
 }

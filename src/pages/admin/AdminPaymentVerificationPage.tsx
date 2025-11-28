@@ -11,6 +11,7 @@ import {
 import { PaymentService, PaymentVerificationData } from '../../services/paymentService';
 import { useAuth } from '../../contexts/AuthContext';
 import AdminLayout from '../../components/admin/AdminLayout';
+import { logger } from '../../utils/logger';
 import toast from 'react-hot-toast';
 
 const AdminPaymentVerificationPage: React.FC = () => {
@@ -29,7 +30,7 @@ const AdminPaymentVerificationPage: React.FC = () => {
         const proofsData = await PaymentService.getAllPaymentProofs();
         setPaymentProofs(proofsData);
       } catch (error) {
-        console.error('Error fetching payment proofs:', error);
+        logger.error('Error fetching payment proofs:', error);
         toast.error('Failed to load payment proofs');
         setPaymentProofs([]);
       } finally {
@@ -66,7 +67,7 @@ const AdminPaymentVerificationPage: React.FC = () => {
       setSelectedProof(null);
       setVerificationNotes('');
     } catch (error) {
-      console.error('Error verifying payment:', error);
+      logger.error('Error verifying payment:', error);
       toast.error('Failed to verify payment');
     }
   };

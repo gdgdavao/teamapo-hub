@@ -22,6 +22,7 @@ import {
 } from 'firebase/storage';
 import { httpsCallable } from 'firebase/functions';
 import { db, storage, functions } from '../config/firebase';
+import { logger } from '../utils/logger';
 import { CertificateTemplate, Certificate } from '../types';
 import { NotificationService } from './notificationService';
 
@@ -46,6 +47,65 @@ export class CertificateService {
   private static readonly CERTIFICATES_PATH = 'certificates';
 
   /**
+   * Get certificate by registration ID
+   * Used to check if a certificate already exists for an attendee
+   */
+  static async getCertificateByRegistrationId(registrationId: string): Promise<Certificate | null> {
+    try {
+      const certificatesQuery = query(
+        collection(db, this.CERTIFICATES_COLLECTION),
+        where('registrationId', '==', registrationId),
+        limit(1)
+      );
+      const snapshot = await getDocs(certificatesQuery);
+      
+      if (snapshot.empty) {
+        return null;
+      }
+      
+      return {
+        id: snapshot.docs[0].id,
+        ...snapshot.docs[0].data()
+      } as Certificate;
+    } catch (error) {
+      logger.error('Error fetching certificate by registration ID:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Get consistent verification code for an attendee
+   * - First checks if a certificate already exists (returns existing code)
+   * - Otherwise generates a deterministic code based on attendee identity
+   */
+  static async getConsistentVerificationCode(
+    eventId: string,
+    registrationId: string,
+    email: string,
+    name: string
+  ): Promise<string> {
+    // Check if certificate already exists for this registration
+    const existingCert = await this.getCertificateByRegistrationId(registrationId);
+    if (existingCert?.credentialId) {
+      return existingCert.credentialId;
+    }
+    
+    // Generate deterministic code from identity using Web Crypto API
+    const normalizedEmail = email.toLowerCase().trim();
+    const normalizedName = name.trim().toLowerCase();
+    const input = `${eventId}:${normalizedEmail}:${normalizedName}`;
+    
+    const encoder = new TextEncoder();
+    const data = encoder.encode(input);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    const hash = hashHex.substring(0, 12).toUpperCase();
+    
+    return `CERT-${hash}`;
+  }
+
+  /**
    * Upload certificate template image to Firebase Storage
    */
   static async uploadTemplateImage(templateId: string, imageFile: File): Promise<string> {
@@ -54,7 +114,7 @@ export class CertificateService {
       const snapshot = await uploadBytes(imageRef, imageFile);
       return await getDownloadURL(snapshot.ref);
     } catch (error) {
-      console.error('Error uploading template image:', error);
+      logger.error('Error uploading template image:', error);
       throw new Error('Failed to upload template image');
     }
   }
@@ -76,7 +136,7 @@ export class CertificateService {
       const snapshot = await uploadBytes(imageRef, blob);
       return await getDownloadURL(snapshot.ref);
     } catch (error) {
-      console.error('Error uploading template image from data URL:', error);
+      logger.error('Error uploading template image from data URL:', error);
       throw new Error('Failed to upload template image');
     }
   }
@@ -106,7 +166,7 @@ export class CertificateService {
       const snapshot = await uploadBytes(imageRef, blob, { contentType });
       return await getDownloadURL(snapshot.ref);
     } catch (error) {
-      console.error('Error uploading image from URL:', error);
+      logger.error('Error uploading image from URL:', error);
       throw new Error('Failed to upload image from URL to Firebase Storage');
     }
   }
@@ -147,7 +207,7 @@ export class CertificateService {
       await setDoc(templateRef, template);
       return templateId;
     } catch (error) {
-      console.error('Error creating certificate template:', error);
+      logger.error('Error creating certificate template:', error);
       throw new Error('Failed to create certificate template');
     }
   }
@@ -168,7 +228,7 @@ export class CertificateService {
         ...doc.data()
       } as CertificateTemplate));
     } catch (error) {
-      console.error('Error fetching certificate templates:', error);
+      logger.error('Error fetching certificate templates:', error);
       throw new Error('Failed to fetch certificate templates');
     }
   }
@@ -190,7 +250,7 @@ export class CertificateService {
       
       return null;
     } catch (error) {
-      console.error('Error fetching certificate template:', error);
+      logger.error('Error fetching certificate template:', error);
       throw new Error('Failed to fetch certificate template');
     }
   }
@@ -206,7 +266,7 @@ export class CertificateService {
         updatedAt: serverTimestamp()
       });
     } catch (error) {
-      console.error('Error updating certificate template:', error);
+      logger.error('Error updating certificate template:', error);
       throw new Error('Failed to update certificate template');
     }
   }
@@ -226,10 +286,10 @@ export class CertificateService {
         await deleteObject(imagesRef);
       } catch (error) {
         // Ignore if files don't exist
-        console.warn('Template images not found or already deleted');
+        logger.warn('Template images not found or already deleted');
       }
     } catch (error) {
-      console.error('Error deleting certificate template:', error);
+      logger.error('Error deleting certificate template:', error);
       throw new Error('Failed to delete certificate template');
     }
   }
@@ -280,12 +340,12 @@ export class CertificateService {
           );
         }
       } catch (error) {
-        console.warn('Failed to create certificate ready notification:', error);
+        logger.warn('Failed to create certificate ready notification:', error);
       }
 
       return response.certificateId!;
     } catch (error) {
-      console.error('Error generating certificate:', error);
+      logger.error('Error generating certificate:', error);
       throw new Error('Failed to generate certificate');
     }
   }
@@ -318,7 +378,7 @@ export class CertificateService {
         } as IssuedCertificate;
       });
     } catch (error) {
-      console.error('Error fetching issued certificates:', error);
+      logger.error('Error fetching issued certificates:', error);
       throw new Error('Failed to fetch issued certificates');
     }
   }
@@ -352,7 +412,7 @@ export class CertificateService {
         } as IssuedCertificate;
       });
     } catch (error) {
-      console.error('Error fetching certificates by event:', error);
+      logger.error('Error fetching certificates by event:', error);
       throw new Error('Failed to fetch certificates by event');
     }
   }
@@ -362,11 +422,13 @@ export class CertificateService {
    */
   static async verifyCertificate(verificationCode: string): Promise<{
     isValid: boolean;
+    isRevoked?: boolean;
     recipientName?: string;
     eventTitle?: string;
     eventDate?: string;
     issuedDate?: string;
     certificateUrl?: string;
+    verificationCount?: number;
   }> {
     try {
       const certificatesQuery = query(
@@ -382,21 +444,41 @@ export class CertificateService {
       
       const certificate = snapshot.docs[0].data();
       
-      // Increment verification count
-      await updateDoc(snapshot.docs[0].ref, {
-        verificationCount: (certificate.verificationCount || 0) + 1
-      });
+      // Check if certificate is revoked (isVerified === false means revoked)
+      if (certificate.isVerified === false) {
+        return {
+          isValid: false,
+          isRevoked: true,
+          recipientName: certificate.recipientName,
+          eventTitle: certificate.eventTitle
+        };
+      }
+      
+      // Try to increment verification count (may fail for anonymous users, which is ok)
+      let newVerificationCount = (certificate.verificationCount || 0) + 1;
+      try {
+        await updateDoc(snapshot.docs[0].ref, {
+          verificationCount: newVerificationCount
+        });
+      } catch (updateError) {
+        // Silently ignore update errors for anonymous users
+        // The verification still succeeds, just without incrementing the count
+        logger.log('Could not update verification count (likely anonymous user)');
+        newVerificationCount = certificate.verificationCount || 0;
+      }
       
       return {
         isValid: true,
+        isRevoked: false,
         recipientName: certificate.recipientName,
         eventTitle: certificate.eventTitle,
         eventDate: certificate.eventDate,
         issuedDate: certificate.issuedAt?.toDate?.()?.toISOString(),
-        certificateUrl: certificate.certificateUrl
+        certificateUrl: certificate.certificateUrl,
+        verificationCount: newVerificationCount
       };
     } catch (error) {
-      console.error('Error verifying certificate:', error);
+      logger.error('Error verifying certificate:', error);
       throw new Error('Failed to verify certificate');
     }
   }
@@ -418,7 +500,7 @@ export class CertificateService {
       
       return null;
     } catch (error) {
-      console.error('Error fetching certificate:', error);
+      logger.error('Error fetching certificate:', error);
       throw new Error('Failed to fetch certificate');
     }
   }
@@ -435,7 +517,7 @@ export class CertificateService {
         revokeReason: reason || 'Revoked by admin'
       });
     } catch (error) {
-      console.error('Error revoking certificate:', error);
+      logger.error('Error revoking certificate:', error);
       throw new Error('Failed to revoke certificate');
     }
   }
@@ -473,7 +555,7 @@ export class CertificateService {
         totalDownloads
       };
     } catch (error) {
-      console.error('Error fetching certificate stats:', error);
+      logger.error('Error fetching certificate stats:', error);
       throw new Error('Failed to fetch certificate stats');
     }
   }
@@ -507,7 +589,7 @@ export class CertificateService {
       
       return storageUrl;
     } catch (error) {
-      console.error('Error re-uploading template image:', error);
+      logger.error('Error re-uploading template image:', error);
       throw new Error('Failed to re-upload template image to Firebase Storage');
     }
   }
@@ -541,7 +623,7 @@ export class CertificateService {
         ...snapshot.docs[0].data()
       } as CertificateTemplate;
     } catch (error) {
-      console.error('Error fetching template for event:', error);
+      logger.error('Error fetching template for event:', error);
       return null;
     }
   }
@@ -559,7 +641,7 @@ export class CertificateService {
       const snapshot = await uploadBytes(imageRef, blob, { contentType: 'image/png' });
       return await getDownloadURL(snapshot.ref);
     } catch (error) {
-      console.error('Error saving certificate to storage:', error);
+      logger.error('Error saving certificate to storage:', error);
       throw new Error('Failed to save certificate to storage');
     }
   }
@@ -582,10 +664,11 @@ export class CertificateService {
       const certificateRef = doc(collection(db, this.CERTIFICATES_COLLECTION));
       const certificateId = certificateRef.id;
       
-      const verificationUrl = `${window.location.origin}/verify/${data.verificationCode}`;
+      const verificationUrl = `https://apohub.gdgdavao.org/verify/${data.verificationCode}`;
       
       await setDoc(certificateRef, {
         credentialId: data.verificationCode,
+        verificationCode: data.verificationCode, // Required by Firestore rules for anonymous create
         recipientName: data.recipientName,
         recipientEmail: data.recipientEmail,
         eventId: data.eventId,
@@ -603,7 +686,7 @@ export class CertificateService {
       
       return certificateId;
     } catch (error) {
-      console.error('Error creating certificate record:', error);
+      logger.error('Error creating certificate record:', error);
       throw new Error('Failed to create certificate record');
     }
   }

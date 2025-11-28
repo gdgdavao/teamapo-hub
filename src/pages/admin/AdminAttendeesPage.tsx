@@ -31,6 +31,7 @@ import { PaymentService } from '../../services/paymentService';
 import { EmailService } from '../../services/emailService';
 import { Registration as FirestoreRegistration, Event } from '../../types';
 import { getDownloadUrlFromPath } from '../../utils/storageUtils';
+import { logger } from '../../utils/logger';
 
 // Utility function to format dates
 const formatDate = (dateString: string): string => {
@@ -459,7 +460,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
         setEvents(Array.from(eventsCache.values()));
         setLoading(false);
       } catch (error) {
-        console.error('Error fetching registrations:', error);
+        logger.error('Error fetching registrations:', error);
         setRegistrations([]);
         setEvents([]);
         setLoading(false);
@@ -494,12 +495,12 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
         }
       } catch (e: any) {
         // eslint-disable-next-line no-console
-        console.warn('[AdminAttendeesPage] Failed to load latest payment proof', e);
+        logger.warn('[AdminAttendeesPage] Failed to load latest payment proof', e);
         
         // Show user-friendly message if it's an index error
         if (e?.message?.includes('index') || e?.code === 'failed-precondition') {
           // eslint-disable-next-line no-console
-          console.error(
+          logger.error(
             '⚠️ Firestore Index Required!\n\n' +
             'Please create the required index by visiting:\n' +
             'Firebase Console → Firestore Database → Indexes\n\n' +
@@ -538,10 +539,10 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
           // Simulate email notification
           const registration = registrations.find(r => r.id === registrationId);
           if (registration) {
-            console.log(`Email notification sent to ${registration.attendee.email} - Status: ${newStatus}`);
+            logger.log(`Email notification sent to ${registration.attendee.email} - Status: ${newStatus}`);
           }
         } catch (error) {
-          console.error('Failed to update registration status:', error);
+          logger.error('Failed to update registration status:', error);
           // You might want to show a toast notification here
           alert('Failed to update registration status. Please try again.');
         }
@@ -561,7 +562,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
       // Simulate email notification
       const registration = registrations.find(r => r.id === registrationId);
       if (registration) {
-        console.log(`Email notification sent to ${registration.attendee.email} - Status: ${newStatus}`);
+        logger.log(`Email notification sent to ${registration.attendee.email} - Status: ${newStatus}`);
       }
     }
   };
@@ -623,9 +624,9 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
         };
       });
 
-      console.log(`Payment ${action} for registration ${registrationId}`);
+      logger.log(`Payment ${action} for registration ${registrationId}`);
     } catch (error) {
-      console.error('Failed to update payment status:', error);
+      logger.error('Failed to update payment status:', error);
       alert(`Failed to ${action} payment. Please try again.`);
     }
   };
@@ -690,9 +691,9 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
       setEditingDetails(null);
 
       // Show success message
-      console.log('Attendee details updated successfully');
+      logger.log('Attendee details updated successfully');
     } catch (error) {
-      console.error('Failed to update attendee details:', error);
+      logger.error('Failed to update attendee details:', error);
       alert('Failed to update attendee details. Please try again.');
     } finally {
       setSavingDetails(false);
@@ -733,7 +734,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
           setConvertedImageUrls(prev => ({ ...prev, [cacheKey]: downloadUrl }));
         }
       } catch (error) {
-        console.error('Failed to convert payment proof image URL:', error);
+        logger.error('Failed to convert payment proof image URL:', error);
       } finally {
         setImageLoadingStates(prev => ({ ...prev, [cacheKey]: false }));
       }
@@ -1043,7 +1044,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
             paymentSuccessCount++;
             paymentApproved = true;
           } catch (paymentError) {
-            console.error(`Failed to approve payment for registration ${reg.id}:`, paymentError);
+            logger.error(`Failed to approve payment for registration ${reg.id}:`, paymentError);
             paymentFailCount++;
           }
         } else if (reg.paymentStatus !== 'paid') {
@@ -1060,7 +1061,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
             paymentSuccessCount++;
             paymentApproved = true;
           } catch (paymentError) {
-            console.error(`Failed to force approve payment for registration ${reg.id}:`, paymentError);
+            logger.error(`Failed to force approve payment for registration ${reg.id}:`, paymentError);
             paymentFailCount++;
           }
         }
@@ -1070,7 +1071,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
           registrationsToNotify.push(reg);
         }
       } catch (error) {
-        console.error(`Failed to approve registration ${reg.id}:`, error);
+        logger.error(`Failed to approve registration ${reg.id}:`, error);
         failCount++;
       }
     }
@@ -1085,7 +1086,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
           paymentSuccessCount++;
           paymentApproved = true;
         } catch (paymentError) {
-          console.error(`Failed to approve payment for registration ${reg.id}:`, paymentError);
+          logger.error(`Failed to approve payment for registration ${reg.id}:`, paymentError);
           paymentFailCount++;
         }
       } else if (reg.paymentStatus !== 'paid') {
@@ -1102,7 +1103,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
           paymentSuccessCount++;
           paymentApproved = true;
         } catch (paymentError) {
-          console.error(`Failed to force approve payment for registration ${reg.id}:`, paymentError);
+          logger.error(`Failed to force approve payment for registration ${reg.id}:`, paymentError);
           paymentFailCount++;
         }
       }
@@ -1161,7 +1162,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
             attendeeName: reg.attendee.name
           });
         } catch (emailError) {
-          console.error(`Failed to send payment notification to ${reg.attendee.email}:`, emailError);
+          logger.error(`Failed to send payment notification to ${reg.attendee.email}:`, emailError);
           // Don't fail the whole operation if email fails
         }
       }
@@ -1237,7 +1238,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
           successCount++;
         }
       } catch (error) {
-        console.error(`Failed to approve payment for registration ${reg.id}:`, error);
+        logger.error(`Failed to approve payment for registration ${reg.id}:`, error);
         failCount++;
       }
     }
@@ -1276,7 +1277,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
             attendeeName: reg.attendee.name
           });
         } catch (emailError) {
-          console.error(`Failed to send payment notification to ${reg.attendee.email}:`, emailError);
+          logger.error(`Failed to send payment notification to ${reg.attendee.email}:`, emailError);
           // Don't fail the whole operation if email fails
         }
       }
@@ -1338,7 +1339,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
         
         successCount++;
       } catch (error) {
-        console.error(`Failed to force approve registration ${reg.id}:`, error);
+        logger.error(`Failed to force approve registration ${reg.id}:`, error);
         failCount++;
       }
     }
@@ -1372,7 +1373,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
             attendeeName: reg.attendee.name
           });
         } catch (emailError) {
-          console.error(`Failed to send payment notification to ${reg.attendee.email}:`, emailError);
+          logger.error(`Failed to send payment notification to ${reg.attendee.email}:`, emailError);
           // Don't fail the whole operation if email fails
         }
       }
@@ -1436,7 +1437,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
         });
         successCount++;
       } catch (error) {
-        console.error(`Failed to send email to ${reg.attendee?.email || 'unknown'}:`, error);
+        logger.error(`Failed to send email to ${reg.attendee?.email || 'unknown'}:`, error);
         failCount++;
       }
     }
@@ -2573,7 +2574,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
                                 alt="Payment proof"
                                 className="max-w-full h-auto max-h-96 rounded-lg border border-gray-200 transition-transform group-hover:scale-105"
                                 onError={(e) => {
-                                  console.error('Failed to load payment proof image:', imageUrl);
+                                  logger.error('Failed to load payment proof image:', imageUrl);
                                   // Show error message instead of trying to fallback
                                   const errorDiv = document.createElement('div');
                                   errorDiv.className = 'flex flex-col items-center justify-center p-8 text-red-500 border-2 border-dashed border-red-300 rounded-lg';
@@ -2761,7 +2762,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
                           // Show success message
                           alert('Registration deleted successfully');
                         } catch (error) {
-                          console.error('Failed to delete registration:', error);
+                          logger.error('Failed to delete registration:', error);
                           alert('Failed to delete registration. Please try again.');
                         }
                       }

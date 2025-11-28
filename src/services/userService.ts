@@ -21,6 +21,7 @@ import {
   deleteObject 
 } from 'firebase/storage';
 import { httpsCallable } from 'firebase/functions';
+import { logger } from '../utils/logger';
 import { 
   createUserWithEmailAndPassword,
   updateProfile,
@@ -97,7 +98,7 @@ export class UserService {
 
       return enhancedUsers;
     } catch (error) {
-      console.error('Error fetching users:', error);
+      logger.error('Error fetching users:', error);
       throw new Error('Failed to fetch users');
     }
   }
@@ -143,7 +144,7 @@ export class UserService {
         lastLogin: user.updatedAt?.toDate?.() || new Date()
       };
     } catch (error) {
-      console.warn('Error enhancing user metadata:', error);
+      logger.warn('Error enhancing user metadata:', error);
       return {
         ...user,
         registrationCount: 0,
@@ -173,7 +174,7 @@ export class UserService {
       
       return null;
     } catch (error) {
-      console.error('Error fetching user:', error);
+      logger.error('Error fetching user:', error);
       throw new Error('Failed to fetch user');
     }
   }
@@ -189,7 +190,7 @@ export class UserService {
         updatedAt: serverTimestamp()
       });
     } catch (error) {
-      console.error('Error updating user profile:', error);
+      logger.error('Error updating user profile:', error);
       throw new Error('Failed to update user profile');
     }
   }
@@ -210,7 +211,7 @@ export class UserService {
 
       return downloadURL;
     } catch (error) {
-      console.error('Error uploading profile picture:', error);
+      logger.error('Error uploading profile picture:', error);
       throw new Error('Failed to upload profile picture');
     }
   }
@@ -238,7 +239,7 @@ export class UserService {
       
       return response.user!;
     } catch (error) {
-      console.error('Error creating user:', error);
+      logger.error('Error creating user:', error);
       throw new Error('Failed to create user');
     }
   }
@@ -257,7 +258,7 @@ export class UserService {
         throw new Error(response.message || 'Failed to delete user');
       }
     } catch (error) {
-      console.error('Error deleting user:', error);
+      logger.error('Error deleting user:', error);
       throw new Error('Failed to delete user');
     }
   }
@@ -279,11 +280,11 @@ export class UserService {
           const suspendUserFunction = httpsCallable(functions, 'suspendUser');
           await suspendUserFunction({ userId });
         } catch (error) {
-          console.warn('Could not revoke user sessions:', error);
+          logger.warn('Could not revoke user sessions:', error);
         }
       }
     } catch (error) {
-      console.error('Error toggling user status:', error);
+      logger.error('Error toggling user status:', error);
       throw new Error('Failed to toggle user status');
     }
   }
@@ -333,7 +334,7 @@ export class UserService {
         newUsersThisMonth: newUsersSnapshot.size
       };
     } catch (error) {
-      console.error('Error fetching user stats:', error);
+      logger.error('Error fetching user stats:', error);
       throw new Error('Failed to fetch user stats');
     }
   }
@@ -345,7 +346,7 @@ export class UserService {
     try {
       await sendPasswordResetEmail(auth, email);
     } catch (error) {
-      console.error('Error sending password reset:', error);
+      logger.error('Error sending password reset:', error);
       throw new Error('Failed to send password reset email');
     }
   }
@@ -388,7 +389,7 @@ export class UserService {
 
       return enhancedUsers;
     } catch (error) {
-      console.error('Error fetching users by role:', error);
+      logger.error('Error fetching users by role:', error);
       throw new Error('Failed to fetch users by role');
     }
   }
@@ -411,7 +412,7 @@ export class UserService {
 
       return filteredUsers.slice(0, limit);
     } catch (error) {
-      console.error('Error searching users:', error);
+      logger.error('Error searching users:', error);
       throw new Error('Failed to search users');
     }
   }
@@ -430,7 +431,7 @@ export class UserService {
       
       await Promise.all(updatePromises);
     } catch (error) {
-      console.error('Error bulk updating user roles:', error);
+      logger.error('Error bulk updating user roles:', error);
       throw new Error('Failed to bulk update user roles');
     }
   }
@@ -495,7 +496,7 @@ export class UserService {
         lastActivity: user.lastLogin || null
       };
     } catch (error) {
-      console.error('Error fetching user activity:', error);
+      logger.error('Error fetching user activity:', error);
       throw new Error('Failed to fetch user activity');
     }
   }

@@ -78,7 +78,7 @@ class EventService:
     """Service class for event-related operations"""
     
     @staticmethod
-    def validate_event_data(event_data: Dict[str, Any]) -> Dict[str, Any]:
+    def validate_event_data(event_data: Dict[str, Any], is_edit_mode: bool = False) -> Dict[str, Any]:
         """
         Validate event data for creation/update
         Returns validation result with errors if any
@@ -123,7 +123,8 @@ class EventService:
 
             # Temporal validations
             if start_datetime:
-                if start_datetime < _normalize_dt(datetime.now()):
+                # Only validate future date for new events, not when editing
+                if not is_edit_mode and start_datetime < _normalize_dt(datetime.now()):
                     errors.append("Event start date must be in the future")
                 if end_datetime and start_datetime >= end_datetime:
                     errors.append("Event end date must be after start date")
@@ -310,7 +311,10 @@ def validate_event_data(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 message="Event data is required"
             )
         
-        validation_result = EventService.validate_event_data(event_data)
+        # Check if this is an edit operation (bypass future date validation)
+        is_edit_mode = req.data.get('isEditMode', False)
+        
+        validation_result = EventService.validate_event_data(event_data, is_edit_mode)
         
         logger.info(f"Event validation completed for user {req.auth.uid}")
         return validation_result
@@ -517,8 +521,8 @@ def publish_event(req: https_fn.CallableRequest) -> Dict[str, Any]:
                     message="Permission denied"
                 )
         
-        # Final validation before publishing
-        validation_result = EventService.validate_event_data(event_data)
+        # Final validation before publishing (skip future date check since event already exists)
+        validation_result = EventService.validate_event_data(event_data, is_edit_mode=True)
         if not validation_result['isValid']:
             # In emulator/development flows we prefer graceful failure to avoid noisy 400s;
             # return success=false so clients can choose to fallback.

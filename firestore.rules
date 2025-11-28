@@ -122,7 +122,10 @@ service cloud.firestore {
                        request.resource.data.registrationId is string &&
                        request.resource.data.verificationCode is string &&
                        request.resource.data.recipientName is string;
-      allow update, delete: if isAuthenticated();
+      // Allow anonymous updates ONLY for verificationCount (for public verification tracking)
+      allow update: if isAuthenticated() || 
+                       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['verificationCount']);
+      allow delete: if isAuthenticated();
     }
     
     // Feedback tokens collection - secure tokens for feedback URLs

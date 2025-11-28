@@ -19,6 +19,7 @@ import { User } from '../../types';
 import AdminLayout from '../../components/admin/AdminLayout';
 import { useAuth } from '../../contexts/AuthContext';
 import { UserService, UserWithMetadata } from '../../services/userService';
+import { logger } from '../../utils/logger';
 import toast from 'react-hot-toast';
 
 const AdminUsersPage: React.FC = () => {
@@ -49,7 +50,7 @@ const AdminUsersPage: React.FC = () => {
       });
       setUsers(usersData);
     } catch (error) {
-      console.error('Error fetching users:', error);
+      logger.error('Error fetching users:', error);
       toast.error('Failed to fetch users');
     } finally {
       setLoading(false);
@@ -64,7 +65,7 @@ const AdminUsersPage: React.FC = () => {
       setShowDeleteModal(false);
       setDeletingUser(null);
     } catch (error) {
-      console.error('Error deleting user:', error);
+      logger.error('Error deleting user:', error);
       toast.error('Failed to delete user');
     }
   };
@@ -93,7 +94,7 @@ const AdminUsersPage: React.FC = () => {
       toast.success(`User ${userData.displayName} created successfully! Password reset email sent to ${userData.email}.`);
       
     } catch (error: any) {
-      console.error('Error creating user:', error);
+      logger.error('Error creating user:', error);
       // The createUser function already handles toasts for errors
     }
   };
@@ -127,7 +128,7 @@ const AdminUsersPage: React.FC = () => {
       setEditingUser(null);
       toast.success('User updated successfully');
     } catch (error) {
-      console.error('Error updating user:', error);
+      logger.error('Error updating user:', error);
       toast.error('Failed to update user');
     }
   };
@@ -161,7 +162,7 @@ const AdminUsersPage: React.FC = () => {
       setSelectedUsers([]);
       toast.success(`${usersToDelete.length} users deleted successfully`);
     } catch (error) {
-      console.error('Error deleting users:', error);
+      logger.error('Error deleting users:', error);
       toast.error('Failed to delete users');
     }
   };

@@ -1,4 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
+import { logger } from '../utils/logger';
 
 interface CacheEntry {
   response: string;
@@ -31,7 +32,7 @@ class AICache {
 
       return entry.response;
     } catch (error) {
-      console.warn('Error reading from AI cache:', error);
+      logger.warn('Error reading from AI cache:', error);
       return null;
     }
   }
@@ -46,7 +47,7 @@ class AICache {
 
       localStorage.setItem(key, JSON.stringify(entry));
     } catch (error) {
-      console.warn('Error writing to AI cache:', error);
+      logger.warn('Error writing to AI cache:', error);
     }
   }
 
@@ -57,7 +58,7 @@ class AICache {
       );
       keys.forEach(key => localStorage.removeItem(key));
     } catch (error) {
-      console.warn('Error clearing AI cache:', error);
+      logger.warn('Error clearing AI cache:', error);
     }
   }
 
@@ -81,7 +82,7 @@ class AICache {
         }
       });
     } catch (error) {
-      console.warn('Error cleaning up AI cache:', error);
+      logger.warn('Error cleaning up AI cache:', error);
     }
   }
 }

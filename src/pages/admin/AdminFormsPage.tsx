@@ -15,6 +15,7 @@ import {
 import AdminLayout from '../../components/admin/AdminLayout';
 import OrganizerLayout from '../../components/organizer/OrganizerLayout';
 import { useAuth } from '../../contexts/AuthContext';
+import { logger } from '../../utils/logger';
 import FormService from '../../services/formService';
 
 interface FormField {
@@ -73,7 +74,7 @@ const AdminFormsPage: React.FC = () => {
   const eventsData = await FormService.getAllEvents();
   setEvents(eventsData);
       } catch (error) {
-        console.error('Error fetching events:', error);
+        logger.error('Error fetching events:', error);
         setEvents([]);
       }
     };
@@ -85,7 +86,7 @@ const AdminFormsPage: React.FC = () => {
   const formsData = await FormService.getAllForms();
   setForms(formsData as any);
       } catch (error) {
-        console.error('Error fetching forms:', error);
+        logger.error('Error fetching forms:', error);
         setForms([]);
       }
     };
@@ -98,7 +99,7 @@ const AdminFormsPage: React.FC = () => {
       const formsData = await FormService.getAllForms();
       setForms(formsData as any);
     } catch (error) {
-      console.error('Error refreshing forms:', error);
+      logger.error('Error refreshing forms:', error);
     }
   };
 
@@ -214,7 +215,7 @@ const AdminFormsPage: React.FC = () => {
       }
       await refreshForms();
     } catch (err) {
-      console.error('Failed to save form:', err);
+      logger.error('Failed to save form:', err);
       alert('Failed to save form. Please try again.');
       return;
     }
@@ -247,7 +248,7 @@ const AdminFormsPage: React.FC = () => {
     try {
       await FormService.updateForm(formId, { isActive: next } as any);
     } catch (err) {
-      console.error('Failed to update status:', err);
+      logger.error('Failed to update status:', err);
       // revert on failure
       setForms(prev => prev.map(f => f.id === formId ? { ...f, isActive: !next } : f));
       alert('Failed to update form status.');
@@ -261,7 +262,7 @@ const AdminFormsPage: React.FC = () => {
     try {
       await FormService.deleteForm(formId);
     } catch (err) {
-      console.error('Failed to delete form:', err);
+      logger.error('Failed to delete form:', err);
       alert('Failed to delete form.');
       setForms(prev);
     }
