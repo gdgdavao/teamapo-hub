@@ -51,6 +51,8 @@ export interface Event {
   isPublished: boolean;
   registrationDeadline?: Timestamp;
   requirements?: string[];
+  feedbackRequestsSentAt?: Timestamp;
+  feedbackRequestsSentCount?: number;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
