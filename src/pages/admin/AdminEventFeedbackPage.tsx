@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { 
   ChevronLeftIcon,
@@ -13,6 +13,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { StarIcon as StarIconSolid } from '@heroicons/react/20/solid';
 import AdminLayout from '../../components/admin/AdminLayout';
+import FeedbackEmailStatus from '../../components/admin/FeedbackEmailStatus';
 import { FeedbackService } from '../../services/feedbackService';
 import { EventService } from '../../services/eventService';
 import { Feedback, Event } from '../../types';
@@ -30,33 +31,39 @@ const AdminEventFeedbackPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'summary' | 'individual'>('summary');
   const [selectedResponse, setSelectedResponse] = useState<number | null>(null);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      if (!eventId) return;
+  const fetchData = useCallback(async () => {
+    if (!eventId) return;
+    
+    try {
+      setLoading(true);
       
-      try {
-        setLoading(true);
-        
-        // Fetch event details, feedback, and feedback form in parallel
-        const [eventData, feedbackData, feedbackForm] = await Promise.all([
-          EventService.getEvent(eventId),
-          FeedbackService.getEventFeedback(eventId),
-          EventService.getFeedbackForm(eventId)
-        ]);
-        
-        setEvent(eventData);
-        setFeedbackList(feedbackData);
-        setFeedbackFormFields(feedbackForm.fields || []);
-      } catch (error) {
-        logger.error('Error fetching feedback data:', error);
-        toast.error('Failed to load feedback data');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchData();
+      // Fetch event details, feedback, and feedback form in parallel
+      const [eventData, feedbackData, feedbackForm] = await Promise.all([
+        EventService.getEvent(eventId),
+        FeedbackService.getEventFeedback(eventId),
+        EventService.getFeedbackForm(eventId)
+      ]);
+      
+      setEvent(eventData);
+      setFeedbackList(feedbackData);
+      setFeedbackFormFields(feedbackForm.fields || []);
+    } catch (error) {
+      logger.error('Error fetching feedback data:', error);
+      toast.error('Failed to load feedback data');
+    } finally {
+      setLoading(false);
+    }
   }, [eventId]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  // Callback when feedback emails are sent
+  const handleEmailsSent = useCallback(() => {
+    // Refresh feedback data in case some people submit immediately
+    fetchData();
+  }, [fetchData]);
 
   // Helper function to safely convert Firestore Timestamp or Date to Date object
   const toDate = (dateValue: any): Date | null => {
@@ -343,6 +350,9 @@ const AdminEventFeedbackPage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Feedback Email Status - Shows email delivery tracking */}
+      <FeedbackEmailStatus event={event} onEmailsSent={handleEmailsSent} />
 
       {feedbackList.length === 0 ? (
         <div className="bg-white rounded-lg shadow-sm p-12 text-center">
