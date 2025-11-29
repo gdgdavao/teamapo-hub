@@ -1799,6 +1799,7 @@ def sendConfirmationEmail(req: https_fn.CallableRequest) -> Dict[str, Any]:
         user_name = data.get('userName', 'Attendee')
         requires_payment = data.get('requiresPayment', False)
         email_type = data.get('emailType', 'submitted')  # 'submitted' or 'approved'
+        is_resend = data.get('isResend', False)  # Track if this is a resend operation
 
         if not event_id or not user_email:
             raise https_fn.HttpsError(
@@ -1952,7 +1953,7 @@ def sendConfirmationEmail(req: https_fn.CallableRequest) -> Dict[str, Any]:
 
             # Log activity for traceability
             try:
-                get_db().collection('activity_logs').add({
+                activity_log_data = {
                     'type': 'email_confirmation_sent',
                     'registrationId': registration_id,
                     'eventId': event_id,
@@ -1962,7 +1963,10 @@ def sendConfirmationEmail(req: https_fn.CallableRequest) -> Dict[str, Any]:
                     'emailId': email_result.get('email_id'),
                     'success': email_result.get('success', False),
                     'timestamp': firestore.SERVER_TIMESTAMP
-                })
+                }
+                if is_resend:
+                    activity_log_data['isResend'] = True
+                get_db().collection('activity_logs').add(activity_log_data)
             except Exception as log_err:
                 logger.warning(f"Failed to write activity log for confirmation email: {str(log_err)}")
 
@@ -2016,6 +2020,7 @@ def sendPaymentNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
         attendee_email = data.get('attendeeEmail')
         attendee_name = data.get('attendeeName', 'Attendee')
         payment_instructions = data.get('paymentInstructions')
+        is_resend = data.get('isResend', False)  # Track if this is a resend operation
 
         if not registration_id or not status:
             raise https_fn.HttpsError(
@@ -2088,7 +2093,7 @@ def sendPaymentNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
             except Exception:
                 pass
             
-            get_db().collection('activity_logs').add({
+            activity_log_data = {
                 'type': 'payment_notification_sent',
                 'registrationId': registration_id,
                 'eventId': event_id,
@@ -2099,7 +2104,10 @@ def sendPaymentNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 'emailId': email_result.get('email_id'),
                 'success': email_result.get('success', False),
                 'timestamp': firestore.SERVER_TIMESTAMP
-            })
+            }
+            if is_resend:
+                activity_log_data['isResend'] = True
+            get_db().collection('activity_logs').add(activity_log_data)
         except Exception as log_err:
             logger.warning(f"Failed to write activity log for payment notification: {str(log_err)}")
 
@@ -2143,6 +2151,7 @@ def sendCertificateNotification(req: https_fn.CallableRequest) -> Dict[str, Any]
         event_title = data.get('eventTitle')
         certificate_url = data.get('certificateUrl')
         registration_id = data.get('registrationId')
+        is_resend = data.get('isResend', False)  # Track if this is a resend operation
 
         if not user_email or not event_title or not certificate_url:
             raise https_fn.HttpsError(
@@ -2172,7 +2181,7 @@ def sendCertificateNotification(req: https_fn.CallableRequest) -> Dict[str, Any]
             except Exception:
                 pass
             
-            get_db().collection('activity_logs').add({
+            activity_log_data = {
                 'type': 'certificate_notification_sent',
                 'eventId': event_id,
                 'userEmail': user_email,
@@ -2183,7 +2192,10 @@ def sendCertificateNotification(req: https_fn.CallableRequest) -> Dict[str, Any]
                 'emailId': email_result.get('email_id'),
                 'success': email_result.get('success', False),
                 'timestamp': firestore.SERVER_TIMESTAMP
-            })
+            }
+            if is_resend:
+                activity_log_data['isResend'] = True
+            get_db().collection('activity_logs').add(activity_log_data)
         except Exception as log_err:
             logger.warning(f"Failed to write activity log for certificate notification: {str(log_err)}")
 
@@ -2225,6 +2237,7 @@ def sendEventReminder(req: https_fn.CallableRequest) -> Dict[str, Any]:
         event_location = data.get('eventLocation')
         registration_id = data.get('registrationId')
         reminder_type = data.get('reminderType', '24h')  # '24h' or '1h'
+        is_resend = data.get('isResend', False)  # Track if this is a resend operation
 
         if not user_email or not event_title or not event_date:
             raise https_fn.HttpsError(
@@ -2256,7 +2269,7 @@ def sendEventReminder(req: https_fn.CallableRequest) -> Dict[str, Any]:
             except Exception:
                 pass
             
-            get_db().collection('activity_logs').add({
+            activity_log_data = {
                 'type': 'event_reminder_sent',
                 'eventId': event_id,
                 'userEmail': user_email,
@@ -2269,7 +2282,10 @@ def sendEventReminder(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 'emailId': email_result.get('email_id'),
                 'success': email_result.get('success', False),
                 'timestamp': firestore.SERVER_TIMESTAMP
-            })
+            }
+            if is_resend:
+                activity_log_data['isResend'] = True
+            get_db().collection('activity_logs').add(activity_log_data)
         except Exception as log_err:
             logger.warning(f"Failed to write activity log for event reminder: {str(log_err)}")
 
@@ -2577,6 +2593,7 @@ def sendFeedbackRequest(req: https_fn.CallableRequest) -> Dict[str, Any]:
         event_title = data.get('eventTitle')
         event_id = data.get('eventId')
         registration_id = data.get('registrationId')
+        is_resend = data.get('isResend', False)  # Track if this is a resend operation
         
         # Support both old and new API - feedbackUrl or generate from eventId
         feedback_url = data.get('feedbackUrl')
@@ -2626,7 +2643,7 @@ def sendFeedbackRequest(req: https_fn.CallableRequest) -> Dict[str, Any]:
 
         # Log activity for traceability
         try:
-            get_db().collection('activity_logs').add({
+            activity_log_data = {
                 'type': 'feedback_request_sent',
                 'eventId': event_id,
                 'userEmail': user_email,
@@ -2637,7 +2654,10 @@ def sendFeedbackRequest(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 'emailId': email_result.get('email_id'),
                 'success': email_result.get('success', False),
                 'timestamp': firestore.SERVER_TIMESTAMP
-            })
+            }
+            if is_resend:
+                activity_log_data['isResend'] = True
+            get_db().collection('activity_logs').add(activity_log_data)
         except Exception as log_err:
             logger.warning(f"Failed to write activity log for feedback request: {str(log_err)}")
 
@@ -2921,6 +2941,7 @@ def sendCheckInNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
         event_id = data.get('eventId')
         user_email = data.get('userEmail')
         user_name = data.get('userName', 'Attendee')
+        is_resend = data.get('isResend', False)  # Track if this is a resend operation
 
         if not registration_id or not event_id or not user_email:
             raise https_fn.HttpsError(
@@ -2957,7 +2978,7 @@ def sendCheckInNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
 
             # Log activity for traceability
             try:
-                get_db().collection('activity_logs').add({
+                activity_log_data = {
                     'type': 'checkin_notification_sent',
                     'registrationId': registration_id,
                     'eventId': event_id,
@@ -2966,7 +2987,10 @@ def sendCheckInNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
                     'emailId': email_result.get('email_id'),
                     'success': email_result.get('success', False),
                     'timestamp': firestore.SERVER_TIMESTAMP
-                })
+                }
+                if is_resend:
+                    activity_log_data['isResend'] = True
+                get_db().collection('activity_logs').add(activity_log_data)
             except Exception as log_err:
                 logger.warning(f"Failed to write activity log for check-in notification: {str(log_err)}")
 

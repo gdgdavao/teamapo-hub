@@ -12,7 +12,8 @@ import {
   CameraIcon,
   XMarkIcon,
   ExclamationTriangleIcon,
-  ShieldCheckIcon
+  ShieldCheckIcon,
+  ArrowPathIcon
 } from '@heroicons/react/24/outline';
 import { CertificateService } from '../../services/certificateService';
 import { logger } from '../../utils/logger';
@@ -96,6 +97,9 @@ const CertificateVerificationPage: React.FC = () => {
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [isCameraLoading, setIsCameraLoading] = useState(false);
+  const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment');
+  const [availableCameras, setAvailableCameras] = useState<MediaDeviceInfo[]>([]);
   
   // Image loading state
   const [imageLoading, setImageLoading] = useState(true);
@@ -105,6 +109,7 @@ const CertificateVerificationPage: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const scannerControlsRef = useRef<IScannerControls | null>(null);
   const codeReaderRef = useRef<BrowserQRCodeReader | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
   // Check for camera availability on mount
   useEffect(() => {
@@ -112,14 +117,17 @@ const CertificateVerificationPage: React.FC = () => {
       try {
         if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
           setHasCamera(false);
+          setAvailableCameras([]);
           return;
         }
         const devices = await navigator.mediaDevices.enumerateDevices();
         const videoDevices = devices.filter(device => device.kind === 'videoinput');
+        setAvailableCameras(videoDevices);
         setHasCamera(videoDevices.length > 0);
       } catch (error) {
         logger.error('Error checking camera availability:', error);
         setHasCamera(false);
+        setAvailableCameras([]);
       }
     };
     checkCamera();
@@ -173,52 +181,80 @@ const CertificateVerificationPage: React.FC = () => {
   const startCamera = async () => {
     try {
       setScanError(null);
-      
-      if (!codeReaderRef.current) {
-        codeReaderRef.current = new BrowserQRCodeReader();
-      }
-
+      setIsCameraLoading(true);
       setIsCameraActive(true);
-      setIsScanning(true);
-
-      // Start continuous scanning
-      scannerControlsRef.current = await codeReaderRef.current.decodeFromVideoDevice(
-        undefined, // Use default camera (environment/back camera preferred)
-        videoRef.current!,
-        (result, error) => {
-          if (result) {
-            const qrText = result.getText();
-            logger.log('QR Code detected:', qrText);
-            
-            // Vibrate if supported (for mobile feedback)
-            if ('vibrate' in navigator) {
-              navigator.vibrate(200);
-            }
-
-            // Parse and validate the QR code
-            const parsed = parseQRCode(qrText);
-            
-            if (parsed.valid && parsed.code) {
-              // Stop scanning
-              stopCamera();
-              // Set the verification code and trigger verification
-              setVerificationCode(parsed.code);
-              verifyCertificate(parsed.code);
-            } else {
-              setScanError(parsed.error || 'Invalid QR code');
-            }
-          }
-          
-          if (error && error.name !== 'NotFoundException') {
-            logger.warn('QR scanning error:', error);
-          }
+      
+      // Get camera stream with explicit constraints
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: facingMode,
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
         }
-      );
-    } catch (error) {
+      });
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        streamRef.current = stream;
+        
+        if (!codeReaderRef.current) {
+          codeReaderRef.current = new BrowserQRCodeReader();
+        }
+
+        setIsCameraLoading(false);
+        setIsScanning(true);
+
+        // Start continuous scanning from video element
+        scannerControlsRef.current = await codeReaderRef.current.decodeFromVideoElement(
+          videoRef.current,
+          (result, error) => {
+            if (result) {
+              const qrText = result.getText();
+              logger.log('QR Code detected:', qrText);
+              
+              // Vibrate if supported (for mobile feedback)
+              if ('vibrate' in navigator) {
+                navigator.vibrate(200);
+              }
+
+              // Parse and validate the QR code
+              const parsed = parseQRCode(qrText);
+              
+              if (parsed.valid && parsed.code) {
+                // Stop scanning
+                stopCamera();
+                // Set the verification code and trigger verification
+                setVerificationCode(parsed.code);
+                verifyCertificate(parsed.code);
+              } else {
+                setScanError(parsed.error || 'Invalid QR code');
+              }
+            }
+            
+            if (error && error.name !== 'NotFoundException') {
+              logger.warn('QR scanning error:', error);
+            }
+          }
+        );
+      }
+    } catch (error: unknown) {
       logger.error('Error accessing camera:', error);
-      setScanError('Unable to access camera. Please check permissions and try again.');
+      
+      // Specific error messages based on error type
+      const err = error as Error & { name?: string };
+      if (err.name === 'NotAllowedError') {
+        setScanError('Camera permission denied. Please allow camera access in your browser settings and try again.');
+      } else if (err.name === 'NotFoundError') {
+        setScanError('No camera found on this device.');
+      } else if (err.name === 'NotReadableError') {
+        setScanError('Camera is already in use by another application.');
+      } else {
+        setScanError('Unable to access camera. Please check permissions and try again.');
+      }
+      
       setIsCameraActive(false);
       setIsScanning(false);
+      setIsCameraLoading(false);
     }
   };
 
@@ -227,9 +263,101 @@ const CertificateVerificationPage: React.FC = () => {
       scannerControlsRef.current.stop();
       scannerControlsRef.current = null;
     }
+    
+    // Stop all stream tracks
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    
+    // Clear video srcObject
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    
     setIsCameraActive(false);
     setIsScanning(false);
+    setIsCameraLoading(false);
     setScanError(null);
+  };
+
+  // Flip camera between front and back
+  const handleFlipCamera = async () => {
+    // Stop current camera first
+    stopCamera();
+    
+    // Toggle facing mode
+    const newFacingMode = facingMode === 'environment' ? 'user' : 'environment';
+    setFacingMode(newFacingMode);
+    
+    // Small delay to ensure cleanup
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
+    // Restart camera with new facing mode - need to call with updated state
+    try {
+      setScanError(null);
+      setIsCameraLoading(true);
+      setIsCameraActive(true);
+      
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: newFacingMode,
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        }
+      });
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        streamRef.current = stream;
+        
+        if (!codeReaderRef.current) {
+          codeReaderRef.current = new BrowserQRCodeReader();
+        }
+
+        setIsCameraLoading(false);
+        setIsScanning(true);
+
+        scannerControlsRef.current = await codeReaderRef.current.decodeFromVideoElement(
+          videoRef.current,
+          (result, error) => {
+            if (result) {
+              const qrText = result.getText();
+              logger.log('QR Code detected:', qrText);
+              
+              if ('vibrate' in navigator) {
+                navigator.vibrate(200);
+              }
+
+              const parsed = parseQRCode(qrText);
+              
+              if (parsed.valid && parsed.code) {
+                stopCamera();
+                setVerificationCode(parsed.code);
+                verifyCertificate(parsed.code);
+              } else {
+                setScanError(parsed.error || 'Invalid QR code');
+              }
+            }
+            
+            if (error && error.name !== 'NotFoundException') {
+              logger.warn('QR scanning error:', error);
+            }
+          }
+        );
+      }
+    } catch (error: unknown) {
+      logger.error('Error flipping camera:', error);
+      const err = error as Error & { name?: string };
+      if (err.name === 'NotAllowedError') {
+        setScanError('Camera permission denied.');
+      } else {
+        setScanError('Unable to switch camera. Try again.');
+      }
+      setIsCameraActive(false);
+      setIsScanning(false);
+      setIsCameraLoading(false);
+    }
   };
 
   // Auto-verify if code is provided in URL
@@ -277,25 +405,52 @@ const CertificateVerificationPage: React.FC = () => {
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
                 <CameraIcon className="w-5 h-5" />
-                Scanning QR Code...
+                {isCameraLoading ? 'Starting camera...' : 'Scanning QR Code...'}
               </h3>
-              <button
-                type="button"
-                onClick={stopCamera}
-                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-                aria-label="Close camera"
-              >
-                <XMarkIcon className="w-6 h-6" />
-              </button>
+              <div className="flex items-center gap-2">
+                {/* Camera flip button - only show if multiple cameras */}
+                {availableCameras.length > 1 && !isCameraLoading && (
+                  <button
+                    type="button"
+                    onClick={handleFlipCamera}
+                    className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                    aria-label="Switch camera"
+                    title={`Switch to ${facingMode === 'environment' ? 'front' : 'back'} camera`}
+                    tabIndex={0}
+                  >
+                    <ArrowPathIcon className="w-6 h-6" />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={stopCamera}
+                  className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                  aria-label="Close camera"
+                  tabIndex={0}
+                >
+                  <XMarkIcon className="w-6 h-6" />
+                </button>
+              </div>
             </div>
             
             <div className="relative aspect-video bg-black rounded-lg overflow-hidden">
               <video
                 ref={videoRef}
                 className="w-full h-full object-cover"
+                autoPlay
                 playsInline
                 muted
               />
+              
+              {/* Loading overlay */}
+              {isCameraLoading && (
+                <div className="absolute inset-0 bg-gray-900/80 flex items-center justify-center z-10">
+                  <div className="text-center">
+                    <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-white mx-auto mb-3" />
+                    <p className="text-white text-sm">Starting camera...</p>
+                  </div>
+                </div>
+              )}
               
               {/* Scanning overlay */}
               <div className="absolute inset-0 pointer-events-none">
@@ -306,7 +461,7 @@ const CertificateVerificationPage: React.FC = () => {
                   <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-blue-500" />
                   <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-blue-500" />
                 </div>
-                {isScanning && (
+                {isScanning && !isCameraLoading && (
                   <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-48 h-0.5 sm:w-64 bg-blue-500 animate-pulse" />
                 )}
               </div>
