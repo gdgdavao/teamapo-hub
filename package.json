@@ -40,6 +40,7 @@
     "@google/genai": "^1.15.0",
     "@headlessui/react": "^2.2.0",
     "@heroicons/react": "^2.2.0",
+    "@vercel/analytics": "^1.5.0",
     "@zxing/browser": "^0.1.5",
     "@zxing/library": "^0.21.3",
     "autoprefixer": "^10.4.20",

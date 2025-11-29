@@ -47,7 +47,8 @@ import NotFoundPage from './pages/error/NotFoundPage';
 // Public Pages
 import EventRegistrationPage from './pages/public/EventRegistrationPage';
 
-// Domain Redirect Component
+// Vercel Analytics
+import { Analytics } from "@vercel/analytics/react"
 
 // Protected Route Component
 const ProtectedRoute: React.FC<{ 
@@ -313,7 +314,7 @@ const App: React.FC = () => {
     <AuthProvider>
       <div className="min-h-screen bg-gray-50">
         <AppContent />
-        
+        <Analytics />
       </div>
     </AuthProvider>
   );
