@@ -11,10 +11,9 @@ import {
   XCircle,
   Clock,
   MailOpen,
-  ChevronDown,
-  Users,
-  FileText,
-  AlertCircle
+  AlertCircle,
+  X,
+  Edit3
 } from 'lucide-react';
 import { EmailService, EmailLog, EmailTemplate } from '../../services/emailService';
 import { EventService } from '../../services/eventService';
@@ -39,10 +38,21 @@ const AdminEmailManagementPage = () => {
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [loading, setLoading] = useState(true);
   const [resendingEmail, setResendingEmail] = useState<string | null>(null);
-  const [showBulkSendModal, setShowBulkSendModal] = useState(false);
-  const [selectedTemplate, setSelectedTemplate] = useState<EmailTemplate | null>(null);
   const [refreshingStatuses, setRefreshingStatuses] = useState(false);
   const [fetchingFromResend, setFetchingFromResend] = useState(false);
+  
+  // Resend modal state
+  const [showResendModal, setShowResendModal] = useState(false);
+  const [resendTarget, setResendTarget] = useState<EmailLogWithStatus | null>(null);
+  const [overrideEmail, setOverrideEmail] = useState('');
+  const [resendingFromModal, setResendingFromModal] = useState(false);
+  const [resendEmailType, setResendEmailType] = useState<string>('');
+  
+  // Bulk selection state
+  const [selectedEmails, setSelectedEmails] = useState<string[]>([]);
+  const [bulkResending, setBulkResending] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState({ current: 0, total: 0 });
+  
   const [emailStats, setEmailStats] = useState({
     total: 0,
     successful: 0,
@@ -323,51 +333,162 @@ const AdminEmailManagementPage = () => {
     }
   };
 
-  const handleBulkSend = async () => {
-    if (!selectedTemplate || !selectedEvent || selectedEvent === 'all') {
-      alert('Please select an event and template');
+  // Open resend modal for a specific email
+  const handleOpenResendModal = (email: EmailLogWithStatus) => {
+    setResendTarget(email);
+    setOverrideEmail(email.userEmail);
+    setResendEmailType(email.type); // Default to original email type
+    setShowResendModal(true);
+  };
+
+  // Close resend modal
+  const handleCloseResendModal = () => {
+    setShowResendModal(false);
+    setResendTarget(null);
+    setOverrideEmail('');
+    setResendEmailType('');
+    setResendingFromModal(false);
+  };
+
+  // Validate email format
+  const isValidEmail = (email: string): boolean => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  };
+
+  // Resend email from modal with optional email override and type change
+  const handleResendFromModal = async () => {
+    if (!resendTarget || resendingFromModal) return;
+    
+    if (!isValidEmail(overrideEmail)) {
+      alert('Please enter a valid email address');
       return;
     }
 
+    setResendingFromModal(true);
     try {
-      const event = events.find(e => e.id === selectedEvent);
-      if (!event) return;
+      const isEmailChanged = overrideEmail !== resendTarget.userEmail;
+      const isTypeChanged = resendEmailType !== resendTarget.type;
+      
+      // Create a modified email log with the new type if changed
+      const emailLogToResend: EmailLog = isTypeChanged 
+        ? { ...resendTarget, type: resendEmailType as EmailLog['type'] }
+        : resendTarget;
+      
+      const result = await EmailService.resendEmail(
+        emailLogToResend, 
+        isEmailChanged ? overrideEmail : undefined,
+        true
+      );
+      
+      const changes: string[] = [];
+      if (isEmailChanged) changes.push(`to ${overrideEmail}`);
+      if (isTypeChanged) changes.push(`as ${getEmailTypeLabel(resendEmailType)}`);
+      
+      if (result.success) {
+        alert(`Email resent successfully${changes.length > 0 ? ` (${changes.join(', ')})` : ''}!`);
+        handleCloseResendModal();
+        loadData();
+      } else {
+        alert(`Failed to resend email: ${result.message}`);
+      }
+    } catch (error: any) {
+      logger.error('Error resending email from modal:', error);
+      alert(`Error resending email: ${error.message}`);
+    } finally {
+      setResendingFromModal(false);
+    }
+  };
 
-      const eventRegs = await RegistrationService.getEventRegistrations(selectedEvent);
-      const attendees = eventRegs
-        .filter(reg => reg.paymentStatus === 'paid' && reg.attendanceStatus !== 'cancelled')
-        .map(reg => ({
-          email: reg.userDetails.email,
-          name: reg.userDetails.name,
-          registrationId: reg.id
-        }));
+  // Toggle selection of a single email
+  const handleToggleEmailSelection = (emailId: string) => {
+    setSelectedEmails(prev => 
+      prev.includes(emailId)
+        ? prev.filter(id => id !== emailId)
+        : [...prev, emailId]
+    );
+  };
 
-      if (attendees.length === 0) {
-        alert('No eligible attendees found');
-        return;
+  // Toggle select all emails (visible/filtered)
+  const handleToggleSelectAll = () => {
+    if (selectedEmails.length === filteredEmails.length) {
+      setSelectedEmails([]);
+    } else {
+      setSelectedEmails(filteredEmails.map(e => e.id));
+    }
+  };
+
+  // Bulk resend selected emails with throttling
+  const handleBulkResend = async () => {
+    if (selectedEmails.length === 0 || bulkResending) return;
+
+    const confirmed = confirm(
+      `Are you sure you want to resend ${selectedEmails.length} email(s)?\n\n` +
+      `This will resend the emails to their original recipients.`
+    );
+    if (!confirmed) return;
+
+    setBulkResending(true);
+    setBulkProgress({ current: 0, total: selectedEmails.length });
+
+    let successCount = 0;
+    let failedCount = 0;
+    const failedEmails: string[] = [];
+
+    for (let i = 0; i < selectedEmails.length; i++) {
+      const emailId = selectedEmails[i];
+      const email = emails.find(e => e.id === emailId);
+      
+      if (!email) {
+        failedCount++;
+        continue;
       }
 
-      const confirmed = confirm(`Send ${selectedTemplate.name} to ${attendees.length} attendees?`);
-      if (!confirmed) return;
-
-      const result = await EmailService.sendBulkEmails(
-        attendees,
-        selectedTemplate,
-        {
-          eventId: event.id,
-          eventTitle: event.title,
-          eventDate: event.startDate.toDate().toLocaleDateString(),
-          eventLocation: event.venue.type === 'online' ? 'Online' : event.venue.name || 'TBD'
+      try {
+        const result = await EmailService.resendEmail(email, undefined, true);
+        
+        if (result.success) {
+          successCount++;
+        } else {
+          failedCount++;
+          failedEmails.push(`${email.userEmail}: ${result.message}`);
         }
-      );
+      } catch (error: any) {
+        failedCount++;
+        failedEmails.push(`${email.userEmail}: ${error.message}`);
+      }
 
-      alert(`Bulk send completed: ${result.success} successful, ${result.failed} failed`);
-      setShowBulkSendModal(false);
-      loadData();
-    } catch (error: any) {
-      logger.error('Error sending bulk emails:', error);
-      alert(`Error: ${error.message}`);
+      setBulkProgress({ current: i + 1, total: selectedEmails.length });
+
+      // Throttle: 100ms delay between requests
+      if (i < selectedEmails.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
     }
+
+    setBulkResending(false);
+    setSelectedEmails([]);
+
+    let message = `Bulk resend complete!\n\n✅ Successful: ${successCount}\n❌ Failed: ${failedCount}`;
+    if (failedEmails.length > 0 && failedEmails.length <= 5) {
+      message += `\n\nFailed emails:\n${failedEmails.join('\n')}`;
+    }
+    alert(message);
+    
+    loadData();
+  };
+
+  // Select all bounced/failed emails
+  const handleSelectAllBounced = () => {
+    const bouncedIds = filteredEmails
+      .filter(e => e.deliveryStatus === 'bounced' || e.deliveryStatus === 'complained')
+      .map(e => e.id);
+    setSelectedEmails(bouncedIds);
+  };
+
+  const handleBulkSend = async () => {
+    // Legacy bulk send - can be removed if not needed
+    alert('Use the row selection and "Resend Selected" for bulk operations');
   };
 
   const handleExportEmails = async () => {
@@ -391,8 +512,7 @@ const AdminEmailManagementPage = () => {
       email_confirmation_sent: 'Registration Confirmation',
       payment_notification_sent: 'Payment Notification',
       event_reminder_sent: 'Event Reminder',
-      feedback_request_sent: 'Feedback Request',
-      certificate_notification_sent: 'Certificate Ready',
+      feedback_request_sent: 'Feedback & Certificate',
       checkin_notification_sent: 'Check-in Confirmation'
     };
     return labels[type] || type;
@@ -404,7 +524,6 @@ const AdminEmailManagementPage = () => {
       payment_notification_sent: 'bg-green-100 text-green-800',
       event_reminder_sent: 'bg-yellow-100 text-yellow-800',
       feedback_request_sent: 'bg-purple-100 text-purple-800',
-      certificate_notification_sent: 'bg-indigo-100 text-indigo-800',
       checkin_notification_sent: 'bg-teal-100 text-teal-800'
     };
     return colors[type] || 'bg-gray-100 text-gray-800';
@@ -528,12 +647,27 @@ const AdminEmailManagementPage = () => {
         <div className="bg-white rounded-lg shadow-sm p-4 mb-6">
           <div className="flex flex-wrap gap-4 items-center justify-between">
             <div className="flex flex-wrap gap-3">
+              {/* Bulk Resend Selected */}
               <button
-                onClick={() => setShowBulkSendModal(true)}
-                className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                onClick={handleBulkResend}
+                disabled={selectedEmails.length === 0 || bulkResending}
+                className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Send className="h-4 w-4 mr-2" />
-                Bulk Send
+                {bulkResending 
+                  ? `Resending ${bulkProgress.current}/${bulkProgress.total}...` 
+                  : `Resend Selected (${selectedEmails.length})`
+                }
+              </button>
+
+              {/* Select All Bounced */}
+              <button
+                onClick={handleSelectAllBounced}
+                disabled={filteredEmails.filter(e => e.deliveryStatus === 'bounced' || e.deliveryStatus === 'complained').length === 0}
+                className="inline-flex items-center px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <AlertCircle className="h-4 w-4 mr-2" />
+                Select Bounced
               </button>
 
               <button
@@ -577,6 +711,11 @@ const AdminEmailManagementPage = () => {
             <div className="flex items-center gap-2 text-sm text-gray-600">
               <Filter className="h-4 w-4" />
               {filteredEmails.length} of {emails.length} emails
+              {selectedEmails.length > 0 && (
+                <span className="ml-2 text-blue-600 font-medium">
+                  ({selectedEmails.length} selected)
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -618,8 +757,7 @@ const AdminEmailManagementPage = () => {
               <option value="email_confirmation_sent">Registration Confirmation</option>
               <option value="payment_notification_sent">Payment Notification</option>
               <option value="event_reminder_sent">Event Reminder</option>
-              <option value="feedback_request_sent">Feedback Request</option>
-              <option value="certificate_notification_sent">Certificate Ready</option>
+              <option value="feedback_request_sent">Feedback & Certificate</option>
               <option value="checkin_notification_sent">Check-in Confirmation</option>
             </select>
 
@@ -654,6 +792,15 @@ const AdminEmailManagementPage = () => {
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
+                    <th className="px-4 py-3 text-left">
+                      <input
+                        type="checkbox"
+                        checked={selectedEmails.length === filteredEmails.length && filteredEmails.length > 0}
+                        onChange={handleToggleSelectAll}
+                        className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                        aria-label="Select all emails"
+                      />
+                    </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Timestamp
                     </th>
@@ -676,7 +823,19 @@ const AdminEmailManagementPage = () => {
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {filteredEmails.map((email) => (
-                    <tr key={email.id} className="hover:bg-gray-50">
+                    <tr 
+                      key={email.id} 
+                      className={`hover:bg-gray-50 ${selectedEmails.includes(email.id) ? 'bg-blue-50' : ''}`}
+                    >
+                      <td className="px-4 py-4">
+                        <input
+                          type="checkbox"
+                          checked={selectedEmails.includes(email.id)}
+                          onChange={() => handleToggleEmailSelection(email.id)}
+                          className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                          aria-label={`Select email to ${email.userEmail}`}
+                        />
+                      </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         {email.timestamp.toDate().toLocaleString()}
                       </td>
@@ -697,14 +856,19 @@ const AdminEmailManagementPage = () => {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm">
                         <button
-                          onClick={() => handleResendEmail(email)}
+                          onClick={() => handleOpenResendModal(email)}
                           disabled={resendingEmail === email.id}
-                          className="text-blue-600 hover:text-blue-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="inline-flex items-center px-2 py-1 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          title="Resend email (with option to change recipient)"
+                          aria-label={`Resend email to ${email.userEmail}`}
                         >
                           {resendingEmail === email.id ? (
                             <RefreshCw className="h-4 w-4 animate-spin" />
                           ) : (
-                            <RefreshCw className="h-4 w-4" />
+                            <>
+                              <Edit3 className="h-4 w-4 mr-1" />
+                              <span>Resend</span>
+                            </>
                           )}
                         </button>
                       </td>
@@ -716,60 +880,111 @@ const AdminEmailManagementPage = () => {
           )}
         </div>
 
-        {/* Bulk Send Modal */}
-        {showBulkSendModal && (
+        {/* Resend Email Modal */}
+        {showResendModal && resendTarget && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full p-6">
-              <h3 className="text-xl font-semibold text-gray-900 mb-4">Send Bulk Emails</h3>
+            <div className="bg-white rounded-lg shadow-xl max-w-lg w-full p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-xl font-semibold text-gray-900">Resend Email</h3>
+                <button
+                  onClick={handleCloseResendModal}
+                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                  aria-label="Close modal"
+                >
+                  <X className="h-6 w-6" />
+                </button>
+              </div>
               
               <div className="space-y-4">
-                {/* Event Selection */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Select Event
-                  </label>
-                  <select
-                    value={selectedEvent}
-                    onChange={(e) => setSelectedEvent(e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    <option value="all">Select an event...</option>
-                    {events.map(event => (
-                      <option key={event.id} value={event.id}>{event.title}</option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Template Selection */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Select Email Template
-                  </label>
-                  <div className="grid grid-cols-1 gap-3">
-                    {EmailService.getEmailTemplates().map(template => (
-                      <button
-                        key={template.id}
-                        onClick={() => setSelectedTemplate(template)}
-                        className={`text-left p-4 border-2 rounded-lg transition-colors ${
-                          selectedTemplate?.id === template.id
-                            ? 'border-blue-600 bg-blue-50'
-                            : 'border-gray-200 hover:border-gray-300'
-                        }`}
-                      >
-                        <div className="font-medium text-gray-900">{template.name}</div>
-                        <div className="text-sm text-gray-600 mt-1">{template.description}</div>
-                      </button>
-                    ))}
+                {/* Original Email Info */}
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="text-gray-500">Original Type:</span>
+                      <span className={`ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${getEmailTypeColor(resendTarget.type)}`}>
+                        {getEmailTypeLabel(resendTarget.type)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Event:</span>
+                      <span className="ml-2 text-gray-900 font-medium">{resendTarget.eventTitle || 'N/A'}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Original Recipient:</span>
+                      <span className="ml-2 text-gray-900">{resendTarget.userName}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Status:</span>
+                      <span className="ml-2">{renderDeliveryStatus(resendTarget)}</span>
+                    </div>
                   </div>
                 </div>
 
-                {/* Info */}
-                {selectedEvent !== 'all' && selectedTemplate && (
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                {/* Email Type Selector */}
+                <div>
+                  <label htmlFor="resend-email-type" className="block text-sm font-medium text-gray-700 mb-2">
+                    Email Type to Send
+                  </label>
+                  <select
+                    id="resend-email-type"
+                    value={resendEmailType}
+                    onChange={(e) => setResendEmailType(e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value="email_confirmation_sent">Registration Confirmation</option>
+                    <option value="payment_notification_sent">Payment Notification</option>
+                    <option value="event_reminder_sent">Event Reminder</option>
+                    <option value="feedback_request_sent">Feedback & Certificate</option>
+                    <option value="checkin_notification_sent">Check-in Confirmation</option>
+                  </select>
+                  {resendEmailType !== resendTarget.type && (
+                    <p className="mt-1 text-xs text-blue-600">
+                      ℹ️ Will send as <strong>{getEmailTypeLabel(resendEmailType)}</strong> instead of original type
+                    </p>
+                  )}
+                </div>
+
+                {/* Email Address Input */}
+                <div>
+                  <label htmlFor="override-email" className="block text-sm font-medium text-gray-700 mb-2">
+                    Recipient Email Address
+                  </label>
+                  <input
+                    id="override-email"
+                    type="email"
+                    value={overrideEmail}
+                    onChange={(e) => setOverrideEmail(e.target.value)}
+                    placeholder="Enter email address"
+                    className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                      overrideEmail && !isValidEmail(overrideEmail) 
+                        ? 'border-red-300 bg-red-50' 
+                        : 'border-gray-300'
+                    }`}
+                    aria-describedby="email-help"
+                  />
+                  <p id="email-help" className="mt-1 text-xs text-gray-500">
+                    Change the email address if the original bounced or is incorrect
+                  </p>
+                  {overrideEmail && !isValidEmail(overrideEmail) && (
+                    <p className="mt-1 text-xs text-red-600">Please enter a valid email address</p>
+                  )}
+                </div>
+
+                {/* Summary of changes */}
+                {(overrideEmail !== resendTarget.userEmail || resendEmailType !== resendTarget.type) && isValidEmail(overrideEmail) && (
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
                     <div className="flex items-start">
-                      <AlertCircle className="h-5 w-5 text-blue-600 mr-2 mt-0.5" />
-                      <div className="text-sm text-blue-800">
-                        This will send <strong>{selectedTemplate.name}</strong> to all paid and registered attendees for the selected event.
+                      <AlertCircle className="h-5 w-5 text-yellow-600 mr-2 mt-0.5 flex-shrink-0" />
+                      <div className="text-sm text-yellow-800">
+                        <strong>Changes to apply:</strong>
+                        <ul className="mt-1 list-disc list-inside">
+                          {overrideEmail !== resendTarget.userEmail && (
+                            <li>Send to <span className="font-medium">{overrideEmail}</span> instead of <span className="line-through">{resendTarget.userEmail}</span></li>
+                          )}
+                          {resendEmailType !== resendTarget.type && (
+                            <li>Send as <span className="font-medium">{getEmailTypeLabel(resendEmailType)}</span> instead of {getEmailTypeLabel(resendTarget.type)}</li>
+                          )}
+                        </ul>
                       </div>
                     </div>
                   </div>
@@ -779,21 +994,49 @@ const AdminEmailManagementPage = () => {
               {/* Actions */}
               <div className="flex justify-end gap-3 mt-6">
                 <button
-                  onClick={() => {
-                    setShowBulkSendModal(false);
-                    setSelectedTemplate(null);
-                  }}
+                  onClick={handleCloseResendModal}
                   className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
                 >
                   Cancel
                 </button>
                 <button
-                  onClick={handleBulkSend}
-                  disabled={!selectedEvent || selectedEvent === 'all' || !selectedTemplate}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  onClick={handleResendFromModal}
+                  disabled={resendingFromModal || !isValidEmail(overrideEmail)}
+                  className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Send Emails
+                  {resendingFromModal ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                      Sending...
+                    </>
+                  ) : (
+                    <>
+                      <Send className="h-4 w-4 mr-2" />
+                      Resend Email
+                    </>
+                  )}
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Bulk Progress Overlay */}
+        {bulkResending && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full mx-4">
+              <div className="text-center">
+                <RefreshCw className="h-12 w-12 text-blue-600 animate-spin mx-auto mb-4" />
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">Resending Emails</h3>
+                <p className="text-gray-600 mb-4">
+                  Processing {bulkProgress.current} of {bulkProgress.total}...
+                </p>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div 
+                    className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${(bulkProgress.current / bulkProgress.total) * 100}%` }}
+                  />
+                </div>
               </div>
             </div>
           </div>

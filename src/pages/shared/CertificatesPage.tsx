@@ -1303,13 +1303,54 @@ const CertificatesPage: React.FC = () => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                       <div className="flex gap-2">
-                        <button className="text-blue-600 hover:text-blue-900">
+                        <button 
+                          onClick={() => certificate.certificateUrl && window.open(certificate.certificateUrl, '_blank')}
+                          disabled={!certificate.certificateUrl}
+                          className="text-blue-600 hover:text-blue-900 disabled:text-gray-300 disabled:cursor-not-allowed p-1 rounded hover:bg-blue-50 transition-colors"
+                          title="View certificate"
+                          aria-label={`View certificate for ${certificate.recipientName}`}
+                        >
                           <EyeIcon className="w-4 h-4" />
                         </button>
-                        <button className="text-green-600 hover:text-green-900">
+                        <button 
+                          onClick={async () => {
+                            if (!certificate.certificateUrl) {
+                              toast.error('Certificate URL not available');
+                              return;
+                            }
+                            try {
+                              const response = await fetch(certificate.certificateUrl);
+                              const blob = await response.blob();
+                              const url = window.URL.createObjectURL(blob);
+                              const link = document.createElement('a');
+                              link.href = url;
+                              link.download = `certificate-${certificate.recipientName.replace(/\s+/g, '_')}-${certificate.verificationCode}.png`;
+                              document.body.appendChild(link);
+                              link.click();
+                              document.body.removeChild(link);
+                              window.URL.revokeObjectURL(url);
+                              toast.success('Certificate downloaded!');
+                            } catch (err) {
+                              logger.error('Failed to download certificate:', err);
+                              toast.error('Failed to download certificate');
+                            }
+                          }}
+                          disabled={!certificate.certificateUrl}
+                          className="text-green-600 hover:text-green-900 disabled:text-gray-300 disabled:cursor-not-allowed p-1 rounded hover:bg-green-50 transition-colors"
+                          title="Download certificate"
+                          aria-label={`Download certificate for ${certificate.recipientName}`}
+                        >
                           <ArrowDownTrayIcon className="w-4 h-4" />
                         </button>
-                        <button className="text-purple-600 hover:text-purple-900">
+                        <button 
+                          onClick={() => {
+                            const verifyUrl = `${window.location.origin}/verify/${certificate.verificationCode}`;
+                            window.open(verifyUrl, '_blank');
+                          }}
+                          className="text-purple-600 hover:text-purple-900 p-1 rounded hover:bg-purple-50 transition-colors"
+                          title="View verification page"
+                          aria-label={`View verification page for ${certificate.recipientName}`}
+                        >
                           <QrCodeIcon className="w-4 h-4" />
                         </button>
                       </div>

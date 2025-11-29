@@ -15,7 +15,7 @@ import { logger } from '../utils/logger';
 
 export interface EmailLog {
   id: string;
-  type: 'email_confirmation_sent' | 'payment_notification_sent' | 'certificate_notification_sent' | 'event_reminder_sent' | 'feedback_request_sent' | 'checkin_notification_sent';
+  type: 'email_confirmation_sent' | 'payment_notification_sent' | 'event_reminder_sent' | 'feedback_request_sent' | 'checkin_notification_sent';
   registrationId?: string;
   eventId?: string;
   eventTitle?: string;
@@ -33,7 +33,7 @@ export interface EmailLog {
 export interface EmailTemplate {
   id: string;
   name: string;
-  type: 'registration_confirmation' | 'payment_notification' | 'certificate_notification' | 'event_reminder' | 'feedback_request';
+  type: 'registration_confirmation' | 'payment_notification' | 'event_reminder' | 'feedback_request' | 'checkin_notification';
   description: string;
 }
 
@@ -84,15 +84,15 @@ export class EmailService {
       },
       {
         id: 'feedback_request',
-        name: 'Feedback Request',
+        name: 'Feedback & Certificate',
         type: 'feedback_request',
-        description: 'Request feedback from attendees'
+        description: 'Request feedback from attendees - certificate will be automatically sent after submission'
       },
       {
-        id: 'certificate_notification',
-        name: 'Certificate Ready',
-        type: 'certificate_notification',
-        description: 'Notify attendees that certificate is ready'
+        id: 'checkin_notification',
+        name: 'Check-in Confirmation',
+        type: 'checkin_notification',
+        description: 'Send check-in confirmation to attendees'
       }
     ];
   }
@@ -118,10 +118,19 @@ export class EmailService {
 
       const snapshot = await getDocs(emailsQuery);
       
+      // Email types we care about from activity_logs
+      const EMAIL_TYPES = [
+        'email_confirmation_sent',
+        'payment_notification_sent', 
+        'event_reminder_sent',
+        'feedback_request_sent',
+        'checkin_notification_sent'
+      ];
+      
       return snapshot.docs
         .filter(doc => {
           const type = doc.data().type;
-          return type && type.includes('email') || type && type.includes('notification');
+          return type && EMAIL_TYPES.includes(type);
         })
         .map(doc => ({
           id: doc.id,
@@ -153,10 +162,19 @@ export class EmailService {
 
       const snapshot = await getDocs(emailsQuery);
       
+      // Email types we care about from activity_logs
+      const EMAIL_TYPES = [
+        'email_confirmation_sent',
+        'payment_notification_sent', 
+        'event_reminder_sent',
+        'feedback_request_sent',
+        'checkin_notification_sent'
+      ];
+      
       return snapshot.docs
         .filter(doc => {
           const type = doc.data().type;
-          return type && (type.includes('email') || type.includes('notification'));
+          return type && EMAIL_TYPES.includes(type);
         })
         .map(doc => ({
           id: doc.id,
@@ -209,6 +227,7 @@ export class EmailService {
     userName: string;
     requiresPayment?: boolean;
     emailType?: 'submitted' | 'approved';
+    isResend?: boolean;
   }): Promise<{ success: boolean; message: string; emailId?: string }> {
     try {
       const sendConfirmationEmail = httpsCallable(functions, 'sendConfirmationEmail');
@@ -238,6 +257,7 @@ export class EmailService {
     attendeeEmail: string;
     attendeeName: string;
     paymentInstructions?: string;
+    isResend?: boolean;
   }): Promise<{ success: boolean; message: string; emailId?: string }> {
     try {
       const sendPaymentNotification = httpsCallable(functions, 'sendPaymentNotification');
@@ -268,6 +288,7 @@ export class EmailService {
     eventLocation: string;
     registrationId?: string;
     reminderType?: '24h' | '1h';
+    isResend?: boolean;
   }): Promise<{ success: boolean; message: string; emailId?: string }> {
     try {
       const sendEventReminder = httpsCallable(functions, 'sendEventReminder');
@@ -297,6 +318,7 @@ export class EmailService {
     eventId: string;
     registrationId?: string;
     feedbackUrl?: string;
+    isResend?: boolean;
   }): Promise<{ success: boolean; message: string; emailId?: string }> {
     try {
       const sendFeedbackRequest = httpsCallable(functions, 'sendFeedbackRequest');
@@ -325,6 +347,7 @@ export class EmailService {
     eventTitle: string;
     certificateUrl: string;
     registrationId?: string;
+    isResend?: boolean;
   }): Promise<{ success: boolean; message: string; emailId?: string }> {
     try {
       const sendCertificateNotification = httpsCallable(functions, 'sendCertificateNotification');
@@ -340,6 +363,34 @@ export class EmailService {
       return {
         success: false,
         message: error.message || 'Failed to send certificate notification'
+      };
+    }
+  }
+
+  /**
+   * Send check-in notification email
+   */
+  static async sendCheckInNotification(params: {
+    registrationId: string;
+    eventId: string;
+    userEmail: string;
+    userName: string;
+    isResend?: boolean;
+  }): Promise<{ success: boolean; message: string; emailId?: string }> {
+    try {
+      const sendCheckInNotification = httpsCallable(functions, 'sendCheckInNotification');
+      const result = await sendCheckInNotification(params) as any;
+      
+      return {
+        success: result.data.success,
+        message: result.data.message,
+        emailId: result.data.emailId
+      };
+    } catch (error: any) {
+      logger.error('Error sending check-in notification:', error);
+      return {
+        success: false,
+        message: error.message || 'Failed to send check-in notification'
       };
     }
   }
@@ -364,19 +415,30 @@ export class EmailService {
   }
 
   /**
-   * Resend email by log ID
+   * Resend email by log ID with optional email override
+   * @param emailLog - The original email log entry
+   * @param overrideEmail - Optional new email address to send to (for bounced/invalid emails)
+   * @param isResend - Flag to mark this as a resend operation in activity logs
    */
-  static async resendEmail(emailLog: EmailLog): Promise<{ success: boolean; message: string }> {
+  static async resendEmail(
+    emailLog: EmailLog, 
+    overrideEmail?: string,
+    isResend: boolean = true
+  ): Promise<{ success: boolean; message: string; emailId?: string }> {
     try {
+      // Use override email if provided, otherwise use original
+      const targetEmail = overrideEmail || emailLog.userEmail;
+      
       // Determine which function to call based on email type
       switch (emailLog.type) {
         case 'email_confirmation_sent':
           return await this.sendConfirmationEmail({
             registrationId: emailLog.registrationId || '',
             eventId: emailLog.eventId || '',
-            userEmail: emailLog.userEmail,
+            userEmail: targetEmail,
             userName: emailLog.userName,
-            emailType: 'approved'
+            emailType: 'approved',
+            isResend
           });
 
         case 'payment_notification_sent':
@@ -384,38 +446,41 @@ export class EmailService {
             registrationId: emailLog.registrationId || '',
             status: emailLog.status as any || 'pending',
             eventTitle: emailLog.eventTitle || '',
-            attendeeEmail: emailLog.userEmail,
-            attendeeName: emailLog.userName
+            attendeeEmail: targetEmail,
+            attendeeName: emailLog.userName,
+            isResend
           });
 
         case 'event_reminder_sent':
           return await this.sendEventReminder({
-            userEmail: emailLog.userEmail,
+            userEmail: targetEmail,
             userName: emailLog.userName,
             eventTitle: emailLog.eventTitle || '',
             eventDate: 'TBD',
             eventLocation: 'TBD',
             registrationId: emailLog.registrationId,
-            reminderType: emailLog.reminderType as any
+            reminderType: emailLog.reminderType as any,
+            isResend
           });
 
         case 'feedback_request_sent':
           return await this.sendFeedbackRequest({
-            userEmail: emailLog.userEmail,
+            userEmail: targetEmail,
             userName: emailLog.userName,
             eventTitle: emailLog.eventTitle || '',
             eventId: emailLog.eventId || '',
             registrationId: emailLog.registrationId,
-            feedbackUrl: emailLog.feedbackUrl
+            feedbackUrl: emailLog.feedbackUrl,
+            isResend
           });
 
-        case 'certificate_notification_sent':
-          return await this.sendCertificateNotification({
-            userEmail: emailLog.userEmail,
+        case 'checkin_notification_sent':
+          return await this.sendCheckInNotification({
+            registrationId: emailLog.registrationId || '',
+            eventId: emailLog.eventId || '',
+            userEmail: targetEmail,
             userName: emailLog.userName,
-            eventTitle: emailLog.eventTitle || '',
-            certificateUrl: emailLog.certificateUrl || '',
-            registrationId: emailLog.registrationId
+            isResend
           });
 
         default:
