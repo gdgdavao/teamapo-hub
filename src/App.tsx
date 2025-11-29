@@ -29,6 +29,7 @@ import CreateEventPage from './pages/admin/AdminCreateEventPage';
 import ManageEventsPage from './pages/admin/AdminManageEventsPage';
 import AdminEventFeedbackPage from './pages/admin/AdminEventFeedbackPage';
 import AdminEmailManagementPage from './pages/admin/AdminEmailManagementPage';
+import CertificateRegenerationPage from './pages/admin/CertificateRegenerationPage';
 
 // Shared Pages
 import CertificatesPage from './pages/shared/CertificatesPage';
@@ -215,6 +216,12 @@ const AppContent: React.FC = () => {
           <AdminEmailManagementPage />
         </ProtectedRoute>
       } />
+
+      <Route path="/admin/certificates/regenerate" element={
+        <ProtectedRoute requiredRole="admin">
+          <CertificateRegenerationPage />
+        </ProtectedRoute>
+      } />
       
       <Route path="/users" element={
         <ProtectedRoute requiredRole="admin">
@@ -291,6 +298,7 @@ const AppContent: React.FC = () => {
 
       {/* Public Event Registration Route */}
       <Route path="/events/:eventId/register" element={<EventRegistrationPage />} />
+      <Route path="/e/:slug" element={<EventRegistrationPage />} />
 
       {/* 404 Route */}
       <Route path="*" element={<NotFoundPage />} />

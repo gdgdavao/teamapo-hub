@@ -660,8 +660,11 @@ const ManageEventsPage: React.FC = () => {
     }
   };
 
-  const handleShareEvent = (eventId: string, eventTitle: string) => {
-    const shareUrl = `${window.location.origin}/events/${eventId}/register`;
+  const handleShareEvent = (eventId: string, eventTitle: string, eventSlug?: string) => {
+    // Use slug-based URL if available, otherwise fall back to ID
+    const shareUrl = eventSlug 
+      ? `${window.location.origin}/e/${eventSlug}`
+      : `${window.location.origin}/events/${eventId}/register`;
     
     // Copy link to clipboard
     navigator.clipboard.writeText(shareUrl).then(() => {
@@ -990,7 +993,7 @@ const ManageEventsPage: React.FC = () => {
                         <PencilIcon className="h-4 w-4" />
                       </Link>
                       <button
-                        onClick={() => event.status === 'published' ? handleShareEvent(event.id, event.title) : null}
+                        onClick={() => event.status === 'published' ? handleShareEvent(event.id, event.title, event.slug) : null}
                         className={`flex items-center justify-center w-8 h-8 rounded-lg transition-colors ${
                           event.status === 'published'
                             ? 'text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 cursor-pointer'
@@ -1171,7 +1174,7 @@ const ManageEventsPage: React.FC = () => {
                               <PencilIcon className="h-4 w-4" />
                             </Link>
                             <button
-                              onClick={() => event.status === 'published' ? handleShareEvent(event.id, event.title) : null}
+                              onClick={() => event.status === 'published' ? handleShareEvent(event.id, event.title, event.slug) : null}
                               className={`${
                                 event.status === 'published'
                                   ? 'text-indigo-600 hover:text-indigo-900 cursor-pointer'
@@ -1319,7 +1322,7 @@ const ManageEventsPage: React.FC = () => {
                         <span className="hidden sm:inline">Edit</span>
                       </Link>
                       <button
-                        onClick={() => event.status === 'published' ? handleShareEvent(event.id, event.title) : null}
+                        onClick={() => event.status === 'published' ? handleShareEvent(event.id, event.title, event.slug) : null}
                         className={`flex items-center justify-center space-x-1 px-2 sm:px-3 py-2 rounded-lg transition-colors text-xs font-medium min-w-0 ${
                           event.status === 'published'
                             ? 'text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 cursor-pointer'

@@ -24,6 +24,7 @@ export interface User {
 // Event Types
 export interface Event {
   id: string;
+  slug: string;
   title: string;
   description: string;
   shortDescription: string;
@@ -190,6 +191,8 @@ export interface Registration {
   updatedAt: Timestamp;
   registrationType?: 'online' | 'walk-in'; // Type of registration
   registeredBy?: string; // UID of admin/organizer who registered walk-in attendee
+  // Custom form responses - keyed by field ID
+  customResponses?: Record<string, string | boolean | number>;
 }
 
 export interface PaymentDetails {

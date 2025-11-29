@@ -70,9 +70,10 @@ const initFirebaseAdmin = async () => {
   try {
     const { initializeApp, cert, getApps } = await import('firebase-admin/app')
     const { getFirestore } = await import('firebase-admin/firestore')
+    const { getStorage } = await import('firebase-admin/storage')
 
     if (getApps().length > 0) {
-      return getFirestore()
+      return { db: getFirestore(), storage: getStorage() }
     }
 
     // Load service account from file
@@ -82,11 +83,59 @@ const initFirebaseAdmin = async () => {
 
     initializeApp({
       credential: cert(serviceAccount),
+      storageBucket: `${serviceAccount.project_id}.firebasestorage.app`,
     })
-    return getFirestore()
+    return { db: getFirestore(), storage: getStorage() }
   } catch (error) {
     console.warn('[event-static-html] Failed to initialize Firebase Admin:', error.message)
-    return null
+    return { db: null, storage: null }
+  }
+}
+
+/**
+ * Resolve Firebase Storage path to a public download URL
+ * Handles various URL formats:
+ * - Already HTTPS URLs: return as-is
+ * - gs:// URLs: convert to public URL
+ * - Storage paths: convert to public URL
+ */
+const resolveStorageUrl = async (storage, imageUrl, defaultImage) => {
+  if (!imageUrl) return defaultImage
+  
+  // Already a public HTTPS URL
+  if (imageUrl.startsWith('https://')) {
+    return imageUrl
+  }
+
+  try {
+    const bucket = storage.bucket()
+    let filePath = imageUrl
+
+    // Handle gs:// URLs
+    if (imageUrl.startsWith('gs://')) {
+      const gsUrl = new URL(imageUrl)
+      filePath = gsUrl.pathname.slice(1) // Remove leading slash
+    }
+
+    const file = bucket.file(filePath)
+    const [exists] = await file.exists()
+    
+    if (!exists) {
+      console.warn(`[event-static-html] Image file not found: ${filePath}`)
+      return defaultImage
+    }
+
+    // Generate a signed URL that expires in 1 year (for social sharing)
+    // Or use the public URL if the file is public
+    const [signedUrl] = await file.getSignedUrl({
+      action: 'read',
+      expires: Date.now() + 365 * 24 * 60 * 60 * 1000, // 1 year
+    })
+    
+    return signedUrl
+  } catch (error) {
+    console.warn(`[event-static-html] Failed to resolve storage URL: ${imageUrl}`, error.message)
+    return defaultImage
   }
 }
 
@@ -123,6 +172,7 @@ const fetchPublishedEvents = async (db) => {
       const data = doc.data()
       events.push({
         id: doc.id,
+        slug: data.slug || null,
         title: data.title || 'Untitled Event',
         description: data.description || '',
         shortDescription: data.shortDescription || data.description || '',
@@ -167,7 +217,7 @@ const createEventStaticHtmlPlugin = () => ({
     }
 
     // Initialize Firebase Admin and fetch events
-    const db = await initFirebaseAdmin()
+    const { db, storage } = await initFirebaseAdmin()
     const events = await fetchPublishedEvents(db)
 
     if (events.length === 0) {
@@ -182,6 +232,7 @@ const createEventStaticHtmlPlugin = () => ({
       events.map(async (event) => {
         const {
           id,
+          slug,
           title,
           shortDescription,
           description,
@@ -194,9 +245,22 @@ const createEventStaticHtmlPlugin = () => ({
           tags,
         } = event
 
-        const eventUrl = `${siteUrl}/events/${id}/register`
+        // Use slug-based URL if available, otherwise fall back to ID
+        const eventUrl = slug 
+          ? `${siteUrl}/e/${slug}`
+          : `${siteUrl}/events/${id}/register`
         const eventDescription = shortDescription || description || 'Join us for this exciting event!'
-        const eventImage = imageUrl || defaultImage
+        
+        // Resolve event image URL from Firebase Storage if needed
+        const eventImage = storage 
+          ? await resolveStorageUrl(storage, imageUrl, defaultImage)
+          : (imageUrl || defaultImage)
+        
+        console.log(`[event-static-html] Event: ${title}`)
+        console.log(`  - Slug: ${slug || '(none)'}`)
+        console.log(`  - Original imageUrl: ${imageUrl || '(none)'}`)
+        console.log(`  - Resolved eventImage: ${eventImage === defaultImage ? '(default)' : eventImage.substring(0, 80) + '...'}`)
+        
         const pageTitle = `${title} | TeamApo Hub`
 
         // Format date for display
@@ -233,21 +297,31 @@ const createEventStaticHtmlPlugin = () => ({
         html = upsertMeta(html, 'name', 'description', metaDescription)
 
         // Open Graph
-        html = upsertMeta(html, 'property', 'og:title', title)
+        html = upsertMeta(html, 'property', 'og:title', pageTitle)
         html = upsertMeta(html, 'property', 'og:description', metaDescription)
         html = upsertMeta(html, 'property', 'og:image', eventImage)
+        html = upsertMeta(html, 'property', 'og:image:secure_url', eventImage)
+        html = upsertMeta(html, 'property', 'og:image:alt', `${title} Event Banner`)
         html = upsertMeta(html, 'property', 'og:url', eventUrl)
         html = upsertMeta(html, 'property', 'og:type', 'event')
         html = upsertMeta(html, 'property', 'og:site_name', 'TeamApo Hub')
 
         // Twitter Card
-        html = upsertMeta(html, 'name', 'twitter:title', title)
+        html = upsertMeta(html, 'name', 'twitter:title', pageTitle)
         html = upsertMeta(html, 'name', 'twitter:description', metaDescription)
         html = upsertMeta(html, 'name', 'twitter:image', eventImage)
+        html = upsertMeta(html, 'name', 'twitter:image:alt', `${title} Event Banner`)
+        html = upsertMeta(html, 'name', 'twitter:url', eventUrl)
         html = upsertMeta(html, 'name', 'twitter:card', 'summary_large_image')
 
         // Generic image meta
         html = upsertMeta(html, 'name', 'image', eventImage)
+
+        // Add canonical link
+        const canonicalLink = `\n    <link rel="canonical" href="${escapeHtml(eventUrl)}" />`
+        // Remove existing canonical if any
+        html = html.replace(/\n?\s*<link[^>]*rel=["']canonical["'][^>]*>/gi, '')
+        html = insertBeforeHeadClose(html, canonicalLink)
 
         // Event-specific meta tags
         if (startDate) {
@@ -303,12 +377,19 @@ const createEventStaticHtmlPlugin = () => ({
         const ldJsonScript = `\n    <script type="application/ld+json">${JSON.stringify(structuredData)}</script>`
         html = insertBeforeHeadClose(html, ldJsonScript)
 
-        // Write the file
-        const outDir = path.resolve('dist', 'events', id, 'register')
-        const outPath = path.join(outDir, 'index.html')
+        // Write the file for ID-based route (backward compatibility)
+        const outDirById = path.resolve('dist', 'events', id, 'register')
+        const outPathById = path.join(outDirById, 'index.html')
+        await fs.mkdir(outDirById, { recursive: true })
+        await fs.writeFile(outPathById, html, 'utf-8')
 
-        await fs.mkdir(outDir, { recursive: true })
-        await fs.writeFile(outPath, html, 'utf-8')
+        // Also write the file for slug-based route if slug exists
+        if (slug) {
+          const outDirBySlug = path.resolve('dist', 'e', slug)
+          const outPathBySlug = path.join(outDirBySlug, 'index.html')
+          await fs.mkdir(outDirBySlug, { recursive: true })
+          await fs.writeFile(outPathBySlug, html, 'utf-8')
+        }
       }),
     )
 

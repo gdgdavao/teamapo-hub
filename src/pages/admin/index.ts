@@ -10,3 +10,4 @@ export { default as AdminManageEventsPage } from './AdminManageEventsPage';
 export { default as AdminAnalyticsPage } from './AdminAnalyticsPage';
 export { default as AdminEventFeedbackPage } from './AdminEventFeedbackPage';
 export { default as AdminEmailManagementPage } from './AdminEmailManagementPage';
+export { default as CertificateRegenerationPage } from './CertificateRegenerationPage';

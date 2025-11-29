@@ -19,10 +19,11 @@ import { getDownloadUrlFromPath } from '../../utils/storageUtils';
 import { logger } from '../../utils/logger';
 
 const EventRegistrationPage: React.FC = () => {
-  const { eventId } = useParams<{ eventId: string }>();
+  const { eventId, slug } = useParams<{ eventId?: string; slug?: string }>();
   const navigate = useNavigate();
   
   const [event, setEvent] = useState<Event | null>(null);
+  const [resolvedEventId, setResolvedEventId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [registrationForm, setRegistrationForm] = useState<FormField[]>([]);
@@ -142,18 +143,48 @@ const EventRegistrationPage: React.FC = () => {
     } : undefined
   });
 
+  // Resolve slug to eventId if needed
+  useEffect(() => {
+    const resolveEventIdentifier = async () => {
+      if (eventId) {
+        setResolvedEventId(eventId);
+        return;
+      }
+      
+      if (slug) {
+        try {
+          const eventBySlug = await EventService.getEventBySlug(slug);
+          if (eventBySlug) {
+            setResolvedEventId(eventBySlug.id);
+          } else {
+            setError('Event not found');
+            setLoading(false);
+          }
+        } catch (err) {
+          logger.error('Error resolving event slug:', err);
+          setError('Failed to load event');
+          setLoading(false);
+        }
+        return;
+      }
+      
+      setError('Event ID or slug is required');
+      setLoading(false);
+    };
+    
+    resolveEventIdentifier();
+  }, [eventId, slug]);
+
   // Load event data with real-time updates
   useEffect(() => {
-    if (!eventId) {
-      setError('Event ID is required');
-      setLoading(false);
+    if (!resolvedEventId) {
       return;
     }
 
     setLoading(true);
 
     const unsubscribe = EventService.subscribeToEvent(
-      eventId,
+      resolvedEventId,
       eventData => {
         if (!eventData) {
           setError('Event not found');
@@ -187,21 +218,21 @@ const EventRegistrationPage: React.FC = () => {
     return () => {
       unsubscribe();
     };
-  }, [eventId]);
+  }, [resolvedEventId]);
 
   useEffect(() => {
     hasLoadedFormRef.current = false;
-  }, [eventId]);
+  }, [resolvedEventId]);
 
   // Load registration form configuration once event is available
   useEffect(() => {
-    if (!eventId || !event || hasLoadedFormRef.current) {
+    if (!resolvedEventId || !event || hasLoadedFormRef.current) {
       return;
     }
 
     const loadRegistrationForm = async () => {
       try {
-        const formFields = await EventService.getEventRegistrationForm(eventId);
+        const formFields = await EventService.getEventRegistrationForm(resolvedEventId);
         setRegistrationForm(formFields);
         hasLoadedFormRef.current = true;
       } catch (err) {
@@ -211,10 +242,13 @@ const EventRegistrationPage: React.FC = () => {
     };
 
     loadRegistrationForm();
-  }, [eventId, event]);
+  }, [resolvedEventId, event]);
 
   const copyEventLink = () => {
-    const url = `${window.location.origin}/events/${eventId}/register`;
+    // Use slug-based URL if available, otherwise fall back to ID
+    const url = event?.slug 
+      ? `${window.location.origin}/e/${event.slug}`
+      : `${window.location.origin}/events/${resolvedEventId}/register`;
     navigator.clipboard.writeText(url);
     toast.success('Event link copied to clipboard!');
   };

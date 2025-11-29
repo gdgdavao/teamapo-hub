@@ -22,6 +22,7 @@ import {
 import { httpsCallable } from 'firebase/functions';
 import { db, storage, functions } from '../config/firebase';
 import { logger } from '../utils/logger';
+import { generateSlug } from '../utils/slugUtils';
 import { Event, TicketType, PromoCode, FormField } from '../types';
 
 // Interface for event form data
@@ -101,6 +102,45 @@ export class EventService {
   private static readonly EVENT_IMAGES_PATH = 'event-images';
   private static readonly SPEAKER_PHOTOS_PATH = 'speaker-photos';
   private static readonly PAYMENT_QR_PATH = 'payment-qr';
+
+  /**
+   * Generate a unique slug for an event
+   * Checks existing slugs in the database to ensure uniqueness
+   */
+  private static async generateUniqueSlug(title: string): Promise<string> {
+    const baseSlug = generateSlug(title);
+    
+    // Check if slug exists
+    const existingEvent = await this.getEventBySlug(baseSlug);
+    if (!existingEvent) {
+      return baseSlug;
+    }
+    
+    // Add a short random suffix if slug exists
+    const randomSuffix = Math.random().toString(36).substring(2, 6);
+    return `${baseSlug}-${randomSuffix}`;
+  }
+
+  /**
+   * Get event by slug
+   */
+  static async getEventBySlug(slug: string): Promise<Event | null> {
+    try {
+      const eventsRef = collection(db, this.EVENTS_COLLECTION);
+      const q = query(eventsRef, where('slug', '==', slug));
+      const snapshot = await getDocs(q);
+      
+      if (snapshot.empty) {
+        return null;
+      }
+      
+      const doc = snapshot.docs[0];
+      return { id: doc.id, ...doc.data() } as Event;
+    } catch (error) {
+      logger.error('Error getting event by slug:', error);
+      return null;
+    }
+  }
 
   /**
    * Recursively remove undefined values from an object to prevent Firestore errors
@@ -304,8 +344,12 @@ export class EventService {
         };
       }
 
+      // Generate a unique slug from the title
+      const slug = await this.generateUniqueSlug(eventData.title);
+
       // Convert form data to Event object (only include defined fields to avoid Firestore errors)
       const event: any = {
+        slug,
         title: eventData.title.trim(),
         description: eventData.description.trim(),
         shortDescription: eventData.shortDescription.trim(),
@@ -406,10 +450,22 @@ export class EventService {
     try {
       const eventRef = doc(db, this.EVENTS_COLLECTION, eventId);
       
+      // Check if the existing event has a slug, if not generate one
+      const existingEvent = await this.getEvent(eventId);
+      
       // Create update data object, filtering out undefined values
       const updateData: any = {
         updatedAt: serverTimestamp()
       };
+
+      // Generate slug if event doesn't have one yet
+      if (existingEvent && !existingEvent.slug) {
+        const titleForSlug = eventData.title || existingEvent.title;
+        if (titleForSlug) {
+          updateData.slug = await this.generateUniqueSlug(titleForSlug);
+          logger.log(`Generated slug for existing event: ${updateData.slug}`);
+        }
+      }
 
       // Only add fields that have actual values (avoid undefined)
       Object.keys(eventData).forEach(key => {
