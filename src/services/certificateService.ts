@@ -32,7 +32,9 @@ export interface IssuedCertificate {
   templateName: string;
   recipientName: string;
   recipientEmail: string;
+  eventId: string;
   eventTitle: string;
+  registrationId?: string;
   issuedDate: string;
   verificationCode: string;
   status: 'issued' | 'verified' | 'revoked';
@@ -369,7 +371,9 @@ export class CertificateService {
           templateName: data.templateName || 'Unknown Template',
           recipientName: data.recipientName,
           recipientEmail: data.recipientEmail || '',
+          eventId: data.eventId || '',
           eventTitle: data.eventTitle,
+          registrationId: data.registrationId,
           issuedDate: data.issuedAt?.toDate?.()?.toISOString() || new Date().toISOString(),
           verificationCode: data.credentialId,
           status: data.isVerified ? 'issued' : 'issued',
@@ -403,7 +407,9 @@ export class CertificateService {
           templateName: data.templateName || 'Unknown Template',
           recipientName: data.recipientName,
           recipientEmail: data.recipientEmail || '',
+          eventId: data.eventId || eventId,
           eventTitle: data.eventTitle,
+          registrationId: data.registrationId,
           issuedDate: data.issuedAt?.toDate?.()?.toISOString() || new Date().toISOString(),
           verificationCode: data.credentialId,
           status: data.isVerified ? 'issued' : 'issued',

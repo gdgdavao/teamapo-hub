@@ -498,19 +498,20 @@ const FeedbackPage: React.FC = () => {
                 </div>
               )}
               
-              {/* No Template Available */}
-              {!template && !generatingCertificate && !certificateUrl && !certificateError && (
-                <div className="py-4">
-                  <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                  </div>
-                  <p className="text-sm font-medium text-gray-600 mb-1">
-                    Certificate Coming Soon
+              {/* Fallback: No certificate available - contact support */}
+              {!generatingCertificate && !certificateUrl && !certificateError && (
+                <div className="py-4 text-center">
+                  <p className="text-sm text-gray-600 mb-2">
+                    Having trouble with your certificate?
                   </p>
-                  <p className="text-xs text-gray-400">
-                    The organizer hasn't set up certificates for this event yet. Check back later!
+                  <p className="text-sm text-gray-500">
+                    Please contact us at{' '}
+                    <a 
+                      href="mailto:support@gdgdavao.org" 
+                      className="text-blue-600 hover:text-blue-800 font-medium underline"
+                    >
+                      support@gdgdavao.org
+                    </a>
                   </p>
                 </div>
               )}

@@ -16,15 +16,19 @@ import {
   MapPinIcon,
   SparklesIcon,
   ArrowPathIcon,
-  ExclamationTriangleIcon
+  ExclamationTriangleIcon,
+  ArchiveBoxArrowDownIcon,
+  UserGroupIcon,
+  XMarkIcon
 } from '@heroicons/react/24/outline';
 import AdminLayout from '../../components/admin/AdminLayout';
 import OrganizerLayout from '../../components/organizer/OrganizerLayout';
 import { useAuth } from '../../contexts/AuthContext';
-import { CertificateTemplate, Certificate, TemplateElement } from '../../types';
+import { CertificateTemplate, Certificate, TemplateElement, Registration } from '../../types';
 import { CertificateGenerationService } from '../../utils/certificateGeneration';
 import { CertificateService, IssuedCertificate } from '../../services/certificateService';
 import { EventService } from '../../services/eventService';
+import { RegistrationService } from '../../services/registrationService';
 import { logger } from '../../utils/logger';
 import toast from 'react-hot-toast';
 
@@ -41,6 +45,19 @@ const CertificatesPage: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedEvent, setSelectedEvent] = useState('');
   const [loading, setLoading] = useState(false);
+  const [selectedCertificates, setSelectedCertificates] = useState<Set<string>>(new Set());
+  const [isExporting, setIsExporting] = useState(false);
+
+  // Bulk generate state
+  const [showBulkGenerateModal, setShowBulkGenerateModal] = useState(false);
+  const [bulkGenerateEventId, setBulkGenerateEventId] = useState('');
+  const [registrations, setRegistrations] = useState<Registration[]>([]);
+  const [loadingRegistrations, setLoadingRegistrations] = useState(false);
+  const [selectedRegistrations, setSelectedRegistrations] = useState<Set<string>>(new Set());
+  const [bulkGenerateFilter, setBulkGenerateFilter] = useState<'all' | 'attended' | 'no-certificate'>('no-certificate');
+  const [bulkGenerating, setBulkGenerating] = useState(false);
+  const [bulkGenerateProgress, setBulkGenerateProgress] = useState({ current: 0, total: 0 });
+  const [attendeeSearchTerm, setAttendeeSearchTerm] = useState('');
 
   // Unified template builder state
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
@@ -609,13 +626,378 @@ const CertificatesPage: React.FC = () => {
     }
   };
 
+  // Bulk selection handlers
+  const handleSelectCertificate = (certificateId: string) => {
+    setSelectedCertificates(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(certificateId)) {
+        newSet.delete(certificateId);
+      } else {
+        newSet.add(certificateId);
+      }
+      return newSet;
+    });
+  };
+
+  const handleSelectAll = () => {
+    if (selectedCertificates.size === filteredCertificates.length) {
+      setSelectedCertificates(new Set());
+    } else {
+      setSelectedCertificates(new Set(filteredCertificates.map(c => c.id)));
+    }
+  };
+
+  const handleBulkExport = async () => {
+    if (selectedCertificates.size === 0) {
+      toast.error('Please select at least one certificate to export');
+      return;
+    }
+
+    try {
+      setIsExporting(true);
+      toast.loading(`Preparing ${selectedCertificates.size} certificate(s) for download...`, { id: 'bulk-export' });
+
+      const selectedCerts = filteredCertificates.filter(c => selectedCertificates.has(c.id));
+      
+      // Check if certificates have URLs
+      const certsWithUrls = selectedCerts.filter(c => c.certificateUrl);
+      const certsWithoutUrls = selectedCerts.filter(c => !c.certificateUrl);
+
+      if (certsWithoutUrls.length > 0) {
+        toast.error(`${certsWithoutUrls.length} certificate(s) don't have download URLs yet`, { id: 'bulk-export' });
+        return;
+      }
+
+      // For single certificate, just download directly
+      if (certsWithUrls.length === 1) {
+        const cert = certsWithUrls[0];
+        const link = document.createElement('a');
+        link.href = cert.certificateUrl;
+        link.download = `certificate-${cert.recipientName.replace(/\s+/g, '_')}-${cert.verificationCode}.png`;
+        link.target = '_blank';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        toast.success('Certificate downloaded successfully!', { id: 'bulk-export' });
+        setSelectedCertificates(new Set());
+        return;
+      }
+
+      // For multiple certificates, download each one with a slight delay
+      let downloadedCount = 0;
+      for (const cert of certsWithUrls) {
+        try {
+          const response = await fetch(cert.certificateUrl);
+          const blob = await response.blob();
+          const url = window.URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = `certificate-${cert.recipientName.replace(/\s+/g, '_')}-${cert.verificationCode}.png`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          window.URL.revokeObjectURL(url);
+          downloadedCount++;
+          
+          // Small delay between downloads to prevent browser blocking
+          await new Promise(resolve => setTimeout(resolve, 500));
+        } catch (err) {
+          logger.error(`Failed to download certificate ${cert.id}:`, err);
+        }
+      }
+
+      toast.success(`Successfully downloaded ${downloadedCount} certificate(s)!`, { id: 'bulk-export' });
+      setSelectedCertificates(new Set());
+    } catch (error) {
+      logger.error('Error during bulk export:', error);
+      toast.error('Failed to export certificates', { id: 'bulk-export' });
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleExportCSV = () => {
+    if (selectedCertificates.size === 0) {
+      toast.error('Please select at least one certificate to export');
+      return;
+    }
+
+    const selectedCerts = filteredCertificates.filter(c => selectedCertificates.has(c.id));
+    
+    // Create CSV content
+    const headers = ['Recipient Name', 'Email', 'Event', 'Template', 'Issue Date', 'Verification Code', 'Status', 'Certificate URL'];
+    const rows = selectedCerts.map(cert => [
+      cert.recipientName,
+      cert.recipientEmail,
+      cert.eventTitle,
+      cert.templateName,
+      new Date(cert.issuedDate).toLocaleDateString(),
+      cert.verificationCode,
+      cert.status,
+      cert.certificateUrl || 'N/A'
+    ]);
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+    ].join('\n');
+
+    // Download CSV
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `certificates-export-${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+
+    toast.success(`Exported ${selectedCerts.length} certificate(s) to CSV`);
+  };
+
+  // Bulk Generate Handlers
+  const handleOpenBulkGenerate = () => {
+    setShowBulkGenerateModal(true);
+    setBulkGenerateEventId('');
+    setRegistrations([]);
+    setSelectedRegistrations(new Set());
+    setBulkGenerateFilter('no-certificate');
+    setBulkGenerateProgress({ current: 0, total: 0 });
+    setAttendeeSearchTerm('');
+  };
+
+  const handleCloseBulkGenerate = () => {
+    if (bulkGenerating) {
+      if (!confirm('Generation is in progress. Are you sure you want to cancel?')) {
+        return;
+      }
+    }
+    setShowBulkGenerateModal(false);
+    setBulkGenerateEventId('');
+    setRegistrations([]);
+    setSelectedRegistrations(new Set());
+    setBulkGenerating(false);
+  };
+
+  const handleLoadRegistrations = async (eventId: string) => {
+    if (!eventId) {
+      setRegistrations([]);
+      setSelectedRegistrations(new Set());
+      return;
+    }
+
+    try {
+      setLoadingRegistrations(true);
+      const eventRegistrations = await RegistrationService.getEventRegistrations(eventId);
+      setRegistrations(eventRegistrations);
+      setSelectedRegistrations(new Set());
+    } catch (error) {
+      logger.error('Error loading registrations:', error);
+      toast.error('Failed to load registrations');
+      setRegistrations([]);
+    } finally {
+      setLoadingRegistrations(false);
+    }
+  };
+
+  const getFilteredRegistrations = () => {
+    // Filter issued certificates for the selected event
+    const eventCertificates = issuedCertificates.filter(cert => cert.eventId === bulkGenerateEventId);
+    
+    return registrations.filter(reg => {
+      // Check if certificate exists in issuedCertificates for this event
+      const hasCertificate = eventCertificates.some(
+        cert => cert.registrationId === reg.id || 
+               cert.recipientEmail === reg.userDetails?.email
+      );
+      
+      // Apply status filter - check for both 'attended' and 'checked-in' statuses
+      if (bulkGenerateFilter === 'attended') {
+        if (reg.attendanceStatus !== 'attended' && reg.attendanceStatus !== 'checked-in') return false;
+      }
+      if (bulkGenerateFilter === 'no-certificate') {
+        if (hasCertificate || reg.certificateIssued) return false;
+      }
+      
+      // Apply search filter
+      if (attendeeSearchTerm.trim()) {
+        const search = attendeeSearchTerm.toLowerCase();
+        const name = (reg.userDetails?.name || '').toLowerCase();
+        const email = (reg.userDetails?.email || '').toLowerCase();
+        if (!name.includes(search) && !email.includes(search)) return false;
+      }
+      
+      return true;
+    });
+  };
+
+  // Helper to check if a registration has a certificate issued
+  const hasIssuedCertificate = (reg: Registration) => {
+    // Filter issued certificates for the selected event
+    const eventCertificates = issuedCertificates.filter(cert => cert.eventId === bulkGenerateEventId);
+    
+    return reg.certificateIssued || eventCertificates.some(
+      cert => cert.registrationId === reg.id || 
+             cert.recipientEmail === reg.userDetails?.email
+    );
+  };
+
+  // Get count of registrations without certificates (using actual issued certs data)
+  const getRegistrationsWithoutCertificateCount = () => {
+    // Filter issued certificates for the selected event
+    const eventCertificates = issuedCertificates.filter(cert => cert.eventId === bulkGenerateEventId);
+    
+    return registrations.filter(reg => {
+      const hasCert = reg.certificateIssued || eventCertificates.some(
+        cert => cert.registrationId === reg.id || 
+               cert.recipientEmail === reg.userDetails?.email
+      );
+      return !hasCert;
+    }).length;
+  };
+
+  // Get count of attended/checked-in registrations
+  const getAttendedCount = () => {
+    return registrations.filter(r => r.attendanceStatus === 'attended' || r.attendanceStatus === 'checked-in').length;
+  };
+
+  const handleClearSelection = () => {
+    setSelectedRegistrations(new Set());
+  };
+
+  const handleInvertSelection = () => {
+    const filtered = getFilteredRegistrations();
+    const newSelection = new Set<string>();
+    filtered.forEach(reg => {
+      if (!selectedRegistrations.has(reg.id)) {
+        newSelection.add(reg.id);
+      }
+    });
+    setSelectedRegistrations(newSelection);
+  };
+
+  const handleSelectRegistration = (registrationId: string) => {
+    setSelectedRegistrations(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(registrationId)) {
+        newSet.delete(registrationId);
+      } else {
+        newSet.add(registrationId);
+      }
+      return newSet;
+    });
+  };
+
+  const handleSelectAllRegistrations = () => {
+    const filtered = getFilteredRegistrations();
+    if (selectedRegistrations.size === filtered.length) {
+      setSelectedRegistrations(new Set());
+    } else {
+      setSelectedRegistrations(new Set(filtered.map(r => r.id)));
+    }
+  };
+
+  const handleBulkGenerate = async () => {
+    if (selectedRegistrations.size === 0) {
+      toast.error('Please select at least one attendee');
+      return;
+    }
+
+    const selectedEvent = events.find(e => e.id === bulkGenerateEventId);
+    if (!selectedEvent) {
+      toast.error('Please select an event');
+      return;
+    }
+
+    // Find template for this event
+    const eventTemplate = templates.find(t => t.eventId === bulkGenerateEventId && t.isActive);
+    if (!eventTemplate) {
+      toast.error('No active certificate template found for this event. Please create one first.');
+      return;
+    }
+
+    // Show warning for large batches
+    if (selectedRegistrations.size > 50) {
+      const proceed = confirm(
+        `You are about to generate ${selectedRegistrations.size} certificates. ` +
+        `This may take a while. Do you want to continue?`
+      );
+      if (!proceed) return;
+    }
+
+    try {
+      setBulkGenerating(true);
+      const selected = getFilteredRegistrations().filter(r => selectedRegistrations.has(r.id));
+      setBulkGenerateProgress({ current: 0, total: selected.length });
+
+      let successCount = 0;
+      let failCount = 0;
+
+      for (let i = 0; i < selected.length; i++) {
+        const reg = selected[i];
+        try {
+          await CertificateService.generateCertificate({
+            templateId: eventTemplate.id,
+            recipientName: reg.userDetails?.name || 'Unknown',
+            recipientEmail: reg.userDetails?.email || '',
+            eventId: bulkGenerateEventId,
+            eventTitle: selectedEvent.title,
+            userId: reg.userId,
+            registrationId: reg.id
+          });
+          successCount++;
+        } catch (err) {
+          logger.error(`Failed to generate certificate for ${reg.userDetails?.name}:`, err);
+          failCount++;
+        }
+
+        setBulkGenerateProgress({ current: i + 1, total: selected.length });
+
+        // Add small delay every 10 certificates to prevent rate limiting
+        if ((i + 1) % 10 === 0 && i + 1 < selected.length) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+      }
+
+      // Refresh issued certificates
+      const updatedCertificates = await CertificateService.getAllIssuedCertificates();
+      setIssuedCertificates(updatedCertificates);
+
+      if (failCount === 0) {
+        toast.success(`Successfully generated ${successCount} certificate(s)!`);
+      } else {
+        toast.success(`Generated ${successCount} certificate(s). ${failCount} failed.`);
+      }
+
+      handleCloseBulkGenerate();
+    } catch (error) {
+      logger.error('Error during bulk generation:', error);
+      toast.error('An error occurred during bulk generation');
+    } finally {
+      setBulkGenerating(false);
+    }
+  };
+
+  // Helper function to get template name by ID
+  const getTemplateName = (templateId: string, fallback: string) => {
+    const template = templates.find(t => t.id === templateId);
+    return template?.name || fallback;
+  };
+
   // Filter templates and certificates based on search and event
   const filteredTemplates = templates.filter(template => 
     (template.name || '').toLowerCase().includes(searchTerm.toLowerCase()) &&
     (selectedEvent === '' || template.eventId === selectedEvent)
   );
 
-  const filteredCertificates = issuedCertificates.filter(cert => 
+  // Enrich certificates with resolved template names
+  const enrichedCertificates = issuedCertificates.map(cert => ({
+    ...cert,
+    templateName: getTemplateName(cert.templateId, cert.templateName)
+  }));
+
+  const filteredCertificates = enrichedCertificates.filter(cert => 
     ((cert.recipientName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
      (cert.recipientEmail || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
      (cert.templateName || '').toLowerCase().includes(searchTerm.toLowerCase())) &&
@@ -781,6 +1163,57 @@ const CertificatesPage: React.FC = () => {
         </select>
       </div>
 
+      {/* Bulk Export Controls */}
+      {filteredCertificates.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3 p-4 bg-gray-50 rounded-lg border border-gray-200">
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={selectedCertificates.size === filteredCertificates.length && filteredCertificates.length > 0}
+              onChange={handleSelectAll}
+              className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+              aria-label="Select all certificates"
+            />
+            <span className="text-sm text-gray-600">
+              {selectedCertificates.size > 0 
+                ? `${selectedCertificates.size} of ${filteredCertificates.length} selected`
+                : `Select all (${filteredCertificates.length})`
+              }
+            </span>
+          </div>
+          
+          <div className="flex-1" />
+          
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleExportCSV}
+              disabled={selectedCertificates.size === 0}
+              className="px-3 py-2 text-sm bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
+            >
+              <DocumentTextIcon className="w-4 h-4" />
+              Export CSV
+            </button>
+            <button
+              onClick={handleBulkExport}
+              disabled={selectedCertificates.size === 0 || isExporting}
+              className="px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
+            >
+              {isExporting ? (
+                <>
+                  <ArrowPathIcon className="w-4 h-4 animate-spin" />
+                  Exporting...
+                </>
+              ) : (
+                <>
+                  <ArchiveBoxArrowDownIcon className="w-4 h-4" />
+                  Download Selected
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Certificates Table */}
       {loading ? (
         <div className="flex justify-center items-center py-12">
@@ -798,6 +1231,15 @@ const CertificatesPage: React.FC = () => {
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12">
+                    <input
+                      type="checkbox"
+                      checked={selectedCertificates.size === filteredCertificates.length && filteredCertificates.length > 0}
+                      onChange={handleSelectAll}
+                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                      aria-label="Select all certificates"
+                    />
+                  </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Recipient
                   </th>
@@ -820,7 +1262,19 @@ const CertificatesPage: React.FC = () => {
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {filteredCertificates.map(certificate => (
-                  <tr key={certificate.id}>
+                  <tr 
+                    key={certificate.id}
+                    className={selectedCertificates.has(certificate.id) ? 'bg-blue-50' : ''}
+                  >
+                    <td className="px-4 py-4 whitespace-nowrap">
+                      <input
+                        type="checkbox"
+                        checked={selectedCertificates.has(certificate.id)}
+                        onChange={() => handleSelectCertificate(certificate.id)}
+                        className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                        aria-label={`Select certificate for ${certificate.recipientName}`}
+                      />
+                    </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div>
                         <div className="text-sm font-medium text-gray-900">{certificate.recipientName}</div>
@@ -1361,6 +1815,13 @@ const CertificatesPage: React.FC = () => {
             <h1 className="text-2xl font-bold text-gray-900">Certificate Management</h1>
             <p className="text-gray-600">Create templates and manage issued certificates</p>
           </div>
+          <button
+            onClick={handleOpenBulkGenerate}
+            className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors inline-flex items-center gap-2"
+          >
+            <UserGroupIcon className="w-5 h-5" />
+            Bulk Generate
+          </button>
         </div>
 
         {/* Tabs */}
@@ -1407,6 +1868,299 @@ const CertificatesPage: React.FC = () => {
         {activeTab === 'issued' && renderIssuedTab()}
         {activeTab === 'builder' && renderBuilderTab()}
       </div>
+
+      {/* Bulk Generate Modal */}
+      {showBulkGenerateModal && (
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          <div className="flex min-h-screen items-center justify-center p-4">
+            <div 
+              className="fixed inset-0 bg-black bg-opacity-50 transition-opacity"
+              onClick={handleCloseBulkGenerate}
+              aria-hidden="true"
+            />
+            
+            <div className="relative w-full max-w-4xl bg-white rounded-xl shadow-2xl">
+              {/* Modal Header */}
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+                <div>
+                  <h2 className="text-xl font-semibold text-gray-900">Bulk Generate Certificates</h2>
+                  <p className="text-sm text-gray-500 mt-1">Generate certificates for multiple attendees at once</p>
+                </div>
+                <button
+                  onClick={handleCloseBulkGenerate}
+                  className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors"
+                  aria-label="Close modal"
+                >
+                  <XMarkIcon className="w-6 h-6" />
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <div className="px-6 py-4 max-h-[70vh] overflow-y-auto">
+                {/* Event Selection */}
+                <div className="mb-6">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Select Event *
+                  </label>
+                  <select
+                    value={bulkGenerateEventId}
+                    onChange={(e) => {
+                      setBulkGenerateEventId(e.target.value);
+                      handleLoadRegistrations(e.target.value);
+                    }}
+                    disabled={bulkGenerating}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent disabled:bg-gray-100"
+                  >
+                    <option value="">Choose an event...</option>
+                    {events.map(event => {
+                      const hasTemplate = templates.some(t => t.eventId === event.id && t.isActive);
+                      return (
+                        <option key={event.id} value={event.id}>
+                          {event.title} {hasTemplate ? '✓' : '(No template)'}
+                        </option>
+                      );
+                    })}
+                  </select>
+                  {bulkGenerateEventId && !templates.some(t => t.eventId === bulkGenerateEventId && t.isActive) && (
+                    <p className="mt-2 text-sm text-red-600 flex items-center gap-1">
+                      <ExclamationTriangleIcon className="w-4 h-4" />
+                      This event has no active certificate template. Please create one first.
+                    </p>
+                  )}
+                </div>
+
+                {/* Filter Tabs */}
+                {bulkGenerateEventId && registrations.length > 0 && (
+                  <div className="mb-4">
+                    <div className="flex gap-2 border-b border-gray-200">
+                      <button
+                        onClick={() => setBulkGenerateFilter('all')}
+                        disabled={bulkGenerating}
+                        className={`px-4 py-2 text-sm font-medium transition-colors ${
+                          bulkGenerateFilter === 'all'
+                            ? 'text-green-600 border-b-2 border-green-600'
+                            : 'text-gray-500 hover:text-gray-700'
+                        }`}
+                      >
+                        All ({registrations.length})
+                      </button>
+                      <button
+                        onClick={() => setBulkGenerateFilter('attended')}
+                        disabled={bulkGenerating}
+                        className={`px-4 py-2 text-sm font-medium transition-colors ${
+                          bulkGenerateFilter === 'attended'
+                            ? 'text-green-600 border-b-2 border-green-600'
+                            : 'text-gray-500 hover:text-gray-700'
+                        }`}
+                      >
+                        Attended ({getAttendedCount()})
+                      </button>
+                      <button
+                        onClick={() => setBulkGenerateFilter('no-certificate')}
+                        disabled={bulkGenerating}
+                        className={`px-4 py-2 text-sm font-medium transition-colors ${
+                          bulkGenerateFilter === 'no-certificate'
+                            ? 'text-green-600 border-b-2 border-green-600'
+                            : 'text-gray-500 hover:text-gray-700'
+                        }`}
+                      >
+                        No Certificate ({getRegistrationsWithoutCertificateCount()})
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Search and Selection Controls */}
+                {bulkGenerateEventId && registrations.length > 0 && (
+                  <div className="mb-4 flex flex-col sm:flex-row gap-3">
+                    {/* Search Box */}
+                    <div className="relative flex-1">
+                      <MagnifyingGlassIcon className="w-5 h-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                      <input
+                        type="text"
+                        placeholder="Search by name or email..."
+                        value={attendeeSearchTerm}
+                        onChange={(e) => setAttendeeSearchTerm(e.target.value)}
+                        disabled={bulkGenerating}
+                        className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent disabled:bg-gray-100"
+                      />
+                    </div>
+                    
+                    {/* Quick Selection Buttons */}
+                    <div className="flex gap-2">
+                      <button
+                        onClick={handleSelectAllRegistrations}
+                        disabled={bulkGenerating || getFilteredRegistrations().length === 0}
+                        className="px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Select All
+                      </button>
+                      <button
+                        onClick={handleClearSelection}
+                        disabled={bulkGenerating || selectedRegistrations.size === 0}
+                        className="px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Clear
+                      </button>
+                      <button
+                        onClick={handleInvertSelection}
+                        disabled={bulkGenerating || getFilteredRegistrations().length === 0}
+                        className="px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Invert
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Progress Bar */}
+                {bulkGenerating && (
+                  <div className="mb-4 p-4 bg-green-50 rounded-lg border border-green-200">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-medium text-green-700">
+                        Generating certificates...
+                      </span>
+                      <span className="text-sm text-green-600">
+                        {bulkGenerateProgress.current} / {bulkGenerateProgress.total}
+                      </span>
+                    </div>
+                    <div className="w-full h-3 bg-green-200 rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-green-600 transition-all duration-300 ease-out"
+                        style={{ 
+                          width: `${bulkGenerateProgress.total > 0 
+                            ? (bulkGenerateProgress.current / bulkGenerateProgress.total) * 100 
+                            : 0}%` 
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Registrations Table */}
+                {loadingRegistrations ? (
+                  <div className="flex justify-center items-center py-12">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600"></div>
+                  </div>
+                ) : bulkGenerateEventId && getFilteredRegistrations().length === 0 ? (
+                  <div className="text-center py-12">
+                    <UserGroupIcon className="w-12 h-12 mx-auto text-gray-400 mb-3" />
+                    <p className="text-gray-500">No attendees found matching the selected filter.</p>
+                  </div>
+                ) : bulkGenerateEventId && getFilteredRegistrations().length > 0 ? (
+                  <div className="border border-gray-200 rounded-lg overflow-hidden">
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-4 py-3 text-left w-12">
+                            <input
+                              type="checkbox"
+                              checked={selectedRegistrations.size === getFilteredRegistrations().length && getFilteredRegistrations().length > 0}
+                              onChange={handleSelectAllRegistrations}
+                              disabled={bulkGenerating}
+                              className="w-4 h-4 text-green-600 border-gray-300 rounded focus:ring-green-500"
+                              aria-label="Select all attendees"
+                            />
+                          </th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Attendance</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Certificate</th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-200">
+                        {getFilteredRegistrations().map(reg => (
+                          <tr 
+                            key={reg.id}
+                            onClick={() => !bulkGenerating && handleSelectRegistration(reg.id)}
+                            className={`cursor-pointer transition-colors ${selectedRegistrations.has(reg.id) ? 'bg-green-50 hover:bg-green-100' : 'hover:bg-gray-50'}`}
+                          >
+                            <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                              <input
+                                type="checkbox"
+                                checked={selectedRegistrations.has(reg.id)}
+                                onChange={() => handleSelectRegistration(reg.id)}
+                                disabled={bulkGenerating}
+                                className="w-4 h-4 text-green-600 border-gray-300 rounded focus:ring-green-500"
+                                aria-label={`Select ${reg.userDetails?.name}`}
+                              />
+                            </td>
+                            <td className="px-4 py-3 text-sm font-medium text-gray-900">
+                              {reg.userDetails?.name || 'Unknown'}
+                            </td>
+                            <td className="px-4 py-3 text-sm text-gray-500">
+                              {reg.userDetails?.email || 'N/A'}
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${
+                                reg.attendanceStatus === 'attended' || reg.attendanceStatus === 'checked-in'
+                                  ? 'bg-green-100 text-green-800'
+                                  : reg.attendanceStatus === 'registered' || reg.attendanceStatus === 'pending'
+                                  ? 'bg-blue-100 text-blue-800'
+                                  : 'bg-gray-100 text-gray-800'
+                              }`}>
+                                {reg.attendanceStatus === 'checked-in' ? 'Checked In' : (reg.attendanceStatus || 'Registered')}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3">
+                              {hasIssuedCertificate(reg) ? (
+                                <span className="inline-flex items-center gap-1 text-green-600 text-sm">
+                                  <CheckCircleIcon className="w-4 h-4" />
+                                  Issued
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 text-gray-400 text-sm">
+                                  <XCircleIcon className="w-4 h-4" />
+                                  Not issued
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="flex items-center justify-between px-6 py-4 border-t border-gray-200 bg-gray-50">
+                <div className="text-sm text-gray-500">
+                  {selectedRegistrations.size > 0 && (
+                    <span>{selectedRegistrations.size} attendee(s) selected</span>
+                  )}
+                </div>
+                <div className="flex gap-3">
+                  <button
+                    onClick={handleCloseBulkGenerate}
+                    disabled={bulkGenerating}
+                    className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleBulkGenerate}
+                    disabled={bulkGenerating || selectedRegistrations.size === 0 || !templates.some(t => t.eventId === bulkGenerateEventId && t.isActive)}
+                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
+                  >
+                    {bulkGenerating ? (
+                      <>
+                        <ArrowPathIcon className="w-4 h-4 animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <SparklesIcon className="w-4 h-4" />
+                        Generate Certificates
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </LayoutComponent>
   );
 };
