@@ -19,7 +19,8 @@ import {
   ExclamationTriangleIcon,
   ArchiveBoxArrowDownIcon,
   UserGroupIcon,
-  XMarkIcon
+  XMarkIcon,
+  WrenchScrewdriverIcon
 } from '@heroicons/react/24/outline';
 import AdminLayout from '../../components/admin/AdminLayout';
 import OrganizerLayout from '../../components/organizer/OrganizerLayout';
@@ -31,6 +32,30 @@ import { EventService } from '../../services/eventService';
 import { RegistrationService } from '../../services/registrationService';
 import { logger } from '../../utils/logger';
 import toast from 'react-hot-toast';
+import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { db, storage } from '../../config/firebase';
+
+/**
+ * Extract full name from registration customResponses
+ * Combines First Name (field '1') + Last Name (field '1762143123275') for DevFest Davao
+ */
+const getFullNameFromRegistration = (regData: { customResponses?: Record<string, string | boolean | number>; userDetails?: { name?: string } } | null): string | null => {
+  if (!regData) return null;
+  
+  const customResponses = regData.customResponses || {};
+  const userDetails = regData.userDetails || {};
+  
+  // Field '1' is First Name, '1762143123275' is Last Name for DevFest Davao form
+  const firstName = customResponses['1'] as string | undefined;
+  const lastName = customResponses['1762143123275'] as string | undefined;
+  
+  if (firstName && lastName) {
+    return `${firstName} ${lastName}`.trim();
+  }
+  
+  return userDetails.name || firstName || null;
+};
 
 const CertificatesPage: React.FC = () => {
   const { userProfile } = useAuth();
@@ -58,6 +83,12 @@ const CertificatesPage: React.FC = () => {
   const [bulkGenerating, setBulkGenerating] = useState(false);
   const [bulkGenerateProgress, setBulkGenerateProgress] = useState({ current: 0, total: 0 });
   const [attendeeSearchTerm, setAttendeeSearchTerm] = useState('');
+
+  // Certificate name regeneration state
+  const [isRegenerating, setIsRegenerating] = useState(false);
+  const [regeneratingCertId, setRegeneratingCertId] = useState<string | null>(null);
+  const [regenerateProgress, setRegenerateProgress] = useState({ current: 0, total: 0 });
+  const [certificateFullNames, setCertificateFullNames] = useState<Record<string, string | null>>({});
 
   // Unified template builder state
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
@@ -647,6 +678,188 @@ const CertificatesPage: React.FC = () => {
     }
   };
 
+  // Fetch full name from registration for a certificate
+  const fetchFullNameForCertificate = async (cert: IssuedCertificate): Promise<string | null> => {
+    if (!cert.registrationId) return null;
+    
+    try {
+      const regRef = doc(db, 'registrations', cert.registrationId);
+      const regSnap = await getDoc(regRef);
+      
+      if (regSnap.exists()) {
+        return getFullNameFromRegistration(regSnap.data() as { customResponses?: Record<string, string | boolean | number>; userDetails?: { name?: string } });
+      }
+    } catch (err) {
+      logger.warn(`Could not fetch registration ${cert.registrationId}:`, err);
+    }
+    return null;
+  };
+
+  // Check if certificate needs name fix (full name differs from current name)
+  const certificateNeedsNameFix = (cert: IssuedCertificate): boolean => {
+    const fullName = certificateFullNames[cert.id];
+    return fullName !== undefined && fullName !== null && fullName !== cert.recipientName;
+  };
+
+  // Regenerate a single certificate with the correct full name
+  const handleRegenerateCertificateName = async (cert: IssuedCertificate) => {
+    const fullName = certificateFullNames[cert.id];
+    if (!fullName || fullName === cert.recipientName) {
+      toast.error('Certificate name is already correct');
+      return;
+    }
+
+    setRegeneratingCertId(cert.id);
+    
+    try {
+      // Get the template
+      const template = await CertificateService.getTemplateById(cert.templateId);
+      if (!template) {
+        throw new Error('Template not found');
+      }
+      
+      // Generate new certificate with full name
+      const result = await CertificateGenerationService.generateCertificate(template, {
+        templateId: cert.templateId,
+        recipientName: fullName,
+        recipientEmail: cert.recipientEmail,
+        eventTitle: cert.eventTitle,
+        eventDate: cert.eventDate,
+        eventId: cert.eventId,
+        verificationCode: cert.verificationCode // Keep the same verification code
+      });
+      
+      // Upload to Firebase Storage (overwrite existing)
+      const imageRef = ref(storage, `certificates/${cert.eventId}/${cert.verificationCode}.png`);
+      await uploadBytes(imageRef, result.blob, { contentType: 'image/png' });
+      const newUrl = await getDownloadURL(imageRef);
+      
+      // Update Firestore document with new name and URL
+      const certRef = doc(db, 'certificates', cert.id);
+      await updateDoc(certRef, {
+        recipientName: fullName,
+        certificateUrl: newUrl,
+        updatedAt: serverTimestamp(),
+        regeneratedAt: serverTimestamp(),
+        regenerationReason: 'Full name fix'
+      });
+      
+      // Update local state
+      setIssuedCertificates(prev => prev.map(c => 
+        c.id === cert.id ? { ...c, recipientName: fullName, certificateUrl: newUrl } : c
+      ));
+      
+      toast.success(`Certificate regenerated for ${fullName}`);
+    } catch (err) {
+      logger.error(`Error regenerating certificate ${cert.id}:`, err);
+      toast.error('Failed to regenerate certificate');
+    } finally {
+      setRegeneratingCertId(null);
+    }
+  };
+
+  // Bulk regenerate certificates with name fixes
+  const handleBulkRegenerateNames = async () => {
+    const certsToFix = filteredCertificates.filter(c => 
+      selectedCertificates.has(c.id) && certificateNeedsNameFix(c)
+    );
+    
+    if (certsToFix.length === 0) {
+      toast.error('No certificates selected that need name fixes');
+      return;
+    }
+
+    setIsRegenerating(true);
+    setRegenerateProgress({ current: 0, total: certsToFix.length });
+    
+    let successCount = 0;
+    for (let i = 0; i < certsToFix.length; i++) {
+      const cert = certsToFix[i];
+      const fullName = certificateFullNames[cert.id];
+      
+      if (!fullName) continue;
+      
+      try {
+        const template = await CertificateService.getTemplateById(cert.templateId);
+        if (!template) continue;
+        
+        const result = await CertificateGenerationService.generateCertificate(template, {
+          templateId: cert.templateId,
+          recipientName: fullName,
+          recipientEmail: cert.recipientEmail,
+          eventTitle: cert.eventTitle,
+          eventDate: cert.eventDate,
+          eventId: cert.eventId,
+          verificationCode: cert.verificationCode
+        });
+        
+        const imageRef = ref(storage, `certificates/${cert.eventId}/${cert.verificationCode}.png`);
+        await uploadBytes(imageRef, result.blob, { contentType: 'image/png' });
+        const newUrl = await getDownloadURL(imageRef);
+        
+        const certRef = doc(db, 'certificates', cert.id);
+        await updateDoc(certRef, {
+          recipientName: fullName,
+          certificateUrl: newUrl,
+          updatedAt: serverTimestamp(),
+          regeneratedAt: serverTimestamp(),
+          regenerationReason: 'Full name fix (bulk)'
+        });
+        
+        setIssuedCertificates(prev => prev.map(c => 
+          c.id === cert.id ? { ...c, recipientName: fullName, certificateUrl: newUrl } : c
+        ));
+        
+        successCount++;
+      } catch (err) {
+        logger.error(`Error regenerating certificate ${cert.id}:`, err);
+      }
+      
+      setRegenerateProgress({ current: i + 1, total: certsToFix.length });
+      await new Promise(resolve => setTimeout(resolve, 500)); // Delay between certificates
+    }
+    
+    setIsRegenerating(false);
+    setSelectedCertificates(new Set());
+    toast.success(`Regenerated ${successCount} of ${certsToFix.length} certificates`);
+  };
+
+  // Load full names for selected event's certificates
+  const handleLoadFullNames = async () => {
+    if (!selectedEvent) {
+      toast.error('Please select an event first');
+      return;
+    }
+    
+    const eventCerts = issuedCertificates.filter(c => c.eventId === selectedEvent);
+    
+    if (eventCerts.length === 0) {
+      toast.error('No certificates found for this event');
+      return;
+    }
+    
+    toast.loading('Loading registration data...', { id: 'load-names' });
+    
+    const newFullNames: Record<string, string | null> = {};
+    let needsFixCount = 0;
+    
+    for (const cert of eventCerts) {
+      const fullName = await fetchFullNameForCertificate(cert);
+      newFullNames[cert.id] = fullName;
+      if (fullName && fullName !== cert.recipientName) {
+        needsFixCount++;
+      }
+    }
+    
+    setCertificateFullNames(prev => ({ ...prev, ...newFullNames }));
+    
+    if (needsFixCount > 0) {
+      toast.success(`Found ${needsFixCount} certificate(s) needing name fixes`, { id: 'load-names' });
+    } else {
+      toast.success('All certificates have correct names', { id: 'load-names' });
+    }
+  };
+
   const handleBulkExport = async () => {
     if (selectedCertificates.size === 0) {
       toast.error('Please select at least one certificate to export');
@@ -1161,7 +1374,42 @@ const CertificatesPage: React.FC = () => {
             <option key={event.id} value={event.id}>{event.title}</option>
           ))}
         </select>
+        {/* Load Names Button - shows when event is selected */}
+        {selectedEvent && (
+          <button
+            onClick={handleLoadFullNames}
+            className="px-3 py-2 text-sm bg-amber-100 border border-amber-300 text-amber-800 rounded-lg hover:bg-amber-200 transition-colors inline-flex items-center gap-2"
+            title="Load full names from registrations to check for name mismatches"
+          >
+            <WrenchScrewdriverIcon className="w-4 h-4" />
+            Check Names
+          </button>
+        )}
       </div>
+
+      {/* Regeneration Progress */}
+      {isRegenerating && (
+        <div className="p-4 bg-amber-50 rounded-lg border border-amber-200">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-medium text-amber-700">
+              Regenerating certificates...
+            </span>
+            <span className="text-sm text-amber-600">
+              {regenerateProgress.current} / {regenerateProgress.total}
+            </span>
+          </div>
+          <div className="w-full h-3 bg-amber-200 rounded-full overflow-hidden">
+            <div 
+              className="h-full bg-amber-600 transition-all duration-300 ease-out"
+              style={{ 
+                width: `${regenerateProgress.total > 0 
+                  ? (regenerateProgress.current / regenerateProgress.total) * 100 
+                  : 0}%` 
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Bulk Export Controls */}
       {filteredCertificates.length > 0 && (
@@ -1185,6 +1433,27 @@ const CertificatesPage: React.FC = () => {
           <div className="flex-1" />
           
           <div className="flex items-center gap-2">
+            {/* Fix Names Button - only show when there are certificates that need fixing */}
+            {selectedCertificates.size > 0 && Object.keys(certificateFullNames).length > 0 && (
+              <button
+                onClick={handleBulkRegenerateNames}
+                disabled={isRegenerating || !filteredCertificates.some(c => selectedCertificates.has(c.id) && certificateNeedsNameFix(c))}
+                className="px-3 py-2 text-sm bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
+                title="Regenerate selected certificates with corrected full names"
+              >
+                {isRegenerating ? (
+                  <>
+                    <ArrowPathIcon className="w-4 h-4 animate-spin" />
+                    Fixing...
+                  </>
+                ) : (
+                  <>
+                    <WrenchScrewdriverIcon className="w-4 h-4" />
+                    Fix Names
+                  </>
+                )}
+              </button>
+            )}
             <button
               onClick={handleExportCSV}
               disabled={selectedCertificates.size === 0}
@@ -1277,7 +1546,22 @@ const CertificatesPage: React.FC = () => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div>
-                        <div className="text-sm font-medium text-gray-900">{certificate.recipientName}</div>
+                        <div className="text-sm font-medium text-gray-900 flex items-center gap-1">
+                          {certificate.recipientName}
+                          {certificateNeedsNameFix(certificate) && (
+                            <span 
+                              className="inline-flex items-center text-amber-600" 
+                              title={`Should be: ${certificateFullNames[certificate.id]}`}
+                            >
+                              <ExclamationTriangleIcon className="w-4 h-4" />
+                            </span>
+                          )}
+                        </div>
+                        {certificateNeedsNameFix(certificate) && (
+                          <div className="text-xs text-amber-600">
+                            Should be: {certificateFullNames[certificate.id]}
+                          </div>
+                        )}
                         <div className="text-sm text-gray-500">{certificate.recipientEmail}</div>
                       </div>
                     </td>
@@ -1353,6 +1637,22 @@ const CertificatesPage: React.FC = () => {
                         >
                           <QrCodeIcon className="w-4 h-4" />
                         </button>
+                        {/* Fix Name Button - only show if certificate needs fixing */}
+                        {certificateNeedsNameFix(certificate) && (
+                          <button 
+                            onClick={() => handleRegenerateCertificateName(certificate)}
+                            disabled={regeneratingCertId === certificate.id}
+                            className="text-amber-600 hover:text-amber-900 disabled:text-gray-300 disabled:cursor-not-allowed p-1 rounded hover:bg-amber-50 transition-colors"
+                            title={`Fix name to: ${certificateFullNames[certificate.id]}`}
+                            aria-label={`Fix certificate name for ${certificate.recipientName}`}
+                          >
+                            {regeneratingCertId === certificate.id ? (
+                              <ArrowPathIcon className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <WrenchScrewdriverIcon className="w-4 h-4" />
+                            )}
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

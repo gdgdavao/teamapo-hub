@@ -10,8 +10,37 @@ import { FeedbackService } from '../../services/feedbackService';
 import { CertificateService } from '../../services/certificateService';
 import { CertificateGenerationService } from '../../utils/certificateGeneration';
 import { RegistrationService } from '../../services/registrationService';
-import { Event, FormField, CertificateTemplate } from '../../types';
+import { Event, FormField, CertificateTemplate, Registration } from '../../types';
 import { logger } from '../../utils/logger';
+
+/**
+ * Extract full name from registration customResponses
+ * Combines First Name (field '1') + Last Name (field '1762143123275') for DevFest Davao
+ * Falls back to userDetails.name if customResponses don't have the fields
+ */
+const getFullNameFromRegistration = (registration: Registration | null): string | null => {
+  if (!registration) return null;
+  
+  const customResponses = registration.customResponses || {};
+  const userDetails = registration.userDetails || {};
+  
+  // Try to get first name and last name from customResponses
+  // Field '1' is typically First Name, '1762143123275' is Last Name for DevFest Davao form
+  const firstName = customResponses['1'] as string | undefined;
+  const lastName = customResponses['1762143123275'] as string | undefined;
+  
+  // If we found both first and last name, combine them
+  if (firstName && lastName) {
+    const fullName = `${firstName} ${lastName}`.trim();
+    if (fullName) return fullName;
+  }
+  
+  // Fall back to userDetails.name
+  if (userDetails.name) return userDetails.name;
+  
+  // Last resort: return first name only
+  return firstName || null;
+};
 
 const FeedbackPage: React.FC = () => {
   const { eventId } = useParams<{ eventId: string }>();
@@ -198,9 +227,17 @@ const FeedbackPage: React.FC = () => {
         setEvent(eventData);
 
         // Check if feedback was already submitted for this registration
-        if (registrationId && userEmail && userName) {
+        if (registrationId && userEmail) {
           // First try to get registration (returns null for anonymous users due to permissions)
           const registration = await RegistrationService.getRegistrationById(registrationId);
+          
+          // Extract full name from registration customResponses if available
+          // This fixes the issue where token only has first name
+          const fullName = getFullNameFromRegistration(registration) || userName;
+          if (fullName && fullName !== userName) {
+            setUserName(fullName);
+          }
+          const nameForCertificate = fullName || userName || 'Attendee';
           
           if (registration?.feedbackSubmitted) {
             // Feedback already submitted - skip to certificate generation/display
@@ -211,7 +248,7 @@ const FeedbackPage: React.FC = () => {
             if (certTemplate) {
               setTemplate(certTemplate);
               // This will either retrieve existing certificate or generate new one
-              await generateCertificateForUser(certTemplate, eventData, registrationId, userEmail, userName);
+              await generateCertificateForUser(certTemplate, eventData, registrationId, userEmail, nameForCertificate);
             }
             setLoading(false);
             return;

@@ -2321,15 +2321,71 @@ def generate_feedback_token() -> str:
     return secrets.token_urlsafe(32)  # 256-bit token, URL-safe
 
 
-def generate_feedback_url(event_id: str, registration_id: str = None, user_email: str = None, user_name: str = None) -> str:
+def get_full_name_from_registration(reg_data: Dict[str, Any]) -> str:
+    """
+    Extract the full name from registration data by combining first name and last name.
+    Falls back to userDetails.name if custom responses don't have first/last name fields.
+    
+    Known field IDs:
+    - '1' = First Name (default registration form)
+    - '1762143123275' = Last Name (DevFest Davao 2025 form)
+    - Some forms may have different field IDs
+    """
+    custom_responses = reg_data.get('customResponses', {})
+    user_details = reg_data.get('userDetails', {})
+    
+    # Try to get first name and last name from customResponses
+    # Common field patterns for first name
+    first_name = None
+    last_name = None
+    
+    # Check for first name - field '1' is the default first name field
+    if '1' in custom_responses:
+        first_name = custom_responses['1']
+    
+    # Check for last name - field '1762143123275' is the DevFest Davao form's last name field
+    # Also check common labels in case field IDs vary
+    last_name_field_ids = ['1762143123275']
+    for field_id in last_name_field_ids:
+        if field_id in custom_responses:
+            last_name = custom_responses[field_id]
+            break
+    
+    # If we found both first and last name, combine them
+    if first_name and last_name:
+        full_name = f"{first_name} {last_name}".strip()
+        if full_name:
+            return full_name
+    
+    # Fall back to userDetails.name if available
+    if user_details.get('name'):
+        return user_details['name']
+    
+    # Last resort: return first name only or 'Attendee'
+    return first_name or 'Attendee'
+
+
+def generate_feedback_url(event_id: str, registration_id: str = None, user_email: str = None, user_name: str = None, reg_data: Dict[str, Any] = None) -> str:
     """
     Generate a secure feedback URL with a token that hides personal information.
     Creates a feedbackToken document in Firestore to store the mapping.
+    
+    Args:
+        event_id: The event ID
+        registration_id: The registration ID  
+        user_email: User's email address
+        user_name: User's name (if reg_data is provided, full name will be extracted from it)
+        reg_data: Optional registration data dict to extract full name from customResponses
     """
     base_url = "https://apohub.gdgdavao.org"  # Production URL (app domain)
     
     # Generate a secure token
     token = generate_feedback_token()
+    
+    # If reg_data is provided, try to get the full name from customResponses
+    final_name = user_name
+    if reg_data:
+        final_name = get_full_name_from_registration(reg_data)
     
     # Store token mapping in Firestore
     db = get_db()
@@ -2338,7 +2394,7 @@ def generate_feedback_url(event_id: str, registration_id: str = None, user_email
         'eventId': event_id,
         'registrationId': registration_id,
         'email': user_email,
-        'name': user_name,
+        'name': final_name,
         'createdAt': firestore.SERVER_TIMESTAMP,
         'expiresAt': None,  # No expiry for now, but can be added
         'used': False
@@ -2414,22 +2470,24 @@ def send_feedback_requests_for_event(event_id: str, event_title: str) -> None:
             if reg_data.get('feedbackRequestSent', False):
                 continue
             
-            # Get user details
+            # Get user details - extract full name from customResponses
             user_details = reg_data.get('userDetails', {})
             user_email = user_details.get('email')
-            user_name = user_details.get('name', 'Attendee')
+            # Use get_full_name_from_registration for proper first+last name handling
+            user_name = get_full_name_from_registration(reg_data)
             
             if not user_email:
                 logger.warning(f"Skipping registration {reg_id}: no email address")
                 continue
             
             try:
-                # Generate feedback URL
+                # Generate feedback URL - pass reg_data for full name extraction
                 feedback_url = generate_feedback_url(
                     event_id=event_id,
                     registration_id=reg_id,
                     user_email=user_email,
-                    user_name=user_name
+                    user_name=user_name,
+                    reg_data=reg_data
                 )
                 
                 # Send feedback request email
@@ -2595,6 +2653,20 @@ def sendFeedbackRequest(req: https_fn.CallableRequest) -> Dict[str, Any]:
         registration_id = data.get('registrationId')
         is_resend = data.get('isResend', False)  # Track if this is a resend operation
         
+        # Try to get full name from registration if available
+        reg_data = None
+        if registration_id and event_id:
+            try:
+                db = get_db()
+                reg_ref = db.collection('registrations').document(registration_id)
+                reg_doc = reg_ref.get()
+                if reg_doc.exists:
+                    reg_data = reg_doc.to_dict()
+                    # Use full name from registration
+                    user_name = get_full_name_from_registration(reg_data)
+            except Exception as reg_err:
+                logger.warning(f"Could not fetch registration for full name: {str(reg_err)}")
+        
         # Support both old and new API - feedbackUrl or generate from eventId
         feedback_url = data.get('feedbackUrl')
         if not feedback_url and event_id:
@@ -2602,7 +2674,8 @@ def sendFeedbackRequest(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 event_id=event_id,
                 registration_id=registration_id,
                 user_email=user_email,
-                user_name=user_name
+                user_name=user_name,
+                reg_data=reg_data
             )
 
         if not user_email or not event_title or not feedback_url:

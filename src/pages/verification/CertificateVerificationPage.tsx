@@ -13,7 +13,8 @@ import {
   XMarkIcon,
   ExclamationTriangleIcon,
   ShieldCheckIcon,
-  ArrowPathIcon
+  ArrowPathIcon,
+  ArrowDownTrayIcon
 } from '@heroicons/react/24/outline';
 import { CertificateService } from '../../services/certificateService';
 import { logger } from '../../utils/logger';
@@ -576,7 +577,34 @@ const CertificateVerificationPage: React.FC = () => {
                 {/* Certificate Preview - Full Size */}
                 {verificationData.certificateUrl && (
                   <div className="mb-8">
-                    <h3 className="text-lg font-semibold text-gray-900 mb-4 border-b pb-2">Certificate</h3>
+                    <div className="flex items-center justify-between mb-4 border-b pb-2">
+                      <h3 className="text-lg font-semibold text-gray-900">Certificate</h3>
+                      <button
+                        onClick={async () => {
+                          if (!verificationData.certificateUrl) return;
+                          try {
+                            const response = await fetch(verificationData.certificateUrl);
+                            const blob = await response.blob();
+                            const url = window.URL.createObjectURL(blob);
+                            const link = document.createElement('a');
+                            link.href = url;
+                            link.download = `certificate-${verificationData.recipientName?.replace(/\s+/g, '_') || 'download'}-${verificationData.verificationCode}.png`;
+                            document.body.appendChild(link);
+                            link.click();
+                            document.body.removeChild(link);
+                            window.URL.revokeObjectURL(url);
+                          } catch (err) {
+                            logger.error('Failed to download certificate:', err);
+                          }
+                        }}
+                        className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
+                        aria-label="Download certificate"
+                        tabIndex={0}
+                      >
+                        <ArrowDownTrayIcon className="w-4 h-4" />
+                        Download Certificate
+                      </button>
+                    </div>
                     <div className="border border-gray-200 rounded-lg overflow-hidden bg-gray-100">
                       {/* Skeleton loader */}
                       {imageLoading && (
