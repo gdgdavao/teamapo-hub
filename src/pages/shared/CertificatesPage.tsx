@@ -124,6 +124,10 @@ const CertificatesPage: React.FC = () => {
   const [regenerateProgress, setRegenerateProgress] = useState({ current: 0, total: 0 });
   const [certificateFullNames, setCertificateFullNames] = useState<Record<string, string | null>>({});
 
+  // Regenerate with updated template state
+  const [showRegenerateWarningModal, setShowRegenerateWarningModal] = useState(false);
+  const [regenerateReason, setRegenerateReason] = useState<'template_fix' | 'name_fix' | ''>('');
+
   // Unified template builder state
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
   const [templateName, setTemplateName] = useState('');
@@ -894,6 +898,92 @@ const CertificatesPage: React.FC = () => {
     }
   };
 
+  // Regenerate selected certificates with updated template (e.g., after template fix)
+  const handleRegenerateWithTemplate = async () => {
+    if (selectedCertificates.size === 0) {
+      toast.error('Please select at least one certificate to regenerate');
+      return;
+    }
+
+    const selectedCerts = filteredCertificates.filter(c => selectedCertificates.has(c.id));
+    
+    // Group by template to show which templates will be used
+    const templateIds = [...new Set(selectedCerts.map(c => c.templateId))];
+    
+    setIsRegenerating(true);
+    setRegenerateProgress({ current: 0, total: selectedCerts.length });
+    setShowRegenerateWarningModal(false);
+    
+    let successCount = 0;
+    let failCount = 0;
+
+    for (let i = 0; i < selectedCerts.length; i++) {
+      const cert = selectedCerts[i];
+      
+      try {
+        // Get the latest template
+        const template = await CertificateService.getTemplateById(cert.templateId);
+        if (!template) {
+          logger.warn(`Template ${cert.templateId} not found for certificate ${cert.id}`);
+          failCount++;
+          continue;
+        }
+        
+        // Generate new certificate with current template
+        const result = await CertificateGenerationService.generateCertificate(template, {
+          templateId: cert.templateId,
+          recipientName: cert.recipientName,
+          recipientEmail: cert.recipientEmail,
+          eventTitle: cert.eventTitle,
+          eventDate: cert.eventDate || cert.issuedDate || new Date().toISOString(),
+          eventId: cert.eventId,
+          verificationCode: cert.verificationCode // Keep the same verification code
+        });
+        
+        // Upload to Firebase Storage (overwrite existing)
+        const imageRef = ref(storage, `certificates/${cert.eventId}/${cert.verificationCode}.png`);
+        await uploadBytes(imageRef, result.blob, { contentType: 'image/png' });
+        const newUrl = await getDownloadURL(imageRef);
+        
+        // Update Firestore document with new URL
+        const certRef = doc(db, 'certificates', cert.id);
+        await updateDoc(certRef, {
+          certificateUrl: newUrl,
+          updatedAt: serverTimestamp(),
+          regeneratedAt: serverTimestamp(),
+          regenerationReason: regenerateReason || 'Template update'
+        });
+        
+        // Update local state
+        setIssuedCertificates(prev => prev.map(c => 
+          c.id === cert.id ? { ...c, certificateUrl: newUrl } : c
+        ));
+        
+        successCount++;
+      } catch (err) {
+        logger.error(`Error regenerating certificate ${cert.id}:`, err);
+        failCount++;
+      }
+      
+      setRegenerateProgress({ current: i + 1, total: selectedCerts.length });
+      
+      // Add small delay to prevent rate limiting
+      if ((i + 1) % 5 === 0 && i + 1 < selectedCerts.length) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+    
+    setIsRegenerating(false);
+    setSelectedCertificates(new Set());
+    setRegenerateReason('');
+    
+    if (failCount === 0) {
+      toast.success(`Successfully regenerated ${successCount} certificate(s) with updated template!`);
+    } else {
+      toast.success(`Regenerated ${successCount} certificate(s). ${failCount} failed.`);
+    }
+  };
+
   const handleBulkExport = async () => {
     if (selectedCertificates.size === 0) {
       toast.error('Please select at least one certificate to export');
@@ -1489,6 +1579,18 @@ const CertificatesPage: React.FC = () => {
                     Fix Names
                   </>
                 )}
+              </button>
+            )}
+            {/* Regenerate with Template Button */}
+            {selectedCertificates.size > 0 && (
+              <button
+                onClick={() => setShowRegenerateWarningModal(true)}
+                disabled={isRegenerating}
+                className="px-3 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
+                title="Regenerate selected certificates with updated template"
+              >
+                <ArrowPathIcon className="w-4 h-4" />
+                Regenerate Template
               </button>
             )}
             <button
@@ -2534,6 +2636,125 @@ const CertificatesPage: React.FC = () => {
                     )}
                   </button>
                 </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Regenerate with Template Warning Modal */}
+      {showRegenerateWarningModal && (
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          <div className="flex min-h-screen items-center justify-center p-4">
+            <div 
+              className="fixed inset-0 bg-black bg-opacity-50 transition-opacity"
+              onClick={() => !isRegenerating && setShowRegenerateWarningModal(false)}
+              aria-hidden="true"
+            />
+            
+            <div className="relative w-full max-w-lg bg-white rounded-xl shadow-2xl">
+              {/* Modal Header */}
+              <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-200 bg-amber-50">
+                <div className="flex-shrink-0 w-10 h-10 flex items-center justify-center rounded-full bg-amber-100">
+                  <ExclamationTriangleIcon className="w-6 h-6 text-amber-600" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900">Regenerate Certificates</h2>
+                  <p className="text-sm text-amber-700">This action will overwrite existing certificates</p>
+                </div>
+              </div>
+
+              {/* Modal Body */}
+              <div className="px-6 py-5">
+                <div className="space-y-4">
+                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                    <h3 className="font-medium text-amber-800 mb-2">⚠️ Warning</h3>
+                    <ul className="text-sm text-amber-700 space-y-1 list-disc list-inside">
+                      <li>This will regenerate <strong>{selectedCertificates.size}</strong> certificate(s) using the <strong>current template</strong></li>
+                      <li>The previous certificate images will be <strong>overwritten</strong></li>
+                      <li>Verification codes will remain the same</li>
+                      <li>This action <strong>cannot be undone</strong></li>
+                    </ul>
+                  </div>
+
+                  {/* Reason Input */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Reason for regeneration (optional)
+                    </label>
+                    <select
+                      value={regenerateReason}
+                      onChange={(e) => setRegenerateReason(e.target.value as typeof regenerateReason)}
+                      disabled={isRegenerating}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent disabled:bg-gray-100"
+                    >
+                      <option value="">Select a reason...</option>
+                      <option value="template_fix">Template was updated/fixed</option>
+                      <option value="name_fix">Name correction needed</option>
+                    </select>
+                  </div>
+
+                  {/* Info Box */}
+                  <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                    <p className="text-sm text-blue-700">
+                      <strong>When to use:</strong> Use this when the certificate template had visual issues 
+                      (wrong logo, incorrect text, design problems) that have been fixed and you need to 
+                      regenerate certificates with the corrected template.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Progress Bar */}
+                {isRegenerating && (
+                  <div className="mt-4 p-4 bg-green-50 rounded-lg border border-green-200">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-medium text-green-700">
+                        Regenerating certificates...
+                      </span>
+                      <span className="text-sm text-green-600">
+                        {regenerateProgress.current} / {regenerateProgress.total}
+                      </span>
+                    </div>
+                    <div className="w-full h-3 bg-green-200 rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-green-600 transition-all duration-300 ease-out"
+                        style={{ 
+                          width: `${regenerateProgress.total > 0 
+                            ? (regenerateProgress.current / regenerateProgress.total) * 100 
+                            : 0}%` 
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50">
+                <button
+                  onClick={() => setShowRegenerateWarningModal(false)}
+                  disabled={isRegenerating}
+                  className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleRegenerateWithTemplate}
+                  disabled={isRegenerating}
+                  className="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
+                >
+                  {isRegenerating ? (
+                    <>
+                      <ArrowPathIcon className="w-4 h-4 animate-spin" />
+                      Regenerating...
+                    </>
+                  ) : (
+                    <>
+                      <ArrowPathIcon className="w-4 h-4" />
+                      Regenerate {selectedCertificates.size} Certificate(s)
+                    </>
+                  )}
+                </button>
               </div>
             </div>
           </div>
