@@ -15,7 +15,13 @@ import { logger } from '../../utils/logger';
 
 /**
  * Extract full name from registration customResponses
- * Combines First Name (field '1') + Last Name (field '1762143123275') for DevFest Davao
+ * Combines First Name + Last Name from customResponses for forms with separate name fields
+ * 
+ * Common field mappings:
+ * - Field '1': First Name (DevFest Davao form)
+ * - Field '1762143123275': Last Name (DevFest Davao form)
+ * - Also checks for common variations like 'firstName', 'first_name', 'lastName', 'last_name'
+ * 
  * Falls back to userDetails.name if customResponses don't have the fields
  */
 const getFullNameFromRegistration = (registration: Registration | null): string | null => {
@@ -24,21 +30,41 @@ const getFullNameFromRegistration = (registration: Registration | null): string 
   const customResponses = registration.customResponses || {};
   const userDetails = registration.userDetails || {};
   
-  // Try to get first name and last name from customResponses
-  // Field '1' is typically First Name, '1762143123275' is Last Name for DevFest Davao form
-  const firstName = customResponses['1'] as string | undefined;
-  const lastName = customResponses['1762143123275'] as string | undefined;
+  // Try to find first name and last name from customResponses
+  // Support multiple field naming conventions
+  const firstNameFields = ['1', 'firstName', 'first_name', 'First Name', 'first name'];
+  const lastNameFields = ['1762143123275', 'lastName', 'last_name', 'Last Name', 'last name'];
+  
+  let firstName: string | undefined;
+  let lastName: string | undefined;
+  
+  // Find first name
+  for (const field of firstNameFields) {
+    const value = customResponses[field];
+    if (typeof value === 'string' && value.trim()) {
+      firstName = value.trim();
+      break;
+    }
+  }
+  
+  // Find last name
+  for (const field of lastNameFields) {
+    const value = customResponses[field];
+    if (typeof value === 'string' && value.trim()) {
+      lastName = value.trim();
+      break;
+    }
+  }
   
   // If we found both first and last name, combine them
   if (firstName && lastName) {
-    const fullName = `${firstName} ${lastName}`.trim();
-    if (fullName) return fullName;
+    return `${firstName} ${lastName}`.trim();
   }
   
   // Fall back to userDetails.name
   if (userDetails.name) return userDetails.name;
   
-  // Last resort: return first name only
+  // Last resort: return first name only if available
   return firstName || null;
 };
 

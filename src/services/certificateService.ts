@@ -34,6 +34,7 @@ export interface IssuedCertificate {
   recipientEmail: string;
   eventId: string;
   eventTitle: string;
+  eventDate?: string;
   registrationId?: string;
   issuedDate: string;
   verificationCode: string;
@@ -373,6 +374,7 @@ export class CertificateService {
           recipientEmail: data.recipientEmail || '',
           eventId: data.eventId || '',
           eventTitle: data.eventTitle,
+          eventDate: data.eventDate || '',
           registrationId: data.registrationId,
           issuedDate: data.issuedAt?.toDate?.()?.toISOString() || new Date().toISOString(),
           verificationCode: data.credentialId,
@@ -409,6 +411,7 @@ export class CertificateService {
           recipientEmail: data.recipientEmail || '',
           eventId: data.eventId || eventId,
           eventTitle: data.eventTitle,
+          eventDate: data.eventDate || '',
           registrationId: data.registrationId,
           issuedDate: data.issuedAt?.toDate?.()?.toISOString() || new Date().toISOString(),
           verificationCode: data.credentialId,
