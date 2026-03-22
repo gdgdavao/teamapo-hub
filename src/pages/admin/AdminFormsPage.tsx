@@ -20,7 +20,7 @@ import FormService from '../../services/formService';
 
 interface FormField {
   id: string;
-  type: 'text' | 'email' | 'phone' | 'select' | 'multiselect' | 'textarea' | 'checkbox' | 'radio' | 'rating' | 'file' | 'date' | 'number';
+  type: 'text' | 'email' | 'phone' | 'select' | 'multiselect' | 'textarea' | 'checkbox' | 'radio' | 'rating' | 'file' | 'date' | 'number' | 'spacer';
   label: string;
   placeholder?: string;
   required: boolean;
@@ -115,14 +115,15 @@ const AdminFormsPage: React.FC = () => {
     { type: 'radio', label: 'Radio Buttons', icon: '🔘' },
     { type: 'checkbox', label: 'Checkbox', icon: '✅' },
     { type: 'rating', label: 'Rating', icon: '⭐' },
-    { type: 'file', label: 'File Upload', icon: '📎' }
+    { type: 'file', label: 'File Upload', icon: '📎' },
+    { type: 'spacer', label: 'Spacer', icon: '➖' }
   ];
 
   const addField = (type: FormField['type']) => {
     const newField: FormField = {
       id: Date.now().toString(),
       type,
-      label: `New ${type} field`,
+      label: type === 'spacer' ? 'Section Spacer' : `New ${type} field`,
       required: false,
       gridSize: 'full'
     };
@@ -351,6 +352,8 @@ const AdminFormsPage: React.FC = () => {
             </div>
           </div>
         );
+      case 'spacer':
+        return <div className="h-0.5 w-full rounded-full bg-gray-200" />;
       default:
         return <div className="text-gray-500">Unknown field type</div>;
     }
@@ -724,10 +727,10 @@ const AdminFormsPage: React.FC = () => {
                 </div>
               )}
 
-              <div className="space-y-4">
+              <div className="space-y-6">
                 {formFields.map((field) => (
-                  <div key={field.id}>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <div key={field.id} className="space-y-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
                       {field.label}
                       {field.required && <span className="text-secondary-500 ml-1">*</span>}
                     </label>
@@ -766,10 +769,10 @@ const AdminFormsPage: React.FC = () => {
               <p className="text-gray-600 mb-6">{editingForm.description}</p>
             )}
 
-            <div className="space-y-6">
+            <div className="space-y-8">
               {editingForm.fields.map((field) => (
-                <div key={field.id}>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                <div key={field.id} className="space-y-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-3">
                     {field.label}
                     {field.required && <span className="text-secondary-500 ml-1">*</span>}
                   </label>

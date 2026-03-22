@@ -4,6 +4,7 @@ import { Event, TicketType, FormField } from '../../../types';
 import { EventService } from '../../../services/eventService';
 import { logger } from '../../../utils/logger';
 import toast from 'react-hot-toast';
+import FormattedLabelText, { stripFormattedLabelSyntax } from '../FormattedLabelText';
 
 interface WalkInRegistrationModalProps {
   isOpen: boolean;
@@ -132,23 +133,27 @@ const WalkInRegistrationModal: React.FC<WalkInRegistrationModalProps> = ({
 
     // Validate custom form fields
     for (const field of registrationForm) {
+      if (field.type === 'spacer') continue;
+
+      const plainLabel = stripFormattedLabelSyntax(field.label);
+
       if (field.required) {
         const value = formData.customFormData?.[field.id];
         
         if (!value || (typeof value === 'string' && !value.trim())) {
-          toast.error(`${field.label} is required`);
+          toast.error(`${plainLabel} is required`);
           return;
         }
 
         // Email validation
         if (field.type === 'email' && typeof value === 'string' && !value.includes('@')) {
-          toast.error(`Please enter a valid email for ${field.label}`);
+          toast.error(`Please enter a valid email for ${plainLabel}`);
           return;
         }
 
         // Phone validation (basic)
         if (field.type === 'phone' && typeof value === 'string' && value.trim() && value.length < 10) {
-          toast.error(`Please enter a valid phone number for ${field.label}`);
+          toast.error(`Please enter a valid phone number for ${plainLabel}`);
           return;
         }
       }
@@ -219,6 +224,12 @@ const WalkInRegistrationModal: React.FC<WalkInRegistrationModalProps> = ({
     const commonInputClass = "w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent";
 
     switch (field.type) {
+      case 'spacer':
+        return (
+          <div key={field.id} className="md:col-span-2 py-2">
+            <div className="h-0.5 w-full rounded-full bg-gray-200" />
+          </div>
+        );
       case 'text':
       case 'email':
       case 'phone':
@@ -226,7 +237,7 @@ const WalkInRegistrationModal: React.FC<WalkInRegistrationModalProps> = ({
         return (
           <div key={field.id} className={gridClass}>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              {field.label} {field.required && <span className="text-red-500">*</span>}
+              <FormattedLabelText value={field.label} /> {field.required && <span className="text-red-500">*</span>}
             </label>
             {field.description && (
               <p className="text-xs text-gray-500 mb-1">{field.description}</p>
@@ -246,7 +257,7 @@ const WalkInRegistrationModal: React.FC<WalkInRegistrationModalProps> = ({
         return (
           <div key={field.id} className={gridClass}>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              {field.label} {field.required && <span className="text-red-500">*</span>}
+              <FormattedLabelText value={field.label} /> {field.required && <span className="text-red-500">*</span>}
             </label>
             {field.description && (
               <p className="text-xs text-gray-500 mb-1">{field.description}</p>
@@ -266,7 +277,7 @@ const WalkInRegistrationModal: React.FC<WalkInRegistrationModalProps> = ({
         return (
           <div key={field.id} className={gridClass}>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              {field.label} {field.required && <span className="text-red-500">*</span>}
+              <FormattedLabelText value={field.label} /> {field.required && <span className="text-red-500">*</span>}
             </label>
             {field.description && (
               <p className="text-xs text-gray-500 mb-1">{field.description}</p>
@@ -289,7 +300,7 @@ const WalkInRegistrationModal: React.FC<WalkInRegistrationModalProps> = ({
         return (
           <div key={field.id} className={gridClass}>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              {field.label} {field.required && <span className="text-red-500">*</span>}
+              <FormattedLabelText value={field.label} /> {field.required && <span className="text-red-500">*</span>}
             </label>
             {field.description && (
               <p className="text-xs text-gray-500 mb-2">{field.description}</p>
@@ -325,7 +336,7 @@ const WalkInRegistrationModal: React.FC<WalkInRegistrationModalProps> = ({
                 required={field.required}
               />
               <span className="text-sm text-gray-700">
-                {field.label} {field.required && <span className="text-red-500">*</span>}
+                <FormattedLabelText value={field.label} /> {field.required && <span className="text-red-500">*</span>}
               </span>
             </label>
             {field.description && (
@@ -338,7 +349,7 @@ const WalkInRegistrationModal: React.FC<WalkInRegistrationModalProps> = ({
         return (
           <div key={field.id} className={gridClass}>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              {field.label} {field.required && <span className="text-red-500">*</span>}
+              <FormattedLabelText value={field.label} /> {field.required && <span className="text-red-500">*</span>}
             </label>
             {field.description && (
               <p className="text-xs text-gray-500 mb-2">{field.description}</p>
@@ -370,7 +381,7 @@ const WalkInRegistrationModal: React.FC<WalkInRegistrationModalProps> = ({
         return (
           <div key={field.id} className={gridClass}>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              {field.label} {field.required && <span className="text-red-500">*</span>}
+              <FormattedLabelText value={field.label} /> {field.required && <span className="text-red-500">*</span>}
             </label>
             {field.description && (
               <p className="text-xs text-gray-500 mb-1">{field.description}</p>
@@ -389,7 +400,7 @@ const WalkInRegistrationModal: React.FC<WalkInRegistrationModalProps> = ({
         return (
           <div key={field.id} className={gridClass}>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              {field.label} {field.required && <span className="text-red-500">*</span>}
+              <FormattedLabelText value={field.label} /> {field.required && <span className="text-red-500">*</span>}
             </label>
             {field.description && (
               <p className="text-xs text-gray-500 mb-2">{field.description}</p>
@@ -417,7 +428,7 @@ const WalkInRegistrationModal: React.FC<WalkInRegistrationModalProps> = ({
         return (
           <div key={field.id} className={gridClass}>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              {field.label} {field.required && <span className="text-red-500">*</span>}
+              <FormattedLabelText value={field.label} /> {field.required && <span className="text-red-500">*</span>}
             </label>
             {field.description && (
               <p className="text-xs text-gray-500 mb-1">{field.description}</p>

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { FormField } from '../FormBuilder';
+import FormattedLabelText, { stripFormattedLabelSyntax } from '../FormattedLabelText';
 
 interface FormRendererProps {
   fields: FormField[];
@@ -39,11 +40,13 @@ const FormRenderer: React.FC<FormRendererProps> = ({
     const newErrors: Record<string, string> = {};
 
     fields.forEach(field => {
+      if (field.type === 'spacer') return;
+
       const value = formData[field.id];
 
       // Required field validation
       if (field.required && (!value || value.toString().trim() === '')) {
-        newErrors[field.id] = `${field.label} is required`;
+        newErrors[field.id] = `${stripFormattedLabelSyntax(field.label)} is required`;
         return;
       }
 
@@ -119,6 +122,12 @@ const FormRenderer: React.FC<FormRendererProps> = ({
     } ${disabled ? 'bg-gray-50 cursor-not-allowed' : ''}`;
 
     switch (field.type) {
+      case 'spacer':
+        return (
+          <div className="py-2">
+            <div className="h-0.5 w-full rounded-full bg-gray-200" />
+          </div>
+        );
       case 'text':
       case 'email':
       case 'phone':
@@ -155,7 +164,7 @@ const FormRenderer: React.FC<FormRendererProps> = ({
             disabled={disabled}
             className={baseInputClass}
           >
-            <option value="">{field.placeholder || `Select ${field.label.toLowerCase()}`}</option>
+            <option value="">{field.placeholder || `Select ${stripFormattedLabelSyntax(field.label).toLowerCase()}`}</option>
             {field.options?.map((option, index) => (
               <option key={index} value={option}>
                 {option}
@@ -281,25 +290,27 @@ const FormRenderer: React.FC<FormRendererProps> = ({
 
   return (
     <form onSubmit={handleSubmit} className={className}>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 gap-x-6 gap-y-8 md:grid-cols-2">
         {fields.map((field) => (
           <div
             key={field.id}
-            className={field.gridSize === 'full' ? 'md:col-span-2' : 'col-span-1'}
+            className={field.gridSize === 'full' || field.type === 'spacer' ? 'md:col-span-2' : 'col-span-1'}
           >
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              {field.label}
-              {field.required && <span className="text-red-500 ml-1">*</span>}
-            </label>
+            {field.type !== 'spacer' && (
+              <label className="block text-sm font-medium text-gray-700 mb-3">
+                <FormattedLabelText value={field.label} />
+                {field.required && <span className="text-red-500 ml-1">*</span>}
+              </label>
+            )}
             
             {renderField(field)}
             
             {errors[field.id] && (
-              <p className="mt-1 text-sm text-red-600">{errors[field.id]}</p>
+              <p className="mt-2 text-sm text-red-600">{errors[field.id]}</p>
             )}
             
             {field.description && !errors[field.id] && (
-              <p className="mt-1 text-xs text-gray-500">{field.description}</p>
+              <p className="mt-2 text-xs text-gray-500">{field.description}</p>
             )}
           </div>
         ))}

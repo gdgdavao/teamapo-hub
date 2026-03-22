@@ -483,7 +483,7 @@ export interface RegistrationFormData {
 // Form Builder Types
 export interface FormField {
   id: string;
-  type: 'text' | 'email' | 'phone' | 'select' | 'multiselect' | 'textarea' | 'checkbox' | 'radio' | 'rating' | 'file' | 'date' | 'number';
+  type: 'text' | 'email' | 'phone' | 'select' | 'multiselect' | 'textarea' | 'checkbox' | 'radio' | 'rating' | 'file' | 'date' | 'number' | 'spacer';
   label: string;
   placeholder?: string;
   required: boolean;

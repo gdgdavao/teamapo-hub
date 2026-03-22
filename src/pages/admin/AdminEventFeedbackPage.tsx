@@ -20,13 +20,78 @@ import { Feedback, Event } from '../../types';
 import { logger } from '../../utils/logger';
 import toast from 'react-hot-toast';
 
+type FeedbackFormField = {
+  id: string;
+  label: string;
+  type: string;
+  required?: boolean;
+  options?: string[];
+};
+
+type RatingAggregation = {
+  type: 'rating';
+  distribution: Record<number, number>;
+  total: number;
+  average: string;
+};
+
+type SelectAggregation = {
+  type: 'select';
+  counts: Record<string, number>;
+  total: number;
+  options: string[];
+};
+
+type MultiSelectAggregation = {
+  type: 'multiselect';
+  counts: Record<string, number>;
+  total: number;
+  options: string[];
+};
+
+type CheckboxAggregation = {
+  type: 'checkbox';
+  yesCount: number;
+  noCount: number;
+  total: number;
+};
+
+type TextAggregation = {
+  type: 'text';
+  responses: string[];
+  total: number;
+};
+
+type NumberAggregation = {
+  type: 'number';
+  average: string;
+  min: number;
+  max: number;
+  total: number;
+};
+
+type OtherAggregation = {
+  type: 'other';
+  responses: Array<string | number | boolean | string[]>;
+  total: number;
+};
+
+type FieldAggregation =
+  | RatingAggregation
+  | SelectAggregation
+  | MultiSelectAggregation
+  | CheckboxAggregation
+  | TextAggregation
+  | NumberAggregation
+  | OtherAggregation;
+
 const AdminEventFeedbackPage: React.FC = () => {
   const { eventId } = useParams<{ eventId: string }>();
   const navigate = useNavigate();
   
   const [event, setEvent] = useState<Event | null>(null);
   const [feedbackList, setFeedbackList] = useState<Feedback[]>([]);
-  const [feedbackFormFields, setFeedbackFormFields] = useState<any[]>([]);
+  const [feedbackFormFields, setFeedbackFormFields] = useState<FeedbackFormField[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'summary' | 'individual'>('summary');
   const [selectedResponse, setSelectedResponse] = useState<number | null>(null);
@@ -98,7 +163,7 @@ const AdminEventFeedbackPage: React.FC = () => {
     const responses = (feedback as any).customResponses || (feedback as any).responses || {};
     
     // Try to find a rating field in the responses
-    const ratingField = feedbackFormFields.find(f => f.type === 'rating');
+    const ratingField = feedbackFormFields.find((field) => field.type === 'rating');
     if (ratingField && responses[ratingField.id] !== undefined) {
       return Number(responses[ratingField.id]) || 0;
     }
@@ -140,8 +205,8 @@ const AdminEventFeedbackPage: React.FC = () => {
   };
 
   // Aggregate responses for a specific field (Google Forms style)
-  const getFieldAggregation = (field: any) => {
-    const responses: any[] = [];
+  const getFieldAggregation = (field: FeedbackFormField): FieldAggregation => {
+    const responses: unknown[] = [];
     
     feedbackList.forEach(feedback => {
       const customResponses = (feedback as any).customResponses || (feedback as any).responses || {};
@@ -161,7 +226,9 @@ const AdminEventFeedbackPage: React.FC = () => {
         }
       });
       const total = responses.length;
-      const average = total > 0 ? (responses.reduce((sum, v) => sum + Number(v), 0) / total).toFixed(1) : '0';
+      const average = total > 0
+        ? (responses.reduce<number>((sum, value) => sum + Number(value), 0) / total).toFixed(1)
+        : '0';
       return { type: 'rating', distribution, total, average };
     }
 
@@ -169,8 +236,9 @@ const AdminEventFeedbackPage: React.FC = () => {
     if (field.type === 'select' || field.type === 'radio') {
       const counts: Record<string, number> = {};
       (field.options || []).forEach((opt: string) => { counts[opt] = 0; });
-      responses.forEach(val => {
-        counts[val] = (counts[val] || 0) + 1;
+      responses.forEach((val) => {
+        const optionValue = String(val);
+        counts[optionValue] = (counts[optionValue] || 0) + 1;
       });
       return { type: 'select', counts, total: responses.length, options: field.options || [] };
     }
@@ -179,10 +247,11 @@ const AdminEventFeedbackPage: React.FC = () => {
     if (field.type === 'multiselect') {
       const counts: Record<string, number> = {};
       (field.options || []).forEach((opt: string) => { counts[opt] = 0; });
-      responses.forEach(val => {
+      responses.forEach((val) => {
         if (Array.isArray(val)) {
-          val.forEach((item: string) => {
-            counts[item] = (counts[item] || 0) + 1;
+          val.forEach((item) => {
+            const optionValue = String(item);
+            counts[optionValue] = (counts[optionValue] || 0) + 1;
           });
         }
       });
@@ -198,7 +267,8 @@ const AdminEventFeedbackPage: React.FC = () => {
 
     // For text/textarea - return all text responses
     if (field.type === 'text' || field.type === 'textarea') {
-      return { type: 'text', responses, total: responses.length };
+      const textResponses = responses.map((value) => String(value));
+      return { type: 'text', responses: textResponses, total: textResponses.length };
     }
 
     // For number fields
@@ -211,7 +281,7 @@ const AdminEventFeedbackPage: React.FC = () => {
     }
 
     // Default: just return response count
-    return { type: 'other', responses, total: responses.length };
+    return { type: 'other', responses: responses as Array<string | number | boolean | string[]>, total: responses.length };
   };
 
   const formatDate = (timestamp: any) => {

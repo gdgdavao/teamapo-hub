@@ -7,6 +7,7 @@ import TicketSelector, { TicketSelection } from '../TicketSelector';
 import { Event, FormField } from '../../../types';
 import { logger } from '../../../utils/logger';
 import toast from 'react-hot-toast';
+import FormattedLabelText, { stripFormattedLabelSyntax } from '../../shared/FormattedLabelText';
 
 interface RegistrationFormProps {
   event: Event;
@@ -57,7 +58,7 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
     // Check if using custom form fields or fallback form
     if (registrationForm.length > 0) {
       // Validate custom form fields
-      const requiredFields = registrationForm.filter(field => field.required);
+      const requiredFields = registrationForm.filter(field => field.required && field.type !== 'spacer');
       const missingFields = requiredFields.filter(field => 
         !registrationData.customResponses[field.id] || 
         (typeof registrationData.customResponses[field.id] === 'string' && registrationData.customResponses[field.id].trim() === '')
@@ -71,7 +72,7 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
       // Validate email in custom form
       const emailField = registrationForm.find(field => 
         field.type === 'email' ||
-        field.label.toLowerCase().includes('email') || 
+        stripFormattedLabelSyntax(field.label).toLowerCase().includes('email') || 
         field.id.toLowerCase().includes('email')
       );
       
@@ -110,12 +111,12 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
       if (registrationForm.length > 0) {
         // Extract name and email from custom responses if they exist
         const nameField = registrationForm.find(field => 
-          field.label.toLowerCase().includes('name') || 
+          stripFormattedLabelSyntax(field.label).toLowerCase().includes('name') || 
           field.id.toLowerCase().includes('name')
         );
         const emailField = registrationForm.find(field => 
           field.type === 'email' ||
-          field.label.toLowerCase().includes('email') || 
+          stripFormattedLabelSyntax(field.label).toLowerCase().includes('email') || 
           field.id.toLowerCase().includes('email')
         );
         
@@ -235,14 +236,23 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
             <div className="w-1 h-5 bg-green-500 rounded-full mr-2"></div>
             Registration Details
           </h2>
-          <form onSubmit={handleRegistrationSubmit} className="space-y-4">
+          <form onSubmit={handleRegistrationSubmit} className="space-y-6">
             {/* Dynamic Form Fields from Event Configuration */}
             {registrationForm.length > 0 ? (
-              <div className="space-y-4">
+              <div className="grid grid-cols-1 gap-x-6 gap-y-6 md:grid-cols-2">
                 {registrationForm.map((field) => (
-                  <div key={field.id} className={field.gridSize === 'half' ? 'md:w-1/2' : 'w-full'}>
+                  <div
+                    key={field.id}
+                    className={`space-y-2 ${field.type === 'spacer' || field.gridSize !== 'half' ? 'md:col-span-2' : 'md:col-span-1'}`}
+                  >
+                    {field.type === 'spacer' ? (
+                      <div className="py-4">
+                        <div className="h-0.5 w-full rounded-full bg-gray-200" />
+                      </div>
+                    ) : (
+                      <>
                     <label className="block text-sm font-semibold text-gray-700 mb-2">
-                      {field.label} {field.required && <span className="text-red-500">*</span>}
+                      <FormattedLabelText value={field.label} /> {field.required && <span className="text-red-500">*</span>}
                     </label>
                     {field.type === 'textarea' ? (
                       <textarea
@@ -254,7 +264,7 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
                         className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                         rows={3}
                         required={field.required}
-                        placeholder={field.placeholder || `Enter your ${field.label.toLowerCase()}`}
+                        placeholder={field.placeholder || `Enter your ${stripFormattedLabelSyntax(field.label).toLowerCase()}`}
                       />
                     ) : field.type === 'select' ? (
                       <select
@@ -330,7 +340,9 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
                           className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded mt-1"
                           required={field.required}
                         />
-                        <span className="ml-3 text-gray-700">{field.placeholder || field.label}</span>
+                        <span className="ml-3 text-gray-700">
+                          {field.placeholder || <FormattedLabelText value={field.label} />}
+                        </span>
                       </label>
                     ) : field.type === 'rating' ? (
                       <div className="flex space-x-1">
@@ -360,15 +372,17 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
                         }))}
                         className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                         required={field.required}
-                        placeholder={field.placeholder || `Enter your ${field.label.toLowerCase()}`}
+                        placeholder={field.placeholder || `Enter your ${stripFormattedLabelSyntax(field.label).toLowerCase()}`}
                       />
+                    )}
+                      </>
                     )}
                   </div>
                 ))}
               </div>
             ) : (
               /* Fallback to basic form if no custom form is configured */
-              <div className="space-y-4">
+              <div className="space-y-6">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
                     Full Name <span className="text-red-500">*</span>

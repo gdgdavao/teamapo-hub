@@ -1,16 +1,18 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { 
   PlusIcon, 
   TrashIcon,
   ArrowUpIcon,
   ArrowDownIcon,
   XCircleIcon,
-  EyeIcon
+  EyeIcon,
+  LinkIcon
 } from '@heroicons/react/24/outline';
+import FormattedLabelText from '../FormattedLabelText';
 
 export interface FormField {
   id: string;
-  type: 'text' | 'email' | 'phone' | 'select' | 'multiselect' | 'textarea' | 'checkbox' | 'radio' | 'rating' | 'file' | 'date' | 'number';
+  type: 'text' | 'email' | 'phone' | 'select' | 'multiselect' | 'textarea' | 'checkbox' | 'radio' | 'rating' | 'file' | 'date' | 'number' | 'spacer';
   label: string;
   placeholder?: string;
   required: boolean;
@@ -42,6 +44,7 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
   showPreview = true
 }) => {
   const [previewMode, setPreviewMode] = useState(false);
+  const labelTextareaRefs = useRef<Record<string, HTMLTextAreaElement | null>>({});
 
   const fieldTypes = [
     { type: 'text', label: 'Text Input', icon: '📝' },
@@ -55,14 +58,16 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
     { type: 'radio', label: 'Radio Buttons', icon: '🔘' },
     { type: 'checkbox', label: 'Checkbox', icon: '✅' },
     { type: 'rating', label: 'Rating', icon: '⭐' },
-    { type: 'file', label: 'File Upload', icon: '📎' }
+    { type: 'file', label: 'File Upload', icon: '📎' },
+    { type: 'spacer', label: 'Spacer', icon: '➖' }
   ];
 
   const addField = (fieldType?: FormField['type']) => {
+    const selectedType = fieldType || 'text';
     const newField: FormField = {
       id: Date.now().toString(),
-      type: fieldType || 'text',
-      label: 'New Field',
+      type: selectedType,
+      label: selectedType === 'spacer' ? 'Section Spacer' : 'New Field',
       required: false,
       gridSize: 'full'
     };
@@ -98,6 +103,12 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
   const renderFormField = (field: FormField, isPreview: boolean = false) => {
     if (isPreview) {
       switch (field.type) {
+        case 'spacer':
+          return (
+            <div className="py-4">
+              <div className="h-0.5 w-full rounded-full bg-gray-200" />
+            </div>
+          );
         case 'textarea':
           return (
             <textarea
@@ -167,6 +178,51 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
     return null;
   };
 
+  const isSpacerField = (field: FormField) => field.type === 'spacer';
+
+  const applyLabelFormatting = (
+    fieldId: string,
+    formatType: 'bold' | 'italic' | 'underline' | 'link'
+  ) => {
+    const textarea = labelTextareaRefs.current[fieldId];
+    const targetField = fields.find((field) => field.id === fieldId);
+
+    if (!textarea || !targetField) return;
+
+    const selectionStart = textarea.selectionStart ?? 0;
+    const selectionEnd = textarea.selectionEnd ?? 0;
+    const selectedText = targetField.label.slice(selectionStart, selectionEnd);
+    const hasSelection = selectionEnd > selectionStart;
+
+    let replacementText = '';
+
+    if (formatType === 'bold') {
+      replacementText = hasSelection ? `**${selectedText}**` : '**bold text**';
+    } else if (formatType === 'italic') {
+      replacementText = hasSelection ? `*${selectedText}*` : '*italic text*';
+    } else if (formatType === 'underline') {
+      replacementText = hasSelection ? `__${selectedText}__` : '__underlined text__';
+    } else {
+      const defaultLabel = hasSelection ? selectedText : 'link text';
+      const inputUrl = window.prompt('Enter a link URL (https://...)', 'https://');
+
+      if (!inputUrl) return;
+
+      const trimmedUrl = inputUrl.trim();
+      replacementText = `[${defaultLabel}](${trimmedUrl})`;
+    }
+
+    const nextLabel = `${targetField.label.slice(0, selectionStart)}${replacementText}${targetField.label.slice(selectionEnd)}`;
+
+    updateField(fieldId, { label: nextLabel });
+
+    const nextCursorPosition = selectionStart + replacementText.length;
+    window.requestAnimationFrame(() => {
+      textarea.focus();
+      textarea.setSelectionRange(nextCursorPosition, nextCursorPosition);
+    });
+  };
+
   if (previewMode) {
     return (
       <div className="space-y-6">
@@ -184,21 +240,23 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
           </button>
         </div>
 
-        <div className="bg-white border border-gray-200 rounded-lg p-6">
+        <div className="rounded-2xl border border-violet-100 bg-white p-6 shadow-sm">
           <h4 className="text-lg font-semibold mb-4">{title}</h4>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-y-6 gap-x-4 md:grid-cols-2">
             {fields.map((field) => (
               <div
                 key={field.id}
-                className={field.gridSize === 'full' ? 'md:col-span-2' : 'col-span-1'}
+                className={`space-y-2 ${field.gridSize === 'full' || isSpacerField(field) ? 'md:col-span-2' : 'col-span-1'}`}
               >
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  {field.label}
-                  {field.required && <span className="text-red-500">*</span>}
-                </label>
+                {!isSpacerField(field) && (
+                  <label className="block text-sm font-medium text-gray-700">
+                    <FormattedLabelText value={field.label} />
+                    {field.required && <span className="text-red-500">*</span>}
+                  </label>
+                )}
                 {renderFormField(field, true)}
                 {field.description && (
-                  <p className="mt-1 text-xs text-gray-500">{field.description}</p>
+                  <p className="text-xs text-gray-500">{field.description}</p>
                 )}
               </div>
             ))}
@@ -209,48 +267,56 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
-          <p className="text-gray-600">{description}</p>
-        </div>
-        
-        <div className="flex space-x-2">
-          {showPreview && (
+    <div className="space-y-6 rounded-2xl border border-violet-100 bg-violet-50/50 p-4 md:p-6">
+      <div className="rounded-2xl bg-gradient-to-r from-violet-600 to-indigo-600 p-5 text-white shadow-sm">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-semibold">{title}</h3>
+            <p className="text-sm text-violet-100">{description}</p>
+          </div>
+          
+          <div className="flex space-x-2">
+            {showPreview && (
+              <button
+                type="button"
+                onClick={() => setPreviewMode(true)}
+                className="flex items-center rounded-lg border border-violet-200/50 bg-white/10 px-4 py-2 text-white hover:bg-white/20"
+              >
+                <EyeIcon className="w-4 h-4 mr-2" />
+                Preview
+              </button>
+            )}
             <button
               type="button"
-              onClick={() => setPreviewMode(true)}
-              className="flex items-center px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50"
+              onClick={() => addField()}
+              className="flex items-center rounded-lg bg-white px-4 py-2 text-violet-700 hover:bg-violet-100"
             >
-              <EyeIcon className="w-4 h-4 mr-2" />
-              Preview
+              <PlusIcon className="w-4 h-4 mr-2" />
+              Add Field
             </button>
-          )}
-          <button
-            type="button"
-            onClick={() => addField()}
-            className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-          >
-            <PlusIcon className="w-4 h-4 mr-2" />
-            Add Field
-          </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between">
+        <div>
+          <h4 className="text-sm font-semibold uppercase tracking-wide text-violet-700">Field Types</h4>
+          <p className="text-sm text-gray-600">Click to quickly add a field.</p>
         </div>
       </div>
 
       {/* Field Types Palette */}
-      <div className="bg-gray-50 p-4 rounded-lg">
-        <h4 className="text-sm font-medium text-gray-700 mb-3">Quick Add Field Types</h4>
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
+      <div className="rounded-2xl border border-violet-100 bg-white p-4 shadow-sm">
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-4 lg:grid-cols-6">
           {fieldTypes.map((fieldType) => (
             <button
               key={fieldType.type}
               type="button"
               onClick={() => addField(fieldType.type as FormField['type'])}
-              className="flex flex-col items-center p-2 text-xs bg-white border border-gray-200 rounded hover:border-blue-300 hover:bg-blue-50"
+              className="flex items-center gap-2 rounded-full border border-violet-200 px-3 py-2 text-left text-xs text-violet-700 hover:bg-violet-50"
             >
-              <span className="text-lg mb-1">{fieldType.icon}</span>
-              <span className="text-center">{fieldType.label}</span>
+              <span className="text-base">{fieldType.icon}</span>
+              <span>{fieldType.label}</span>
             </button>
           ))}
         </div>
@@ -259,27 +325,27 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
       {/* Form Fields */}
       <div className="space-y-4">
         {fields.length === 0 ? (
-          <div className="text-center py-12 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
+          <div className="rounded-2xl border-2 border-dashed border-violet-300 bg-white py-12 text-center">
             <h4 className="text-lg font-medium text-gray-900 mb-2">No fields added yet</h4>
             <p className="text-gray-600 mb-4">Start building your form by adding fields above</p>
             <button
               type="button"
               onClick={() => addField()}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              className="rounded-lg bg-violet-600 px-4 py-2 text-white hover:bg-violet-700"
             >
               Add Your First Field
             </button>
           </div>
         ) : (
           fields.map((field, index) => (
-            <div key={field.id} className="bg-white border border-gray-200 rounded-lg p-4">
+            <div key={field.id} className="rounded-2xl border border-violet-100 bg-white p-4 shadow-sm">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center space-x-2">
                   <span className="text-sm text-gray-500">#{index + 1}</span>
                   <span className="text-sm font-medium text-gray-700">
                     {fieldTypes.find(ft => ft.type === field.type)?.icon} {field.type}
                   </span>
-                  {field.required && (
+                  {field.required && !isSpacerField(field) && (
                     <span className="px-2 py-1 text-xs bg-red-100 text-red-800 rounded">Required</span>
                   )}
                 </div>
@@ -314,7 +380,7 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Field Type</label>
                   <select
@@ -332,15 +398,53 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Label</label>
-                  <input
-                    type="text"
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => applyLabelFormatting(field.id, 'bold')}
+                      className="rounded border border-gray-300 px-2 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                    >
+                      B
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyLabelFormatting(field.id, 'italic')}
+                      className="rounded border border-gray-300 px-2 py-1 text-xs italic text-gray-700 hover:bg-gray-50"
+                    >
+                      I
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyLabelFormatting(field.id, 'underline')}
+                      className="rounded border border-gray-300 px-2 py-1 text-xs underline text-gray-700 hover:bg-gray-50"
+                    >
+                      U
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyLabelFormatting(field.id, 'link')}
+                      className="inline-flex items-center rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
+                    >
+                      <LinkIcon className="mr-1 h-3.5 w-3.5" />
+                      Link
+                    </button>
+                  </div>
+                  <textarea
+                    ref={(element) => {
+                      labelTextareaRefs.current[field.id] = element;
+                    }}
                     value={field.label}
                     onChange={(e) => updateField(field.id, { label: e.target.value })}
                     className="w-full px-3 py-2 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder="Field label"
+                    placeholder="Field label with formatting"
+                    rows={3}
                   />
+                  <p className="mt-1 text-xs text-gray-500">
+                    Supports new lines, bold (**text**), italic (*text*), underline (__text__), and links ([text](https://...)).
+                  </p>
                 </div>
 
+                {!isSpacerField(field) && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Placeholder</label>
                   <input
@@ -351,7 +455,9 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
                     placeholder="Placeholder text"
                   />
                 </div>
+                )}
 
+                {!isSpacerField(field) && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Field Size</label>
                   <select
@@ -363,6 +469,7 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
                     <option value="half">Half Width</option>
                   </select>
                 </div>
+                )}
 
                 <div className="md:col-span-2">
                   <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
@@ -375,6 +482,7 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
                   />
                 </div>
 
+                {!isSpacerField(field) && (
                 <div className="md:col-span-2 flex items-center space-x-4">
                   <label className="flex items-center">
                     <input
@@ -386,6 +494,7 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
                     <span className="ml-2 text-sm text-gray-700">Required field</span>
                   </label>
                 </div>
+                )}
               </div>
 
               {/* Options for select/multiselect/radio fields */}
