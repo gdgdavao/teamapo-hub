@@ -35,3 +35,4 @@ scripts/emulator-data/storage_export/buckets.json
 *.cache
 .vercel
 venv
+.env*.local
