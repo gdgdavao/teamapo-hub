@@ -7,13 +7,18 @@
     @apply border-gray-200;
   }
   
+  html {
+    font-size: 16px;
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
   body {
     @apply bg-white text-gray-900 font-google;
+    font-weight: 400;
+    line-height: 1.5;
     font-feature-settings: "rlig" 1, "calt" 1;
-  }
-  
-  html {
-    scroll-behavior: smooth;
   }
 }
 

@@ -285,6 +285,7 @@ const AppContent: React.FC = () => {
       {/* Payment Routes - Keep for admin/organizer access */}
       <Route path="/payment/:registrationId" element={<PaymentPage />} />
       <Route path="/payment/success" element={<PaymentSuccessPage />} />
+      <Route path="/registration/success" element={<PaymentSuccessPage />} />
 
       {/* Feedback Route - Keep for admin/organizer access */}
       <Route path="/feedback/:eventId" element={

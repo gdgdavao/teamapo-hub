@@ -192,7 +192,7 @@ const FormRenderer: React.FC<FormRendererProps> = ({
                   disabled={disabled}
                   className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                 />
-                <span className="ml-2 text-gray-700">{option}</span>
+                <span className="ml-2 text-base font-normal text-gray-700">{option}</span>
               </label>
             ))}
           </div>
@@ -212,7 +212,7 @@ const FormRenderer: React.FC<FormRendererProps> = ({
                   disabled={disabled}
                   className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
                 />
-                <span className="ml-2 text-gray-700">{option}</span>
+                <span className="ml-2 text-base font-normal text-gray-700">{option}</span>
               </label>
             ))}
           </div>
@@ -228,7 +228,7 @@ const FormRenderer: React.FC<FormRendererProps> = ({
               disabled={disabled}
               className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded mt-1"
             />
-            <span className="ml-2 text-gray-700">
+            <span className="ml-2 text-base font-normal text-gray-700">
               {field.placeholder || field.label}
             </span>
           </label>
@@ -254,7 +254,7 @@ const FormRenderer: React.FC<FormRendererProps> = ({
               </button>
             ))}
             {value > 0 && (
-              <span className="ml-3 text-sm text-gray-600 self-center">
+              <span className="ml-3 text-base text-gray-600 self-center">
                 {value} out of 5
               </span>
             )}
@@ -297,7 +297,7 @@ const FormRenderer: React.FC<FormRendererProps> = ({
             className={field.gridSize === 'full' || field.type === 'spacer' ? 'md:col-span-2' : 'col-span-1'}
           >
             {field.type !== 'spacer' && (
-              <label className="block text-sm font-medium text-gray-700 mb-3">
+              <label className="mb-3 block text-base font-medium text-gray-700">
                 <FormattedLabelText value={field.label} />
                 {field.required && <span className="text-red-500 ml-1">*</span>}
               </label>
@@ -310,7 +310,7 @@ const FormRenderer: React.FC<FormRendererProps> = ({
             )}
             
             {field.description && !errors[field.id] && (
-              <p className="mt-2 text-xs text-gray-500">{field.description}</p>
+              <p className="mt-2 text-sm text-gray-500">{field.description}</p>
             )}
           </div>
         ))}

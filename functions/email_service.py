@@ -192,9 +192,12 @@ class EmailService:
         event_location: str,
         registration_id: Optional[str] = None,
         qr_code_data: Optional[str] = None,
-        requires_payment: bool = False
+        requires_payment: bool = False,
+        is_free_registration: Optional[bool] = None
     ) -> Dict[str, Any]:
         """Send registration confirmation email."""
+        if is_free_registration is None:
+            is_free_registration = not requires_payment
         
         # Different subject based on whether registration is approved or just submitted
         if registration_id and qr_code_data:
@@ -210,7 +213,8 @@ class EmailService:
             event_location=event_location,
             registration_id=registration_id,
             qr_code_data=qr_code_data,
-            requires_payment=requires_payment
+            requires_payment=requires_payment,
+            is_free_registration=is_free_registration
         )
         
         # Create text content
@@ -220,7 +224,8 @@ class EmailService:
             event_date=event_date,
             event_location=event_location,
             registration_id=registration_id,
-            requires_payment=requires_payment
+            requires_payment=requires_payment,
+            is_free_registration=is_free_registration
         )
         
         tags = [
@@ -435,9 +440,34 @@ class EmailService:
         event_location: str,
         registration_id: Optional[str] = None,
         qr_code_data: Optional[str] = None,
-        requires_payment: bool = False
+        requires_payment: bool = False,
+        is_free_registration: bool = False
     ) -> str:
         """Create HTML content for registration confirmation email."""
+        if is_free_registration:
+            registration_status_title = "You're all set!"
+            registration_status_message = (
+                "Your registration is complete and no payment is required for this event."
+            )
+            next_steps_items = """
+  <li>Save this email for your records.</li>
+  <li>Watch your inbox for event reminders and organizer updates.</li>
+  <li>Arrive early on event day for a smooth check-in.</li>
+"""
+            closing_message = (
+                "Thanks again for registering. We look forward to seeing you at the event!"
+            )
+        else:
+            registration_status_title = "Registration received"
+            registration_status_message = (
+                "We received your registration and payment proof. Our team will manually verify your payment."
+            )
+            next_steps_items = """
+  <li>We'll review your payment proof and confirm your registration.</li>
+  <li>Once verified, you'll receive a final confirmation email with your QR code and registration details.</li>
+  <li>If we need additional information, we'll contact you at this email address.</li>
+"""
+            closing_message = "Please keep an eye on your inbox for updates."
         
         context = {
             'user_name': user_name,
@@ -445,7 +475,11 @@ class EmailService:
             'event_date': event_date,
             'event_location': event_location,
             'registration_id': registration_id or '',
-            'qr_code_data': qr_code_data or ''
+            'qr_code_data': qr_code_data or '',
+            'registration_status_title': registration_status_title,
+            'registration_status_message': registration_status_message,
+            'next_steps_items': next_steps_items,
+            'closing_message': closing_message
         }
         
         return template_loader.render_email_template(
@@ -584,11 +618,31 @@ class EmailService:
         event_date: str,
         event_location: str,
         registration_id: Optional[str] = None,
-        requires_payment: bool = False
+        requires_payment: bool = False,
+        is_free_registration: bool = False
     ) -> str:
         """Create plain text content for registration confirmation email."""
-        
-        payment_text = "\nPAYMENT REQUIRED: Please complete your payment to secure your spot. Check your email for payment instructions.\n" if requires_payment else ""
+        registration_status_text = (
+            "NO PAYMENT REQUIRED: Your registration is complete."
+            if is_free_registration
+            else "PAYMENT VERIFICATION: We received your payment proof and will verify it shortly."
+        )
+
+        next_steps_text = (
+            "- Save this email for your records\n"
+            "- Watch your inbox for event reminders and organizer updates\n"
+            "- Arrive 15 minutes early for check-in"
+            if is_free_registration
+            else "- We'll review your payment proof and registration details\n"
+                 "- You'll receive a final confirmation and QR code after approval\n"
+                 "- If we need more details, we'll contact you by email"
+        )
+
+        payment_text = (
+            "\nPAYMENT REQUIRED: Please complete your payment to secure your spot. Check your email for payment instructions.\n"
+            if requires_payment
+            else ""
+        )
         
         return f"""
 Registration Confirmed - {event_title}
@@ -602,12 +656,10 @@ EVENT DETAILS:
 - Date: {event_date}
 - Location: {event_location}
 {f'- Registration ID: {registration_id}' if registration_id else ''}
+{registration_status_text}
 {payment_text}
 WHAT'S NEXT:
-- Save this email for your records
-- Add the event to your calendar
-- Arrive 15 minutes early for check-in
-- Bring a valid ID for verification
+{next_steps_text}
 
 If you have any questions, feel free to contact us.
 

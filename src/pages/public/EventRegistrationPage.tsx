@@ -324,6 +324,8 @@ const EventRegistrationPage: React.FC = () => {
 
   // Check if registration is closed
   const isRegistrationClosed = event.registrationStatus === 'closed';
+  const activeTicketTypes = event.ticketTypes?.filter(ticket => ticket.isActive !== false) || [];
+  const hasPaidTicketOptions = activeTicketTypes.some(ticket => ticket.price > 0);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -373,7 +375,7 @@ const EventRegistrationPage: React.FC = () => {
                         className="inline-flex items-center px-8 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-all duration-300 font-semibold shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
                       >
                         <CheckCircleIcon className="w-5 h-5 mr-2" />
-                        Register Now
+                        {hasPaidTicketOptions ? 'Register Now' : 'Register for Free'}
                       </button>
                     )}
                     <button
@@ -401,8 +403,8 @@ const EventRegistrationPage: React.FC = () => {
                     <CalendarDaysIcon className="w-5 h-5 text-blue-600" />
                   </div>
                   <div>
-                    <h3 className="font-semibold text-gray-900 text-sm">Date</h3>
-                    <p className="text-gray-600 font-medium text-sm">{formatDate(event.startDate)}</p>
+                    <h3 className="text-base font-medium text-gray-900">Date</h3>
+                    <p className="text-base text-gray-600">{formatDate(event.startDate)}</p>
                   </div>
                 </div>
               </div>
@@ -413,8 +415,8 @@ const EventRegistrationPage: React.FC = () => {
                     <ClockIcon className="w-5 h-5 text-green-600" />
                   </div>
                   <div>
-                    <h3 className="font-semibold text-gray-900 text-sm">Time</h3>
-                    <p className="text-gray-600 font-medium text-sm">
+                    <h3 className="text-base font-medium text-gray-900">Time</h3>
+                    <p className="text-base text-gray-600">
                       {formatTime(event.startDate)} - {formatTime(event.endDate)}
                     </p>
                   </div>
@@ -427,8 +429,8 @@ const EventRegistrationPage: React.FC = () => {
                     <MapPinIcon className="w-5 h-5 text-red-600" />
                   </div>
                   <div>
-                    <h3 className="font-semibold text-gray-900 text-sm">Venue</h3>
-                    <p className="text-gray-600 font-medium text-sm">
+                    <h3 className="text-base font-medium text-gray-900">Venue</h3>
+                    <p className="text-base text-gray-600">
                       {event.venue.type === 'online' ? 'Online Event' : `${event.venue.name || 'Venue'}, ${event.venue.city}`}
                     </p>
                   </div>

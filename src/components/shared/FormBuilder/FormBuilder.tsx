@@ -133,7 +133,7 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
               {field.options?.map((option, index) => (
                 <label key={index} className="flex items-center">
                   <input type="radio" disabled className="mr-2" />
-                  <span className="text-sm">{option}</span>
+                  <span className="text-base">{option}</span>
                 </label>
               ))}
             </div>
@@ -144,7 +144,7 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
               {field.options?.map((option, index) => (
                 <label key={index} className="flex items-center">
                   <input type="checkbox" disabled className="mr-2" />
-                  <span className="text-sm">{option}</span>
+                  <span className="text-base">{option}</span>
                 </label>
               ))}
             </div>
@@ -153,7 +153,7 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
           return (
             <label className="flex items-center">
               <input type="checkbox" disabled className="mr-2" />
-              <span className="text-sm">{field.placeholder || field.label}</span>
+              <span className="text-base">{field.placeholder || field.label}</span>
             </label>
           );
         case 'rating':
@@ -249,14 +249,14 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
                 className={`space-y-2 ${field.gridSize === 'full' || isSpacerField(field) ? 'md:col-span-2' : 'col-span-1'}`}
               >
                 {!isSpacerField(field) && (
-                  <label className="block text-sm font-medium text-gray-700">
+                  <label className="block text-base font-medium text-gray-700">
                     <FormattedLabelText value={field.label} />
                     {field.required && <span className="text-red-500">*</span>}
                   </label>
                 )}
                 {renderFormField(field, true)}
                 {field.description && (
-                  <p className="text-xs text-gray-500">{field.description}</p>
+                  <p className="text-sm text-gray-500">{field.description}</p>
                 )}
               </div>
             ))}
@@ -272,7 +272,7 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-lg font-semibold">{title}</h3>
-            <p className="text-sm text-violet-100">{description}</p>
+            <p className="text-base text-violet-100">{description}</p>
           </div>
           
           <div className="flex space-x-2">
@@ -300,8 +300,8 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
 
       <div className="flex items-center justify-between">
         <div>
-          <h4 className="text-sm font-semibold uppercase tracking-wide text-violet-700">Field Types</h4>
-          <p className="text-sm text-gray-600">Click to quickly add a field.</p>
+          <h4 className="text-base font-medium uppercase tracking-wide text-violet-700">Field Types</h4>
+          <p className="text-base text-gray-600">Click to quickly add a field.</p>
         </div>
       </div>
 
@@ -313,7 +313,7 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
               key={fieldType.type}
               type="button"
               onClick={() => addField(fieldType.type as FormField['type'])}
-              className="flex items-center gap-2 rounded-full border border-violet-200 px-3 py-2 text-left text-xs text-violet-700 hover:bg-violet-50"
+              className="flex items-center gap-2 rounded-full border border-violet-200 px-3 py-2 text-left text-sm text-violet-700 hover:bg-violet-50"
             >
               <span className="text-base">{fieldType.icon}</span>
               <span>{fieldType.label}</span>
@@ -341,8 +341,8 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
             <div key={field.id} className="rounded-2xl border border-violet-100 bg-white p-4 shadow-sm">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center space-x-2">
-                  <span className="text-sm text-gray-500">#{index + 1}</span>
-                  <span className="text-sm font-medium text-gray-700">
+                  <span className="text-base text-gray-500">#{index + 1}</span>
+                  <span className="text-base font-medium text-gray-700">
                     {fieldTypes.find(ft => ft.type === field.type)?.icon} {field.type}
                   </span>
                   {field.required && !isSpacerField(field) && (
@@ -382,11 +382,11 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
 
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Field Type</label>
+                  <label className="mb-1 block text-base font-medium text-gray-700">Field Type</label>
                   <select
                     value={field.type}
                     onChange={(e) => updateField(field.id, { type: e.target.value as FormField['type'] })}
-                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    className="w-full rounded border border-gray-300 px-3 py-2 text-base focus:border-transparent focus:ring-2 focus:ring-blue-500"
                   >
                     {fieldTypes.map((fieldType) => (
                       <option key={fieldType.type} value={fieldType.type}>
@@ -397,7 +397,7 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Label</label>
+                  <label className="mb-1 block text-base font-medium text-gray-700">Label</label>
                   <div className="mb-2 flex flex-wrap items-center gap-2">
                     <button
                       type="button"
@@ -435,23 +435,23 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
                     }}
                     value={field.label}
                     onChange={(e) => updateField(field.id, { label: e.target.value })}
-                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    className="w-full rounded border border-gray-300 px-3 py-2 text-base focus:border-transparent focus:ring-2 focus:ring-blue-500"
                     placeholder="Field label with formatting"
                     rows={3}
                   />
-                  <p className="mt-1 text-xs text-gray-500">
+                  <p className="mt-1 text-sm text-gray-500">
                     Supports new lines, bold (**text**), italic (*text*), underline (__text__), and links ([text](https://...)).
                   </p>
                 </div>
 
                 {!isSpacerField(field) && (
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Placeholder</label>
+                  <label className="mb-1 block text-base font-medium text-gray-700">Placeholder</label>
                   <input
                     type="text"
                     value={field.placeholder || ''}
                     onChange={(e) => updateField(field.id, { placeholder: e.target.value })}
-                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    className="w-full rounded border border-gray-300 px-3 py-2 text-base focus:border-transparent focus:ring-2 focus:ring-blue-500"
                     placeholder="Placeholder text"
                   />
                 </div>
@@ -459,11 +459,11 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
 
                 {!isSpacerField(field) && (
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Field Size</label>
+                  <label className="mb-1 block text-base font-medium text-gray-700">Field Size</label>
                   <select
                     value={field.gridSize}
                     onChange={(e) => updateField(field.id, { gridSize: e.target.value as 'full' | 'half' })}
-                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    className="w-full rounded border border-gray-300 px-3 py-2 text-base focus:border-transparent focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="full">Full Width</option>
                     <option value="half">Half Width</option>
@@ -472,12 +472,12 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
                 )}
 
                 <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                  <label className="mb-1 block text-base font-medium text-gray-700">Description</label>
                   <input
                     type="text"
                     value={field.description || ''}
                     onChange={(e) => updateField(field.id, { description: e.target.value })}
-                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    className="w-full rounded border border-gray-300 px-3 py-2 text-base focus:border-transparent focus:ring-2 focus:ring-blue-500"
                     placeholder="Optional help text for this field"
                   />
                 </div>
@@ -491,7 +491,7 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
                       onChange={(e) => updateField(field.id, { required: e.target.checked })}
                       className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                     />
-                    <span className="ml-2 text-sm text-gray-700">Required field</span>
+                    <span className="ml-2 text-base text-gray-700">Required field</span>
                   </label>
                 </div>
                 )}
@@ -500,7 +500,7 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
               {/* Options for select/multiselect/radio fields */}
               {['select', 'multiselect', 'radio'].includes(field.type) && (
                 <div className="mt-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Options</label>
+                  <label className="mb-2 block text-base font-medium text-gray-700">Options</label>
                   <div className="space-y-2">
                     {(field.options || []).map((option, optionIndex) => (
                       <div key={optionIndex} className="flex items-center space-x-2">
@@ -512,7 +512,7 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
                             newOptions[optionIndex] = e.target.value;
                             updateField(field.id, { options: newOptions });
                           }}
-                          className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          className="flex-1 rounded border border-gray-300 px-3 py-2 text-base focus:border-transparent focus:ring-2 focus:ring-blue-500"
                           placeholder={`Option ${optionIndex + 1}`}
                         />
                         <button
@@ -533,7 +533,7 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
                         const newOptions = [...(field.options || []), ''];
                         updateField(field.id, { options: newOptions });
                       }}
-                      className="flex items-center text-sm text-blue-600 hover:text-blue-700"
+                      className="flex items-center text-base text-blue-600 hover:text-blue-700"
                     >
                       <PlusIcon className="w-4 h-4 mr-1" />
                       Add Option
@@ -545,13 +545,13 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
               {/* Validation rules */}
               {['text', 'textarea', 'number'].includes(field.type) && (
                 <div className="mt-4">
-                  <details className="text-sm">
+                  <details className="text-base">
                     <summary className="font-medium text-gray-700 cursor-pointer">Validation Rules</summary>
                     <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-4">
                       {field.type !== 'number' && (
                         <>
                           <div>
-                            <label className="block text-xs text-gray-600 mb-1">Min Length</label>
+                            <label className="mb-1 block text-sm text-gray-600">Min Length</label>
                             <input
                               type="number"
                               value={field.validation?.minLength || ''}
@@ -561,12 +561,12 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
                                   minLength: e.target.value ? parseInt(e.target.value) : undefined
                                 }
                               })}
-                              className="w-full px-2 py-1 text-xs border border-gray-300 rounded"
+                              className="w-full rounded border border-gray-300 px-2 py-1 text-sm"
                               placeholder="Min characters"
                             />
                           </div>
                           <div>
-                            <label className="block text-xs text-gray-600 mb-1">Max Length</label>
+                            <label className="mb-1 block text-sm text-gray-600">Max Length</label>
                             <input
                               type="number"
                               value={field.validation?.maxLength || ''}
@@ -576,7 +576,7 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
                                   maxLength: e.target.value ? parseInt(e.target.value) : undefined
                                 }
                               })}
-                              className="w-full px-2 py-1 text-xs border border-gray-300 rounded"
+                              className="w-full rounded border border-gray-300 px-2 py-1 text-sm"
                               placeholder="Max characters"
                             />
                           </div>
@@ -585,7 +585,7 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
                       {field.type === 'number' && (
                         <>
                           <div>
-                            <label className="block text-xs text-gray-600 mb-1">Min Value</label>
+                            <label className="mb-1 block text-sm text-gray-600">Min Value</label>
                             <input
                               type="number"
                               value={field.validation?.min || ''}
@@ -595,11 +595,11 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
                                   min: e.target.value ? parseFloat(e.target.value) : undefined
                                 }
                               })}
-                              className="w-full px-2 py-1 text-xs border border-gray-300 rounded"
+                              className="w-full rounded border border-gray-300 px-2 py-1 text-sm"
                             />
                           </div>
                           <div>
-                            <label className="block text-xs text-gray-600 mb-1">Max Value</label>
+                            <label className="mb-1 block text-sm text-gray-600">Max Value</label>
                             <input
                               type="number"
                               value={field.validation?.max || ''}
@@ -609,7 +609,7 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
                                   max: e.target.value ? parseFloat(e.target.value) : undefined
                                 }
                               })}
-                              className="w-full px-2 py-1 text-xs border border-gray-300 rounded"
+                              className="w-full rounded border border-gray-300 px-2 py-1 text-sm"
                             />
                           </div>
                         </>

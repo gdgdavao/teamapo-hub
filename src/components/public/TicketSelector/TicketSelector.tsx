@@ -159,6 +159,11 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
     return !ticketType.maxQuantity || ticketType.maxQuantity === 0;
   };
 
+  const formatAmount = (amount: number): string => {
+    if (amount <= 0) return 'Free';
+    return `₱${amount.toLocaleString()}`;
+  };
+
   const renderTicketCard = (ticketType: TicketType) => {
     const pricing = ticketPricings[ticketType.id];
     const isSelected = selectedTicketType === ticketType.id;
@@ -184,7 +189,7 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
           <div>
             <h3 className="text-lg font-semibold text-gray-900">{ticketType.name}</h3>
             {ticketType.description && (
-              <p className="text-sm text-gray-600 mt-1">{ticketType.description}</p>
+              <p className="mt-1 text-base text-gray-600">{ticketType.description}</p>
             )}
           </div>
           {isSelected && (
@@ -196,14 +201,14 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
         <div className="mb-4">
           <div className="flex items-baseline space-x-2">
             <span className="text-2xl font-bold text-gray-900">
-              ₱{pricing?.currentPrice?.toLocaleString() || ticketType.price.toLocaleString()}
+              {formatAmount(pricing?.currentPrice ?? ticketType.price)}
             </span>
             {pricing && pricing.originalPrice > pricing.currentPrice && (
               <>
                 <span className="text-lg text-gray-500 line-through">
                   ₱{pricing.originalPrice.toLocaleString()}
                 </span>
-                <span className="text-sm font-medium text-green-600">
+                <span className="text-base text-green-600">
                   {savingsPercentage}% OFF
                 </span>
               </>
@@ -217,7 +222,7 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
           <div className="mb-4">
             <ul className="space-y-1">
               {ticketType.benefits.map((benefit, index) => (
-                <li key={index} className="flex items-center space-x-2 text-sm text-gray-600">
+                <li key={index} className="flex items-center space-x-2 text-base text-gray-600">
                   <CheckCircleIcon className="w-4 h-4 text-green-500 flex-shrink-0" />
                   <span>{benefit}</span>
                 </li>
@@ -227,7 +232,7 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
         )}
 
         {/* Availability */}
-        <div className="text-sm text-gray-500">
+        <div className="text-base text-gray-500">
           {isAvailable ? (
             <span>
               {availableQty !== null && (
@@ -235,7 +240,7 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
               )}
             </span>
           ) : (
-            <span className="text-red-500 font-medium">Sold Out</span>
+            <span className="font-medium text-red-500">Sold Out</span>
           )}
         </div>
       </div>
@@ -257,7 +262,7 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
       {/* Quantity Selection */}
       {selectedTicketType && (
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
+          <label className="mb-2 block text-base font-medium text-gray-700">
             Quantity
           </label>
           {(() => {
@@ -296,7 +301,7 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
                   placeholder="1"
                 />
                 {!isUnlimited(selectedTicket) && (
-                  <p className="text-xs text-gray-500 mt-1">{available} tickets remaining</p>
+                  <p className="mt-1 text-sm text-gray-500">{available} tickets remaining</p>
                 )}
               </>
             );
@@ -307,7 +312,7 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
       {/* Promo Code */}
       {selectedTicketType && promoCodes.length > 0 && (
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
+          <label className="mb-2 block text-base font-medium text-gray-700">
             Promo Code (Optional)
           </label>
           <div className="flex space-x-2">
@@ -328,13 +333,13 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
               {promoCodeError && (
                 <div className="flex items-center space-x-1 mt-1 text-red-600">
                   <ExclamationTriangleIcon className="w-4 h-4" />
-                  <span className="text-sm">{promoCodeError}</span>
+                  <span className="text-base">{promoCodeError}</span>
                 </div>
               )}
               {promoCodeValid && appliedPromoCode && (
                 <div className="flex items-center space-x-1 mt-1 text-green-600">
                   <CheckCircleIcon className="w-4 h-4" />
-                  <span className="text-sm">Promo code applied!</span>
+                  <span className="text-base">Promo code applied!</span>
                 </div>
               )}
             </div>
@@ -362,7 +367,7 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
       {selectedTicketType && quantity > 0 && (
         <div className="bg-gray-50 rounded-lg p-4">
           <h4 className="font-medium text-gray-900 mb-3">Pricing Summary</h4>
-          <div className="space-y-2 text-sm">
+          <div className="space-y-2 text-base">
             {(() => {
               const ticketType = ticketTypes.find(t => t.id === selectedTicketType);
               const summaryCalc = ticketType
@@ -380,7 +385,7 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
                     <span>
                       {ticketType?.name} × {quantity}
                     </span>
-                    <span>₱{originalTotal.toLocaleString()}</span>
+                    <span>{formatAmount(originalTotal)}</span>
                   </div>
                   
                   {promoCodeValid && appliedPromoCode && discountAmount > 0 && (
@@ -393,7 +398,7 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
                   <hr className="border-gray-300" />
                   <div className="flex justify-between font-semibold text-lg">
                     <span>Total</span>
-                    <span>₱{totalAmount.toLocaleString()}</span>
+                    <span>{formatAmount(totalAmount)}</span>
                   </div>
                 </>
               );
