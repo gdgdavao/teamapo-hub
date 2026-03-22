@@ -35,6 +35,22 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+type AuthErrorLike = {
+  code?: string;
+};
+
+const getFriendlySignInErrorMessage = (error: AuthErrorLike) => {
+  const signInErrorMessages: Record<string, string> = {
+    'auth/invalid-credential': 'Invalid email or password. Please try again.',
+    'auth/wrong-password': 'Invalid email or password. Please try again.',
+    'auth/user-not-found': 'Invalid email or password. Please try again.',
+    'auth/too-many-requests': 'Too many failed attempts. Please wait a moment and try again.',
+    'auth/network-request-failed': 'Network error. Check your connection and try again.',
+  };
+
+  return signInErrorMessages[error.code ?? ''] ?? 'Unable to sign in. Please try again.';
+};
+
 export const useAuth = () => {
   const context = useContext(AuthContext);
   if (context === undefined) {
@@ -102,7 +118,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       toast.success(`Welcome back, ${result.user.displayName || email}!`);
     } catch (error: any) {
       logger.error('Sign in error:', error);
-      toast.error(error.message || 'Sign in failed');
+      toast.error(getFriendlySignInErrorMessage(error));
       throw error;
     } finally {
       setLoading(false);
