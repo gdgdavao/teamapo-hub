@@ -232,17 +232,11 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
         )}
 
         {/* Availability */}
-        <div className="text-base text-gray-500">
-          {isAvailable ? (
-            <span>
-              {availableQty !== null && (
-                <span>{availableQty} tickets remaining</span>
-              )}
-            </span>
-          ) : (
+        {!isAvailable && (
+          <div className="text-base text-gray-500">
             <span className="font-medium text-red-500">Sold Out</span>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     );
   };
@@ -300,9 +294,6 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
                   className="w-32 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   placeholder="1"
                 />
-                {!isUnlimited(selectedTicket) && (
-                  <p className="mt-1 text-sm text-gray-500">{available} tickets remaining</p>
-                )}
               </>
             );
           })()}
