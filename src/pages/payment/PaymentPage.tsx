@@ -465,7 +465,7 @@ const PaymentPage: React.FC = () => {
       <div className="text-center mb-8">
         <h1 className="text-3xl font-bold text-gray-900 mb-2">Complete Your Payment</h1>
         <p className="text-gray-600">Event: {event.title}</p>
-        <p className="text-sm text-gray-500">Registration ID: {registration.id}</p>
+        <p className="text-base text-gray-500">Registration ID: {registration.id}</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -507,7 +507,7 @@ const PaymentPage: React.FC = () => {
               {/* Payment Method Selector (multiple configs) */}
               {paymentConfigs.length > 1 && (
                 <div className="mb-6">
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">Choose a payment method</label>
+                  <label className="mb-2 block text-base font-medium text-gray-700">Choose a payment method</label>
                   <select
                     value={selectedPaymentConfigId || ''}
                     onChange={(e) => {
@@ -529,7 +529,7 @@ const PaymentPage: React.FC = () => {
               
               {/* Bank Details */}
               <div className="mb-6">
-                <h3 className="font-semibold text-gray-800 mb-3">Bank Transfer Details:</h3>
+                <h3 className="mb-3 text-lg font-medium text-gray-800">Bank Transfer Details:</h3>
                 <div className="bg-gray-50 rounded-lg p-4 space-y-2">
                   <div><span className="font-medium">Bank:</span> {selectedConfig.bankDetails.bankName}</div>
                   <div><span className="font-medium">Account Name:</span> {selectedConfig.bankDetails.accountName}</div>
@@ -543,7 +543,7 @@ const PaymentPage: React.FC = () => {
               {/* QR Code */}
               {selectedConfig.qrCodeUrl && (
                 <div className="mb-6">
-                  <h3 className="font-semibold text-gray-800 mb-3 flex items-center">
+                  <h3 className="mb-3 flex items-center text-lg font-medium text-gray-800">
                     <QrCodeIcon className="h-4 w-4 mr-1" />
                     Scan QR Code:
                   </h3>
@@ -560,7 +560,7 @@ const PaymentPage: React.FC = () => {
               {/* Payment Instructions */}
               {selectedConfig.instructions && (
                 <div className="mb-6">
-                  <h3 className="font-semibold text-gray-800 mb-3">Instructions:</h3>
+                  <h3 className="mb-3 text-lg font-medium text-gray-800">Instructions:</h3>
                   <div className="bg-blue-50 rounded-lg p-4">
                     <p className="text-gray-700 whitespace-pre-line">{selectedConfig.instructions}</p>
                   </div>
@@ -586,7 +586,7 @@ const PaymentPage: React.FC = () => {
           {formDisabled && (
             <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
               <p className="text-blue-800 font-medium">✓ Payment proof submitted successfully!</p>
-              <p className="text-blue-600 text-sm">Redirecting to confirmation page...</p>
+              <p className="text-base text-blue-600">Redirecting to confirmation page...</p>
             </div>
           )}
           
@@ -594,7 +594,7 @@ const PaymentPage: React.FC = () => {
             {/* Transaction ID */}
             {selectedConfig?.requiresTransactionId && (
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                <label className="mb-2 block text-base font-medium text-gray-700">
                   Transaction ID <span className="text-red-500">*</span>
                 </label>
                 <input
@@ -612,7 +612,7 @@ const PaymentPage: React.FC = () => {
             {/* Selected Payment Method (auto from config) */}
             {selectedConfig && (
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">
+                <label className="mb-1 block text-base font-medium text-gray-700">
                   Payment Method
                 </label>
                 <div className="px-4 py-3 border border-gray-200 rounded-xl bg-gray-50 text-gray-800">
@@ -624,7 +624,7 @@ const PaymentPage: React.FC = () => {
             {/* Payment Proof Image */}
             {selectedConfig?.requiresProof && (
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                <label className="mb-2 block text-base font-medium text-gray-700">
                   Payment Proof Image <span className="text-red-500">*</span>
                 </label>
                 <div className="space-y-3">
@@ -639,7 +639,7 @@ const PaymentPage: React.FC = () => {
                   
                   {paymentProof.proofImagePreview && (
                     <div className="mt-3">
-                      <p className="text-sm text-gray-600 mb-2">Preview:</p>
+                      <p className="mb-2 text-base text-gray-600">Preview:</p>
                       <img 
                         src={paymentProof.proofImagePreview} 
                         alt="Payment proof preview"
@@ -653,7 +653,7 @@ const PaymentPage: React.FC = () => {
 
             {/* Notes */}
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
+              <label className="mb-2 block text-base font-medium text-gray-700">
                 Additional Notes (Optional)
               </label>
               <textarea
@@ -689,7 +689,7 @@ const PaymentPage: React.FC = () => {
           <div className="mt-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
             <div className="flex items-start">
               <ExclamationTriangleIcon className="h-5 w-5 text-yellow-500 mt-0.5 mr-2" />
-              <div className="text-sm text-yellow-800">
+              <div className="text-base text-yellow-800">
                 <p className="font-medium">Important:</p>
                 <p>Your payment will be verified by our team. You'll receive a confirmation email once approved. This may take 1-2 business days.</p>
               </div>

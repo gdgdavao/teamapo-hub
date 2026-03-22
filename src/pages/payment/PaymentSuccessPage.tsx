@@ -1,15 +1,14 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import { 
   CheckCircleIcon, 
   EnvelopeIcon, 
-  CalendarIcon,
-  UserIcon,
   TicketIcon
 } from '@heroicons/react/24/outline';
 
 const PaymentSuccessPage: React.FC = () => {
-  const navigate = useNavigate();
+  const location = useLocation();
+  const isFreeRegistrationSuccess = location.pathname === '/registration/success';
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
@@ -18,8 +17,14 @@ const PaymentSuccessPage: React.FC = () => {
         <div className="mx-auto flex items-center justify-center h-20 w-20 rounded-full bg-green-100 mb-6">
           <CheckCircleIcon className="h-12 w-12 text-green-600" />
         </div>
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">Payment Proof Submitted</h1>
-        <p className="text-gray-600 text-lg">Your registration is pending manual verification by our team.</p>
+        <h1 className="text-3xl font-bold text-gray-900 mb-2">
+          {isFreeRegistrationSuccess ? 'Registration Complete' : 'Payment Proof Submitted'}
+        </h1>
+        <p className="text-gray-600 text-lg">
+          {isFreeRegistrationSuccess
+            ? "You're officially registered. No payment is required for this event."
+            : 'Your registration is pending manual verification by our team.'}
+        </p>
       </div>
 
       {/* Success Details */}
@@ -37,8 +42,14 @@ const PaymentSuccessPage: React.FC = () => {
               </div>
             </div>
             <div>
-              <h3 className="text-lg font-semibold text-gray-900">Manual Review</h3>
-              <p className="text-gray-600">The organizers will review your payment proof shortly.</p>
+              <h3 className="text-lg font-semibold text-gray-900">
+                {isFreeRegistrationSuccess ? 'Registration Recorded' : 'Manual Review'}
+              </h3>
+              <p className="text-gray-600">
+                {isFreeRegistrationSuccess
+                  ? 'Your registration details were received successfully.'
+                  : 'The organizers will review your payment proof shortly.'}
+              </p>
             </div>
           </div>
 
@@ -50,7 +61,11 @@ const PaymentSuccessPage: React.FC = () => {
             </div>
             <div>
               <h3 className="text-lg font-semibold text-gray-900">Email Notification</h3>
-              <p className="text-gray-600">You'll receive an email once your payment is approved or if we need more info.</p>
+              <p className="text-gray-600">
+                {isFreeRegistrationSuccess
+                  ? "We'll send a confirmation email with your event details."
+                  : "You'll receive an email once your payment is approved or if we need more info."}
+              </p>
             </div>
           </div>
 
@@ -62,7 +77,11 @@ const PaymentSuccessPage: React.FC = () => {
             </div>
             <div>
               <h3 className="text-lg font-semibold text-gray-900">Next Steps</h3>
-              <p className="text-gray-600">After approval, you'll receive your confirmation and QR code for check-in.</p>
+              <p className="text-gray-600">
+                {isFreeRegistrationSuccess
+                  ? 'Watch your inbox for updates and event reminders before the event date.'
+                  : "After approval, you'll receive your confirmation and QR code for check-in."}
+              </p>
             </div>
           </div>
         </div>
@@ -75,10 +94,20 @@ const PaymentSuccessPage: React.FC = () => {
           Important Information
         </h3>
         <ul className="space-y-2 text-blue-800">
-          <li>• Check your email (including spam folder) for verification updates</li>
+          <li>
+            • {isFreeRegistrationSuccess
+              ? 'Check your email (including spam folder) for your registration confirmation'
+              : 'Check your email (including spam folder) for verification updates'}
+          </li>
           <li>• Keep your registration ID safe - you may need it for support</li>
-          <li>• If you don't receive an update within 1-2 business days, contact support</li>
-          <li>• Your payment proof is securely stored for our records</li>
+          <li>
+            • {isFreeRegistrationSuccess
+              ? "If you don't receive confirmation details within 24 hours, contact support"
+              : "If you don't receive an update within 1-2 business days, contact support"}
+          </li>
+          {!isFreeRegistrationSuccess && (
+            <li>• Your payment proof is securely stored for our records</li>
+          )}
         </ul>
       </div>
 

@@ -198,8 +198,8 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
         
         toast.success('Registration completed! You will receive a confirmation email shortly.');
         
-        // Navigate to success page for free events
-        navigate('/payment/success');
+        // Navigate to dedicated success page for free events
+        navigate('/registration/success');
       }
     } catch (err: any) {
       logger.error('Registration error:', err);
@@ -251,7 +251,7 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
                       </div>
                     ) : (
                       <>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    <label className="mb-2 block text-base font-medium text-gray-700">
                       <FormattedLabelText value={field.label} /> {field.required && <span className="text-red-500">*</span>}
                     </label>
                     {field.type === 'textarea' ? (
@@ -297,7 +297,7 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
                               className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
                               required={field.required && !registrationData.customResponses[field.id]}
                             />
-                            <span className="ml-3 text-gray-700">{option}</span>
+                            <span className="ml-3 text-base font-normal text-gray-700">{option}</span>
                           </label>
                         ))}
                       </div>
@@ -324,7 +324,7 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
                               }}
                               className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                             />
-                            <span className="ml-3 text-gray-700">{option}</span>
+                            <span className="ml-3 text-base font-normal text-gray-700">{option}</span>
                           </label>
                         ))}
                       </div>
@@ -340,7 +340,7 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
                           className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded mt-1"
                           required={field.required}
                         />
-                        <span className="ml-3 text-gray-700">
+                        <span className="ml-3 text-base font-normal text-gray-700">
                           {field.placeholder || <FormattedLabelText value={field.label} />}
                         </span>
                       </label>
@@ -384,7 +384,7 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
               /* Fallback to basic form if no custom form is configured */
               <div className="space-y-6">
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  <label className="mb-2 block text-base font-medium text-gray-700">
                     Full Name <span className="text-red-500">*</span>
                   </label>
                   <input
@@ -398,7 +398,7 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
                 </div>
 
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  <label className="mb-2 block text-base font-medium text-gray-700">
                     Email Address <span className="text-red-500">*</span>
                   </label>
                   <input
@@ -412,7 +412,7 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
                 </div>
 
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  <label className="mb-2 block text-base font-medium text-gray-700">
                     Phone Number
                   </label>
                   <input
@@ -425,7 +425,7 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
                 </div>
 
                 <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  <label className="mb-2 block text-base font-medium text-gray-700">
                     Organization
                   </label>
                   <input
@@ -443,12 +443,16 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
             <div className="bg-blue-50 rounded-lg p-4 border border-blue-100">
               <div className="flex justify-between items-center">
                 <span className="text-base font-semibold text-gray-900">Total Amount:</span>
-                <span className="text-2xl font-bold text-blue-600">
-                  ₱{ticketSelection.totalAmount.toLocaleString()}
-                </span>
+                {ticketSelection.totalAmount > 0 ? (
+                  <span className="text-2xl font-bold text-blue-600">
+                    ₱{ticketSelection.totalAmount.toLocaleString()}
+                  </span>
+                ) : (
+                  <span className="text-2xl font-bold text-green-600">Free</span>
+                )}
               </div>
               {ticketSelection.discountAmount > 0 && (
-                <div className="mt-2 text-sm text-green-600 font-medium">
+                <div className="mt-2 text-base text-green-600">
                   You saved ₱{ticketSelection.discountAmount.toLocaleString()}!
                 </div>
               )}
@@ -465,7 +469,7 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ event, registration
                   Processing...
                 </div>
               ) : (
-                'Proceed to Payment'
+                ticketSelection.totalAmount > 0 ? 'Proceed to Payment' : 'Complete Registration'
               )}
             </button>
           </form>

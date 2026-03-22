@@ -1798,8 +1798,12 @@ def sendConfirmationEmail(req: https_fn.CallableRequest) -> Dict[str, Any]:
         user_email = data.get('userEmail')
         user_name = data.get('userName', 'Attendee')
         requires_payment = data.get('requiresPayment', False)
+        is_free_registration = data.get('isFreeRegistration')
         email_type = data.get('emailType', 'submitted')  # 'submitted' or 'approved'
         is_resend = data.get('isResend', False)  # Track if this is a resend operation
+
+        if is_free_registration is None:
+            is_free_registration = not requires_payment
 
         if not event_id or not user_email:
             raise https_fn.HttpsError(
@@ -1948,7 +1952,8 @@ def sendConfirmationEmail(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 event_location=event_location,
                 registration_id=include_registration_id,
                 qr_code_data=qr_code_data,
-                requires_payment=requires_payment
+                requires_payment=requires_payment,
+                is_free_registration=is_free_registration
             )
 
             # Log activity for traceability
