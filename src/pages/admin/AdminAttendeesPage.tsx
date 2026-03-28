@@ -1159,7 +1159,8 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
             status: 'approved',
             eventTitle: currentEvent.title,
             attendeeEmail: reg.attendee.email,
-            attendeeName: reg.attendee.name
+            attendeeName: reg.attendee.name,
+            isFreeRegistration: getRegistrationTotalAmount(reg) === 0
           });
         } catch (emailError) {
           logger.error(`Failed to send payment notification to ${reg.attendee.email}:`, emailError);
@@ -1274,7 +1275,8 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
             status: 'approved',
             eventTitle: currentEvent.title,
             attendeeEmail: reg.attendee.email,
-            attendeeName: reg.attendee.name
+            attendeeName: reg.attendee.name,
+            isFreeRegistration: getRegistrationTotalAmount(reg) === 0
           });
         } catch (emailError) {
           logger.error(`Failed to send payment notification to ${reg.attendee.email}:`, emailError);
@@ -1370,7 +1372,8 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
             status: 'approved',
             eventTitle: currentEvent.title,
             attendeeEmail: reg.attendee.email,
-            attendeeName: reg.attendee.name
+            attendeeName: reg.attendee.name,
+            isFreeRegistration: getRegistrationTotalAmount(reg) === 0
           });
         } catch (emailError) {
           logger.error(`Failed to send payment notification to ${reg.attendee.email}:`, emailError);
@@ -1433,7 +1436,8 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
           status: 'approved',
           eventTitle: reg.event.title,
           attendeeEmail: reg.attendee.email,
-          attendeeName: reg.attendee.name
+          attendeeName: reg.attendee.name,
+          isFreeRegistration: getRegistrationTotalAmount(reg) === 0
         });
         successCount++;
       } catch (error) {

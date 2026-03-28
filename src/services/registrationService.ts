@@ -888,7 +888,8 @@ export class RegistrationService {
             status: 'approved',
             eventTitle,
             attendeeEmail: freeApprovalDetails.attendeeEmail,
-            attendeeName: freeApprovalDetails.attendeeName
+            attendeeName: freeApprovalDetails.attendeeName,
+            isFreeRegistration: true
           });
         } catch (notificationError) {
           logger.warn('Failed to send payment notification for free registration:', notificationError);

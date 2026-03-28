@@ -2026,6 +2026,7 @@ def sendPaymentNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
         attendee_name = data.get('attendeeName', 'Attendee')
         payment_instructions = data.get('paymentInstructions')
         is_resend = data.get('isResend', False)  # Track if this is a resend operation
+        is_free_registration = bool(data.get('isFreeRegistration', False))
 
         if not registration_id or not status:
             raise https_fn.HttpsError(
@@ -2083,7 +2084,8 @@ def sendPaymentNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
             registration_id=registration_id,
             status=status,
             payment_instructions=payment_instructions,
-            qr_code_data=qr_code_data
+            qr_code_data=qr_code_data,
+            is_free_registration=is_free_registration
         )
 
         # Log activity for traceability
@@ -2108,7 +2110,8 @@ def sendPaymentNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 'userName': attendee_name,
                 'emailId': email_result.get('email_id'),
                 'success': email_result.get('success', False),
-                'timestamp': firestore.SERVER_TIMESTAMP
+                'timestamp': firestore.SERVER_TIMESTAMP,
+                'isFreeRegistration': is_free_registration
             }
             if is_resend:
                 activity_log_data['isResend'] = True

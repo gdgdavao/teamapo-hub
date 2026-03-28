@@ -250,17 +250,26 @@ class EmailService:
         registration_id: str,
         status: str,  # 'approved', 'rejected', 'pending'
         payment_instructions: Optional[str] = None,
-        qr_code_data: Optional[str] = None
+        qr_code_data: Optional[str] = None,
+        is_free_registration: bool = False
     ) -> Dict[str, Any]:
-        """Send payment status notification email."""
+        """Send payment status notification email (or registration-focused copy for free events)."""
         
         status_messages = {
             'approved': 'Payment Approved',
             'rejected': 'Payment Rejected',
             'pending': 'Payment Pending'
         }
+        free_status_subjects = {
+            'approved': 'Registration Approved',
+            'rejected': 'Registration Update',
+            'pending': 'Registration Pending'
+        }
         
-        subject = f"{status_messages.get(status, 'Payment Update')} - {event_title}"
+        if is_free_registration:
+            subject = f"{free_status_subjects.get(status, 'Registration Update')} - {event_title}"
+        else:
+            subject = f"{status_messages.get(status, 'Payment Update')} - {event_title}"
         
         html_content = self._create_payment_notification_html(
             user_name=user_name,
@@ -269,7 +278,8 @@ class EmailService:
             status=status,
             payment_instructions=payment_instructions,
             qr_code_data=qr_code_data,
-            use_cid=bool(qr_code_data)  # Use CID for attachment if QR code exists
+            use_cid=bool(qr_code_data),  # Use CID for attachment if QR code exists
+            is_free_registration=is_free_registration
         )
         
         text_content = self._create_payment_notification_text(
@@ -277,14 +287,16 @@ class EmailService:
             event_title=event_title,
             registration_id=registration_id,
             status=status,
-            payment_instructions=payment_instructions
+            payment_instructions=payment_instructions,
+            is_free_registration=is_free_registration
         )
         
         tags = [
             {"name": "type", "value": "payment_notification"},
             {"name": "status", "value": sanitize_tag_value(status)},
             {"name": "event", "value": sanitize_tag_value(event_title)},
-            {"name": "registration_id", "value": sanitize_tag_value(registration_id)}
+            {"name": "registration_id", "value": sanitize_tag_value(registration_id)},
+            {"name": "free_registration", "value": "true" if is_free_registration else "false"}
         ]
         
         # Prepare attachments if QR code exists
@@ -495,14 +507,55 @@ class EmailService:
         status: str,
         payment_instructions: Optional[str] = None,
         qr_code_data: Optional[str] = None,
-        use_cid: bool = False
+        use_cid: bool = False,
+        is_free_registration: bool = False
     ) -> str:
         """Create HTML content for payment notification email."""
         
         # Get status-specific styling
         colors = template_loader.get_payment_status_colors(status)
-        status_message = template_loader.get_payment_status_message(status)
-        next_steps = template_loader.get_payment_next_steps(status)
+        
+        if is_free_registration:
+            if status == 'approved':
+                intro_paragraph = (
+                    f"Great news — your registration for <strong>{event_title}</strong> is confirmed."
+                )
+                status_message = "Registration approved!"
+                contact_prompt = (
+                    "If you have questions about the event or your registration, please contact us."
+                )
+                next_steps = (
+                    "<li>Your registration is confirmed and you're all set for the event!</li>"
+                )
+            elif status == 'rejected':
+                intro_paragraph = (
+                    f"We have an update regarding your registration for <strong>{event_title}</strong>."
+                )
+                status_message = "Registration not approved"
+                contact_prompt = (
+                    "If you have questions about the event or your registration, please contact us."
+                )
+                next_steps = (
+                    "<li>Please contact us if you have questions about this update.</li>"
+                )
+            else:
+                intro_paragraph = (
+                    f"We have an update regarding your registration for <strong>{event_title}</strong>."
+                )
+                status_message = "Registration pending"
+                contact_prompt = (
+                    "If you have questions about the event or your registration, please contact us."
+                )
+                next_steps = (
+                    "<li>Complete any remaining steps to secure your spot at the event.</li>"
+                )
+        else:
+            intro_paragraph = (
+                f"We have an update regarding your payment for <strong>{event_title}</strong>."
+            )
+            status_message = template_loader.get_payment_status_message(status)
+            contact_prompt = "If you have any questions about your payment, please contact us."
+            next_steps = template_loader.get_payment_next_steps(status)
         
         # Handle payment instructions section
         payment_instructions_section = ""
@@ -537,9 +590,12 @@ class EmailService:
             'status_border_color': colors['border_color'],
             'status_text_color': colors['text_color'],
             'status_message': status_message,
+            'intro_paragraph': intro_paragraph,
+            'contact_prompt': contact_prompt,
             'payment_instructions_section': payment_instructions_section,
             'qr_code_section': qr_code_section,
-            'next_steps': next_steps
+            'next_steps': next_steps,
+            'is_free_registration': is_free_registration
         }
         
         return template_loader.render_email_template(
@@ -677,30 +733,59 @@ This email was sent to {user_name} for their registration to {event_title}.
         event_title: str,
         registration_id: str,
         status: str,
-        payment_instructions: Optional[str] = None
+        payment_instructions: Optional[str] = None,
+        is_free_registration: bool = False
     ) -> str:
         """Create plain text content for payment notification email."""
         
-        status_messages = {
-            'approved': 'Payment Approved!',
-            'rejected': 'Payment Rejected',
-            'pending': 'Payment Pending'
-        }
-        
-        message = status_messages.get(status, 'Payment Update')
+        if is_free_registration:
+            status_messages = {
+                'approved': 'Registration approved!',
+                'rejected': 'Registration not approved',
+                'pending': 'Registration pending'
+            }
+            intro = {
+                'approved': f"Great news — your registration for {event_title} is confirmed.",
+                'rejected': f"We have an update regarding your registration for {event_title}.",
+                'pending': f"We have an update regarding your registration for {event_title}."
+            }
+            message = status_messages.get(status, 'Registration update')
+            intro_line = intro.get(status, f"Update regarding your registration for {event_title}.")
+            next_steps = {
+                'approved': "Your registration is confirmed and you're all set for the event!",
+                'rejected': "Please contact us if you have questions about this update.",
+                'pending': "Complete any remaining steps to secure your spot at the event."
+            }
+            contact_line = (
+                "If you have questions about the event or your registration, please contact us."
+            )
+            subject_label = (
+                'Registration approved' if status == 'approved' else 'Registration update'
+            )
+        else:
+            status_messages = {
+                'approved': 'Payment Approved!',
+                'rejected': 'Payment Rejected',
+                'pending': 'Payment Pending'
+            }
+            message = status_messages.get(status, 'Payment Update')
+            intro_line = f"We have an update regarding your payment for {event_title}."
+            next_steps = {
+                'approved': "Your registration is confirmed and you're all set for the event!",
+                'rejected': "Please check your payment details and try again.",
+                'pending': "Complete your payment to secure your spot at the event."
+            }
+            contact_line = "If you have any questions about your payment, please contact us."
+            subject_label = "Payment update"
         
         instructions_text = f"\nPAYMENT INSTRUCTIONS:\n{payment_instructions}\n" if payment_instructions and status == 'pending' else ""
         
-        next_steps = {
-            'approved': "Your registration is confirmed and you're all set for the event!",
-            'rejected': "Please check your payment details and try again.",
-            'pending': "Complete your payment to secure your spot at the event."
-        }
-        
         return f"""
-Payment Update - {event_title}
+{subject_label} - {event_title}
 
 Hello {user_name}!
+
+{intro_line}
 
 {message}
 Registration ID: {registration_id}
@@ -709,7 +794,7 @@ NEXT STEPS:
 - {next_steps.get(status, 'Please contact us for assistance.')}
 - Keep this email for your records
 
-If you have any questions about your payment, please contact us.
+{contact_line}
 
 Best regards,
 The GDG Davao Team

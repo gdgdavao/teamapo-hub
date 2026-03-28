@@ -28,6 +28,8 @@ export interface EmailLog {
   reminderType?: string;
   certificateUrl?: string;
   feedbackUrl?: string;
+  /** When true, payment notification used registration-focused copy (free events). */
+  isFreeRegistration?: boolean;
 }
 
 export interface EmailTemplate {
@@ -258,6 +260,7 @@ export class EmailService {
     attendeeName: string;
     paymentInstructions?: string;
     isResend?: boolean;
+    isFreeRegistration?: boolean;
   }): Promise<{ success: boolean; message: string; emailId?: string }> {
     try {
       const sendPaymentNotification = httpsCallable(functions, 'sendPaymentNotification');
@@ -448,7 +451,8 @@ export class EmailService {
             eventTitle: emailLog.eventTitle || '',
             attendeeEmail: targetEmail,
             attendeeName: emailLog.userName,
-            isResend
+            isResend,
+            isFreeRegistration: emailLog.isFreeRegistration === true
           });
 
         case 'event_reminder_sent':
