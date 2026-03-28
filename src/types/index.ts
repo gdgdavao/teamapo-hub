@@ -601,6 +601,7 @@ export interface EmailLog {
   reminderType?: string;
   certificateUrl?: string;
   feedbackUrl?: string;
+  isFreeRegistration?: boolean;
 }
 
 export interface EmailTemplate {

@@ -222,6 +222,9 @@ class EmailTemplateLoader:
         user_name = context.get('user_name', '')
         event_title = context.get('event_title', '')
         
+        if template_name == 'payment_notification' and context.get('is_free_registration'):
+            return "For questions about your registration or this event, please contact us."
+        
         footer_messages = {
             'registration_confirmation': f"If you don't hear from us within 2 business days, please contact us.",
             'payment_notification': f"For payment inquiries regarding your registration, please contact us.",
