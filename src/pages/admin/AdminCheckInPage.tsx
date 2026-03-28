@@ -535,8 +535,10 @@ const AdminCheckInPage: React.FC = () => {
     if (!qrCode.trim()) return;
 
     try {
-      // Find registration by QR code field
-      const registration = registrations.find(r => r.qrCode === qrCode.trim());
+      const scanned = qrCode.trim();
+      const registration = scanned.startsWith('registration:')
+        ? registrations.find(r => r.id === scanned.replace('registration:', ''))
+        : registrations.find(r => r.qrCode === scanned);
       
       if (!registration) {
         // Show error feedback
