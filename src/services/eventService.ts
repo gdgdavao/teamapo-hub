@@ -475,6 +475,31 @@ export class EventService {
         }
       });
 
+      // Rebuild nested venue object so readers of event.venue.* see the updated values
+      const venueFields = ['venueType', 'venueName', 'venueAddress', 'city'];
+      const isVenueUpdate = venueFields.some(f => (eventData as any)[f] !== undefined);
+      if (isVenueUpdate && existingEvent) {
+        const venue: any = {
+          type: eventData.venueType ?? existingEvent.venue?.type,
+          city: eventData.city ?? existingEvent.venue?.city,
+        };
+        const name = eventData.venueName ?? existingEvent.venue?.name;
+        if (name && name.trim()) venue.name = name.trim();
+        const address = eventData.venueAddress ?? existingEvent.venue?.address;
+        if (address && address.trim()) venue.address = address.trim();
+        if (venue.type === 'online') {
+          venue.onlineDetails = existingEvent.venue?.onlineDetails ?? {
+            platform: 'Google Meet',
+            instructions: 'Meeting link will be sent via email',
+          };
+        }
+        updateData.venue = venue;
+        delete updateData.venueType;
+        delete updateData.venueName;
+        delete updateData.venueAddress;
+        delete updateData.city;
+      }
+
       // Normalize nested arrays if provided
       if (eventData.ticketTypes) {
         updateData.ticketTypes = this.sanitizeTicketTypes(eventData.ticketTypes as TicketType[]);
