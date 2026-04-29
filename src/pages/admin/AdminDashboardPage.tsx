@@ -125,7 +125,7 @@ const EventCard: React.FC<{
           {event.status}
         </span>
         <Link 
-          to={`/events/${event.id}`}
+          to={event.slug ? `/e/${event.slug}` : `/events/${event.id}/register`}
           className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-white transition-colors"
         >
           <EyeIcon className="w-4 h-4" />
