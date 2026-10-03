@@ -1,0 +1,3384 @@
+"""
+Firebase Functions for APOHUB Event Management Platform
+Handles event creation, validation, publishing, and related operations.
+"""
+
+import json
+import logging
+import os
+import secrets
+import base64
+import requests
+from datetime import datetime, timedelta
+from typing import Dict, List, Any, Optional
+from urllib.parse import quote
+from firebase_functions import https_fn, firestore_fn
+from firebase_functions.options import set_global_options
+from firebase_admin import initialize_app, firestore, storage, auth
+from firebase_admin.exceptions import FirebaseError
+from google.cloud.firestore_v1 import FieldFilter
+from email_service import email_service
+
+# Global variables for Firebase Admin services (lazy initialization)
+_app = None
+_db = None
+
+# Set global options for region and cost control
+# Ensure region matches Firestore location in firebase.json (asia-southeast2)
+set_global_options(region="asia-southeast2", max_instances=10)
+
+# Ensure Firebase Admin SDK is initialized at import time so callable auth verification works
+try:
+    # If already initialized, this is a no-op
+    from firebase_admin import _apps
+    if not _apps:
+        initialize_app()
+except Exception as e:
+    # Log but do not crash import; lazy init in get_db() remains as fallback
+    logging.getLogger(__name__).warning(f"Admin SDK init at import failed or already initialized: {str(e)}")
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+CHECKED_IN_CANONICAL = 'checked-in'
+CHECKED_IN_ALIASES = frozenset({CHECKED_IN_CANONICAL, 'checked_in'})
+
+
+def normalize_attendance_status(status: Optional[str]) -> Optional[str]:
+    """Convert any checked-in alias to the canonical string; otherwise return the original status."""
+    if status in CHECKED_IN_ALIASES:
+        return CHECKED_IN_CANONICAL
+    return status
+
+def get_db():
+    """Lazy initialization of Firestore client"""
+    global _app, _db
+    if _db is None:
+        try:
+            # Check if app is already initialized
+            from firebase_admin import _apps
+            if not _apps:
+                _app = initialize_app()
+            else:
+                _app = None  # App already exists
+            _db = firestore.client()
+            logger.info("Firebase Admin client retrieved")
+        except Exception as e:
+            logger.error(f"Error during Firebase initialization: {str(e)}")
+            raise
+    return _db
+
+# Alias for backward compatibility - use get_db() function instead
+
+
+class EventValidationError(Exception):
+    """Custom exception for event validation errors"""
+    pass
+
+
+class EventService:
+    """Service class for event-related operations"""
+    
+    @staticmethod
+    def validate_event_data(event_data: Dict[str, Any], is_edit_mode: bool = False) -> Dict[str, Any]:
+        """
+        Validate event data for creation/update
+        Returns validation result with errors if any
+        """
+        errors = []
+
+        # Helper to normalize datetimes for comparison
+        def _normalize_dt(dt: datetime) -> datetime:
+            return dt if dt.tzinfo is None else dt.replace(tzinfo=None)
+
+        # Required fields validation (support both client shape and stored Firestore shape)
+        for field in ['title', 'description']:
+            if not event_data.get(field):
+                errors.append(f"Missing required field: {field}")
+
+        start_datetime = None
+        end_datetime = None
+
+        try:
+            # Start datetime: handle either (date string + time string) or datetime value
+            sd = event_data.get('startDate')
+            st = event_data.get('startTime')
+            if isinstance(sd, datetime):
+                start_datetime = _normalize_dt(sd)
+            elif isinstance(sd, dict) and sd.get('seconds') is not None:
+                # Firestore Timestamp serialized as dict
+                start_datetime = _normalize_dt(datetime.fromtimestamp(int(sd.get('seconds'))))
+            elif sd and st:
+                start_datetime = datetime.fromisoformat(f"{sd}T{st}")
+            else:
+                errors.append("Missing required field: startDate/startTime")
+
+            # End datetime is optional, but if provided, must be after start
+            ed = event_data.get('endDate')
+            et = event_data.get('endTime')
+            if isinstance(ed, datetime):
+                end_datetime = _normalize_dt(ed)
+            elif isinstance(ed, dict) and ed.get('seconds') is not None:
+                end_datetime = _normalize_dt(datetime.fromtimestamp(int(ed.get('seconds'))))
+            elif ed and et:
+                end_datetime = datetime.fromisoformat(f"{ed}T{et}")
+
+            # Temporal validations
+            if start_datetime:
+                # Only validate future date for new events, not when editing
+                if not is_edit_mode and start_datetime < _normalize_dt(datetime.now()):
+                    errors.append("Event start date must be in the future")
+                if end_datetime and start_datetime >= end_datetime:
+                    errors.append("Event end date must be after start date")
+        except ValueError as e:
+            errors.append(f"Invalid date format: {str(e)}")
+        
+        # Venue validation (support both client payload and stored Firestore shape)
+        venue_type = event_data.get('venueType')
+        venue_city = event_data.get('city')
+        venue_name = event_data.get('venueName')
+        venue_obj = event_data.get('venue') or {}
+        if not venue_type and isinstance(venue_obj, dict):
+            venue_type = venue_obj.get('type')
+            venue_city = venue_obj.get('city', venue_city)
+            venue_name = venue_obj.get('name', venue_name)
+
+        if venue_type == 'offline':
+            if not venue_name:
+                errors.append("Venue name is required for offline events")
+            if not venue_city:
+                errors.append("City is required for offline events")
+        
+        # Ticket validation (defensively coerce None and strings)
+        ticket_types = event_data.get('ticketTypes', [])
+        if ticket_types:
+            for i, ticket in enumerate(ticket_types):
+                if not ticket.get('name'):
+                    errors.append(f"Ticket type {i+1} name is required")
+                price = ticket.get('price')
+                try:
+                    price_num = float(price) if price is not None else 0.0
+                except (TypeError, ValueError):
+                    price_num = 0.0
+                if price_num < 0:
+                    errors.append(f"Ticket type {i+1} price cannot be negative")
+                max_qty = ticket.get('maxQuantity')
+                if max_qty is not None:
+                    try:
+                        max_qty_num = int(max_qty)
+                        if max_qty_num < 0:
+                            errors.append(f"Ticket type {i+1} max quantity cannot be negative")
+                    except (TypeError, ValueError):
+                        errors.append(f"Ticket type {i+1} max quantity must be a number if provided")
+        
+        # Payment config validation for paid events
+        if event_data.get('isPaid') and event_data.get('paymentConfig'):
+            payment_config = event_data['paymentConfig']
+            bank_details = payment_config.get('bankDetails', {})
+            
+            if not bank_details.get('bankName'):
+                errors.append("Bank name is required for paid events")
+            if not bank_details.get('accountName'):
+                errors.append("Account name is required for paid events")
+            if not bank_details.get('accountNumber'):
+                errors.append("Account number is required for paid events")
+            if not payment_config.get('instructions'):
+                errors.append("Payment instructions are required for paid events")
+        
+        return {
+            'isValid': len(errors) == 0,
+            'errors': errors
+        }
+    
+    @staticmethod
+    def generate_event_statistics(event_id: str) -> Dict[str, Any]:
+        """Generate comprehensive event statistics"""
+        try:
+            db = get_db()
+            # Get event document
+            event_ref = get_db().collection('events').document(event_id)
+            event_doc = event_ref.get()
+            
+            if not event_doc.exists:
+                raise EventValidationError(f"Event {event_id} not found")
+            
+            event_data = event_doc.to_dict()
+            
+            # Get registrations
+            registrations = get_db().collection('registrations').where(
+                filter=FieldFilter('eventId', '==', event_id)
+            ).stream()
+            
+            registration_stats = {
+                'total': 0,
+                'paid': 0,
+                'free': 0,
+                'pending': 0,
+                'confirmed': 0,
+                'cancelled': 0,
+                'revenue': 0
+            }
+            
+            attendance_stats = {
+                'checkedIn': 0,
+                'noShows': 0,
+                'attendanceRate': 0
+            }
+            
+            feedback_stats = {
+                'responses': 0,
+                'averageRating': 0,
+                'responseRate': 0
+            }
+            
+            demographics = {
+                'organizations': {},
+                'locations': {},
+                'experience': {}
+            }
+            
+            for reg in registrations:
+                reg_data = reg.to_dict()
+                registration_stats['total'] += 1
+                
+                # Payment status
+                if reg_data.get('paymentStatus') == 'paid':
+                    registration_stats['paid'] += 1
+                    registration_stats['revenue'] += reg_data.get('totalAmount', 0)
+                else:
+                    registration_stats['free'] += 1
+                
+                # Registration status
+                status = reg_data.get('registrationStatus', 'pending')
+                registration_stats[status] = registration_stats.get(status, 0) + 1
+                
+                # Attendance
+                attendance_status = normalize_attendance_status(reg_data.get('attendanceStatus'))
+                if attendance_status == CHECKED_IN_CANONICAL:
+                    attendance_stats['checkedIn'] += 1
+                elif attendance_status == 'no_show':
+                    attendance_stats['noShows'] += 1
+                
+                # Feedback
+                if reg_data.get('feedbackSubmitted'):
+                    feedback_stats['responses'] += 1
+                
+                # Demographics
+                user_details = reg_data.get('userDetails', {})
+                org = user_details.get('organization', 'Not specified')
+                demographics['organizations'][org] = demographics['organizations'].get(org, 0) + 1
+            
+            # Calculate rates
+            if registration_stats['total'] > 0:
+                attendance_stats['attendanceRate'] = int(
+                    attendance_stats['checkedIn'] / registration_stats['total'] * 100
+                )
+                feedback_stats['responseRate'] = int(
+                    feedback_stats['responses'] / registration_stats['total'] * 100
+                )
+            
+            return {
+                'eventId': event_id,
+                'eventTitle': event_data.get('title', 'Unknown'),
+                'generatedAt': datetime.now().isoformat(),
+                'registrationStats': registration_stats,
+                'attendanceStats': attendance_stats,
+                'feedbackStats': feedback_stats,
+                'demographics': demographics
+            }
+            
+        except Exception as e:
+            logger.error(f"Error generating statistics for event {event_id}: {str(e)}")
+            raise
+
+
+# Firebase Functions
+
+@https_fn.on_call()
+def validate_event_data(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Validate event data before creation/update
+    """
+    try:
+        if not req.auth:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.UNAUTHENTICATED,
+                message="Authentication required"
+            )
+        
+        event_data = req.data.get('eventData')
+        if not event_data:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="Event data is required"
+            )
+        
+        # Check if this is an edit operation (bypass future date validation)
+        is_edit_mode = req.data.get('isEditMode', False)
+        
+        validation_result = EventService.validate_event_data(event_data, is_edit_mode)
+        
+        logger.info(f"Event validation completed for user {req.auth.uid}")
+        return validation_result
+        
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error validating event data: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error during validation"
+        )
+
+
+@https_fn.on_call()
+def validateEventData(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Validate event data before creation/update (camelCase alias)
+    """
+    return validate_event_data(req)
+
+
+@https_fn.on_call()
+def initialize_event(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Initialize event after creation - set up subcollections and default data
+    """
+    try:
+        if not req.auth:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.UNAUTHENTICATED,
+                message="Authentication required"
+            )
+        
+        event_id = req.data.get('eventId')
+        if not event_id:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="Event ID is required"
+            )
+        
+        db = get_db()
+        # Verify event exists and user has permission
+        event_ref = get_db().collection('events').document(event_id)
+        event_doc = event_ref.get()
+        
+        if not event_doc.exists:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.NOT_FOUND,
+                message="Event not found"
+            )
+        
+        event_data = event_doc.to_dict()
+        organizer_uid = event_data.get('organizer', {}).get('uid')
+        
+        # Check if user is organizer or admin
+        user_doc = get_db().collection('users').document(req.auth.uid).get()
+        if user_doc.exists:
+            user_data = user_doc.to_dict()
+            is_admin = user_data.get('role') == 'admin'
+            is_organizer = req.auth.uid == organizer_uid
+            
+            if not (is_admin or is_organizer):
+                raise https_fn.HttpsError(
+                    code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
+                    message="Permission denied"
+                )
+        
+        # Initialize analytics document
+        analytics_ref = get_db().collection('event_analytics').document(event_id)
+        analytics_ref.set({
+            'eventId': event_id,
+            'createdAt': firestore.SERVER_TIMESTAMP,
+            'lastUpdated': firestore.SERVER_TIMESTAMP,
+            'registrationCount': 0,
+            'revenue': 0,
+            'checkedInCount': 0,
+            'feedbackCount': 0
+        })
+        
+        # Create default form templates if not provided
+        forms_ref = get_db().collection('events').document(event_id).collection('forms')
+        
+        # Default registration form
+        forms_ref.document('registration').set({
+            'type': 'registration',
+            'fields': [
+                {
+                    'id': 'name',
+                    'type': 'text',
+                    'label': 'Full Name',
+                    'required': True,
+                    'gridSize': 'full'
+                },
+                {
+                    'id': 'email',
+                    'type': 'email',
+                    'label': 'Email Address',
+                    'required': True,
+                    'gridSize': 'half'
+                },
+                {
+                    'id': 'phone',
+                    'type': 'phone',
+                    'label': 'Phone Number',
+                    'required': True,
+                    'gridSize': 'half'
+                }
+            ],
+            'createdAt': firestore.SERVER_TIMESTAMP,
+            'updatedAt': firestore.SERVER_TIMESTAMP
+        })
+        
+        # Default feedback form
+        forms_ref.document('feedback').set({
+            'type': 'feedback',
+            'fields': [
+                {
+                    'id': 'overall_rating',
+                    'type': 'rating',
+                    'label': 'Overall Event Rating',
+                    'required': True,
+                    'gridSize': 'full'
+                },
+                {
+                    'id': 'liked_most',
+                    'type': 'textarea',
+                    'label': 'What did you like most?',
+                    'required': False,
+                    'gridSize': 'full'
+                },
+                {
+                    'id': 'improvements',
+                    'type': 'textarea',
+                    'label': 'Areas for improvement',
+                    'required': False,
+                    'gridSize': 'full'
+                }
+            ],
+            'createdAt': firestore.SERVER_TIMESTAMP,
+            'updatedAt': firestore.SERVER_TIMESTAMP
+        })
+        
+        logger.info(f"Event {event_id} initialized successfully")
+        return {
+            'success': True,
+            'message': 'Event initialized successfully',
+            'eventId': event_id
+        }
+        
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error initializing event: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error during initialization"
+        )
+
+
+@https_fn.on_call()
+def publish_event(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Publish an event - make it visible to public
+    """
+    try:
+        if not req.auth:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.UNAUTHENTICATED,
+                message="Authentication required"
+            )
+        
+        event_id = req.data.get('eventId')
+        if not event_id:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="Event ID is required"
+            )
+        
+        # Get event and verify permissions
+        db = get_db()
+        event_ref = get_db().collection('events').document(event_id)
+        event_doc = event_ref.get()
+        
+        if not event_doc.exists:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.NOT_FOUND,
+                message="Event not found"
+            )
+        
+        event_data = event_doc.to_dict()
+        organizer_uid = event_data.get('organizer', {}).get('uid')
+        
+        # Check permissions
+        user_doc = get_db().collection('users').document(req.auth.uid).get()
+        if user_doc.exists:
+            user_data = user_doc.to_dict()
+            is_admin = user_data.get('role') == 'admin'
+            is_organizer = req.auth.uid == organizer_uid
+            
+            if not (is_admin or is_organizer):
+                raise https_fn.HttpsError(
+                    code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
+                    message="Permission denied"
+                )
+        
+        # Final validation before publishing (skip future date check since event already exists)
+        validation_result = EventService.validate_event_data(event_data, is_edit_mode=True)
+        if not validation_result['isValid']:
+            # In emulator/development flows we prefer graceful failure to avoid noisy 400s;
+            # return success=false so clients can choose to fallback.
+            logger.warning(
+                f"Publish validation failed for event {event_id}: {validation_result['errors']}"
+            )
+            return {
+                'success': False,
+                'message': 'Cannot publish event with validation errors',
+                'errors': validation_result['errors'],
+                'eventId': event_id
+            }
+        
+        # Update event status
+        event_ref.update({
+            'status': 'published',
+            'isPublished': True,
+            'publishedAt': firestore.SERVER_TIMESTAMP,
+            'updatedAt': firestore.SERVER_TIMESTAMP
+        })
+        
+        logger.info(f"Event {event_id} published successfully by user {req.auth.uid}")
+        return {
+            'success': True,
+            'message': 'Event published successfully',
+            'eventId': event_id
+        }
+        
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error publishing event: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error during publishing"
+        )
+
+
+@https_fn.on_call()
+def duplicate_event(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Duplicate an existing event
+    """
+    try:
+        if not req.auth:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.UNAUTHENTICATED,
+                message="Authentication required"
+            )
+        
+        event_id = req.data.get('eventId')
+        new_title = req.data.get('newTitle')
+        
+        if not event_id:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="Event ID is required"
+            )
+        
+        # Get original event
+        db = get_db()
+        original_event_ref = get_db().collection('events').document(event_id)
+        original_event_doc = original_event_ref.get()
+        
+        if not original_event_doc.exists:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.NOT_FOUND,
+                message="Original event not found"
+            )
+        
+        original_event_data = original_event_doc.to_dict()
+        organizer_uid = original_event_data.get('organizer', {}).get('uid')
+        
+        # Check permissions
+        user_doc = get_db().collection('users').document(req.auth.uid).get()
+        if user_doc.exists:
+            user_data = user_doc.to_dict()
+            is_admin = user_data.get('role') == 'admin'
+            is_organizer = req.auth.uid == organizer_uid
+            
+            if not (is_admin or is_organizer):
+                raise https_fn.HttpsError(
+                    code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
+                    message="Permission denied"
+                )
+        
+        # Create new event document
+        new_event_ref = get_db().collection('events').document()
+        new_event_id = new_event_ref.id
+        
+        # Copy event data with modifications
+        new_event_data = original_event_data.copy()
+        new_event_data.update({
+            'title': new_title or f"{original_event_data.get('title', 'Event')} (Copy)",
+            'status': 'draft',
+            'isPublished': False,
+            'currentAttendees': 0,
+            'createdAt': firestore.SERVER_TIMESTAMP,
+            'updatedAt': firestore.SERVER_TIMESTAMP
+        })
+        
+        # Remove fields that shouldn't be copied
+        fields_to_remove = ['publishedAt', 'completedAt']
+        for field in fields_to_remove:
+            new_event_data.pop(field, None)
+        
+        # Create new event
+        new_event_ref.set(new_event_data)
+        
+        # Copy forms subcollection
+        original_forms = original_event_ref.collection('forms').stream()
+        new_forms_ref = new_event_ref.collection('forms')
+        
+        for form_doc in original_forms:
+            form_data = form_doc.to_dict()
+            form_data.update({
+                'createdAt': firestore.SERVER_TIMESTAMP,
+                'updatedAt': firestore.SERVER_TIMESTAMP
+            })
+            new_forms_ref.document(form_doc.id).set(form_data)
+        
+        logger.info(f"Event {event_id} duplicated successfully as {new_event_id}")
+        return {
+            'success': True,
+            'message': 'Event duplicated successfully',
+            'newEventId': new_event_id,
+            'originalEventId': event_id
+        }
+        
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error duplicating event: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error during duplication"
+        )
+
+
+@https_fn.on_call()
+def get_event_statistics(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Get comprehensive event statistics
+    """
+    try:
+        if not req.auth:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.UNAUTHENTICATED,
+                message="Authentication required"
+            )
+        
+        event_id = req.data.get('eventId')
+        if not event_id:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="Event ID is required"
+            )
+        
+        # Verify event exists and user has permission
+        event_ref = get_db().collection('events').document(event_id)
+        event_doc = event_ref.get()
+        
+        if not event_doc.exists:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.NOT_FOUND,
+                message="Event not found"
+            )
+        
+        event_data = event_doc.to_dict()
+        organizer_uid = event_data.get('organizer', {}).get('uid')
+        
+        # Check permissions
+        user_doc = get_db().collection('users').document(req.auth.uid).get()
+        if user_doc.exists:
+            user_data = user_doc.to_dict()
+            is_admin = user_data.get('role') == 'admin'
+            is_organizer = req.auth.uid == organizer_uid
+            
+            if not (is_admin or is_organizer):
+                raise https_fn.HttpsError(
+                    code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
+                    message="Permission denied"
+                )
+        
+        # Generate statistics
+        statistics = EventService.generate_event_statistics(event_id)
+        
+        logger.info(f"Statistics generated for event {event_id}")
+        return {
+            'success': True,
+            'statistics': statistics
+        }
+        
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting event statistics: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error getting statistics"
+        )
+
+
+@https_fn.on_call()
+def getEventStatistics(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Get comprehensive event statistics (camelCase alias)
+    """
+    return get_event_statistics(req)
+
+
+@https_fn.on_call()
+def getEventAnalytics(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Get event analytics summary
+    """
+    try:
+        if not req.auth:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.UNAUTHENTICATED,
+                message="Authentication required"
+            )
+        
+        event_id = req.data.get('eventId')
+        if not event_id:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="Event ID is required"
+            )
+        
+        # Verify event exists and user has permission
+        event_ref = get_db().collection('events').document(event_id)
+        event_doc = event_ref.get()
+        
+        if not event_doc.exists:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.NOT_FOUND,
+                message="Event not found"
+            )
+        
+        event_data = event_doc.to_dict()
+        organizer_uid = event_data.get('organizer', {}).get('uid')
+        
+        # Check permissions
+        user_doc = get_db().collection('users').document(req.auth.uid).get()
+        if user_doc.exists:
+            user_data = user_doc.to_dict()
+            is_admin = user_data.get('role') == 'admin'
+            is_organizer = req.auth.uid == organizer_uid
+            
+            if not (is_admin or is_organizer):
+                raise https_fn.HttpsError(
+                    code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
+                    message="Permission denied"
+                )
+        
+        # Get analytics data
+        analytics_ref = get_db().collection('event_analytics').document(event_id)
+        analytics_doc = analytics_ref.get()
+        
+        if analytics_doc.exists:
+            analytics_data = analytics_doc.to_dict()
+        else:
+            # Create default analytics if not exists
+            analytics_data = {
+                'eventId': event_id,
+                'registrationCount': 0,
+                'revenue': 0,
+                'checkedInCount': 0,
+                'feedbackCount': 0,
+                'createdAt': firestore.SERVER_TIMESTAMP,
+                'lastUpdated': firestore.SERVER_TIMESTAMP
+            }
+            analytics_ref.set(analytics_data)
+        
+        logger.info(f"Analytics retrieved for event {event_id}")
+        return {
+            'success': True,
+            'analytics': analytics_data
+        }
+        
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting event analytics: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error getting analytics"
+        )
+
+
+@https_fn.on_call()
+def deleteEventData(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Delete event and all associated data
+    """
+    try:
+        if not req.auth:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.UNAUTHENTICATED,
+                message="Authentication required"
+            )
+        
+        event_id = req.data.get('eventId')
+        if not event_id:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="Event ID is required"
+            )
+        
+        # Verify event exists and user has permission
+        event_ref = get_db().collection('events').document(event_id)
+        event_doc = event_ref.get()
+        
+        if not event_doc.exists:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.NOT_FOUND,
+                message="Event not found"
+            )
+        
+        event_data = event_doc.to_dict()
+        organizer_uid = event_data.get('organizer', {}).get('uid')
+        
+        # Check permissions
+        user_doc = get_db().collection('users').document(req.auth.uid).get()
+        if user_doc.exists:
+            user_data = user_doc.to_dict()
+            is_admin = user_data.get('role') == 'admin'
+            is_organizer = req.auth.uid == organizer_uid
+            
+            if not (is_admin or is_organizer):
+                raise https_fn.HttpsError(
+                    code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
+                    message="Permission denied"
+                )
+        
+        # Check if event has registrations
+        registrations = get_db().collection('registrations').where(
+            filter=FieldFilter('eventId', '==', event_id)
+        ).limit(1).stream()
+        
+        has_registrations = len(list(registrations)) > 0
+        
+        if has_registrations and not req.data.get('forceDelete', False):
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
+                message="Cannot delete event with registrations. Use forceDelete=true to override."
+            )
+        
+        # Delete event subcollections
+        # Delete forms
+        forms_ref = event_ref.collection('forms')
+        forms_docs = forms_ref.stream()
+        for form_doc in forms_docs:
+            form_doc.reference.delete()
+        
+        # Delete registrations
+        registrations_ref = get_db().collection('registrations').where(
+            filter=FieldFilter('eventId', '==', event_id)
+        )
+        registrations_docs = registrations_ref.stream()
+        for reg_doc in registrations_docs:
+            reg_doc.reference.delete()
+        
+        # Delete analytics
+        analytics_ref = get_db().collection('event_analytics').document(event_id)
+        if analytics_ref.get().exists:
+            analytics_ref.delete()
+        
+        # Delete main event document
+        event_ref.delete()
+        
+        # Log deletion
+        get_db().collection('activity_logs').add({
+            'type': 'event_deleted',
+            'eventId': event_id,
+            'userId': req.auth.uid,
+            'timestamp': firestore.SERVER_TIMESTAMP,
+            'eventTitle': event_data.get('title', 'Unknown')
+        })
+        
+        logger.info(f"Event {event_id} deleted successfully by user {req.auth.uid}")
+        return {
+            'success': True,
+            'message': 'Event deleted successfully',
+            'eventId': event_id
+        }
+        
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting event: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error during deletion"
+        )
+
+
+@https_fn.on_call()
+def validateRegistration(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Validate registration data without authentication (for anonymous registrations)
+    """
+    try:
+        event_id = req.data.get('eventId')
+        ticket_type_id = req.data.get('ticketTypeId')
+        quantity = req.data.get('quantity', 1)
+        promo_code = req.data.get('promoCode')
+        
+        if not event_id or not ticket_type_id:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="Event ID and ticket type ID are required"
+            )
+        
+        # Get event data
+        event_ref = get_db().collection('events').document(event_id)
+        event_doc = event_ref.get()
+        
+        if not event_doc.exists:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.NOT_FOUND,
+                message="Event not found"
+            )
+        
+        event_data = event_doc.to_dict()
+        
+        # Check if event is published
+        if not event_data.get('isPublished', False):
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
+                message="Event is not published"
+            )
+        
+        # Check if event is full
+        current_attendees = event_data.get('currentAttendees', 0)
+        max_attendees = event_data.get('maxAttendees')
+        
+        if max_attendees and current_attendees >= max_attendees:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
+                message="Event is full"
+            )
+        
+        # Find ticket type
+        ticket_types = event_data.get('ticketTypes', [])
+        ticket_type = None
+        for tt in ticket_types:
+            if tt.get('id') == ticket_type_id:
+                ticket_type = tt
+                break
+        
+        if not ticket_type:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.NOT_FOUND,
+                message="Ticket type not found"
+            )
+        
+        # Calculate pricing
+        original_price = ticket_type.get('price', 0)
+        current_price = original_price
+        
+        # Apply promo code if provided
+        promo_code_data = None
+        if promo_code:
+            promoCodes = event_data.get('promoCodes', [])
+            for pc in promoCodes:
+                if pc.get('code') == promo_code and pc.get('isActive', False):
+                    promo_code_data = pc
+                    break
+            
+            if promo_code_data:
+                discount_type = promo_code_data.get('discountType', 'percentage')
+                discount_value = promo_code_data.get('discountValue', 0)
+                
+                if discount_type == 'percentage':
+                    current_price = original_price * (1 - discount_value / 100)
+                elif discount_type == 'fixed':
+                    current_price = max(0, original_price - discount_value)
+        
+        # Calculate totals
+        original_amount = original_price * quantity
+        discount_amount = (original_price - current_price) * quantity
+        total_amount = current_price * quantity
+        
+        return {
+            'isValid': True,
+            'pricing': {
+                'originalPrice': original_price,
+                'currentPrice': current_price,
+                'discountAmount': discount_amount,
+                'promoCode': promo_code_data
+            },
+            'message': 'Registration validation successful'
+        }
+        
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error validating registration: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error during validation"
+        )
+
+
+@https_fn.on_call()
+def createAnonymousRegistration(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """Atomically reserve a ticket and create a pending anonymous registration."""
+    data = req.data or {}
+    event_id = data.get('eventId')
+    form = data.get('registrationData') or {}
+    details = form.get('userDetails') or {}
+    ticket_id = form.get('ticketTypeId')
+    quantity = form.get('quantity', 1)
+    if (not isinstance(event_id, str) or not isinstance(form, dict) or
+            not isinstance(details, dict) or not isinstance(ticket_id, str) or
+            not isinstance(quantity, int) or quantity < 1 or quantity > 10 or
+            not isinstance(details.get('name'), str) or not details['name'].strip() or
+            not isinstance(details.get('email'), str) or '@' not in details['email']):
+        raise https_fn.HttpsError(https_fn.FunctionsErrorCode.INVALID_ARGUMENT, 'Invalid registration data')
+
+    db = get_db()
+    event_ref = db.collection('events').document(event_id)
+    registration_ref = db.collection('registrations').document()
+    token = secrets.token_urlsafe(32)
+    transaction = db.transaction()
+
+    @firestore.transactional
+    def reserve(tx):
+        snapshot = event_ref.get(transaction=tx)
+        if not snapshot.exists:
+            raise https_fn.HttpsError(https_fn.FunctionsErrorCode.NOT_FOUND, 'Event not found')
+        event = snapshot.to_dict() or {}
+        if not event.get('isPublished') or event.get('status') not in ['published', 'ongoing']:
+            raise https_fn.HttpsError(https_fn.FunctionsErrorCode.FAILED_PRECONDITION, 'Event is not available')
+        tickets = list(event.get('ticketTypes') or [])
+        index = next((i for i, ticket in enumerate(tickets) if ticket.get('id') == ticket_id), None)
+        if index is None:
+            raise https_fn.HttpsError(https_fn.FunctionsErrorCode.NOT_FOUND, 'Ticket type not found')
+        ticket = dict(tickets[index])
+        sold = int(ticket.get('currentSold') or 0)
+        maximum = ticket.get('maxQuantity')
+        if isinstance(maximum, int) and sold + quantity > maximum:
+            raise https_fn.HttpsError(https_fn.FunctionsErrorCode.RESOURCE_EXHAUSTED, 'Ticket is sold out')
+        price = float(ticket.get('price') or 0)
+        ticket['currentSold'] = sold + quantity
+        tickets[index] = ticket
+        registration = {
+            'id': registration_ref.id, 'eventId': event_id, 'userId': '',
+            'userDetails': details, 'ticketTypeId': ticket_id, 'quantity': quantity,
+            'originalAmount': price * quantity, 'discountAmount': 0,
+            'totalAmount': price * quantity, 'currency': 'PHP',
+            'pricing': {'originalPrice': price, 'currentPrice': price, 'discountAmount': 0},
+            'paymentStatus': 'pending', 'attendanceStatus': 'pending',
+            'feedbackSubmitted': False, 'certificateIssued': False,
+            'qrCode': f'registration:{registration_ref.id}',
+            'registrationDate': firestore.SERVER_TIMESTAMP, 'updatedAt': firestore.SERVER_TIMESTAMP,
+            'paymentLinkToken': token,
+            'paymentLinkExpiresAt': datetime.utcnow() + timedelta(hours=24),
+            'paymentLinkStatus': 'active',
+        }
+        if isinstance(form.get('customResponses'), dict):
+            registration['customResponses'] = form['customResponses']
+        tx.set(registration_ref, registration)
+        tx.update(event_ref, {
+            'ticketTypes': tickets,
+            'currentAttendees': int(event.get('currentAttendees') or 0) + quantity,
+            'updatedAt': firestore.SERVER_TIMESTAMP,
+        })
+        return registration
+
+    registration = reserve(transaction)
+    return {
+        'registrationId': registration['id'],
+        'pricing': registration['pricing'],
+        'qrCode': registration['qrCode'],
+        'requiresPayment': registration['totalAmount'] > 0,
+        'paymentLinkToken': token,
+    }
+
+
+@https_fn.on_call()
+def getPaymentRegistration(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """Resolve a payment link without exposing registration reads publicly."""
+    data = req.data or {}
+    registration_id, token = data.get('registrationId'), data.get('token')
+    if not isinstance(registration_id, str) or not isinstance(token, str):
+        raise https_fn.HttpsError(https_fn.FunctionsErrorCode.INVALID_ARGUMENT, 'Payment token is required')
+    _, registration = get_registration(registration_id)
+    if registration.get('paymentLinkToken') != token or registration.get('paymentLinkStatus') != 'active':
+        raise https_fn.HttpsError(https_fn.FunctionsErrorCode.PERMISSION_DENIED, 'Invalid payment link')
+    expires = registration.get('paymentLinkExpiresAt')
+    if expires and hasattr(expires, 'timestamp') and expires.timestamp() <= datetime.utcnow().timestamp():
+        raise https_fn.HttpsError(https_fn.FunctionsErrorCode.FAILED_PRECONDITION, 'Payment link expired')
+    return {'registration': {**registration, 'id': registration_id}}
+
+
+@https_fn.on_call()
+def submitAnonymousPaymentProof(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """Store a payment proof only after verifying the one-time payment token."""
+    data = req.data or {}
+    registration_id = data.get('registrationId')
+    token = data.get('paymentToken')
+    image = data.get('imageBase64')
+    content_type = data.get('contentType', 'image/jpeg')
+    allowed = {'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/heic', 'image/heif'}
+    if not all(isinstance(value, str) for value in [registration_id, token, image]) or content_type not in allowed:
+        raise https_fn.HttpsError(https_fn.FunctionsErrorCode.INVALID_ARGUMENT, 'Invalid payment proof')
+    try:
+        image_bytes = base64.b64decode(image, validate=True)
+    except (ValueError, TypeError):
+        raise https_fn.HttpsError(https_fn.FunctionsErrorCode.INVALID_ARGUMENT, 'Invalid payment image')
+    if len(image_bytes) > 4 * 1024 * 1024:
+        raise https_fn.HttpsError(https_fn.FunctionsErrorCode.RESOURCE_EXHAUSTED, 'Payment image is too large')
+    registration_ref, registration = get_registration(registration_id)
+    if registration.get('paymentLinkToken') != token or registration.get('paymentLinkStatus') != 'active':
+        raise https_fn.HttpsError(https_fn.FunctionsErrorCode.PERMISSION_DENIED, 'Invalid payment link')
+    proof_id = get_db().collection('paymentProofs').document().id
+    path = f'payment-proofs/{registration_id}/proof-{proof_id}.jpg'
+    blob = storage.bucket().blob(path)
+    download_token = secrets.token_urlsafe(24)
+    blob.metadata = {'firebaseStorageDownloadTokens': download_token}
+    blob.upload_from_string(image_bytes, content_type=content_type)
+    proof_url = f'https://firebasestorage.googleapis.com/v0/b/{storage.bucket().name}/o/{quote(path, safe="")}?alt=media&token={download_token}'
+    email = (registration.get('userDetails') or {}).get('email', '')
+    proof = {
+        'id': proof_id, 'registrationId': registration_id, 'eventId': registration.get('eventId'),
+        'email': email, 'userDetails': {'name': (registration.get('userDetails') or {}).get('name', 'Attendee'), 'email': email},
+        'attendeeName': (registration.get('userDetails') or {}).get('name', 'Attendee'),
+        'attendeeEmail': email, 'proofImageUrl': proof_url, 'transactionId': data.get('transactionId'),
+        'verificationStatus': 'pending', 'submittedAt': firestore.SERVER_TIMESTAMP,
+        'notes': data.get('notes'), 'ticketPrice': registration.get('totalAmount', 0),
+        'paymentMethod': data.get('paymentMethod', 'bank_transfer'),
+    }
+    get_db().collection('paymentProofs').document(proof_id).set({key: value for key, value in proof.items() if value is not None})
+    registration_ref.update({'paymentStatus': 'processing', 'paymentProofId': proof_id, 'paymentLinkStatus': 'consumed', 'updatedAt': firestore.SERVER_TIMESTAMP})
+    return {'proofId': proof_id}
+
+
+@https_fn.on_call()
+def registerForEvent(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Register a user for an event
+    """
+    try:
+        if not req.auth:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.UNAUTHENTICATED,
+                message="Authentication required"
+            )
+        
+        event_id = req.data.get('eventId')
+        registration_data = req.data.get('registrationData')
+        
+        if not event_id or not registration_data:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="Event ID and registration data are required"
+            )
+        
+        # Verify event exists and is published
+        event_ref = get_db().collection('events').document(event_id)
+        event_doc = event_ref.get()
+        
+        if not event_doc.exists:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.NOT_FOUND,
+                message="Event not found"
+            )
+        
+        event_data = event_doc.to_dict()
+        
+        if not event_data.get('isPublished', False):
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
+                message="Event is not published"
+            )
+        
+        # Check if event is full
+        current_attendees = event_data.get('currentAttendees', 0)
+        max_attendees = event_data.get('maxAttendees')
+        
+        if max_attendees and current_attendees >= max_attendees:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
+                message="Event is full"
+            )
+        
+        # Check if user already registered
+        existing_registration = get_db().collection('registrations').where(
+            filter=FieldFilter('eventId', '==', event_id)
+        ).where(
+            filter=FieldFilter('userId', '==', req.auth.uid)
+        ).limit(1).stream()
+        
+        if len(list(existing_registration)) > 0:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.ALREADY_EXISTS,
+                message="User already registered for this event"
+            )
+        
+        # Create registration document
+        registration_ref = get_db().collection('registrations').document()
+        registration_id = registration_ref.id
+        
+        registration = {
+            'id': registration_id,
+            'eventId': event_id,
+            'userId': req.auth.uid,
+            'registrationData': registration_data,
+            'registrationStatus': 'pending',
+            'paymentStatus': 'unpaid' if event_data.get('ticketTypes', [{}])[0].get('price', 0) > 0 else 'free',
+            'attendanceStatus': 'not_attended',
+            'createdAt': firestore.SERVER_TIMESTAMP,
+            'updatedAt': firestore.SERVER_TIMESTAMP
+        }
+        
+        registration_ref.set(registration)
+        
+        # Update event attendee count
+        event_ref.update({
+            'currentAttendees': current_attendees + 1,
+            'updatedAt': firestore.SERVER_TIMESTAMP
+        })
+        
+        # Update analytics
+        analytics_ref = get_db().collection('event_analytics').document(event_id)
+        analytics_doc = analytics_ref.get()
+        
+        if analytics_doc.exists:
+            analytics_data = analytics_doc.to_dict()
+            analytics_ref.update({
+                'registrationCount': analytics_data.get('registrationCount', 0) + 1,
+                'lastUpdated': firestore.SERVER_TIMESTAMP
+            })
+        
+        logger.info(f"User {req.auth.uid} registered for event {event_id}")
+        return {
+            'success': True,
+            'message': 'Registration successful',
+            'registrationId': registration_id
+        }
+        
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error registering for event: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error during registration"
+        )
+
+
+@https_fn.on_call()
+def processPaymentVerification(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Process payment verification for event registration
+    """
+    try:
+        if not req.auth:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.UNAUTHENTICATED,
+                message="Authentication required"
+            )
+        
+        registration_id = req.data.get('registrationId')
+        payment_data = req.data.get('paymentData')
+        action = req.data.get('action', 'verify')  # 'verify' or 'reject'
+        
+        if not registration_id:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="Registration ID is required"
+            )
+        
+        # Get registration
+        registration_ref = get_db().collection('registrations').document(registration_id)
+        registration_doc = registration_ref.get()
+        
+        if not registration_doc.exists:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.NOT_FOUND,
+                message="Registration not found"
+            )
+        
+        registration_data = registration_doc.to_dict()
+        event_id = registration_data.get('eventId')
+        
+        # Check permissions (organizer or admin)
+        event_ref = get_db().collection('events').document(event_id)
+        event_doc = event_ref.get()
+        
+        if not event_doc.exists:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.NOT_FOUND,
+                message="Event not found"
+            )
+        
+        event_data = event_doc.to_dict()
+        organizer_uid = event_data.get('organizer', {}).get('uid')
+        
+        # Check permissions
+        user_doc = get_db().collection('users').document(req.auth.uid).get()
+        if user_doc.exists:
+            user_data = user_doc.to_dict()
+            is_admin = user_data.get('role') == 'admin'
+            is_organizer = req.auth.uid == organizer_uid
+            
+            if not (is_admin or is_organizer):
+                raise https_fn.HttpsError(
+                    code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
+                    message="Permission denied"
+                )
+        
+        # Update registration status
+        update_data = {
+            'updatedAt': firestore.SERVER_TIMESTAMP
+        }
+        
+        if action == 'verify':
+            update_data.update({
+                'paymentStatus': 'paid',
+                'registrationStatus': 'confirmed',
+                'paymentVerifiedAt': firestore.SERVER_TIMESTAMP,
+                'verifiedBy': req.auth.uid
+            })
+            
+            if payment_data:
+                update_data['paymentData'] = payment_data
+                
+        elif action == 'reject':
+            update_data.update({
+                'paymentStatus': 'rejected',
+                'registrationStatus': 'rejected',
+                'rejectedAt': firestore.SERVER_TIMESTAMP,
+                'rejectedBy': req.auth.uid,
+                'rejectionReason': req.data.get('reason', 'Payment verification failed')
+            })
+        
+        registration_ref.update(update_data)
+        
+        # Update analytics
+        if action == 'verify':
+            analytics_ref = get_db().collection('event_analytics').document(event_id)
+            analytics_doc = analytics_ref.get()
+            
+            if analytics_doc.exists:
+                analytics_data = analytics_doc.to_dict()
+                analytics_ref.update({
+                    'revenue': analytics_data.get('revenue', 0) + payment_data.get('amount', 0),
+                    'lastUpdated': firestore.SERVER_TIMESTAMP
+                })
+        
+        logger.info(f"Payment {action} processed for registration {registration_id}")
+        return {
+            'success': True,
+            'message': f'Payment {action} processed successfully',
+            'registrationId': registration_id
+        }
+        
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing payment verification: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error during payment processing"
+        )
+
+
+@https_fn.on_call()
+def submitFeedback(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Submit feedback for an event
+    """
+    try:
+        if not req.auth:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.UNAUTHENTICATED,
+                message="Authentication required"
+            )
+        
+        event_id = req.data.get('eventId')
+        feedback_data = req.data.get('feedbackData')
+        
+        if not event_id or not feedback_data:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="Event ID and feedback data are required"
+            )
+        
+        # Verify user is registered for the event
+        registration_query = get_db().collection('registrations').where(
+            filter=FieldFilter('eventId', '==', event_id)
+        ).where(
+            filter=FieldFilter('userId', '==', req.auth.uid)
+        ).limit(1).stream()
+        
+        registrations = list(registration_query)
+        if len(registrations) == 0:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
+                message="User not registered for this event"
+            )
+        
+        registration = registrations[0]
+        registration_data = registration.to_dict()
+        
+        # Check if feedback already submitted
+        if registration_data.get('feedbackSubmitted', False):
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.ALREADY_EXISTS,
+                message="Feedback already submitted for this event"
+            )
+        
+        # Create feedback document
+        feedback_ref = get_db().collection('feedback').document()
+        feedback_id = feedback_ref.id
+        
+        feedback = {
+            'id': feedback_id,
+            'eventId': event_id,
+            'userId': req.auth.uid,
+            'registrationId': registration.id,
+            'feedbackData': feedback_data,
+            'createdAt': firestore.SERVER_TIMESTAMP
+        }
+        
+        feedback_ref.set(feedback)
+        
+        # Update registration to mark feedback as submitted
+        registration.reference.update({
+            'feedbackSubmitted': True,
+            'feedbackSubmittedAt': firestore.SERVER_TIMESTAMP,
+            'updatedAt': firestore.SERVER_TIMESTAMP
+        })
+        
+        # Update analytics
+        analytics_ref = get_db().collection('event_analytics').document(event_id)
+        analytics_doc = analytics_ref.get()
+        
+        if analytics_doc.exists:
+            analytics_data = analytics_doc.to_dict()
+            analytics_ref.update({
+                'feedbackCount': analytics_data.get('feedbackCount', 0) + 1,
+                'lastUpdated': firestore.SERVER_TIMESTAMP
+            })
+        
+        # Get event title for email
+        event_ref = get_db().collection('events').document(event_id)
+        event_doc = event_ref.get()
+        event_title = 'Event'
+        if event_doc.exists:
+            event_data = event_doc.to_dict()
+            event_title = event_data.get('title', 'Event')
+        
+        # Check if certificate exists and send notification email
+        certificate_id = registration_data.get('certificateId')
+        if certificate_id:
+            try:
+                cert_ref = get_db().collection('certificates').document(certificate_id)
+                cert_doc = cert_ref.get()
+                
+                if cert_doc.exists:
+                    cert_data = cert_doc.to_dict()
+                    # Check for certificateUrl first (used by custom template system), then downloadUrl (backend placeholder)
+                    certificate_url = cert_data.get('certificateUrl') or cert_data.get('downloadUrl')
+                    
+                    # Only send email if we have a valid, non-placeholder URL
+                    # Placeholder URLs like "https://certificates.apohub.dev/{id}" should be skipped
+                    # unless they're actually accessible
+                    is_placeholder = certificate_url and (
+                        certificate_url.startswith('https://certificates.apohub.dev/') or
+                        certificate_url.startswith('blob:') or
+                        certificate_url.startswith('data:')
+                    )
+                    
+                    # For custom certificates, certificateUrl should be a Firebase Storage URL or similar
+                    # If it's a placeholder, we'll skip sending the email as the certificate may not be ready
+                    if certificate_url and not is_placeholder:
+                        # Get user email and name
+                        user_details = registration_data.get('userDetails', {})
+                        user_email = user_details.get('email')
+                        user_name = user_details.get('name', 'Attendee')
+                        
+                        if user_email:
+                            # Send certificate notification email
+                            try:
+                                email_result = email_service.send_certificate_notification(
+                                    user_email=user_email,
+                                    user_name=user_name,
+                                    event_title=event_title,
+                                    certificate_url=certificate_url,
+                                    registration_id=registration.id
+                                )
+                                
+                                # Log activity
+                                try:
+                                    get_db().collection('activity_logs').add({
+                                        'type': 'certificate_notification_sent',
+                                        'eventId': event_id,
+                                        'userEmail': user_email,
+                                        'userName': user_name,
+                                        'eventTitle': event_title,
+                                        'certificateUrl': certificate_url,
+                                        'registrationId': registration.id,
+                                        'emailId': email_result.get('email_id'),
+                                        'success': email_result.get('success', False),
+                                        'timestamp': firestore.SERVER_TIMESTAMP
+                                    })
+                                except Exception as log_err:
+                                    logger.warning(f"Failed to write activity log for certificate notification: {str(log_err)}")
+                                
+                                # Update registration if email sent successfully
+                                if email_result.get('success'):
+                                    registration.reference.update({
+                                        'certificateEmailSent': True,
+                                        'certificateEmailSentAt': firestore.SERVER_TIMESTAMP,
+                                        'updatedAt': firestore.SERVER_TIMESTAMP
+                                    })
+                                    logger.info(f"Certificate notification sent successfully to {user_email} for event {event_id}")
+                                else:
+                                    logger.warning(f"Failed to send certificate notification to {user_email}: {email_result.get('message')}")
+                                    
+                            except Exception as email_err:
+                                logger.error(f"Error sending certificate notification email: {str(email_err)}")
+                                # Don't fail feedback submission if email fails
+                        else:
+                            logger.warning(f"No email address found for registration {registration.id}, skipping certificate notification")
+                    elif is_placeholder:
+                        logger.info(f"Certificate {certificate_id} has placeholder URL, skipping email notification. Certificate may need to be generated/uploaded first.")
+                    else:
+                        logger.warning(f"Certificate {certificate_id} exists but has no valid certificate URL")
+                else:
+                    logger.info(f"Certificate {certificate_id} not found, skipping certificate notification")
+            except Exception as cert_err:
+                logger.error(f"Error checking certificate for registration {registration.id}: {str(cert_err)}")
+                # Don't fail feedback submission if certificate check fails
+        
+        logger.info(f"Feedback submitted for event {event_id} by user {req.auth.uid}")
+        return {
+            'success': True,
+            'message': 'Feedback submitted successfully',
+            'feedbackId': feedback_id
+        }
+        
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error submitting feedback: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error during feedback submission"
+        )
+
+
+@https_fn.on_call()
+def generateCertificate(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Generate certificate for event attendee
+    """
+    try:
+        if not req.auth:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.UNAUTHENTICATED,
+                message="Authentication required"
+            )
+        
+        event_id = req.data.get('eventId')
+        attendee_id = req.data.get('attendeeId')
+        
+        if not event_id or not attendee_id:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="Event ID and attendee ID are required"
+            )
+        
+        # Verify event exists
+        event_ref = get_db().collection('events').document(event_id)
+        event_doc = event_ref.get()
+        
+        if not event_doc.exists:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.NOT_FOUND,
+                message="Event not found"
+            )
+        
+        event_data = event_doc.to_dict()
+        
+        # Verify attendee registration
+        registration_query = get_db().collection('registrations').where(
+            filter=FieldFilter('eventId', '==', event_id)
+        ).where(
+            filter=FieldFilter('userId', '==', attendee_id)
+        ).limit(1).stream()
+        
+        registrations = list(registration_query)
+        if len(registrations) == 0:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.NOT_FOUND,
+                message="Registration not found"
+            )
+        
+        registration = registrations[0]
+        registration_data = registration.to_dict()
+        
+        # Check if attendee completed the event (submitted feedback)
+        if not registration_data.get('feedbackSubmitted', False):
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
+                message="Certificate can only be generated after feedback submission"
+            )
+        
+        # Check if certificate already exists
+        certificate_query = get_db().collection('certificates').where(
+            filter=FieldFilter('eventId', '==', event_id)
+        ).where(
+            filter=FieldFilter('userId', '==', attendee_id)
+        ).limit(1).stream()
+        
+        existing_certificates = list(certificate_query)
+        if len(existing_certificates) > 0:
+            certificate_data = existing_certificates[0].to_dict()
+            return {
+                'success': True,
+                'message': 'Certificate already exists',
+                'certificateId': certificate_data.get('id'),
+                'downloadUrl': certificate_data.get('downloadUrl')
+            }
+        
+        # Get user details
+        user_ref = get_db().collection('users').document(attendee_id)
+        user_doc = user_ref.get()
+        
+        if not user_doc.exists:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.NOT_FOUND,
+                message="User not found"
+            )
+        
+        user_data = user_doc.to_dict()
+        
+        # Generate certificate ID
+        certificate_ref = get_db().collection('certificates').document()
+        certificate_id = certificate_ref.id
+        
+        # Create certificate record
+        certificate_data = {
+            'id': certificate_id,
+            'eventId': event_id,
+            'userId': attendee_id,
+            'eventTitle': event_data.get('title', 'Event'),
+            'attendeeName': user_data.get('displayName', 'Attendee'),
+            'attendeeEmail': user_data.get('email', ''),
+            'issueDate': firestore.SERVER_TIMESTAMP,
+            'credentialId': f"APOHUB-{event_id[:8]}-{attendee_id[:8]}-{certificate_id[:8]}",
+            'status': 'issued',
+            'downloadUrl': f"https://certificates.apohub.dev/{certificate_id}",
+            'createdAt': firestore.SERVER_TIMESTAMP
+        }
+        
+        certificate_ref.set(certificate_data)
+        
+        # Update registration with certificate info
+        registration.reference.update({
+            'certificateGenerated': True,
+            'certificateId': certificate_id,
+            'certificateGeneratedAt': firestore.SERVER_TIMESTAMP,
+            'updatedAt': firestore.SERVER_TIMESTAMP
+        })
+        
+        logger.info(f"Certificate generated for user {attendee_id} and event {event_id}")
+        return {
+            'success': True,
+            'message': 'Certificate generated successfully',
+            'certificateId': certificate_id,
+            'credentialId': certificate_data['credentialId'],
+            'downloadUrl': certificate_data['downloadUrl']
+        }
+        
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating certificate: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error during certificate generation"
+        )
+
+
+@https_fn.on_call()
+def checkInAttendee(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Check in an attendee for an event
+    """
+    try:
+        if not req.auth:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.UNAUTHENTICATED,
+                message="Authentication required"
+            )
+        
+        event_id = req.data.get('eventId')
+        attendee_id = req.data.get('attendeeId')
+        
+        if not event_id or not attendee_id:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="Event ID and attendee ID are required"
+            )
+        
+        # Verify event exists and user has permission
+        event_ref = get_db().collection('events').document(event_id)
+        event_doc = event_ref.get()
+        
+        if not event_doc.exists:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.NOT_FOUND,
+                message="Event not found"
+            )
+        
+        event_data = event_doc.to_dict()
+        organizer_uid = event_data.get('organizer', {}).get('uid')
+        
+        # Check permissions
+        user_doc = get_db().collection('users').document(req.auth.uid).get()
+        if user_doc.exists:
+            user_data = user_doc.to_dict()
+            is_admin = user_data.get('role') == 'admin'
+            is_organizer = req.auth.uid == organizer_uid
+            
+            if not (is_admin or is_organizer):
+                raise https_fn.HttpsError(
+                    code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
+                    message="Permission denied"
+                )
+        
+        # Find registration
+        registration_query = get_db().collection('registrations').where(
+            filter=FieldFilter('eventId', '==', event_id)
+        ).where(
+            filter=FieldFilter('userId', '==', attendee_id)
+        ).limit(1).stream()
+        
+        registrations = list(registration_query)
+        if len(registrations) == 0:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.NOT_FOUND,
+                message="Registration not found"
+            )
+        
+        registration = registrations[0]
+        registration_data = registration.to_dict()
+        current_attendance_status = normalize_attendance_status(registration_data.get('attendanceStatus'))
+        
+        # Check if already checked in
+        if current_attendance_status == CHECKED_IN_CANONICAL:
+            return {
+                'success': True,
+                'message': 'Attendee already checked in',
+                'registrationId': registration.id,
+                'checkedInAt': registration_data.get('checkedInAt')
+            }
+        
+        # Update registration with check-in info
+        registration.reference.update({
+            'attendanceStatus': CHECKED_IN_CANONICAL,
+            'checkedInAt': firestore.SERVER_TIMESTAMP,
+            'checkedInBy': req.auth.uid,
+            'updatedAt': firestore.SERVER_TIMESTAMP
+        })
+        
+        # Update analytics
+        analytics_ref = get_db().collection('event_analytics').document(event_id)
+        analytics_doc = analytics_ref.get()
+        
+        if analytics_doc.exists:
+            analytics_data = analytics_doc.to_dict()
+            analytics_ref.update({
+                'checkedInCount': analytics_data.get('checkedInCount', 0) + 1,
+                'lastUpdated': firestore.SERVER_TIMESTAMP
+            })
+        
+        logger.info(f"Attendee {attendee_id} checked in for event {event_id}")
+        return {
+            'success': True,
+            'message': 'Attendee checked in successfully',
+            'registrationId': registration.id,
+            'checkedInAt': firestore.SERVER_TIMESTAMP
+        }
+        
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error checking in attendee: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error during check-in"
+        )
+
+
+@https_fn.on_call()
+def bulkProcessPayments(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Bulk process payment verifications for multiple registrations
+    """
+    try:
+        if not req.auth:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.UNAUTHENTICATED,
+                message="Authentication required"
+            )
+        
+        registration_ids = req.data.get('registrationIds', [])
+        action = req.data.get('action', 'verify')  # 'verify' or 'reject'
+        
+        if not registration_ids:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="Registration IDs are required"
+            )
+        
+        # Check admin permissions
+        user_doc = get_db().collection('users').document(req.auth.uid).get()
+        if user_doc.exists:
+            user_data = user_doc.to_dict()
+            is_admin = user_data.get('role') == 'admin'
+            
+            if not is_admin:
+                raise https_fn.HttpsError(
+                    code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
+                    message="Admin access required for bulk operations"
+                )
+        
+        processed_count = 0
+        failed_count = 0
+        results = []
+        
+        for registration_id in registration_ids:
+            try:
+                # Create a mock request object for processPaymentVerification
+                mock_req = type('MockRequest', (), {
+                    'auth': req.auth,
+                    'data': {
+                        'registrationId': registration_id,
+                        'action': action
+                    }
+                })()
+                
+                # Process each registration
+                result = processPaymentVerification(mock_req)
+                
+                if result.get('success'):
+                    processed_count += 1
+                    results.append({
+                        'registrationId': registration_id,
+                        'status': 'success',
+                        'message': result.get('message')
+                    })
+                else:
+                    failed_count += 1
+                    results.append({
+                        'registrationId': registration_id,
+                        'status': 'failed',
+                        'message': result.get('message', 'Unknown error')
+                    })
+                    
+            except Exception as e:
+                failed_count += 1
+                results.append({
+                    'registrationId': registration_id,
+                    'status': 'failed',
+                    'message': str(e)
+                })
+        
+        logger.info(f"Bulk payment processing completed: {processed_count} successful, {failed_count} failed")
+        return {
+            'success': True,
+            'message': f'Bulk processing completed: {processed_count} successful, {failed_count} failed',
+            'processed': processed_count,
+            'failed': failed_count,
+            'results': results
+        }
+        
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error in bulk payment processing: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error during bulk processing"
+        )
+
+
+# Callable utilities for notifications/emails
+@https_fn.on_call()
+def sendConfirmationEmail(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Send a registration confirmation email using Resend.
+    Supports different email types: 'submitted' (immediate) or 'approved' (with QR code and registration ID)
+    """
+    try:
+        data: Dict[str, Any] = req.data or {}
+        registration_id = data.get('registrationId')
+        event_id = data.get('eventId')
+        user_email = data.get('userEmail')
+        user_name = data.get('userName', 'Attendee')
+        requires_payment = data.get('requiresPayment', False)
+        is_free_registration = data.get('isFreeRegistration')
+        email_type = data.get('emailType', 'submitted')  # 'submitted' or 'approved'
+        is_resend = data.get('isResend', False)  # Track if this is a resend operation
+
+        if is_free_registration is None:
+            is_free_registration = not requires_payment
+
+        if not event_id or not user_email:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="eventId and userEmail are required"
+            )
+
+        # Get event details for email content
+        try:
+            event_ref = get_db().collection('events').document(event_id)
+            event_doc = event_ref.get()
+            
+            if not event_doc.exists:
+                raise https_fn.HttpsError(
+                    code=https_fn.FunctionsErrorCode.NOT_FOUND,
+                    message="Event not found"
+                )
+            
+            event_data = event_doc.to_dict()
+            event_title = event_data.get('title', 'Event')
+            
+            # Debug: Log event data structure
+            logger.info(f"Event data keys: {list(event_data.keys())}")
+            logger.info(f"startDate value: {event_data.get('startDate')} (type: {type(event_data.get('startDate'))})")
+            logger.info(f"venue value: {event_data.get('venue')}")
+            
+            # Get proper event date and location from Firestore
+            event_date = 'TBD'
+            event_location = 'TBD'
+            
+            # Extract date from startDate (Firestore Timestamp) with proper timezone handling
+            start_date = event_data.get('startDate')
+            event_timezone = event_data.get('timezone', 'Asia/Manila')  # Default to Manila timezone
+            
+            if start_date:
+                try:
+                    from datetime import datetime
+                    import pytz
+                    
+                    # Parse the timezone
+                    try:
+                        tz = pytz.timezone(event_timezone)
+                    except pytz.exceptions.UnknownTimeZoneError:
+                        logger.warning(f"Unknown timezone: {event_timezone}, using Asia/Manila")
+                        tz = pytz.timezone('Asia/Manila')
+                    
+                    # Handle Firestore timestamp object
+                    if hasattr(start_date, 'seconds'):
+                        # Convert UTC timestamp to the event's timezone
+                        dt_utc = datetime.utcfromtimestamp(start_date.seconds).replace(tzinfo=pytz.UTC)
+                        dt_local = dt_utc.astimezone(tz)
+                        event_date = dt_local.strftime('%B %d, %Y at %I:%M %p')
+                    elif isinstance(start_date, dict) and 'seconds' in start_date:
+                        # Handle serialized timestamp
+                        dt_utc = datetime.utcfromtimestamp(start_date['seconds']).replace(tzinfo=pytz.UTC)
+                        dt_local = dt_utc.astimezone(tz)
+                        event_date = dt_local.strftime('%B %d, %Y at %I:%M %p')
+                    elif isinstance(start_date, str):
+                        # Handle ISO string
+                        dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+                        if dt.tzinfo is None:
+                            dt = pytz.UTC.localize(dt)
+                        dt_local = dt.astimezone(tz)
+                        event_date = dt_local.strftime('%B %d, %Y at %I:%M %p')
+                    else:
+                        logger.warning(f"Unknown startDate format: {type(start_date)} - {start_date}")
+                        event_date = str(start_date)
+                except Exception as date_err:
+                    logger.warning(f"Failed to parse event date: {str(date_err)}")
+                    logger.warning(f"startDate type: {type(start_date)}, value: {start_date}")
+                    event_date = str(start_date)
+            
+            # Get venue information - handle both nested venue object and flat structure
+            venue = event_data.get('venue', {})
+            venue_type = venue.get('type') or event_data.get('venueType')
+            
+            logger.info(f"venue_type: {venue_type}")
+            
+            if venue_type == 'online':
+                event_location = venue.get('onlineUrl') or venue.get('url') or 'Online Event'
+            elif venue_type == 'offline':
+                # Try nested venue object first, then flat structure
+                venue_name = venue.get('name') or event_data.get('venueName', '')
+                venue_address = venue.get('address') or event_data.get('venueAddress', '')
+                venue_city = venue.get('city') or event_data.get('city', '')
+                
+                # Build location string from available parts
+                location_parts = []
+                if venue_name:
+                    location_parts.append(venue_name)
+                if venue_address:
+                    location_parts.append(venue_address)
+                if venue_city:
+                    location_parts.append(venue_city)
+                
+                event_location = ', '.join(location_parts) if location_parts else 'TBD'
+                logger.info(f"Built location: {event_location} from parts: {location_parts}")
+            else:
+                logger.info(f"Unknown venue type: {venue_type}, using TBD")
+            
+            # Generate QR code only for approved registrations
+            qr_code_data = None
+            include_registration_id = None
+            
+            if email_type == 'approved' and registration_id:
+                include_registration_id = registration_id
+                try:
+                    import qrcode
+                    from io import BytesIO
+                    import base64
+                    from PIL import Image
+                    
+                    # Create QR code with optimized settings for email
+                    qr = qrcode.QRCode(
+                        version=1,
+                        error_correction=qrcode.constants.ERROR_CORRECT_L,
+                        box_size=6,  # Reduced from 10 for smaller file size
+                        border=2     # Reduced from 5 for smaller file size
+                    )
+                    qr.add_data(f"registration:{registration_id}")
+                    qr.make(fit=True)
+                    
+                    # Generate image with optimization
+                    img = qr.make_image(fill_color="black", back_color="white")
+                    
+                    # Convert to RGB if needed and optimize
+                    if img.mode != 'RGB':
+                        img = img.convert('RGB')
+                    
+                    # Save with optimization for email clients
+                    buffer = BytesIO()
+                    img.save(buffer, format='PNG', optimize=True)
+                    buffer.seek(0)
+                    qr_code_data = base64.b64encode(buffer.getvalue()).decode()
+                    
+                    logger.info(f"QR code generated successfully. Size: {len(qr_code_data)} bytes")
+                except Exception as qr_err:
+                    logger.warning(f"Failed to generate QR code: {str(qr_err)}")
+
+            # Send email using Resend
+            email_result = email_service.send_registration_confirmation(
+                user_email=user_email,
+                user_name=user_name,
+                event_title=event_title,
+                event_date=event_date,
+                event_location=event_location,
+                registration_id=include_registration_id,
+                qr_code_data=qr_code_data,
+                requires_payment=requires_payment,
+                is_free_registration=is_free_registration
+            )
+
+            # Log activity for traceability
+            try:
+                activity_log_data = {
+                    'type': 'email_confirmation_sent',
+                    'registrationId': registration_id,
+                    'eventId': event_id,
+                    'eventTitle': event_title,
+                    'userEmail': user_email,
+                    'userName': user_name,
+                    'emailId': email_result.get('email_id'),
+                    'success': email_result.get('success', False),
+                    'timestamp': firestore.SERVER_TIMESTAMP
+                }
+                if is_resend:
+                    activity_log_data['isResend'] = True
+                get_db().collection('activity_logs').add(activity_log_data)
+            except Exception as log_err:
+                logger.warning(f"Failed to write activity log for confirmation email: {str(log_err)}")
+
+            if email_result.get('success'):
+                logger.info(f"Registration confirmation email sent to {user_email} (registration {registration_id})")
+                return {
+                    'success': True,
+                    'message': 'Confirmation email sent successfully',
+                    'registrationId': registration_id,
+                    'eventId': event_id,
+                    'emailId': email_result.get('email_id')
+                }
+            else:
+                logger.error(f"Failed to send confirmation email to {user_email}: {email_result.get('message')}")
+                return {
+                    'success': False,
+                    'message': f"Failed to send confirmation email: {email_result.get('message')}",
+                    'registrationId': registration_id,
+                    'eventId': event_id
+                }
+
+        except https_fn.HttpsError:
+            raise
+        except Exception as event_err:
+            logger.error(f"Error getting event details: {str(event_err)}")
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INTERNAL,
+                message="Internal server error getting event details"
+            )
+
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error in sendConfirmationEmail: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error sending confirmation email"
+        )
+
+
+@https_fn.on_call()
+def sendPaymentNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Send payment status notification email using Resend.
+    """
+    try:
+        data: Dict[str, Any] = req.data or {}
+        registration_id = data.get('registrationId')
+        status = data.get('status')  # expected: 'approved' | 'rejected' | 'pending'
+        event_title = data.get('eventTitle')
+        attendee_email = data.get('attendeeEmail')
+        attendee_name = data.get('attendeeName', 'Attendee')
+        payment_instructions = data.get('paymentInstructions')
+        is_resend = data.get('isResend', False)  # Track if this is a resend operation
+        is_free_registration = bool(data.get('isFreeRegistration', False))
+
+        if not registration_id or not status:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="registrationId and status are required"
+            )
+
+        if not attendee_email:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="attendeeEmail is required"
+            )
+
+        # Generate QR code for approved payments (for event check-in)
+        qr_code_data = None
+        if status == 'approved' and registration_id:
+            try:
+                import qrcode
+                from io import BytesIO
+                import base64
+                from PIL import Image
+                
+                # Create QR code with optimized settings for email
+                qr = qrcode.QRCode(
+                    version=1,
+                    error_correction=qrcode.constants.ERROR_CORRECT_L,
+                    box_size=6,  # Reduced from 10 for smaller file size
+                    border=2     # Reduced from 5 for smaller file size
+                )
+                qr.add_data(f"registration:{registration_id}")
+                qr.make(fit=True)
+                
+                # Generate image with optimization
+                img = qr.make_image(fill_color="black", back_color="white")
+                
+                # Convert to RGB if needed and optimize
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                # Save with optimization for email clients
+                buffer = BytesIO()
+                img.save(buffer, format='PNG', optimize=True)
+                buffer.seek(0)
+                qr_code_data = base64.b64encode(buffer.getvalue()).decode()
+                
+                logger.info(f"QR code generated successfully. Size: {len(qr_code_data)} bytes")
+            except Exception as qr_err:
+                logger.warning(f"Failed to generate QR code for payment notification: {str(qr_err)}")
+
+        # Send email using Resend
+        email_result = email_service.send_payment_notification(
+            user_email=attendee_email,
+            user_name=attendee_name,
+            event_title=event_title or 'Event',
+            registration_id=registration_id,
+            status=status,
+            payment_instructions=payment_instructions,
+            qr_code_data=qr_code_data,
+            is_free_registration=is_free_registration
+        )
+
+        # Log activity for traceability
+        try:
+            # Get eventId from registration
+            event_id = None
+            try:
+                reg_ref = get_db().collection('registrations').document(registration_id)
+                reg_doc = reg_ref.get()
+                if reg_doc.exists:
+                    event_id = reg_doc.to_dict().get('eventId')
+            except Exception:
+                pass
+            
+            activity_log_data = {
+                'type': 'payment_notification_sent',
+                'registrationId': registration_id,
+                'eventId': event_id,
+                'status': status,
+                'eventTitle': event_title,
+                'userEmail': attendee_email,
+                'userName': attendee_name,
+                'emailId': email_result.get('email_id'),
+                'success': email_result.get('success', False),
+                'timestamp': firestore.SERVER_TIMESTAMP,
+                'isFreeRegistration': is_free_registration
+            }
+            if is_resend:
+                activity_log_data['isResend'] = True
+            get_db().collection('activity_logs').add(activity_log_data)
+        except Exception as log_err:
+            logger.warning(f"Failed to write activity log for payment notification: {str(log_err)}")
+
+        if email_result.get('success'):
+            logger.info(f"Payment notification email sent to {attendee_email} for registration {registration_id} with status {status}")
+            return {
+                'success': True,
+                'message': 'Payment notification sent successfully',
+                'registrationId': registration_id,
+                'status': status,
+                'emailId': email_result.get('email_id')
+            }
+        else:
+            logger.error(f"Failed to send payment notification to {attendee_email}: {email_result.get('message')}")
+            return {
+                'success': False,
+                'message': f"Failed to send payment notification: {email_result.get('message')}",
+                'registrationId': registration_id,
+                'status': status
+            }
+
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error in sendPaymentNotification: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error sending payment notification"
+        )
+
+
+@https_fn.on_call()
+def sendCertificateNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Send certificate ready notification email using Resend.
+    """
+    try:
+        data: Dict[str, Any] = req.data or {}
+        user_email = data.get('userEmail')
+        user_name = data.get('userName', 'Attendee')
+        event_title = data.get('eventTitle')
+        certificate_url = data.get('certificateUrl')
+        registration_id = data.get('registrationId')
+        is_resend = data.get('isResend', False)  # Track if this is a resend operation
+
+        if not user_email or not event_title or not certificate_url:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="userEmail, eventTitle, and certificateUrl are required"
+            )
+
+        # Send email using Resend
+        email_result = email_service.send_certificate_notification(
+            user_email=user_email,
+            user_name=user_name,
+            event_title=event_title,
+            certificate_url=certificate_url,
+            registration_id=registration_id or 'unknown'
+        )
+
+        # Log activity for traceability
+        try:
+            # Get eventId from registration
+            event_id = None
+            try:
+                if registration_id:
+                    reg_ref = get_db().collection('registrations').document(registration_id)
+                    reg_doc = reg_ref.get()
+                    if reg_doc.exists:
+                        event_id = reg_doc.to_dict().get('eventId')
+            except Exception:
+                pass
+            
+            activity_log_data = {
+                'type': 'certificate_notification_sent',
+                'eventId': event_id,
+                'userEmail': user_email,
+                'userName': user_name,
+                'eventTitle': event_title,
+                'certificateUrl': certificate_url,
+                'registrationId': registration_id,
+                'emailId': email_result.get('email_id'),
+                'success': email_result.get('success', False),
+                'timestamp': firestore.SERVER_TIMESTAMP
+            }
+            if is_resend:
+                activity_log_data['isResend'] = True
+            get_db().collection('activity_logs').add(activity_log_data)
+        except Exception as log_err:
+            logger.warning(f"Failed to write activity log for certificate notification: {str(log_err)}")
+
+        if email_result.get('success'):
+            logger.info(f"Certificate notification email sent to {user_email} for {event_title}")
+            return {
+                'success': True,
+                'message': 'Certificate notification sent successfully',
+                'emailId': email_result.get('email_id')
+            }
+        else:
+            logger.error(f"Failed to send certificate notification to {user_email}: {email_result.get('message')}")
+            return {
+                'success': False,
+                'message': f"Failed to send certificate notification: {email_result.get('message')}"
+            }
+
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error in sendCertificateNotification: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error sending certificate notification"
+        )
+
+
+@https_fn.on_call()
+def sendEventReminder(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Send event reminder email using Resend.
+    """
+    try:
+        data: Dict[str, Any] = req.data or {}
+        user_email = data.get('userEmail')
+        user_name = data.get('userName', 'Attendee')
+        event_title = data.get('eventTitle')
+        event_date = data.get('eventDate')
+        event_location = data.get('eventLocation')
+        registration_id = data.get('registrationId')
+        reminder_type = data.get('reminderType', '24h')  # '24h' or '1h'
+        is_resend = data.get('isResend', False)  # Track if this is a resend operation
+
+        if not user_email or not event_title or not event_date:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="userEmail, eventTitle, and eventDate are required"
+            )
+
+        # Send email using Resend
+        email_result = email_service.send_event_reminder(
+            user_email=user_email,
+            user_name=user_name,
+            event_title=event_title,
+            event_date=event_date,
+            event_location=event_location or 'TBD',
+            registration_id=registration_id or 'unknown',
+            reminder_type=reminder_type
+        )
+
+        # Log activity for traceability
+        try:
+            # Get eventId from registration
+            event_id = None
+            try:
+                if registration_id:
+                    reg_ref = get_db().collection('registrations').document(registration_id)
+                    reg_doc = reg_ref.get()
+                    if reg_doc.exists:
+                        event_id = reg_doc.to_dict().get('eventId')
+            except Exception:
+                pass
+            
+            activity_log_data = {
+                'type': 'event_reminder_sent',
+                'eventId': event_id,
+                'userEmail': user_email,
+                'userName': user_name,
+                'eventTitle': event_title,
+                'eventDate': event_date,
+                'eventLocation': event_location,
+                'registrationId': registration_id,
+                'reminderType': reminder_type,
+                'emailId': email_result.get('email_id'),
+                'success': email_result.get('success', False),
+                'timestamp': firestore.SERVER_TIMESTAMP
+            }
+            if is_resend:
+                activity_log_data['isResend'] = True
+            get_db().collection('activity_logs').add(activity_log_data)
+        except Exception as log_err:
+            logger.warning(f"Failed to write activity log for event reminder: {str(log_err)}")
+
+        if email_result.get('success'):
+            logger.info(f"Event reminder email sent to {user_email} for {event_title} ({reminder_type})")
+            return {
+                'success': True,
+                'message': 'Event reminder sent successfully',
+                'emailId': email_result.get('email_id')
+            }
+        else:
+            logger.error(f"Failed to send event reminder to {user_email}: {email_result.get('message')}")
+            return {
+                'success': False,
+                'message': f"Failed to send event reminder: {email_result.get('message')}"
+            }
+
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error in sendEventReminder: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error sending event reminder"
+        )
+
+
+def generate_feedback_token() -> str:
+    """
+    Generate a secure random token for feedback URLs
+    """
+    import secrets
+    return secrets.token_urlsafe(32)  # 256-bit token, URL-safe
+
+
+def get_full_name_from_registration(reg_data: Dict[str, Any]) -> str:
+    """
+    Extract the full name from registration data by combining first name and last name.
+    Falls back to userDetails.name if custom responses don't have first/last name fields.
+    
+    Known field IDs:
+    - '1' = First Name (default registration form)
+    - '1762143123275' = Last Name (DevFest Davao 2025 form)
+    - Some forms may have different field IDs
+    """
+    custom_responses = reg_data.get('customResponses', {})
+    user_details = reg_data.get('userDetails', {})
+    
+    # Try to get first name and last name from customResponses
+    # Common field patterns for first name
+    first_name = None
+    last_name = None
+    
+    # Check for first name - field '1' is the default first name field
+    if '1' in custom_responses:
+        first_name = custom_responses['1']
+    
+    # Check for last name - field '1762143123275' is the DevFest Davao form's last name field
+    # Also check common labels in case field IDs vary
+    last_name_field_ids = ['1762143123275']
+    for field_id in last_name_field_ids:
+        if field_id in custom_responses:
+            last_name = custom_responses[field_id]
+            break
+    
+    # If we found both first and last name, combine them
+    if first_name and last_name:
+        full_name = f"{first_name} {last_name}".strip()
+        if full_name:
+            return full_name
+    
+    # Fall back to userDetails.name if available
+    if user_details.get('name'):
+        return user_details['name']
+    
+    # Last resort: return first name only or 'Attendee'
+    return first_name or 'Attendee'
+
+
+def generate_feedback_url(event_id: str, registration_id: str = None, user_email: str = None, user_name: str = None, reg_data: Dict[str, Any] = None) -> str:
+    """
+    Generate a secure feedback URL with a token that hides personal information.
+    Creates a feedbackToken document in Firestore to store the mapping.
+    
+    Args:
+        event_id: The event ID
+        registration_id: The registration ID  
+        user_email: User's email address
+        user_name: User's name (if reg_data is provided, full name will be extracted from it)
+        reg_data: Optional registration data dict to extract full name from customResponses
+    """
+    base_url = "https://apohub.gdgdavao.org"  # Production URL (app domain)
+    
+    # Generate a secure token
+    token = generate_feedback_token()
+    
+    # If reg_data is provided, try to get the full name from customResponses
+    final_name = user_name
+    if reg_data:
+        final_name = get_full_name_from_registration(reg_data)
+    
+    # Store token mapping in Firestore
+    db = get_db()
+    token_ref = db.collection('feedbackTokens').document(token)
+    token_ref.set({
+        'eventId': event_id,
+        'registrationId': registration_id,
+        'email': user_email,
+        'name': final_name,
+        'createdAt': firestore.SERVER_TIMESTAMP,
+        'expiresAt': None,  # No expiry for now, but can be added
+        'used': False
+    })
+    
+    # Return clean URL with just the token
+    return f"{base_url}/feedback/{event_id}?token={token}"
+
+
+def send_feedback_requests_for_event(event_id: str, event_title: str) -> None:
+    """
+    Send feedback request emails to all checked-in or confirmed attendees for a completed event.
+    Only sends emails if the event has a certificate template configured (since certificates
+    are now generated client-side after feedback submission).
+    """
+    try:
+        db = get_db()
+        
+        # Check if event has a certificate template - skip feedback emails if no template exists
+        # Since certificates are now generated after feedback submission, we only want to
+        # send feedback requests for events that have certificates configured
+        template_query = db.collection('certificateTemplates').where(
+            filter=FieldFilter('eventId', '==', event_id)
+        ).where(
+            filter=FieldFilter('isActive', '==', True)
+        ).limit(1).stream()
+        
+        has_template = False
+        for _ in template_query:
+            has_template = True
+            break
+        
+        if not has_template:
+            logger.info(f"Skipping feedback requests for event {event_id}: no active certificate template found")
+            return
+        
+        # Query registrations for checked-in or confirmed attendees who haven't submitted feedback
+        # Note: Firestore doesn't support 'in' queries directly, so we'll query separately
+        registration_ids_seen = set()
+        registrations_to_process = []
+
+        def _collect_registrations(query_stream):
+            for registration in query_stream:
+                reg_id = registration.id
+                if reg_id not in registration_ids_seen:
+                    registration_ids_seen.add(reg_id)
+                    registrations_to_process.append(registration)
+
+        for status in CHECKED_IN_ALIASES:
+            checked_in_query = db.collection('registrations').where(
+                filter=FieldFilter('eventId', '==', event_id)
+            ).where(
+                filter=FieldFilter('attendanceStatus', '==', status)
+            ).where(
+                filter=FieldFilter('feedbackSubmitted', '==', False)
+            ).stream()
+            _collect_registrations(checked_in_query)
+        
+        # Only attendees who actually attended (i.e., checked-in) should receive feedback requests.
+        # No additional query for 'registered' or other statuses.
+        
+        logger.info(f"Found {len(registrations_to_process)} registrations to send feedback requests for event {event_id}")
+        
+        # Track how many emails were successfully sent so we only stamp the event when ≥1 succeeds
+        emails_sent_count = 0
+
+        # Process each registration
+        for reg in registrations_to_process:
+            reg_data = reg.to_dict()
+            reg_id = reg.id
+            
+            # Skip if already sent
+            if reg_data.get('feedbackRequestSent', False):
+                continue
+            
+            # Get user details - extract full name from customResponses
+            user_details = reg_data.get('userDetails', {})
+            user_email = user_details.get('email')
+            # Use get_full_name_from_registration for proper first+last name handling
+            user_name = get_full_name_from_registration(reg_data)
+            
+            if not user_email:
+                logger.warning(f"Skipping registration {reg_id}: no email address")
+                continue
+            
+            try:
+                # Generate feedback URL - pass reg_data for full name extraction
+                feedback_url = generate_feedback_url(
+                    event_id=event_id,
+                    registration_id=reg_id,
+                    user_email=user_email,
+                    user_name=user_name,
+                    reg_data=reg_data
+                )
+                
+                # Send feedback request email
+                email_result = email_service.send_feedback_request(
+                    user_email=user_email,
+                    user_name=user_name,
+                    event_title=event_title,
+                    feedback_url=feedback_url,
+                    registration_id=reg_id
+                )
+                
+                # Log activity
+                try:
+                    db.collection('activity_logs').add({
+                        'type': 'feedback_request_sent',
+                        'eventId': event_id,
+                        'userEmail': user_email,
+                        'userName': user_name,
+                        'eventTitle': event_title,
+                        'feedbackUrl': feedback_url,
+                        'registrationId': reg_id,
+                        'emailId': email_result.get('email_id'),
+                        'success': email_result.get('success', False),
+                        'timestamp': firestore.SERVER_TIMESTAMP
+                    })
+                except Exception as log_err:
+                    logger.warning(f"Failed to write activity log for feedback request: {str(log_err)}")
+                
+                # Update registration based on result
+                if email_result.get('success'):
+                    emails_sent_count += 1
+                    update_data = {
+                        'feedbackRequestSent': True,
+                        'feedbackRequestSentAt': firestore.SERVER_TIMESTAMP,
+                        'updatedAt': firestore.SERVER_TIMESTAMP
+                    }
+                    # Remove error field if it exists
+                    if 'feedbackRequestError' in reg_data:
+                        update_data['feedbackRequestError'] = firestore.DELETE_FIELD
+                    reg.reference.update(update_data)
+                    logger.info(f"Feedback request sent successfully to {user_email} for event {event_id}")
+                else:
+                    reg.reference.update({
+                        'feedbackRequestError': email_result.get('message', 'Unknown error'),
+                        'feedbackRequestLastAttemptAt': firestore.SERVER_TIMESTAMP,
+                        'updatedAt': firestore.SERVER_TIMESTAMP
+                    })
+                    logger.warning(f"Failed to send feedback request to {user_email}: {email_result.get('message')}")
+                    
+            except Exception as reg_err:
+                logger.error(f"Error processing registration {reg_id} for feedback request: {str(reg_err)}")
+                # Mark with error but continue processing others
+                try:
+                    reg.reference.update({
+                        'feedbackRequestError': f"Processing error: {str(reg_err)}",
+                        'feedbackRequestLastAttemptAt': firestore.SERVER_TIMESTAMP,
+                        'updatedAt': firestore.SERVER_TIMESTAMP
+                    })
+                except Exception:
+                    pass
+        
+        # Only stamp the event if at least one email was successfully sent
+        # This prevents an empty run (no checked-in attendees yet) from blocking future attempts
+        if emails_sent_count > 0:
+            event_ref = db.collection('events').document(event_id)
+            event_ref.update({
+                'feedbackRequestsSentAt': firestore.SERVER_TIMESTAMP,
+                'feedbackRequestsSentCount': emails_sent_count,
+                'updatedAt': firestore.SERVER_TIMESTAMP
+            })
+            logger.info(f"Completed sending {emails_sent_count} feedback requests for event {event_id}")
+        else:
+            logger.warning(f"No feedback emails sent for event {event_id} (0 eligible registrations found or all failed)")
+        
+    except Exception as e:
+        logger.error(f"Error in send_feedback_requests_for_event for event {event_id}: {str(e)}")
+        raise
+
+
+@https_fn.on_call()
+def resendEventFeedbackRequests(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Manually resend feedback requests for a completed event.
+    This can be used when the automatic trigger failed or needs to be re-run.
+    """
+    try:
+        data: Dict[str, Any] = req.data or {}
+        event_id = data.get('eventId')
+        force = data.get('force', False)  # Force resend even if already sent
+        
+        if not event_id:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="eventId is required"
+            )
+        
+        # Get event data
+        db = get_db()
+        event_ref = db.collection('events').document(event_id)
+        event_doc = event_ref.get()
+        
+        if not event_doc.exists:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.NOT_FOUND,
+                message=f"Event {event_id} not found"
+            )
+        
+        event_data = event_doc.to_dict()
+        event_title = event_data.get('title', 'Event')
+        
+        # Check if already sent (unless force=True)
+        if not force and event_data.get('feedbackRequestsSentAt'):
+            return {
+                'success': False,
+                'message': 'Feedback requests already sent for this event. Use force=true to resend.',
+                'sentAt': event_data.get('feedbackRequestsSentAt')
+            }
+        
+        # Clear the timestamp if forcing resend
+        if force and event_data.get('feedbackRequestsSentAt'):
+            event_ref.update({
+                'feedbackRequestsSentAt': firestore.DELETE_FIELD,
+                'feedbackRequestsSentCount': firestore.DELETE_FIELD,
+                'updatedAt': firestore.SERVER_TIMESTAMP
+            })
+            logger.info(f"Cleared feedback request timestamp for event {event_id} (force resend)")
+        
+        # Send feedback requests
+        send_feedback_requests_for_event(event_id, event_title)
+        
+        # Re-fetch to get the updated count
+        updated_event = event_ref.get().to_dict()
+        sent_count = updated_event.get('feedbackRequestsSentCount', 0)
+        
+        return {
+            'success': True,
+            'message': f'Feedback requests sent to {sent_count} attendee(s)',
+            'emailsSentCount': sent_count
+        }
+        
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error in resendEventFeedbackRequests: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message=f"Internal server error: {str(e)}"
+        )
+
+
+@https_fn.on_call()
+def sendFeedbackRequest(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Send feedback request email using Resend.
+    Only sends if the event has a certificate template configured.
+    """
+    try:
+        data: Dict[str, Any] = req.data or {}
+        user_email = data.get('userEmail')
+        user_name = data.get('userName', 'Attendee')
+        event_title = data.get('eventTitle')
+        event_id = data.get('eventId')
+        registration_id = data.get('registrationId')
+        is_resend = data.get('isResend', False)  # Track if this is a resend operation
+        
+        # Try to get full name from registration if available
+        reg_data = None
+        if registration_id and event_id:
+            try:
+                db = get_db()
+                reg_ref = db.collection('registrations').document(registration_id)
+                reg_doc = reg_ref.get()
+                if reg_doc.exists:
+                    reg_data = reg_doc.to_dict()
+                    # Use full name from registration
+                    user_name = get_full_name_from_registration(reg_data)
+            except Exception as reg_err:
+                logger.warning(f"Could not fetch registration for full name: {str(reg_err)}")
+        
+        # Support both old and new API - feedbackUrl or generate from eventId
+        feedback_url = data.get('feedbackUrl')
+        if not feedback_url and event_id:
+            feedback_url = generate_feedback_url(
+                event_id=event_id,
+                registration_id=registration_id,
+                user_email=user_email,
+                user_name=user_name,
+                reg_data=reg_data
+            )
+
+        if not user_email or not event_title or not feedback_url:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="userEmail, eventTitle, and either feedbackUrl or eventId are required"
+            )
+        
+        # Check if event has a certificate template before sending feedback request
+        if event_id:
+            db = get_db()
+            template_query = db.collection('certificateTemplates').where(
+                filter=FieldFilter('eventId', '==', event_id)
+            ).where(
+                filter=FieldFilter('isActive', '==', True)
+            ).limit(1).stream()
+            
+            has_template = False
+            for _ in template_query:
+                has_template = True
+                break
+            
+            if not has_template:
+                logger.info(f"Skipping feedback request for event {event_id}: no active certificate template found")
+                return {
+                    'success': False,
+                    'message': 'No certificate template configured for this event. Feedback requests are only sent for events with certificates.'
+                }
+
+        # Send email using Resend
+        email_result = email_service.send_feedback_request(
+            user_email=user_email,
+            user_name=user_name,
+            event_title=event_title,
+            feedback_url=feedback_url,
+            registration_id=registration_id or 'unknown'
+        )
+
+        # Log activity for traceability
+        try:
+            activity_log_data = {
+                'type': 'feedback_request_sent',
+                'eventId': event_id,
+                'userEmail': user_email,
+                'userName': user_name,
+                'eventTitle': event_title,
+                'feedbackUrl': feedback_url,
+                'registrationId': registration_id,
+                'emailId': email_result.get('email_id'),
+                'success': email_result.get('success', False),
+                'timestamp': firestore.SERVER_TIMESTAMP
+            }
+            if is_resend:
+                activity_log_data['isResend'] = True
+            get_db().collection('activity_logs').add(activity_log_data)
+        except Exception as log_err:
+            logger.warning(f"Failed to write activity log for feedback request: {str(log_err)}")
+
+        if email_result.get('success'):
+            logger.info(f"Feedback request email sent to {user_email} for {event_title}")
+            return {
+                'success': True,
+                'message': 'Feedback request sent successfully',
+                'emailId': email_result.get('email_id')
+            }
+        else:
+            logger.error(f"Failed to send feedback request to {user_email}: {email_result.get('message')}")
+            return {
+                'success': False,
+                'message': f"Failed to send feedback request: {email_result.get('message')}"
+            }
+
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error in sendFeedbackRequest: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error sending feedback request"
+        )
+
+
+@https_fn.on_call()
+def resolveFeedbackToken(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Resolve a feedback token to get the associated registration data.
+    This allows the feedback page to retrieve user info without exposing it in the URL.
+    """
+    try:
+        data: Dict[str, Any] = req.data or {}
+        token = data.get('token')
+        event_id = data.get('eventId')
+
+        if not token:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="token is required"
+            )
+
+        db = get_db()
+        token_ref = db.collection('feedbackTokens').document(token)
+        token_doc = token_ref.get()
+
+        if not token_doc.exists:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.NOT_FOUND,
+                message="Invalid or expired feedback token"
+            )
+
+        token_data = token_doc.to_dict()
+
+        # Verify event ID matches if provided
+        if event_id and token_data.get('eventId') != event_id:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="Token does not match this event"
+            )
+
+        # Check if token has expired (if expiry is set)
+        expires_at = token_data.get('expiresAt')
+        if expires_at:
+            from datetime import datetime, timezone
+            if isinstance(expires_at, datetime):
+                if expires_at < datetime.now(timezone.utc):
+                    raise https_fn.HttpsError(
+                        code=https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
+                        message="Feedback token has expired"
+                    )
+
+        return {
+            'success': True,
+            'registrationId': token_data.get('registrationId'),
+            'email': token_data.get('email'),
+            'name': token_data.get('name'),
+            'eventId': token_data.get('eventId')
+        }
+
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error in resolveFeedbackToken: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error resolving feedback token"
+        )
+
+
+@https_fn.on_call()
+def getResendEmailStatus(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Get email status from Resend API
+    """
+    try:
+        data: Dict[str, Any] = req.data or {}
+        email_id = data.get('emailId')
+
+        if not email_id:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="emailId is required"
+            )
+
+        # Call Resend API to get email status
+        try:
+            # Get Resend API key from environment
+            resend_api_key = os.getenv('RESEND_API_KEY')
+            if not resend_api_key:
+                raise https_fn.HttpsError(
+                    code=https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
+                    message="Resend API key not configured"
+                )
+            
+            # Make request to Resend API
+            response = requests.get(
+                f"https://api.resend.com/emails/{email_id}",
+                headers={
+                    "Authorization": f"Bearer {resend_api_key}",
+                    "Content-Type": "application/json"
+                }
+            )
+            
+            if response.status_code == 200:
+                email_data = response.json()
+                logger.info(f"Email status retrieved for {email_id}: {email_data.get('last_event')}")
+                return {
+                    'success': True,
+                    'status': {
+                        'id': email_data.get('id'),
+                        'status': email_data.get('last_event', 'unknown'),
+                        'created_at': email_data.get('created_at'),
+                        'last_event': email_data.get('last_event'),
+                        'to': email_data.get('to', []),
+                        'from': email_data.get('from'),
+                        'subject': email_data.get('subject')
+                    }
+                }
+            elif response.status_code == 404:
+                logger.warning(f"Email {email_id} not found in Resend")
+                return {
+                    'success': False,
+                    'message': 'Email not found'
+                }
+            else:
+                logger.error(f"Resend API error: {response.status_code} - {response.text}")
+                return {
+                    'success': False,
+                    'message': f"Failed to fetch email status: {response.text}"
+                }
+                
+        except Exception as api_error:
+            logger.error(f"Error calling Resend API: {str(api_error)}")
+            return {
+                'success': False,
+                'message': f"API error: {str(api_error)}"
+            }
+
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error in getResendEmailStatus: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error fetching email status"
+        )
+
+
+@https_fn.on_call()
+def getAllResendEmails(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Fetch all emails from Resend API with their delivery status
+    Useful for getting bounced emails directly from Resend
+    """
+    try:
+        # Get Resend API key from environment
+        resend_api_key = os.getenv('RESEND_API_KEY')
+        if not resend_api_key:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
+                message="Resend API key not configured"
+            )
+        
+        all_emails = []
+        has_more = True
+        cursor = None
+        
+        # Resend API pagination - fetch all emails
+        while has_more and len(all_emails) < 1000:  # Safety limit
+            try:
+                url = "https://api.resend.com/emails"
+                params = {}
+                if cursor:
+                    params['cursor'] = cursor
+                
+                response = requests.get(
+                    url,
+                    headers={
+                        "Authorization": f"Bearer {resend_api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    params=params
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    emails = data.get('data', [])
+                    all_emails.extend(emails)
+                    
+                    # Check if there are more pages
+                    has_more = data.get('has_more', False)
+                    if has_more:
+                        cursor = data.get('next_cursor')
+                    
+                    logger.info(f"Fetched {len(emails)} emails from Resend (total: {len(all_emails)})")
+                else:
+                    logger.error(f"Resend API error: {response.status_code} - {response.text}")
+                    break
+                    
+            except Exception as page_error:
+                logger.error(f"Error fetching page: {str(page_error)}")
+                break
+        
+        # Filter and categorize emails
+        bounced_emails = []
+        delivered_emails = []
+        pending_emails = []
+        
+        for email in all_emails:
+            last_event = email.get('last_event', '').lower()
+            email_info = {
+                'id': email.get('id'),
+                'to': email.get('to', []),
+                'from': email.get('from'),
+                'subject': email.get('subject'),
+                'created_at': email.get('created_at'),
+                'last_event': last_event
+            }
+            
+            if last_event in ['bounced', 'bounce']:
+                bounced_emails.append(email_info)
+            elif last_event in ['delivered', 'delivery']:
+                delivered_emails.append(email_info)
+            else:
+                pending_emails.append(email_info)
+        
+        logger.info(f"Total emails: {len(all_emails)}, Bounced: {len(bounced_emails)}, Delivered: {len(delivered_emails)}, Pending: {len(pending_emails)}")
+        
+        return {
+            'success': True,
+            'total': len(all_emails),
+            'bounced_count': len(bounced_emails),
+            'delivered_count': len(delivered_emails),
+            'pending_count': len(pending_emails),
+            'bounced_emails': bounced_emails,
+            'delivered_emails': delivered_emails,
+            'pending_emails': pending_emails
+        }
+        
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error in getAllResendEmails: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error fetching all emails from Resend"
+        )
+
+
+@https_fn.on_call()
+def sendCheckInNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Send check-in confirmation notification email using Resend.
+    """
+    try:
+        data: Dict[str, Any] = req.data or {}
+        registration_id = data.get('registrationId')
+        event_id = data.get('eventId')
+        user_email = data.get('userEmail')
+        user_name = data.get('userName', 'Attendee')
+        is_resend = data.get('isResend', False)  # Track if this is a resend operation
+
+        if not registration_id or not event_id or not user_email:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="registrationId, eventId, and userEmail are required"
+            )
+
+        # Get event details for email content
+        try:
+            event_ref = get_db().collection('events').document(event_id)
+            event_doc = event_ref.get()
+            
+            if not event_doc.exists:
+                raise https_fn.HttpsError(
+                    code=https_fn.FunctionsErrorCode.NOT_FOUND,
+                    message="Event not found"
+                )
+            
+            event_data = event_doc.to_dict()
+            event_title = event_data.get('title', 'Event')
+            event_date = event_data.get('date', 'TBD')
+            event_location = event_data.get('location', 'TBD')
+
+            # Send email using Resend (using event reminder template as base)
+            email_result = email_service.send_event_reminder(
+                user_email=user_email,
+                user_name=user_name,
+                event_title=event_title,
+                event_date=event_date,
+                event_location=event_location,
+                registration_id=registration_id,
+                reminder_type="checked_in"  # Custom type for check-in
+            )
+
+            # Log activity for traceability
+            try:
+                activity_log_data = {
+                    'type': 'checkin_notification_sent',
+                    'registrationId': registration_id,
+                    'eventId': event_id,
+                    'userEmail': user_email,
+                    'userName': user_name,
+                    'emailId': email_result.get('email_id'),
+                    'success': email_result.get('success', False),
+                    'timestamp': firestore.SERVER_TIMESTAMP
+                }
+                if is_resend:
+                    activity_log_data['isResend'] = True
+                get_db().collection('activity_logs').add(activity_log_data)
+            except Exception as log_err:
+                logger.warning(f"Failed to write activity log for check-in notification: {str(log_err)}")
+
+            if email_result.get('success'):
+                logger.info(f"Check-in notification email sent to {user_email} (registration {registration_id})")
+                return {
+                    'success': True,
+                    'message': 'Check-in notification sent successfully',
+                    'registrationId': registration_id,
+                    'eventId': event_id,
+                    'emailId': email_result.get('email_id')
+                }
+            else:
+                logger.error(f"Failed to send check-in notification to {user_email}: {email_result.get('message')}")
+                return {
+                    'success': False,
+                    'message': f"Failed to send check-in notification: {email_result.get('message')}",
+                    'registrationId': registration_id,
+                    'eventId': event_id
+                }
+
+        except https_fn.HttpsError:
+            raise
+        except Exception as event_err:
+            logger.error(f"Error getting event details for check-in notification: {str(event_err)}")
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INTERNAL,
+                message="Internal server error getting event details"
+            )
+
+    except https_fn.HttpsError:
+        raise
+    except Exception as e:
+        logger.error(f"Error in sendCheckInNotification: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Internal server error sending check-in notification"
+        )
+
+
+# Firestore Triggers
+
+@firestore_fn.on_document_created(document="events/{eventId}")
+def on_event_created(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]) -> None:
+    """
+    Triggered when a new event is created
+    """
+    try:
+        # Handle potential timestamp parsing issues
+        if not event.data or not event.data.exists:
+            logger.warning("Event data is empty or doesn't exist")
+            return
+            
+        event_id = event.params['eventId']
+        event_data = event.data.to_dict()
+        
+        logger.info(f"Event created: {event_id}")
+        
+        # Update organizer stats
+        organizer_uid = event_data.get('organizer', {}).get('uid')
+        if organizer_uid:
+            organizer_ref = get_db().collection('users').document(organizer_uid)
+            organizer_doc = organizer_ref.get()
+            
+            if organizer_doc.exists:
+                organizer_data = organizer_doc.to_dict()
+                current_events = organizer_data.get('eventsCreated', 0)
+                organizer_ref.update({
+                    'eventsCreated': current_events + 1,
+                    'lastEventCreated': firestore.SERVER_TIMESTAMP
+                })
+        
+        # Log event creation for analytics
+        get_db().collection('activity_logs').add({
+            'type': 'event_created',
+            'eventId': event_id,
+            'userId': organizer_uid,
+            'timestamp': firestore.SERVER_TIMESTAMP,
+            'eventTitle': event_data.get('title', 'Unknown')
+        })
+        
+    except ValueError as e:
+        # Handle timestamp parsing errors specifically
+        if "already exists" in str(e):
+            logger.error(f"Firebase initialization error in event created trigger: {str(e)}")
+        else:
+            logger.error(f"Timestamp parsing error in event created trigger: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error in event created trigger: {str(e)}")
+
+
+@firestore_fn.on_document_updated(document="events/{eventId}")
+def on_event_updated(event: firestore_fn.Event[firestore_fn.Change[firestore_fn.DocumentSnapshot]]) -> None:
+    """
+    Triggered when an event is updated
+    """
+    try:
+        # Handle potential timestamp parsing issues
+        if not event.data or not event.data.after or not event.data.after.exists:
+            logger.warning("Event update data is empty or doesn't exist")
+            return
+            
+        event_id = event.params['eventId']
+        before_data = event.data.before.to_dict() if event.data.before else {}
+        after_data = event.data.after.to_dict() if event.data.after else {}
+        
+        # Check if event was published
+        was_published = before_data.get('isPublished', False)
+        is_published = after_data.get('isPublished', False)
+        
+        if not was_published and is_published:
+            logger.info(f"Event {event_id} was published")
+            
+            # Log event publication
+            get_db().collection('activity_logs').add({
+                'type': 'event_published',
+                'eventId': event_id,
+                'userId': after_data.get('organizer', {}).get('uid'),
+                'timestamp': firestore.SERVER_TIMESTAMP,
+                'eventTitle': after_data.get('title', 'Unknown')
+            })
+        
+        # Check if event status changed to 'completed'
+        before_status = before_data.get('status')
+        after_status = after_data.get('status')
+        
+        if before_status != 'completed' and after_status == 'completed':
+            logger.info(f"Event {event_id} status changed to completed")
+            
+            # Skip if feedback requests already sent
+            if after_data.get('feedbackRequestsSentAt'):
+                logger.info(f"Feedback requests already sent for event {event_id}")
+                return
+            
+            # Send feedback requests to checked-in/confirmed attendees
+            try:
+                send_feedback_requests_for_event(event_id, after_data.get('title', 'Event'))
+            except Exception as e:
+                logger.error(f"Error sending feedback requests for event {event_id}: {str(e)}")
+        
+        # Update analytics if attendee count changed
+        before_attendees = before_data.get('currentAttendees', 0)
+        after_attendees = after_data.get('currentAttendees', 0)
+        
+        if before_attendees != after_attendees:
+            analytics_ref = get_db().collection('event_analytics').document(event_id)
+            analytics_ref.update({
+                'registrationCount': after_attendees,
+                'lastUpdated': firestore.SERVER_TIMESTAMP
+            })
+        
+    except ValueError as e:
+        # Handle timestamp parsing errors specifically
+        if "already exists" in str(e):
+            logger.error(f"Firebase initialization error in event updated trigger: {str(e)}")
+        else:
+            logger.error(f"Timestamp parsing error in event updated trigger: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error in event updated trigger: {str(e)}")
+
+
+# Health check endpoint
+@https_fn.on_request()
+def health_check(req: https_fn.Request) -> https_fn.Response:
+    """Health check endpoint for monitoring"""
+    return https_fn.Response(
+        json.dumps({
+            'status': 'healthy',
+            'timestamp': datetime.now().isoformat(),
+            'service': 'apohub-functions'
+        }),
+        headers={'Content-Type': 'application/json'}
+    )

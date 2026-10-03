@@ -1,0 +1,24 @@
+{
+  "name": "GDG Davao - ApoHub",
+  "short_name": "GDG Davao",
+  "description": "Google Developer Groups Davao - Premier developer community in Davao City",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#4285f4",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["business", "education", "networking", "technology"],
+  "lang": "en-US",
+  "dir": "ltr",
+  "scope": "/",
+  "related_applications": [],
+  "prefer_related_applications": false
+}

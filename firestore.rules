@@ -1,0 +1,118 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAuthenticated() { return request.auth != null; }
+    function isOwner(uid) { return isAuthenticated() && request.auth.uid == uid; }
+    function isAdmin() {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isActive == true;
+    }
+    function isOrganizer() {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isActive == true &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'organizer'];
+    }
+    function isValidEmail(email) { return email is string && email.matches('.*@.*[.].*'); }
+    function ownsEvent(eventId) {
+      return isOrganizer() && exists(/databases/$(database)/documents/events/$(eventId)) &&
+        get(/databases/$(database)/documents/events/$(eventId)).data.organizer.uid == request.auth.uid;
+    }
+    function canManageEvent(eventId) { return isAdmin() || ownsEvent(eventId); }
+    function validAnonymousRegistration() {
+      return request.resource.data.keys().hasOnly([
+        'eventId', 'userId', 'userDetails', 'ticketTypeId', 'quantity',
+        'originalAmount', 'discountAmount', 'totalAmount', 'currency', 'pricing',
+        'paymentStatus', 'attendanceStatus', 'feedbackSubmitted', 'certificateIssued',
+        'qrCode', 'registrationDate', 'updatedAt', 'paymentLinkToken',
+        'paymentLinkExpiresAt', 'paymentLinkStatus', 'promoCode', 'promoCodeId',
+        'customResponses'
+      ]) && request.resource.data.eventId is string &&
+      request.resource.data.userId == '' && request.resource.data.userDetails is map &&
+      request.resource.data.userDetails.name is string &&
+      request.resource.data.userDetails.email is string &&
+      isValidEmail(request.resource.data.userDetails.email) &&
+      request.resource.data.ticketTypeId is string && request.resource.data.quantity is int &&
+      request.resource.data.quantity > 0 && request.resource.data.quantity <= 10 &&
+      request.resource.data.paymentStatus == 'pending' &&
+      request.resource.data.attendanceStatus == 'pending' &&
+      request.resource.data.feedbackSubmitted == false &&
+      request.resource.data.certificateIssued == false &&
+      request.resource.data.qrCode is string && request.resource.data.registrationDate is timestamp &&
+      request.resource.data.updatedAt is timestamp && request.resource.data.paymentLinkToken is string &&
+      request.resource.data.paymentLinkToken.size() >= 32 &&
+      request.resource.data.paymentLinkExpiresAt is timestamp &&
+      request.resource.data.paymentLinkStatus == 'active';
+    }
+
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (isAdmin() || isOwner(userId));
+      allow list: if isAdmin();
+      allow create: if isAdmin() && isValidEmail(request.resource.data.email) &&
+        request.resource.data.role in ['admin', 'organizer'];
+      allow update: if isAdmin() || (isOwner(userId) &&
+        request.resource.data.role == resource.data.role &&
+        request.resource.data.isActive == resource.data.isActive &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'displayName', 'photoURL', 'phoneNumber', 'organization', 'bio', 'skills', 'socialLinks', 'updatedAt'
+        ]));
+      allow delete: if isAdmin();
+    }
+
+    match /events/{eventId} {
+      allow read: if (resource.data.isPublished == true && resource.data.status in ['published', 'ongoing']) || canManageEvent(eventId);
+      allow create: if isAdmin() || (isOrganizer() && request.resource.data.organizer.uid == request.auth.uid);
+      allow update, delete: if canManageEvent(eventId);
+      match /forms/{formId} {
+        allow read: if get(/databases/$(database)/documents/events/$(eventId)).data.isPublished == true || canManageEvent(eventId);
+        allow write: if canManageEvent(eventId);
+      }
+      match /config/{configId} {
+        allow read, write: if canManageEvent(eventId);
+      }
+    }
+
+    match /registrations/{registrationId} {
+      allow read: if isOrganizer();
+      allow create: if !isAuthenticated() && validAnonymousRegistration() &&
+        get(/databases/$(database)/documents/events/$(request.resource.data.eventId)).data.isPublished == true;
+      allow update, delete: if isOrganizer();
+    }
+
+    match /certificateTemplates/{templateId} {
+      allow read: if true;
+      allow write: if isOrganizer();
+    }
+    match /certificates/{certificateId} {
+      allow read: if true;
+      allow create: if false;
+      allow update: if request.resource.data.diff(resource.data).affectedKeys().hasOnly(['verificationCount']) &&
+        request.resource.data.verificationCount == resource.data.verificationCount + 1;
+      allow delete: if isAdmin();
+    }
+    match /feedbackTokens/{tokenId} { allow read, write: if false; }
+    match /feedback/{feedbackId} { allow read: if isOrganizer(); allow create, update, delete: if false; }
+    match /activity_logs/{logId} { allow read: if isOrganizer(); allow create, update, delete: if false; }
+    match /event_analytics/{analyticsId} { allow read, write: if canManageEvent(analyticsId); }
+    match /paymentProofs/{proofId} {
+      allow read: if resource.data.eventId is string && canManageEvent(resource.data.eventId);
+      allow create: if false;
+      allow update: if resource.data.eventId == request.resource.data.eventId && canManageEvent(resource.data.eventId);
+      allow delete: if resource.data.eventId is string && canManageEvent(resource.data.eventId);
+    }
+    match /notifications/{notificationId} {
+      allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
+      allow list: if isAuthenticated() && request.auth.uid == resource.data.userId;
+      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.userId;
+      allow update: if isAuthenticated() && request.auth.uid == resource.data.userId &&
+        request.resource.data.userId == resource.data.userId &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']);
+      allow delete: if isAuthenticated() && request.auth.uid == resource.data.userId;
+    }
+    match /system/{docId} { allow read, write: if isAdmin(); }
+    match /{document=**} { allow read, write: if false; }
+  }
+}

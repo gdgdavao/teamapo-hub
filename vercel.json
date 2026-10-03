@@ -1,0 +1,10 @@
+{
+  "installCommand": "bun install",
+  "buildCommand": "bun run build",
+  "outputDirectory": "dist",
+  "routes": [
+    { "handle": "filesystem" },
+    { "src": "/(.*)", "dest": "/index.html" }
+  ]
+}
+

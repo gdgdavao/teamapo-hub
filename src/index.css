@@ -1,0 +1,300 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply border-gray-200;
+  }
+  
+  html {
+    font-size: 16px;
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply bg-white text-gray-900 font-google;
+    font-weight: 400;
+    line-height: 1.5;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+@layer components {
+  /* Google Material Design Button Styles */
+  .btn-primary {
+    @apply bg-primary-500 hover:bg-primary-600 text-white font-medium py-3 px-6 rounded-lg transition-all duration-200 transform hover:scale-105 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2;
+  }
+  
+  .btn-secondary {
+    @apply bg-white border-2 border-primary-500 text-primary-500 hover:bg-primary-50 font-medium py-3 px-6 rounded-lg transition-all duration-200 transform hover:scale-105 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2;
+  }
+  
+  .btn-success {
+    @apply bg-success-500 hover:bg-success-600 text-white font-medium py-3 px-6 rounded-lg transition-all duration-200 transform hover:scale-105 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-success-500 focus:ring-offset-2;
+  }
+  
+  .btn-danger {
+    @apply bg-secondary-500 hover:bg-secondary-600 text-white font-medium py-3 px-6 rounded-lg transition-all duration-200 transform hover:scale-105 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-secondary-500 focus:ring-offset-2;
+  }
+  
+  /* Form Inputs */
+  .form-input {
+    @apply w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors duration-200 bg-white;
+  }
+  
+  .form-label {
+    @apply block text-sm font-medium text-gray-700 mb-2;
+  }
+  
+  /* Card Styles */
+  .card {
+    @apply bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden;
+  }
+  
+  .card-header {
+    @apply px-6 py-4 border-b border-gray-100 bg-gray-50;
+  }
+  
+  .card-content {
+    @apply px-6 py-4;
+  }
+  
+  .card-footer {
+    @apply px-6 py-4 border-t border-gray-100 bg-gray-50;
+  }
+  
+  /* Event Card Styles (Lu.ma inspired) */
+  .event-card {
+    @apply bg-white rounded-2xl shadow-md hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1 border border-gray-100 overflow-hidden cursor-pointer;
+  }
+  
+  .event-card:hover {
+    @apply ring-2 ring-primary-200;
+  }
+  
+  /* Navigation Styles */
+  .nav-link {
+    @apply text-gray-600 hover:text-primary-600 font-medium transition-colors duration-200 py-2 px-3 rounded-md hover:bg-primary-50;
+  }
+  
+  .nav-link-active {
+    @apply text-primary-600 bg-primary-50 font-semibold;
+  }
+  
+  /* Dashboard Styles (GDG inspired) */
+  .dashboard-card {
+    @apply bg-white rounded-lg shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow duration-200;
+  }
+  
+  .stat-card {
+    @apply bg-gradient-to-r from-primary-500 to-primary-600 text-white rounded-lg p-6 shadow-lg;
+  }
+  
+  /* Loading Animation */
+  .loading-spinner {
+    @apply animate-spin rounded-full border-4 border-gray-200 border-t-primary-500;
+  }
+  
+  /* Toast Styles */
+  .toast-success {
+    @apply bg-success-500 text-white;
+  }
+  
+  .toast-error {
+    @apply bg-secondary-500 text-white;
+  }
+  
+  .toast-info {
+    @apply bg-primary-500 text-white;
+  }
+  
+  /* Badge Styles */
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+  
+  .badge-primary {
+    @apply bg-primary-100 text-primary-800;
+  }
+  
+  .badge-success {
+    @apply bg-success-100 text-success-800;
+  }
+  
+  .badge-warning {
+    @apply bg-accent-100 text-accent-800;
+  }
+  
+  .badge-danger {
+    @apply bg-secondary-100 text-secondary-800;
+  }
+  
+  /* Status Indicators */
+  .status-indicator {
+    @apply w-3 h-3 rounded-full;
+  }
+  
+  .status-live {
+    @apply bg-secondary-500 animate-pulse;
+  }
+  
+  .status-upcoming {
+    @apply bg-accent-500;
+  }
+  
+  .status-completed {
+    @apply bg-success-500;
+  }
+  
+  .status-cancelled {
+    @apply bg-gray-400;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+  
+  .bg-gradient-google {
+    background: linear-gradient(135deg, #4285f4 0%, #34a853 25%, #fbbc04 75%, #ea4335 100%);
+  }
+  
+  .bg-gradient-gdg {
+    background: linear-gradient(135deg, #4285f4 0%, #0f9d58 100%);
+  }
+  
+  .glass-effect {
+    @apply bg-white/80 backdrop-blur-lg border border-white/20;
+  }
+  
+  .shadow-google {
+    box-shadow: 0 2px 10px 0 rgba(66, 133, 244, 0.15);
+  }
+  
+  .hover-lift {
+    @apply transition-all duration-300 hover:-translate-y-1 hover:shadow-xl;
+  }
+
+  /* Mobile Menu Animation */
+  .mobile-menu-enter {
+    transform: translateX(-100%);
+  }
+
+  .mobile-menu-enter-active {
+    transform: translateX(0);
+    transition: transform 300ms ease-in-out;
+  }
+
+  .mobile-menu-exit {
+    transform: translateX(0);
+  }
+
+  .mobile-menu-exit-active {
+    transform: translateX(-100%);
+    transition: transform 300ms ease-in-out;
+  }
+
+  /* Keyframe Animations */
+  @keyframes slideInLeft {
+    from {
+      opacity: 0;
+      transform: translateX(-20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes bounceIn {
+    0% {
+      opacity: 0;
+      transform: scale(0.3);
+    }
+    50% {
+      opacity: 1;
+      transform: scale(1.05);
+    }
+    70% {
+      transform: scale(0.9);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+  
+  /* Scrollbar Hide Utility */
+  .scrollbar-hide {
+    -ms-overflow-style: none;  /* Internet Explorer 10+ */
+    scrollbar-width: none;  /* Firefox */
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;  /* Safari and Chrome */
+  }
+
+  /* Custom Animation Utilities */
+  .animate-slide-in-left {
+    animation: slideInLeft 0.4s ease-out forwards;
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-gray-100;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-gray-300 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-gray-400;
+}
+
+/* Print Styles for Certificates */
+@media print {
+  .print-hidden {
+    display: none !important;
+  }
+  
+  .print-full-width {
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+}
+
+/* Skeleton Loading Shimmer Animation */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.animate-shimmer {
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.6), transparent);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}

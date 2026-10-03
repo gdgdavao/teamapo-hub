@@ -1,0 +1,59 @@
+# Robots.txt for GDG Davao ApoHub
+# https://gdgdavao.org/robots.txt
+
+User-agent: *
+Allow: /
+
+# Disallow admin and authentication pages from indexing
+Disallow: /admin/
+Disallow: /auth/
+Disallow: /login
+Disallow: /signup
+Disallow: /forgot-password
+Disallow: /verification/
+Disallow: /payment/
+
+# Disallow private user areas
+Disallow: /attendee/
+Disallow: /organizer/
+Disallow: /profile
+
+# Allow public pages
+Allow: /
+Allow: /events
+Allow: /register
+Allow: /feedback
+
+# Crawl delay (optional - adjust based on server capacity)
+Crawl-delay: 1
+
+# Sitemap location
+Sitemap: https://gdgdavao.org/sitemap.xml
+
+# Popular search engines
+User-agent: Googlebot
+Allow: /
+
+User-agent: Bingbot
+Allow: /
+
+User-agent: Slurp
+Allow: /
+
+User-agent: DuckDuckBot
+Allow: /
+
+User-agent: Baiduspider
+Allow: /
+
+User-agent: YandexBot
+Allow: /
+
+User-agent: facebookexternalhit
+Allow: /
+
+User-agent: Twitterbot
+Allow: /
+
+User-agent: LinkedInBot
+Allow: /

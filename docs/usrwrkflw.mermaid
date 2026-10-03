@@ -1,0 +1,61 @@
+graph TD
+    subgraph User / Attendee Workflow
+        A[Visits TeamApo Hub Landing Page] --> B{Sees Upcoming & Past Events};
+        B --> C[Selects & Registers for an Event];
+        C --> D[Fills Out Registration Form];
+        D -- Submits --> E(Receives 'Pending Confirmation' Email);
+        E -- Checks if Event is Paid --> F{Event Requires Payment?};
+        F -- Yes --> G[Transfers via Bank/GCash & Uploads Proof];
+        G -- Awaits Organizer Review --> H[Receives Confirmation Email & Ticket];
+        F -- No / Free Event --> H;
+        H -- Attends Event --> I(Event Day);
+        I -- Post-Event --> J[Receives Feedback Email];
+        J --> K[Submits Feedback Form];
+        K -- Submission Triggers --> L[Receives Certificate Email];
+        L --> M[Verifies Certificate via Embedded Link];
+    end
+
+    subgraph Admin Workflow
+        Admin_Dashboard[Admin Logs In to Dashboard]
+        Admin_Dashboard --> Manage_Events{Create, Edit, Delete, Activate Events};
+        Admin_Dashboard --> Manage_Socials[Create Social Media Post];
+        Manage_Socials -- Uses AI --> AI_Caption[Generates Caption with AI];
+        AI_Caption --> Post_Socials[Posts to Facebook, LinkedIn, etc.];
+        Admin_Dashboard --> Review_Attendees[Reviews Pending Attendees];
+        Review_Attendees -- Approves/Rejects --> Trigger_Confirmation_Email[Triggers User Confirmation Flow];
+        Admin_Dashboard --> Manage_Forms[Creates Custom Registration & Feedback Forms];
+        Admin_Dashboard --> Manage_Certs[Uploads/Builds Certificate Templates];
+        Admin_Dashboard --> Insights[Views Event Insights & Revenue];
+        Insights -- Uses AI --> AI_Insights[AI-Powered Data Analysis];
+    end
+
+    subgraph System / Integrations
+        Sys_Email[Email Service]
+        Sys_Payment(Manual Payment Verification Queue)
+        Sys_Social(Social Media APIs)
+        Sys_AI(Google AI Studio - Gemma)
+        Sys_FormBuilder(Custom Form Builder Engine)
+        Sys_CertGen(Certificate Generator & Verifier)
+        Sys_DataPrivacy((Data Privacy Compliance))
+    end
+
+    %% --- Connections between Workflows ---
+    D -- Triggers Review --> Review_Attendees;
+    Trigger_Confirmation_Email -- Sends Signal --> Sys_Email;
+    Sys_Email -- Sends Email to User --> H;
+
+    G -- Proof Enters --> Sys_Payment;
+    Sys_Payment -- Organizer Approves & Confirms --> H;
+
+    K -- Triggers Generation --> Sys_CertGen;
+    Manage_Certs -- Provides Template to --> Sys_CertGen;
+    Sys_CertGen -- Sends Certificate via --> Sys_Email;
+    M -- Validates Against --> Sys_CertGen;
+
+    AI_Caption -- API Call --> Sys_AI;
+    AI_Insights -- API Call --> Sys_AI;
+    Post_Socials -- API Call --> Sys_Social;
+
+    Manage_Forms -- Creates Form Using --> Sys_FormBuilder;
+    Sys_FormBuilder -- Provides Form to --> D;
+    Sys_FormBuilder -- Provides Form to --> K;

@@ -1,0 +1,702 @@
+import { 
+  collection, 
+  doc, 
+  setDoc, 
+  updateDoc, 
+  getDoc, 
+  getDocs, 
+  query, 
+  where, 
+  orderBy, 
+  serverTimestamp,
+  deleteDoc,
+  Timestamp,
+  limit,
+  startAfter
+} from 'firebase/firestore';
+import { 
+  ref, 
+  uploadBytes, 
+  getDownloadURL, 
+  deleteObject 
+} from 'firebase/storage';
+import { httpsCallable } from 'firebase/functions';
+import { db, storage, functions } from '../config/firebase';
+import { logger } from '../utils/logger';
+import { CertificateTemplate, Certificate } from '../types';
+import { NotificationService } from './notificationService';
+
+export interface IssuedCertificate {
+  id: string;
+  templateId: string;
+  templateName: string;
+  recipientName: string;
+  recipientEmail: string;
+  eventId: string;
+  eventTitle: string;
+  eventDate?: string;
+  registrationId?: string;
+  issuedDate: string;
+  verificationCode: string;
+  status: 'issued' | 'verified' | 'revoked';
+  downloadCount: number;
+  certificateUrl: string;
+}
+
+export class CertificateService {
+  private static readonly TEMPLATES_COLLECTION = 'certificateTemplates';
+  private static readonly CERTIFICATES_COLLECTION = 'certificates';
+  private static readonly TEMPLATE_IMAGES_PATH = 'certificate-templates';
+  private static readonly CERTIFICATES_PATH = 'certificates';
+
+  /**
+   * Get certificate by registration ID
+   * Used to check if a certificate already exists for an attendee
+   */
+  static async getCertificateByRegistrationId(registrationId: string): Promise<Certificate | null> {
+    try {
+      const certificatesQuery = query(
+        collection(db, this.CERTIFICATES_COLLECTION),
+        where('registrationId', '==', registrationId),
+        limit(1)
+      );
+      const snapshot = await getDocs(certificatesQuery);
+      
+      if (snapshot.empty) {
+        return null;
+      }
+      
+      return {
+        id: snapshot.docs[0].id,
+        ...snapshot.docs[0].data()
+      } as Certificate;
+    } catch (error) {
+      logger.error('Error fetching certificate by registration ID:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Get consistent verification code for an attendee
+   * - First checks if a certificate already exists (returns existing code)
+   * - Otherwise generates a deterministic code based on attendee identity
+   */
+  static async getConsistentVerificationCode(
+    eventId: string,
+    registrationId: string,
+    email: string,
+    name: string
+  ): Promise<string> {
+    // Check if certificate already exists for this registration
+    const existingCert = await this.getCertificateByRegistrationId(registrationId);
+    if (existingCert?.credentialId) {
+      return existingCert.credentialId;
+    }
+    
+    // Generate deterministic code from identity using Web Crypto API
+    const normalizedEmail = email.toLowerCase().trim();
+    const normalizedName = name.trim().toLowerCase();
+    const input = `${eventId}:${normalizedEmail}:${normalizedName}`;
+    
+    const encoder = new TextEncoder();
+    const data = encoder.encode(input);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    const hash = hashHex.substring(0, 12).toUpperCase();
+    
+    return `CERT-${hash}`;
+  }
+
+  /**
+   * Upload certificate template image to Firebase Storage
+   */
+  static async uploadTemplateImage(templateId: string, imageFile: File): Promise<string> {
+    try {
+      const imageRef = ref(storage, `${this.TEMPLATE_IMAGES_PATH}/${templateId}/${imageFile.name}`);
+      const snapshot = await uploadBytes(imageRef, imageFile);
+      return await getDownloadURL(snapshot.ref);
+    } catch (error) {
+      logger.error('Error uploading template image:', error);
+      throw new Error('Failed to upload template image');
+    }
+  }
+
+  /**
+   * Upload template image from data URL
+   */
+  static async uploadTemplateImageFromDataUrl(templateId: string, dataUrl: string): Promise<string> {
+    try {
+      // Convert data URL to blob
+      const response = await fetch(dataUrl);
+      const blob = await response.blob();
+      
+      // Create file reference
+      const timestamp = Date.now();
+      const imageRef = ref(storage, `${this.TEMPLATE_IMAGES_PATH}/${templateId}/template-${timestamp}.png`);
+      
+      // Upload the blob
+      const snapshot = await uploadBytes(imageRef, blob);
+      return await getDownloadURL(snapshot.ref);
+    } catch (error) {
+      logger.error('Error uploading template image from data URL:', error);
+      throw new Error('Failed to upload template image');
+    }
+  }
+
+  /**
+   * Upload template image from external URL to Firebase Storage for CORS compliance
+   * This ensures all template images are served from Firebase Storage with proper CORS headers
+   */
+  static async uploadImageFromUrl(url: string, templateId: string): Promise<string> {
+    try {
+      // Fetch the external image
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch image: ${response.status}`);
+      }
+      
+      const blob = await response.blob();
+      
+      // Determine file extension from content type
+      const contentType = response.headers.get('content-type') || 'image/png';
+      const extension = contentType.includes('jpeg') || contentType.includes('jpg') ? 'jpg' : 'png';
+      
+      // Upload to Firebase Storage
+      const timestamp = Date.now();
+      const imageRef = ref(storage, `${this.TEMPLATE_IMAGES_PATH}/${templateId}/template-${timestamp}.${extension}`);
+      
+      const snapshot = await uploadBytes(imageRef, blob, { contentType });
+      return await getDownloadURL(snapshot.ref);
+    } catch (error) {
+      logger.error('Error uploading image from URL:', error);
+      throw new Error('Failed to upload image from URL to Firebase Storage');
+    }
+  }
+
+  /**
+   * Create a new certificate template
+   * All template images are uploaded to Firebase Storage for CORS compliance
+   */
+  static async createTemplate(templateData: Omit<CertificateTemplate, 'id' | 'createdAt' | 'updatedAt' | 'usageCount'>): Promise<string> {
+    try {
+      // Generate a new template ID
+      const templateRef = doc(collection(db, this.TEMPLATES_COLLECTION));
+      const templateId = templateRef.id;
+
+      // Process template image URL - always upload to Firebase Storage for CORS compliance
+      let templateImageUrl = templateData.templateImageUrl;
+      if (templateImageUrl) {
+        if (templateImageUrl.startsWith('data:')) {
+          // Upload data URL
+          templateImageUrl = await this.uploadTemplateImageFromDataUrl(templateId, templateImageUrl);
+        } else if (!this.isFirebaseStorageUrl(templateImageUrl)) {
+          // Upload external URL to Firebase Storage for CORS compliance
+          templateImageUrl = await this.uploadImageFromUrl(templateImageUrl, templateId);
+        }
+        // If already a Firebase Storage URL, keep as is
+      }
+
+      // Create the template document
+      const template: Omit<CertificateTemplate, 'id'> = {
+        ...templateData,
+        templateImageUrl: templateImageUrl || '',
+        dimensions: templateData.dimensions || { width: 1200, height: 800 },
+        usageCount: 0,
+        createdAt: serverTimestamp() as any,
+        updatedAt: serverTimestamp() as any
+      };
+
+      await setDoc(templateRef, template);
+      return templateId;
+    } catch (error) {
+      logger.error('Error creating certificate template:', error);
+      throw new Error('Failed to create certificate template');
+    }
+  }
+
+  /**
+   * Get all certificate templates
+   */
+  static async getAllTemplates(): Promise<CertificateTemplate[]> {
+    try {
+      const templatesQuery = query(
+        collection(db, this.TEMPLATES_COLLECTION),
+        orderBy('createdAt', 'desc')
+      );
+      const snapshot = await getDocs(templatesQuery);
+      
+      return snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      } as CertificateTemplate));
+    } catch (error) {
+      logger.error('Error fetching certificate templates:', error);
+      throw new Error('Failed to fetch certificate templates');
+    }
+  }
+
+  /**
+   * Get certificate template by ID
+   */
+  static async getTemplateById(templateId: string): Promise<CertificateTemplate | null> {
+    try {
+      const templateRef = doc(db, this.TEMPLATES_COLLECTION, templateId);
+      const templateSnap = await getDoc(templateRef);
+      
+      if (templateSnap.exists()) {
+        return {
+          id: templateSnap.id,
+          ...templateSnap.data()
+        } as CertificateTemplate;
+      }
+      
+      return null;
+    } catch (error) {
+      logger.error('Error fetching certificate template:', error);
+      throw new Error('Failed to fetch certificate template');
+    }
+  }
+
+  /**
+   * Update certificate template
+   */
+  static async updateTemplate(templateId: string, updates: Partial<CertificateTemplate>): Promise<void> {
+    try {
+      const templateRef = doc(db, this.TEMPLATES_COLLECTION, templateId);
+      await updateDoc(templateRef, {
+        ...updates,
+        updatedAt: serverTimestamp()
+      });
+    } catch (error) {
+      logger.error('Error updating certificate template:', error);
+      throw new Error('Failed to update certificate template');
+    }
+  }
+
+  /**
+   * Delete certificate template
+   */
+  static async deleteTemplate(templateId: string): Promise<void> {
+    try {
+      // Delete template document
+      const templateRef = doc(db, this.TEMPLATES_COLLECTION, templateId);
+      await deleteDoc(templateRef);
+
+      // Delete template images from storage
+      try {
+        const imagesRef = ref(storage, `${this.TEMPLATE_IMAGES_PATH}/${templateId}`);
+        await deleteObject(imagesRef);
+      } catch (error) {
+        // Ignore if files don't exist
+        logger.warn('Template images not found or already deleted');
+      }
+    } catch (error) {
+      logger.error('Error deleting certificate template:', error);
+      throw new Error('Failed to delete certificate template');
+    }
+  }
+
+  /**
+   * Generate certificate for a user
+   */
+  static async generateCertificate(data: {
+    templateId: string;
+    recipientName: string;
+    recipientEmail: string;
+    eventId: string;
+    eventTitle: string;
+    userId?: string;
+    registrationId?: string;
+  }): Promise<string> {
+    try {
+      // Call Firebase Function to generate certificate
+      const generateCertificate = httpsCallable(functions, 'generateCertificate');
+      const result = await generateCertificate(data);
+      
+      const response = result.data as { success: boolean; certificateId?: string; message?: string };
+      if (!response.success) {
+        throw new Error(response.message || 'Failed to generate certificate');
+      }
+      
+      // Increment template usage count
+      const templateRef = doc(db, this.TEMPLATES_COLLECTION, data.templateId);
+      await updateDoc(templateRef, {
+        usageCount: (await getDoc(templateRef)).data()?.usageCount + 1 || 1,
+        updatedAt: serverTimestamp()
+      });
+
+      // Send notification to user about certificate readiness
+      try {
+        if (data.userId) {
+          await NotificationService.createNotification(
+            data.userId,
+            'certificate_ready',
+            'Certificate Ready',
+            `Your certificate for "${data.eventTitle}" is now available for download!`,
+            {
+              certificateId: response.certificateId,
+              eventId: data.eventId,
+              eventTitle: data.eventTitle,
+              registrationId: data.registrationId
+            }
+          );
+        }
+      } catch (error) {
+        logger.warn('Failed to create certificate ready notification:', error);
+      }
+
+      return response.certificateId!;
+    } catch (error) {
+      logger.error('Error generating certificate:', error);
+      throw new Error('Failed to generate certificate');
+    }
+  }
+
+  /**
+   * Get all issued certificates
+   */
+  static async getAllIssuedCertificates(): Promise<IssuedCertificate[]> {
+    try {
+      const certificatesQuery = query(
+        collection(db, this.CERTIFICATES_COLLECTION),
+        orderBy('issuedAt', 'desc')
+      );
+      const snapshot = await getDocs(certificatesQuery);
+      
+      return snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          templateId: data.templateId,
+          templateName: data.templateName || 'Unknown Template',
+          recipientName: data.recipientName,
+          recipientEmail: data.recipientEmail || '',
+          eventId: data.eventId || '',
+          eventTitle: data.eventTitle,
+          eventDate: data.eventDate || '',
+          registrationId: data.registrationId,
+          issuedDate: data.issuedAt?.toDate?.()?.toISOString() || new Date().toISOString(),
+          verificationCode: data.credentialId,
+          status: data.isVerified ? 'issued' : 'issued',
+          downloadCount: data.downloadCount || 0,
+          certificateUrl: data.certificateUrl || ''
+        } as IssuedCertificate;
+      });
+    } catch (error) {
+      logger.error('Error fetching issued certificates:', error);
+      throw new Error('Failed to fetch issued certificates');
+    }
+  }
+
+  /**
+   * Get certificates for a specific event
+   */
+  static async getCertificatesByEvent(eventId: string): Promise<IssuedCertificate[]> {
+    try {
+      const certificatesQuery = query(
+        collection(db, this.CERTIFICATES_COLLECTION),
+        where('eventId', '==', eventId),
+        orderBy('issuedAt', 'desc')
+      );
+      const snapshot = await getDocs(certificatesQuery);
+      
+      return snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          templateId: data.templateId,
+          templateName: data.templateName || 'Unknown Template',
+          recipientName: data.recipientName,
+          recipientEmail: data.recipientEmail || '',
+          eventId: data.eventId || eventId,
+          eventTitle: data.eventTitle,
+          eventDate: data.eventDate || '',
+          registrationId: data.registrationId,
+          issuedDate: data.issuedAt?.toDate?.()?.toISOString() || new Date().toISOString(),
+          verificationCode: data.credentialId,
+          status: data.isVerified ? 'issued' : 'issued',
+          downloadCount: data.downloadCount || 0,
+          certificateUrl: data.certificateUrl || ''
+        } as IssuedCertificate;
+      });
+    } catch (error) {
+      logger.error('Error fetching certificates by event:', error);
+      throw new Error('Failed to fetch certificates by event');
+    }
+  }
+
+  /**
+   * Verify certificate by verification code
+   */
+  static async verifyCertificate(verificationCode: string): Promise<{
+    isValid: boolean;
+    isRevoked?: boolean;
+    recipientName?: string;
+    eventTitle?: string;
+    eventDate?: string;
+    issuedDate?: string;
+    certificateUrl?: string;
+    verificationCount?: number;
+  }> {
+    try {
+      const certificatesQuery = query(
+        collection(db, this.CERTIFICATES_COLLECTION),
+        where('credentialId', '==', verificationCode.toUpperCase()),
+        limit(1)
+      );
+      const snapshot = await getDocs(certificatesQuery);
+      
+      if (snapshot.empty) {
+        return { isValid: false };
+      }
+      
+      const certificate = snapshot.docs[0].data();
+      
+      // Check if certificate is revoked (isVerified === false means revoked)
+      if (certificate.isVerified === false) {
+        return {
+          isValid: false,
+          isRevoked: true,
+          recipientName: certificate.recipientName,
+          eventTitle: certificate.eventTitle
+        };
+      }
+      
+      // Try to increment verification count (may fail for anonymous users, which is ok)
+      let newVerificationCount = (certificate.verificationCount || 0) + 1;
+      try {
+        await updateDoc(snapshot.docs[0].ref, {
+          verificationCount: newVerificationCount
+        });
+      } catch (updateError) {
+        // Silently ignore update errors for anonymous users
+        // The verification still succeeds, just without incrementing the count
+        logger.log('Could not update verification count (likely anonymous user)');
+        newVerificationCount = certificate.verificationCount || 0;
+      }
+      
+      return {
+        isValid: true,
+        isRevoked: false,
+        recipientName: certificate.recipientName,
+        eventTitle: certificate.eventTitle,
+        eventDate: certificate.eventDate,
+        issuedDate: certificate.issuedAt?.toDate?.()?.toISOString(),
+        certificateUrl: certificate.certificateUrl,
+        verificationCount: newVerificationCount
+      };
+    } catch (error) {
+      logger.error('Error verifying certificate:', error);
+      throw new Error('Failed to verify certificate');
+    }
+  }
+
+  /**
+   * Get certificate by ID
+   */
+  static async getCertificateById(certificateId: string): Promise<Certificate | null> {
+    try {
+      const certificateRef = doc(db, this.CERTIFICATES_COLLECTION, certificateId);
+      const certificateSnap = await getDoc(certificateRef);
+      
+      if (certificateSnap.exists()) {
+        return {
+          id: certificateSnap.id,
+          ...certificateSnap.data()
+        } as Certificate;
+      }
+      
+      return null;
+    } catch (error) {
+      logger.error('Error fetching certificate:', error);
+      throw new Error('Failed to fetch certificate');
+    }
+  }
+
+  /**
+   * Revoke certificate
+   */
+  static async revokeCertificate(certificateId: string, reason?: string): Promise<void> {
+    try {
+      const certificateRef = doc(db, this.CERTIFICATES_COLLECTION, certificateId);
+      await updateDoc(certificateRef, {
+        isVerified: false,
+        revokedAt: serverTimestamp(),
+        revokeReason: reason || 'Revoked by admin'
+      });
+    } catch (error) {
+      logger.error('Error revoking certificate:', error);
+      throw new Error('Failed to revoke certificate');
+    }
+  }
+
+  /**
+   * Get certificate statistics
+   */
+  static async getCertificateStats(): Promise<{
+    totalTemplates: number;
+    totalIssued: number;
+    totalVerified: number;
+    totalDownloads: number;
+  }> {
+    try {
+      // Get template count
+      const templatesSnapshot = await getDocs(collection(db, this.TEMPLATES_COLLECTION));
+      const totalTemplates = templatesSnapshot.size;
+
+      // Get certificate stats
+      const certificatesSnapshot = await getDocs(collection(db, this.CERTIFICATES_COLLECTION));
+      let totalIssued = certificatesSnapshot.size;
+      let totalVerified = 0;
+      let totalDownloads = 0;
+
+      certificatesSnapshot.docs.forEach(doc => {
+        const data = doc.data();
+        if (data.isVerified) totalVerified++;
+        totalDownloads += data.downloadCount || 0;
+      });
+
+      return {
+        totalTemplates,
+        totalIssued,
+        totalVerified,
+        totalDownloads
+      };
+    } catch (error) {
+      logger.error('Error fetching certificate stats:', error);
+      throw new Error('Failed to fetch certificate stats');
+    }
+  }
+
+  /**
+   * Re-upload template image from external URL to Firebase Storage for CORS compliance
+   */
+  static async reuploadTemplateImage(templateId: string, externalUrl: string): Promise<string> {
+    try {
+      // Fetch the external image
+      const response = await fetch(externalUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch image: ${response.status}`);
+      }
+      
+      const blob = await response.blob();
+      
+      // Determine file extension from content type
+      const contentType = response.headers.get('content-type') || 'image/png';
+      const extension = contentType.includes('jpeg') || contentType.includes('jpg') ? 'jpg' : 'png';
+      
+      // Upload to Firebase Storage
+      const timestamp = Date.now();
+      const imageRef = ref(storage, `${this.TEMPLATE_IMAGES_PATH}/${templateId}/template-${timestamp}.${extension}`);
+      
+      const snapshot = await uploadBytes(imageRef, blob, { contentType });
+      const storageUrl = await getDownloadURL(snapshot.ref);
+      
+      // Update the template with the new Storage URL
+      await this.updateTemplate(templateId, { templateImageUrl: storageUrl });
+      
+      return storageUrl;
+    } catch (error) {
+      logger.error('Error re-uploading template image:', error);
+      throw new Error('Failed to re-upload template image to Firebase Storage');
+    }
+  }
+
+  /**
+   * Check if a URL is from Firebase Storage (CORS-compliant)
+   */
+  static isFirebaseStorageUrl(url: string): boolean {
+    return url.includes('firebasestorage.googleapis.com') || url.startsWith('data:');
+  }
+
+  /**
+   * Get certificate template for a specific event (strict - no fallback)
+   */
+  static async getTemplateForEvent(eventId: string): Promise<CertificateTemplate | null> {
+    try {
+      const templatesQuery = query(
+        collection(db, this.TEMPLATES_COLLECTION),
+        where('eventId', '==', eventId),
+        where('isActive', '==', true),
+        limit(1)
+      );
+      const snapshot = await getDocs(templatesQuery);
+      
+      if (snapshot.empty) {
+        return null;
+      }
+      
+      return {
+        id: snapshot.docs[0].id,
+        ...snapshot.docs[0].data()
+      } as CertificateTemplate;
+    } catch (error) {
+      logger.error('Error fetching template for event:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Save generated certificate image to Firebase Storage
+   */
+  static async saveCertificateToStorage(
+    blob: Blob,
+    eventId: string,
+    verificationCode: string
+  ): Promise<string> {
+    try {
+      const imageRef = ref(storage, `${this.CERTIFICATES_PATH}/${eventId}/${verificationCode}.png`);
+      const snapshot = await uploadBytes(imageRef, blob, { contentType: 'image/png' });
+      return await getDownloadURL(snapshot.ref);
+    } catch (error) {
+      logger.error('Error saving certificate to storage:', error);
+      throw new Error('Failed to save certificate to storage');
+    }
+  }
+
+  /**
+   * Create a certificate record in Firestore (for anonymous users after feedback)
+   */
+  static async createCertificateRecord(data: {
+    recipientName: string;
+    recipientEmail: string;
+    eventId: string;
+    eventTitle: string;
+    eventDate: string;
+    registrationId: string;
+    certificateUrl: string;
+    verificationCode: string;
+    templateId: string;
+  }): Promise<string> {
+    try {
+      const certificateRef = doc(collection(db, this.CERTIFICATES_COLLECTION));
+      const certificateId = certificateRef.id;
+      
+      const verificationUrl = `https://apohub.gdgdavao.org/verify/${data.verificationCode}`;
+      
+      await setDoc(certificateRef, {
+        credentialId: data.verificationCode,
+        verificationCode: data.verificationCode, // Required by Firestore rules for anonymous create
+        recipientName: data.recipientName,
+        recipientEmail: data.recipientEmail,
+        eventId: data.eventId,
+        eventTitle: data.eventTitle,
+        eventDate: data.eventDate,
+        registrationId: data.registrationId,
+        certificateUrl: data.certificateUrl,
+        verificationUrl,
+        templateId: data.templateId,
+        isVerified: true,
+        issuedAt: serverTimestamp(),
+        downloadCount: 0,
+        verificationCount: 0
+      });
+      
+      return certificateId;
+    } catch (error) {
+      logger.error('Error creating certificate record:', error);
+      throw new Error('Failed to create certificate record');
+    }
+  }
+} 

@@ -1,0 +1,86 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function authenticated() { return request.auth != null; }
+    function admin() {
+      return authenticated() && firestore.exists(/databases/(default)/documents/users/$(request.auth.uid)) &&
+        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin' &&
+        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.isActive == true;
+    }
+    function organizer() {
+      return authenticated() && firestore.exists(/databases/(default)/documents/users/$(request.auth.uid)) &&
+        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.isActive == true &&
+        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role in ['admin', 'organizer'];
+    }
+    function ownsEvent(eventId) {
+      return organizer() && firestore.exists(/databases/(default)/documents/events/$(eventId)) &&
+        firestore.get(/databases/(default)/documents/events/$(eventId)).data.organizer.uid == request.auth.uid;
+    }
+    function image() {
+      return request.resource != null && request.resource.size < 5 * 1024 * 1024 &&
+        request.resource.contentType.matches('image/(jpeg|png|gif|webp|heic|heif)');
+    }
+    function document() {
+      return request.resource != null && request.resource.size < 10 * 1024 * 1024 &&
+        request.resource.contentType in ['application/pdf', 'image/jpeg', 'image/png'];
+    }
+
+    match /events/{eventId}/images/{imageId} {
+      allow read: if true;
+      allow create, update: if ownsEvent(eventId) && image();
+      allow delete: if admin() || ownsEvent(eventId);
+    }
+    match /events/{eventId}/documents/{fileId} {
+      allow read: if true;
+      allow create, update: if ownsEvent(eventId) && document();
+      allow delete: if admin() || ownsEvent(eventId);
+    }
+    match /event-images/{eventId}/{fileId} {
+      allow read: if true;
+      allow create, update: if ownsEvent(eventId) && image();
+      allow delete: if admin() || ownsEvent(eventId);
+    }
+    match /payment-qr/{eventId}/{fileId} {
+      allow read: if true;
+      allow create, update: if ownsEvent(eventId) && image();
+      allow delete: if admin() || ownsEvent(eventId);
+    }
+    match /certificates/{certificateId} {
+      allow read: if true;
+      allow create, update: if admin() && document();
+      allow delete: if admin();
+    }
+    match /certificates/{eventId}/{fileName} {
+      allow read: if true;
+      allow create, update, delete: if admin();
+    }
+    match /payment-proofs/{registrationId}/{proofId} {
+      allow read: if admin() || (authenticated() &&
+        firestore.exists(/databases/(default)/documents/registrations/$(registrationId)) &&
+        ownsEvent(firestore.get(/databases/(default)/documents/registrations/$(registrationId)).data.eventId));
+      // Anonymous proof uploads are handled by a trusted callable function.
+      allow create, update, delete: if admin();
+    }
+    match /certificate-templates/{templateId}/{fileId} {
+      allow read: if true;
+      allow create, update: if admin() && image();
+      allow delete: if admin();
+    }
+    match /profile-pictures/{userId}/{fileId} {
+      allow read: if true;
+      allow create, update: if authenticated() && (request.auth.uid == userId || admin()) && image();
+      allow delete: if authenticated() && (request.auth.uid == userId || admin());
+    }
+    match /speaker-photos/{eventId}/{speakerId}/{fileId} {
+      allow read: if true;
+      allow create, update: if ownsEvent(eventId) && image();
+      allow delete: if admin() || ownsEvent(eventId);
+    }
+    match /system/{allPaths=**} {
+      allow read: if true;
+      allow write, delete: if admin();
+    }
+    match /{allPaths=**} { allow read, write: if false; }
+  }
+}

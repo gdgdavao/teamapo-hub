@@ -1,0 +1,4 @@
+[test]
+# Mirror vitest.config.ts exclusions — rules tests require the Firestore emulator.
+# Run them separately: npm run test:rules (with emulator running)
+exclude = ["tests/rules/**"]
