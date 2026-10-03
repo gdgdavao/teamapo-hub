@@ -32,7 +32,7 @@ def load_env_file():
     else:
         print("❌ .env file not found!")
         print("Please create a .env file in the functions directory with:")
-        print("RESEND_API_KEY=re_your_actual_api_key_here")
+        print("RESEND_API_KEY=<configured-in-environment>")
         print("FROM_EMAIL=noreply@gdgdavao.com")
         return False
     
@@ -114,7 +114,6 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-
 
 
 

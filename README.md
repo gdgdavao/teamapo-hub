@@ -7,7 +7,7 @@ A comprehensive event management system built with React, TypeScript, and Fireba
 ## ✨ Features
 
 - 🎫 **Event Creation & Management** - Create and manage tech events with ease
-- 💳 **Payment Processing** - Integrated Paymongo payment system for Philippine market
+- 💳 **Manual Payment Verification** - Bank transfer / GCash receipt upload with an admin review queue
 - 📱 **QR Code Attendance** - Seamless check-in system with QR codes
 - 🏆 **Certificate Generation** - Automated certificate creation for attendees
 - 📊 **Analytics Dashboard** - Comprehensive event analytics and reporting
@@ -20,7 +20,6 @@ A comprehensive event management system built with React, TypeScript, and Fireba
 ### Prerequisites
 - Node.js 18+ or Bun 1.0+
 - Firebase account and project
-- Paymongo account (for Philippines)
 
 ### Installation
 ```bash
@@ -32,10 +31,10 @@ cd apohub-gdgdavao
 bun install
 
 # Copy environment variables
-cp env.example .env.local
+cp env.example .env
 
-# Start development server
-bun run dev
+# Start local development server with emulators and sample data
+bun run dev:apohub
 ```
 
 Visit `http://localhost:5173` to see the application running.
@@ -53,7 +52,7 @@ Visit `http://localhost:5173` to see the application running.
 - **Package Manager**: Bun
 - **Styling**: Tailwind CSS 3.4 with Google Design System
 - **Backend**: Firebase 11 (Auth, Firestore, Functions, Storage)
-- **Payment**: Paymongo API (QRPH, GCash, Bank Transfer)
+- **Payments**: Manual verification (bank transfer / GCash proof upload)
 - **Icons**: Heroicons + Lucide React
 - **Forms**: React Hook Form
 - **PDF Generation**: jsPDF + html2canvas
@@ -68,7 +67,7 @@ Visit `http://localhost:5173` to see the application running.
 ### Environment Setup
 1. Create a Firebase project and configure authentication
 2. Set up Firestore database with appropriate security rules
-3. Configure Paymongo API keys for payment processing
+3. Configure event payment methods (bank details + QR) in the admin event editor
 4. Update environment variables in `.env.local`
 
 For detailed setup instructions, see our [Development Guide](docs/DEVELOPMENT.md).

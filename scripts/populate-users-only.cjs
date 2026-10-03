@@ -11,25 +11,21 @@
  * 
  * What it creates:
  *   - 8 test users with different roles (admin, organizer, attendee, speaker, volunteer, sponsor)
- *   - Firebase Auth users with password: password123
+ *   - Firebase Auth users with the password from APOHUB_SEED_PASSWORD
  *   - Firestore user documents with detailed profiles
  *   - No events, registrations, or other data - just users
  * 
  * Test accounts:
- *   - admin@gdgdavao.org / password123 (admin)
- *   - maria.organizer@gdgdavao.org / password123 (organizer)
- *   - carlos.dev@gdgdavao.org / password123 (organizer)
- *   - sarah.attendee@gmail.com / password123 (attendee)
- *   - mike.student@university.edu / password123 (attendee)
- *   - dr.tech@techcorp.com / password123 (speaker)
- *   - anna.volunteer@community.org / password123 (volunteer)
- *   - contact@startupdavao.com / password123 (sponsor)
+ *   - Synthetic users use APOHUB_SEED_PASSWORD.
  */
 
 const { initializeApp, cert } = require('firebase-admin/app');
 const { getFirestore, Timestamp } = require('firebase-admin/firestore');
 const { getAuth } = require('firebase-admin/auth');
 const { join } = require('path');
+
+const seedPassword = process.env.APOHUB_SEED_PASSWORD;
+if (!seedPassword) throw new Error('APOHUB_SEED_PASSWORD is required for emulator users.');
 
 console.log('👥 Populating Firebase Emulator with Sample Users Only');
 console.log('💡 This creates realistic test users for development');
@@ -42,11 +38,11 @@ process.env.FIREBASE_AUTH_EMULATOR_HOST = '127.0.0.1:9099';
 // Initialize Firebase Admin for Emulator
 let app;
 try {
-  // For emulator, use the actual project ID
+  const projectId = process.env.GCLOUD_PROJECT || process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || 'demo-apohub';
   app = initializeApp({
-    projectId: 'project-iris-gdgdavao' // Use the actual project ID
+    projectId
   });
-  console.log('✅ Connected to Firebase Emulator');
+  console.log(`✅ Connected to Firebase Emulator (project: ${projectId})`);
 } catch (error) {
   console.error('Failed to initialize Firebase Admin:', error);
   process.exit(1);
@@ -59,11 +55,11 @@ const auth = getAuth(app);
 const generateSampleUsers = () => [
   {
     uid: 'admin-001',
-    email: 'admin@gdgdavao.org',
+    email: 'admin@example.test',
     displayName: 'John Admin',
     role: 'admin',
     organization: 'GDG Davao',
-    phoneNumber: '+639123456789',
+    phoneNumber: '+15550100001',
     bio: 'Lead organizer and admin for GDG Davao. Passionate about technology and community building.',
     skills: ['Event Management', 'Community Building', 'Public Speaking'],
     socialLinks: {
@@ -77,11 +73,11 @@ const generateSampleUsers = () => [
   },
   {
     uid: 'organizer-001',
-    email: 'maria.organizer@gdgdavao.org',
+    email: 'organizer.one@example.test',
     displayName: 'Maria Santos',
     role: 'organizer',
     organization: 'GDG Davao',
-    phoneNumber: '+639987654321',
+    phoneNumber: '+15550100002',
     bio: 'Frontend developer and event organizer. Loves React and helping others learn tech.',
     skills: ['React', 'JavaScript', 'Event Planning', 'Workshop Facilitation'],
     socialLinks: {
@@ -95,11 +91,11 @@ const generateSampleUsers = () => [
   },
   {
     uid: 'organizer-002',
-    email: 'carlos.dev@gdgdavao.org',
+    email: 'organizer.two@example.test',
     displayName: 'Carlos Rodriguez',
     role: 'organizer',
     organization: 'GDG Davao',
-    phoneNumber: '+639555123456',
+    phoneNumber: '+15550100003',
     bio: 'Full-stack developer specializing in Node.js and cloud technologies.',
     skills: ['Node.js', 'Cloud Computing', 'Database Design', 'API Development'],
     socialLinks: {
@@ -113,11 +109,11 @@ const generateSampleUsers = () => [
   },
   {
     uid: 'attendee-001',
-    email: 'sarah.attendee@gmail.com',
+    email: 'attendee.one@example.test',
     displayName: 'Sarah Johnson',
     role: 'attendee',
     organization: 'Freelance Developer',
-    phoneNumber: '+639123456780',
+    phoneNumber: '+15550100004',
     bio: 'Passionate about learning new technologies and attending tech events.',
     skills: ['JavaScript', 'Python', 'Web Development'],
     socialLinks: {
@@ -135,7 +131,7 @@ const generateSampleUsers = () => [
     displayName: 'Mike Chen',
     role: 'attendee',
     organization: 'University of Mindanao',
-    phoneNumber: '+639123456781',
+    phoneNumber: '+15550100005',
     bio: 'Computer Science student interested in mobile app development and AI.',
     skills: ['Java', 'Android Development', 'Machine Learning'],
     socialLinks: {
@@ -153,7 +149,7 @@ const generateSampleUsers = () => [
     displayName: 'Dr. Tech Expert',
     role: 'speaker',
     organization: 'Tech Corp Philippines',
-    phoneNumber: '+639123456782',
+    phoneNumber: '+15550100006',
     bio: 'Senior software architect with 15+ years of experience in enterprise solutions.',
     skills: ['Software Architecture', 'Cloud Computing', 'DevOps', 'Team Leadership'],
     socialLinks: {
@@ -171,7 +167,7 @@ const generateSampleUsers = () => [
     displayName: 'Anna Volunteer',
     role: 'volunteer',
     organization: 'Tech Community Davao',
-    phoneNumber: '+639123456783',
+    phoneNumber: '+15550100007',
     bio: 'Community volunteer passionate about making tech accessible to everyone.',
     skills: ['Event Coordination', 'Community Management', 'Social Media'],
     socialLinks: {
@@ -189,7 +185,7 @@ const generateSampleUsers = () => [
     displayName: 'Startup Davao Rep',
     role: 'sponsor',
     organization: 'Startup Davao',
-    phoneNumber: '+639123456784',
+    phoneNumber: '+15550100008',
     bio: 'Representative from Startup Davao, supporting local tech entrepreneurship.',
     skills: ['Business Development', 'Startup Mentoring', 'Investment'],
     socialLinks: {
@@ -216,7 +212,7 @@ async function populateUsers() {
         email: user.email,
         displayName: user.displayName,
         phoneNumber: user.phoneNumber,
-        password: 'password123', // Default password for testing
+        password: seedPassword,
         emailVerified: true
       });
       console.log(`   ✅ Created Auth user: ${user.displayName} (${user.role})`);
@@ -247,15 +243,13 @@ async function populateUsersOnly() {
     console.log('');
     console.log('📋 What was created:');
     console.log('   • 8 Auth Users + Firestore Documents:');
-    console.log('     - 1 Admin (admin@gdgdavao.org)');
-    console.log('     - 2 Organizers (maria.organizer@gdgdavao.org, carlos.dev@gdgdavao.org)');
-    console.log('     - 2 Attendees (sarah.attendee@gmail.com, mike.student@university.edu)');
+    console.log('     - Synthetic admin, organizers, and attendees');
     console.log('     - 1 Speaker (dr.tech@techcorp.com)');
     console.log('     - 1 Volunteer (anna.volunteer@community.org)');
     console.log('     - 1 Sponsor (contact@startupdavao.com)');
     console.log('');
     console.log('🎯 Test Data Ready:');
-    console.log('   • All users have password: password123');
+    console.log('   • All users use APOHUB_SEED_PASSWORD');
     console.log('   • Login with any of the emails above');
     console.log('   • Test different user roles and permissions');
     console.log('   • Create events, manage users, test workflows');

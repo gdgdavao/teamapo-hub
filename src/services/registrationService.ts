@@ -232,106 +232,29 @@ export class RegistrationService {
     paymentLinkToken?: string;
   }> {
     try {
-      // Validate event and get pricing locally (bypassing functions for now)
+      // Validate the form locally, then reserve inventory in a trusted function.
       const validation = await this.validateRegistrationLocally(registrationData);
       
       if (!validation.isValid) {
         throw new Error(validation.message || validation.errors?.join(', ') || 'Registration validation failed');
       }
 
-      // Generate registration ID
-      const registrationRef = doc(collection(db, this.REGISTRATIONS_COLLECTION));
-      const registrationId = registrationRef.id;
-
-      // Generate QR code
-      const qrCode = this.generateQRCode(registrationId);
-
-      // Determine payment status - force pending for manual approval flow
-      const requiresPayment = validation.pricing.currentPrice > 0;
-      const paymentStatus = 'pending';
-
-      // Generate one-time payment link token and expiry (24h)
-      const token = (() => {
-        try {
-          const arr = new Uint8Array(16);
-          // @ts-ignore - crypto is available in browser
-          (globalThis.crypto || (window as any).crypto).getRandomValues(arr);
-          return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
-        } catch {
-          return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
-        }
-      })();
-      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
-
-      // Create pending registration document
-      const registration: Omit<Registration, 'id'> = {
-        eventId: registrationData.eventId,
-        userId: '', // Anonymous registration
-        userDetails: registrationData.userDetails,
-        ticketTypeId: registrationData.ticketTypeId,
-        quantity: registrationData.quantity,
-        originalAmount: validation.pricing.originalPrice * registrationData.quantity,
-        discountAmount: validation.pricing.discountAmount * registrationData.quantity,
-        totalAmount: validation.pricing.currentPrice * registrationData.quantity,
-        currency: 'PHP', // Default currency
-        // Save promo code information from validation
-        ...(validation.pricing.promoCode ? { promoCode: validation.pricing.promoCode } : {}),
-        ...(validation.pricing.promoCodeId ? { promoCodeId: validation.pricing.promoCodeId } : {}),
-        pricing: validation.pricing,
-        paymentStatus: paymentStatus as any,
-        attendanceStatus: 'pending' as any,
-        feedbackSubmitted: false,
-        certificateIssued: false,
-        qrCode,
-        registrationDate: serverTimestamp() as any,
-        updatedAt: serverTimestamp() as any,
-        // Payment link metadata
-        paymentLinkToken: token as any,
-        paymentLinkExpiresAt: expiresAt as any,
-        paymentLinkStatus: 'active' as any
+      const createRegistration = httpsCallable(functions, 'createAnonymousRegistration');
+      const result = await createRegistration({ eventId: registrationData.eventId, registrationData });
+      const created = result.data as {
+        registrationId: string;
+        pricing: TicketPricing;
+        qrCode: string;
+        requiresPayment: boolean;
+        paymentLinkToken?: string;
       };
 
-      // Add custom form responses if provided
-      if (registrationData.customResponses) {
-        (registration as any).customResponses = registrationData.customResponses;
-      }
-
-      // Clean up undefined values before saving to Firestore
-      const cleanRegistration = Object.fromEntries(
-        Object.entries(registration).filter(([_, value]) => value !== undefined)
-      );
-
-      // Save pending registration
-      logger.log('Saving registration with data:', cleanRegistration);
-      await setDoc(registrationRef, cleanRegistration);
-      logger.log('Registration saved successfully with ID:', registrationId);
-
-      // Update ticket sales immediately to prevent overselling
-      // Even pending registrations should reduce available tickets
-      await this.adjustTicketSales({
-        eventId: registrationData.eventId,
-        ticketTypeId: registrationData.ticketTypeId,
-        delta: registrationData.quantity
-      });
-
-      // Update event attendee count
-      const eventRef = doc(db, this.EVENTS_COLLECTION, registrationData.eventId);
-      await updateDoc(eventRef, {
-        currentAttendees: increment(registrationData.quantity),
-        updatedAt: serverTimestamp()
-      });
-
-      // Increment promo code usage if a promo code was applied
-      if (validation.pricing.promoCodeId) {
-        await this.incrementPromoCodeUsage(registrationData.eventId, validation.pricing.promoCodeId);
-      }
-
       return {
-        registrationId,
-        pricing: validation.pricing,
-        qrCode,
-        requiresPayment,
-        paymentLinkToken: token
+        registrationId: created.registrationId,
+        pricing: created.pricing,
+        qrCode: created.qrCode,
+        requiresPayment: created.requiresPayment,
+        paymentLinkToken: created.paymentLinkToken
       };
     } catch (error) {
       logger.error('Error creating pending registration:', error);
@@ -563,6 +486,18 @@ export class RegistrationService {
       }
       logger.error('Error fetching registration:', error);
       throw new Error('Failed to fetch registration');
+    }
+  }
+
+  static async getRegistrationByPaymentToken(registrationId: string, token: string): Promise<Registration | null> {
+    try {
+      const resolve = httpsCallable(functions, 'getPaymentRegistration');
+      const result = await resolve({ registrationId, token });
+      const data = result.data as { registration?: Registration };
+      return data.registration || null;
+    } catch (error) {
+      logger.warn('Payment registration token could not be resolved:', error);
+      return null;
     }
   }
 
@@ -1540,4 +1475,4 @@ export class RegistrationService {
       throw error;
     }
   }
-} 
+}

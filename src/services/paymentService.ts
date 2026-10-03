@@ -128,135 +128,29 @@ export class PaymentService {
     ticketPrice: number;
     proofImageFile?: File;
     proofImageUrl?: string;
+    paymentToken?: string;
     transactionId?: string;
     paymentMethod?: string;
     notes?: string;
   }): Promise<string> {
     try {
-      // Generate a new payment proof ID
-      const proofRef = doc(collection(db, this.PAYMENT_PROOFS_COLLECTION));
-      const proofId = proofRef.id;
-
-      // Upload proof image if provided
-      let proofImageUrl = data.proofImageUrl;
-      if (data.proofImageFile) {
-        proofImageUrl = await this.uploadPaymentProof(data.registrationId, data.proofImageFile);
-      }
-
-      // Create payment proof document
-      const paymentProof: Omit<PaymentProof, 'id'> = {
+      if (!data.paymentToken || !data.proofImageFile) throw new Error('Payment token and image are required');
+      const bytes = new Uint8Array(await data.proofImageFile.arrayBuffer());
+      if (bytes.byteLength > 4 * 1024 * 1024) throw new Error('Payment proof image must be smaller than 4MB');
+      let binary = '';
+      bytes.forEach(byte => { binary += String.fromCharCode(byte); });
+      const submit = httpsCallable(functions, 'submitAnonymousPaymentProof');
+      const result = await submit({
         registrationId: data.registrationId,
-        proofImageUrl,
+        paymentToken: data.paymentToken,
         transactionId: data.transactionId,
-        submittedAt: serverTimestamp() as any,
-        verificationStatus: 'pending',
-        notes: data.notes
-      };
-
-      // Additional data for admin view
-      // Ensure required fields for Firestore rules
-      const safeAttendeeEmail = (typeof data.attendeeEmail === 'string' && /.+@.+\..+/.test(data.attendeeEmail))
-        ? data.attendeeEmail
-        : 'anon@placeholder.local';
-
-      const proofData = {
-        ...paymentProof,
-        attendeeName: data.attendeeName,
-        attendeeEmail: safeAttendeeEmail,
-        // Add top-level email for compatibility with deployed Firestore rules
-        email: safeAttendeeEmail,
-        eventTitle: data.eventTitle,
-        eventId: data.eventId,
-        ticketPrice: data.ticketPrice,
-        paymentMethod: data.paymentMethod || 'bank_transfer',
-        // Add userDetails to satisfy Firestore rules expecting userDetails.email
-        userDetails: {
-          name: data.attendeeName,
-          email: safeAttendeeEmail
-        }
-      };
-
-      // Clean undefined values to avoid Firestore null/undefined errors
-      const cleanProofData = Object.fromEntries(
-        Object.entries(proofData).map(([k, v]) => {
-          if (v && typeof v === 'object' && !('toDate' in (v as any))) {
-            // Deep-clean one level for nested userDetails
-            const cleaned = Object.fromEntries(Object.entries(v as any).filter(([_, val]) => val !== undefined));
-            return [k, cleaned];
-          }
-          return [k, v];
-        }).filter(([_, v]) => v !== undefined)
-      );
-
-      // Debug and validate payload against Firestore rules expectations
-      try {
-        const debugPayload = {
-          email: (cleanProofData as any).email,
-          eventId: (cleanProofData as any).eventId,
-          verificationStatus: (cleanProofData as any).verificationStatus,
-          userDetailsEmail: (cleanProofData as any)?.userDetails?.email
-        };
-        // eslint-disable-next-line no-console
-        console.debug('[PaymentService] submitPaymentProof payload preview:', debugPayload);
-
-        const emailOk = typeof (cleanProofData as any).email === 'string' && /.+@.+\..+/.test((cleanProofData as any).email);
-        const eventIdOk = typeof (cleanProofData as any).eventId === 'string' && (cleanProofData as any).eventId.length > 0;
-        const statusOk = (cleanProofData as any).verificationStatus === 'pending';
-
-        if (!emailOk || !eventIdOk || !statusOk) {
-          // eslint-disable-next-line no-console
-          logger.error('[PaymentService] submitPaymentProof validation failed', { emailOk, eventIdOk, statusOk, cleanProofData });
-        }
-      } catch (debugErr) {
-        // eslint-disable-next-line no-console
-        logger.warn('[PaymentService] submitPaymentProof debug failed:', debugErr);
-      }
-
-      await setDoc(proofRef, cleanProofData);
-
-    // Update registration status
-      try {
-        const registrationRef = doc(db, this.REGISTRATIONS_COLLECTION, data.registrationId);
-        await updateDoc(registrationRef, {
-          paymentStatus: 'processing',
-          paymentProofId: proofId,
-      updatedAt: serverTimestamp(),
-      paymentLinkStatus: 'consumed'
-        });
-      } catch (e) {
-        // Likely unauthenticated update; ignore and proceed
-        logger.warn('Skipping registration update (unauthenticated):', e);
-      }
-
-      // Send notification to admin about new payment proof
-      try {
-        // Get admin users to notify
-        const adminQuery = query(
-          collection(db, 'users'),
-          where('role', '==', 'admin')
-        );
-        const adminSnapshot = await getDocs(adminQuery);
-
-        adminSnapshot.docs.forEach(async (adminDoc) => {
-          await NotificationService.createNotification(
-            adminDoc.id,
-            'event_update',
-            'New Payment Proof Submitted',
-            `${data.attendeeName} submitted payment proof for "${data.eventTitle}" (₱${data.ticketPrice})`,
-            {
-              proofId,
-              registrationId: data.registrationId,
-              eventId: data.eventId,
-              attendeeEmail: data.attendeeEmail,
-              amount: data.ticketPrice
-            }
-          );
-        });
-      } catch (error) {
-        logger.warn('Failed to create payment proof notification:', error);
-      }
-
-      return proofId;
+        paymentMethod: data.paymentMethod,
+        notes: data.notes,
+        imageBase64: btoa(binary),
+        contentType: data.proofImageFile.type || 'image/jpeg',
+        fileName: data.proofImageFile.name,
+      });
+      return (result.data as { proofId: string }).proofId;
     } catch (error) {
       logger.error('Error submitting payment proof:', error);
       throw new Error('Failed to submit payment proof');
@@ -374,14 +268,9 @@ export class PaymentService {
         if (status === 'approved') {
           const paymentDetails: Partial<PaymentDetails> = {
             paymentId: proofId,
-            paymentMethod: 'qrph' as any,
-            paymentProvider: 'paymongo' as any,
+            paymentMethod: proofData.paymentMethod || 'bank_transfer',
             transactionId: proofData.transactionId || 'manual_verification',
-            paidAt: serverTimestamp() as any,
-            fees: {
-              processingFee: 0,
-              platformFee: 0
-            }
+            paidAt: serverTimestamp() as any
           };
 
           await updateDoc(registrationRef, {
@@ -712,4 +601,4 @@ export class PaymentService {
       throw new Error('Failed to fetch payment proofs by event');
     }
   }
-} 
+}

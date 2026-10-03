@@ -142,6 +142,11 @@ export class EventService {
     }
   }
 
+  static async getPublishedEventBySlug(slug: string): Promise<Event | null> {
+    const event = await this.getEventBySlug(slug);
+    return event?.isPublished && ['published', 'ongoing'].includes(event.status) ? event : null;
+  }
+
   /**
    * Recursively remove undefined values from an object to prevent Firestore errors
    */

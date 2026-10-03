@@ -116,8 +116,11 @@ const PaymentPage: React.FC = () => {
         return;
       }
       
-      // Handle existing Firestore registrations (legacy flow)
-      const registrationData = await RegistrationService.getRegistrationById(registrationId!);
+      // Resolve public payment access through the token-verifying callable.
+      const paymentToken = new URLSearchParams(location.search).get('t');
+      const registrationData = paymentToken
+        ? await RegistrationService.getRegistrationByPaymentToken(registrationId!, paymentToken)
+        : await RegistrationService.getRegistrationById(registrationId!);
       if (!registrationData) {
         throw new Error('Registration not found');
       }
@@ -149,8 +152,7 @@ const PaymentPage: React.FC = () => {
       }
 
       // Token check to enforce expiring, one-time links
-      const search = new URLSearchParams(location.search);
-      const token = search.get('t');
+       const token = paymentToken;
       const regToken = (registrationData as any).paymentLinkToken as string | undefined;
       const exp = (registrationData as any).paymentLinkExpiresAt as any;
       const linkStatus = (registrationData as any).paymentLinkStatus as string | undefined;
@@ -271,28 +273,7 @@ const PaymentPage: React.FC = () => {
       setSubmitting(true);
       setFormDisabled(true); // Disable the entire form
       
-      // STEP 1: Upload payment proof image FIRST (if required)
-      // This ensures we don't create a registration if the upload fails
-      let uploadedImageUrl: string | undefined;
-      if (selectedConfig?.requiresProof && paymentProof.proofImageFile) {
-        uploadToast = toast.loading('Uploading payment proof image...');
-        
-        // Generate a temporary ID for the upload path (will be replaced with actual registrationId)
-        const tempUploadId = registrationId!.startsWith('temp_') 
-          ? `temp_${Date.now()}_${Math.random().toString(36).slice(2)}`
-          : registrationId!;
-        
-        try {
-          uploadedImageUrl = await PaymentService.uploadPaymentProof(tempUploadId, paymentProof.proofImageFile);
-          toast.dismiss(uploadToast);
-          toast.success('Payment proof uploaded successfully!');
-        } catch (uploadError: any) {
-          toast.dismiss(uploadToast);
-          throw new Error(`Failed to upload payment proof: ${uploadError.message}`);
-        }
-      }
-      
-      // STEP 2: Now create the registration (only if upload succeeded or not required)
+      // Create the registration before uploading proof through the trusted function.
       uploadToast = toast.loading('Creating registration...');
       
       // Check if this is a temporary registration that needs to be created in Firestore
@@ -338,7 +319,8 @@ const PaymentPage: React.FC = () => {
           eventTitle: event.title,
           eventId: event.id,
           ticketPrice: tempRegistration.totalAmount,
-          proofImageUrl: uploadedImageUrl, // Use pre-uploaded image URL
+           proofImageFile: paymentProof.proofImageFile,
+           paymentToken: actualRegistration.paymentLinkToken,
           transactionId: paymentProof.transactionId || undefined,
           paymentMethod: selectedConfig.name || paymentProof.paymentMethod,
           notes: paymentProof.notes
@@ -369,7 +351,8 @@ const PaymentPage: React.FC = () => {
           eventTitle: event.title,
           eventId: event.id,
           ticketPrice: registration.totalAmount,
-          proofImageUrl: uploadedImageUrl, // Use pre-uploaded image URL
+           proofImageFile: paymentProof.proofImageFile,
+           paymentToken: new URLSearchParams(location.search).get('t') || undefined,
           transactionId: paymentProof.transactionId || undefined,
           paymentMethod: selectedConfig.name || paymentProof.paymentMethod,
           notes: paymentProof.notes
@@ -701,4 +684,4 @@ const PaymentPage: React.FC = () => {
   );
 };
 
-export default PaymentPage; 
+export default PaymentPage;

@@ -6,9 +6,12 @@ Handles event creation, validation, publishing, and related operations.
 import json
 import logging
 import os
+import secrets
+import base64
 import requests
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
+from urllib.parse import quote
 from firebase_functions import https_fn, firestore_fn
 from firebase_functions.options import set_global_options
 from firebase_admin import initialize_app, firestore, storage, auth
@@ -1027,6 +1030,140 @@ def validateRegistration(req: https_fn.CallableRequest) -> Dict[str, Any]:
             code=https_fn.FunctionsErrorCode.INTERNAL,
             message="Internal server error during validation"
         )
+
+
+@https_fn.on_call()
+def createAnonymousRegistration(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """Atomically reserve a ticket and create a pending anonymous registration."""
+    data = req.data or {}
+    event_id = data.get('eventId')
+    form = data.get('registrationData') or {}
+    details = form.get('userDetails') or {}
+    ticket_id = form.get('ticketTypeId')
+    quantity = form.get('quantity', 1)
+    if (not isinstance(event_id, str) or not isinstance(form, dict) or
+            not isinstance(details, dict) or not isinstance(ticket_id, str) or
+            not isinstance(quantity, int) or quantity < 1 or quantity > 10 or
+            not isinstance(details.get('name'), str) or not details['name'].strip() or
+            not isinstance(details.get('email'), str) or '@' not in details['email']):
+        raise https_fn.HttpsError(https_fn.FunctionsErrorCode.INVALID_ARGUMENT, 'Invalid registration data')
+
+    db = get_db()
+    event_ref = db.collection('events').document(event_id)
+    registration_ref = db.collection('registrations').document()
+    token = secrets.token_urlsafe(32)
+    transaction = db.transaction()
+
+    @firestore.transactional
+    def reserve(tx):
+        snapshot = event_ref.get(transaction=tx)
+        if not snapshot.exists:
+            raise https_fn.HttpsError(https_fn.FunctionsErrorCode.NOT_FOUND, 'Event not found')
+        event = snapshot.to_dict() or {}
+        if not event.get('isPublished') or event.get('status') not in ['published', 'ongoing']:
+            raise https_fn.HttpsError(https_fn.FunctionsErrorCode.FAILED_PRECONDITION, 'Event is not available')
+        tickets = list(event.get('ticketTypes') or [])
+        index = next((i for i, ticket in enumerate(tickets) if ticket.get('id') == ticket_id), None)
+        if index is None:
+            raise https_fn.HttpsError(https_fn.FunctionsErrorCode.NOT_FOUND, 'Ticket type not found')
+        ticket = dict(tickets[index])
+        sold = int(ticket.get('currentSold') or 0)
+        maximum = ticket.get('maxQuantity')
+        if isinstance(maximum, int) and sold + quantity > maximum:
+            raise https_fn.HttpsError(https_fn.FunctionsErrorCode.RESOURCE_EXHAUSTED, 'Ticket is sold out')
+        price = float(ticket.get('price') or 0)
+        ticket['currentSold'] = sold + quantity
+        tickets[index] = ticket
+        registration = {
+            'id': registration_ref.id, 'eventId': event_id, 'userId': '',
+            'userDetails': details, 'ticketTypeId': ticket_id, 'quantity': quantity,
+            'originalAmount': price * quantity, 'discountAmount': 0,
+            'totalAmount': price * quantity, 'currency': 'PHP',
+            'pricing': {'originalPrice': price, 'currentPrice': price, 'discountAmount': 0},
+            'paymentStatus': 'pending', 'attendanceStatus': 'pending',
+            'feedbackSubmitted': False, 'certificateIssued': False,
+            'qrCode': f'registration:{registration_ref.id}',
+            'registrationDate': firestore.SERVER_TIMESTAMP, 'updatedAt': firestore.SERVER_TIMESTAMP,
+            'paymentLinkToken': token,
+            'paymentLinkExpiresAt': datetime.utcnow() + timedelta(hours=24),
+            'paymentLinkStatus': 'active',
+        }
+        if isinstance(form.get('customResponses'), dict):
+            registration['customResponses'] = form['customResponses']
+        tx.set(registration_ref, registration)
+        tx.update(event_ref, {
+            'ticketTypes': tickets,
+            'currentAttendees': int(event.get('currentAttendees') or 0) + quantity,
+            'updatedAt': firestore.SERVER_TIMESTAMP,
+        })
+        return registration
+
+    registration = reserve(transaction)
+    return {
+        'registrationId': registration['id'],
+        'pricing': registration['pricing'],
+        'qrCode': registration['qrCode'],
+        'requiresPayment': registration['totalAmount'] > 0,
+        'paymentLinkToken': token,
+    }
+
+
+@https_fn.on_call()
+def getPaymentRegistration(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """Resolve a payment link without exposing registration reads publicly."""
+    data = req.data or {}
+    registration_id, token = data.get('registrationId'), data.get('token')
+    if not isinstance(registration_id, str) or not isinstance(token, str):
+        raise https_fn.HttpsError(https_fn.FunctionsErrorCode.INVALID_ARGUMENT, 'Payment token is required')
+    _, registration = get_registration(registration_id)
+    if registration.get('paymentLinkToken') != token or registration.get('paymentLinkStatus') != 'active':
+        raise https_fn.HttpsError(https_fn.FunctionsErrorCode.PERMISSION_DENIED, 'Invalid payment link')
+    expires = registration.get('paymentLinkExpiresAt')
+    if expires and hasattr(expires, 'timestamp') and expires.timestamp() <= datetime.utcnow().timestamp():
+        raise https_fn.HttpsError(https_fn.FunctionsErrorCode.FAILED_PRECONDITION, 'Payment link expired')
+    return {'registration': {**registration, 'id': registration_id}}
+
+
+@https_fn.on_call()
+def submitAnonymousPaymentProof(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """Store a payment proof only after verifying the one-time payment token."""
+    data = req.data or {}
+    registration_id = data.get('registrationId')
+    token = data.get('paymentToken')
+    image = data.get('imageBase64')
+    content_type = data.get('contentType', 'image/jpeg')
+    allowed = {'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/heic', 'image/heif'}
+    if not all(isinstance(value, str) for value in [registration_id, token, image]) or content_type not in allowed:
+        raise https_fn.HttpsError(https_fn.FunctionsErrorCode.INVALID_ARGUMENT, 'Invalid payment proof')
+    try:
+        image_bytes = base64.b64decode(image, validate=True)
+    except (ValueError, TypeError):
+        raise https_fn.HttpsError(https_fn.FunctionsErrorCode.INVALID_ARGUMENT, 'Invalid payment image')
+    if len(image_bytes) > 4 * 1024 * 1024:
+        raise https_fn.HttpsError(https_fn.FunctionsErrorCode.RESOURCE_EXHAUSTED, 'Payment image is too large')
+    registration_ref, registration = get_registration(registration_id)
+    if registration.get('paymentLinkToken') != token or registration.get('paymentLinkStatus') != 'active':
+        raise https_fn.HttpsError(https_fn.FunctionsErrorCode.PERMISSION_DENIED, 'Invalid payment link')
+    proof_id = get_db().collection('paymentProofs').document().id
+    path = f'payment-proofs/{registration_id}/proof-{proof_id}.jpg'
+    blob = storage.bucket().blob(path)
+    download_token = secrets.token_urlsafe(24)
+    blob.metadata = {'firebaseStorageDownloadTokens': download_token}
+    blob.upload_from_string(image_bytes, content_type=content_type)
+    proof_url = f'https://firebasestorage.googleapis.com/v0/b/{storage.bucket().name}/o/{quote(path, safe="")}?alt=media&token={download_token}'
+    email = (registration.get('userDetails') or {}).get('email', '')
+    proof = {
+        'id': proof_id, 'registrationId': registration_id, 'eventId': registration.get('eventId'),
+        'email': email, 'userDetails': {'name': (registration.get('userDetails') or {}).get('name', 'Attendee'), 'email': email},
+        'attendeeName': (registration.get('userDetails') or {}).get('name', 'Attendee'),
+        'attendeeEmail': email, 'proofImageUrl': proof_url, 'transactionId': data.get('transactionId'),
+        'verificationStatus': 'pending', 'submittedAt': firestore.SERVER_TIMESTAMP,
+        'notes': data.get('notes'), 'ticketPrice': registration.get('totalAmount', 0),
+        'paymentMethod': data.get('paymentMethod', 'bank_transfer'),
+    }
+    get_db().collection('paymentProofs').document(proof_id).set({key: value for key, value in proof.items() if value is not None})
+    registration_ref.update({'paymentStatus': 'processing', 'paymentProofId': proof_id, 'paymentLinkStatus': 'consumed', 'updatedAt': firestore.SERVER_TIMESTAMP})
+    return {'proofId': proof_id}
 
 
 @https_fn.on_call()

@@ -15,8 +15,10 @@ const fs = require('fs');
   console.log('🔐 Creating production user in Firebase');
 
   // Target user details (override via env if needed)
-  const targetEmail = process.env.PROD_USER_EMAIL || 'davao.gdg@gmail.com';
-  const targetPassword = process.env.PROD_USER_PASSWORD || 'gdgdavaogmail2024!';
+  const targetEmail = process.env.PROD_USER_EMAIL;
+  if (!targetEmail) throw new Error('PROD_USER_EMAIL is required.');
+  const targetPassword = process.env.PROD_USER_PASSWORD;
+  if (!targetPassword) throw new Error('PROD_USER_PASSWORD is required.');
   const targetDisplayName = process.env.PROD_USER_NAME || 'GDG Davao';
   const targetRole = process.env.PROD_USER_ROLE || 'admin'; // 'admin' | 'organizer'
 
@@ -119,5 +121,4 @@ const fs = require('fs');
     process.exit(1);
   }
 })();
-
 

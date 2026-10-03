@@ -12,13 +12,11 @@ graph TD
         B -- Clicks 'Register' --> C[<b>Registration Form</b><br/><i>Fills in details</i>]:::screen
         C -- Clicks 'Submit' --> D((System: Sends 'Pending' Email)):::system
         
-        D --> E{Receives 'Confirmation' Email?}:::decision
-        E -- Yes, Approved --> F[<b>Email Inbox</b><br/><i>Opens confirmation email</i>]:::screen
-        F -- Is event paid? --> G{Event Requires Payment?}:::decision
-        G -- Yes --> H[Clicks 'Pay Now' Link];
-        H --> I[<b>PayMongo Page</b><br/><i>Scans QRPH to pay</i>]:::screen;
-        I -- Payment Successful --> J((System: Sends 'Ticket' Email)):::system;
-        G -- No / Free --> J;
+        D --> F{Event Requires Payment?}:::decision
+        F -- Yes --> H[Clicks 'Pay Now' Link];
+        H --> I[<b>Payment Page</b><br/><i>Transfers via bank/GCash, uploads proof</i>]:::screen;
+        I -- Organizer Approves --> J((System: Sends 'Ticket' Email)):::system;
+        F -- No / Free --> J;
 
         J -- After Event --> K((System: Sends 'Feedback' Email)):::system
         K --> L[<b>Feedback Form</b><br/><i>Fills out feedback questions</i>]:::screen
@@ -46,4 +44,4 @@ graph TD
     end
     
     %% Connect System Actions to User Experience
-    Approve_Action --> E; 
+    Approve_Action --> J; 

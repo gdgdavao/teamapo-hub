@@ -10,6 +10,9 @@ const { getFirestore, Timestamp } = require('firebase-admin/firestore');
 const { getAuth } = require('firebase-admin/auth');
 const { join } = require('path');
 
+const seedPassword = process.env.APOHUB_SEED_PASSWORD;
+if (!seedPassword) throw new Error('APOHUB_SEED_PASSWORD is required for emulator data.');
+
 console.log('🎯 Populating Firebase Emulator with Sample Data');
 console.log('💡 This creates realistic test data for development');
 console.log('');
@@ -21,11 +24,11 @@ process.env.FIREBASE_AUTH_EMULATOR_HOST = '127.0.0.1:9099';
 // Initialize Firebase Admin for Emulator
 let app;
 try {
-  // For emulator, use the actual project ID
+  const projectId = process.env.GCLOUD_PROJECT || process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || 'demo-apohub';
   app = initializeApp({
-    projectId: 'project-iris-gdgdavao' // Use the actual project ID
+    projectId
   });
-  console.log('✅ Connected to Firebase Emulator');
+  console.log(`✅ Connected to Firebase Emulator (project: ${projectId})`);
 } catch (error) {
   console.error('Failed to initialize Firebase Admin:', error);
   process.exit(1);
@@ -38,11 +41,11 @@ const auth = getAuth(app);
 const generateSampleUsers = () => [
   {
     uid: 'admin-001',
-    email: 'admin@gdgdavao.org',
+    email: 'admin@example.test',
     displayName: 'John Admin',
     role: 'admin',
     organization: 'GDG Davao',
-    phoneNumber: '+639123456789',
+    phoneNumber: '+15550100001',
     bio: 'Lead organizer and admin for GDG Davao. Passionate about technology and community building.',
     skills: ['Event Management', 'Community Building', 'Public Speaking'],
     socialLinks: {
@@ -56,11 +59,11 @@ const generateSampleUsers = () => [
   },
   {
     uid: 'organizer-001',
-    email: 'maria.organizer@gdgdavao.org',
+    email: 'organizer.one@example.test',
     displayName: 'Maria Santos',
     role: 'organizer',
     organization: 'GDG Davao',
-    phoneNumber: '+639987654321',
+    phoneNumber: '+15550100002',
     bio: 'Frontend developer and event organizer. Loves React and helping others learn tech.',
     skills: ['React', 'JavaScript', 'Event Planning', 'Workshop Facilitation'],
     socialLinks: {
@@ -74,11 +77,11 @@ const generateSampleUsers = () => [
   },
   {
     uid: 'organizer-002',
-    email: 'carlos.dev@gdgdavao.org',
+    email: 'organizer.two@example.test',
     displayName: 'Carlos Rodriguez',
     role: 'organizer',
     organization: 'GDG Davao',
-    phoneNumber: '+639555123456',
+    phoneNumber: '+15550100003',
     bio: 'Full-stack developer specializing in Node.js and cloud technologies.',
     skills: ['Node.js', 'Cloud Computing', 'Database Design', 'API Development'],
     socialLinks: {
@@ -102,7 +105,7 @@ const generateSampleEvents = () => [
     organizer: {
       uid: 'organizer-001',
       name: 'Maria Santos',
-      email: 'maria.organizer@gdgdavao.org'
+      email: 'organizer.one@example.test'
     },
     speakers: [
       {
@@ -198,7 +201,7 @@ const generateSampleEvents = () => [
     organizer: {
       uid: 'admin-001',
       name: 'John Admin',
-      email: 'admin@gdgdavao.org'
+      email: 'admin@example.test'
     },
     speakers: [
       {
@@ -257,7 +260,7 @@ const generateSampleEvents = () => [
     organizer: {
       uid: 'organizer-002',
       name: 'Carlos Rodriguez',
-      email: 'carlos.dev@gdgdavao.org'
+      email: 'organizer.two@example.test'
     },
     speakers: [
       {
@@ -316,7 +319,7 @@ const generateSampleEvents = () => [
     organizer: {
       uid: 'organizer-001',
       name: 'Maria Santos',
-      email: 'maria.organizer@gdgdavao.org'
+      email: 'organizer.one@example.test'
     },
     speakers: [
       {
@@ -365,7 +368,7 @@ const generateSampleEvents = () => [
     organizer: {
       uid: 'admin-001',
       name: 'John Admin',
-      email: 'admin@gdgdavao.org'
+      email: 'admin@example.test'
     },
     speakers: [
       {
@@ -476,9 +479,9 @@ const generateSampleEvents = () => [
         bankDetails: {
           bankName: 'GCash',
           accountName: 'GDG Davao',
-          accountNumber: '09123456789'
+          accountNumber: '00000000000'
         },
-        instructions: 'Send payment to GCash number 09123456789 (GDG Davao). Include your full name and event name in the message.',
+        instructions: 'Use the emulator-only payment fixture. Never use this value for real payments.',
         requiresProof: true,
         requiresTransactionId: true,
         isActive: true
@@ -512,7 +515,7 @@ const generateSampleRegistrations = () => [
     userDetails: {
       name: 'Alice Developer',
       email: 'alice.developer@email.com',
-      phoneNumber: '+639123456780',
+      phoneNumber: '+15550100010',
       organization: 'Tech Startup Inc'
     },
     ticketTypeId: 'early-bird',
@@ -543,7 +546,7 @@ const generateSampleRegistrations = () => [
     userDetails: {
       name: 'Bob Student',
       email: 'bob.student@university.edu',
-      phoneNumber: '+639123456781',
+      phoneNumber: '+15550100011',
       organization: 'University of the Philippines'
     },
     ticketTypeId: 'regular',
@@ -575,7 +578,7 @@ const generateSampleRegistrations = () => [
     userDetails: {
       name: 'Charlie AI',
       email: 'charlie.ai@tech.com',
-      phoneNumber: '+639123456782',
+      phoneNumber: '+15550100012',
       organization: 'AI Solutions Corp'
     },
     ticketTypeId: 'free',
@@ -607,7 +610,7 @@ const generateSampleRegistrations = () => [
     userDetails: {
       name: 'Diana Backend',
       email: 'diana.backend@startup.io',
-      phoneNumber: '+639123456783',
+      phoneNumber: '+15550100013',
       organization: 'DevStartup'
     },
     ticketTypeId: 'professional',
@@ -639,7 +642,7 @@ const generateSampleRegistrations = () => [
     userDetails: {
       name: 'Emma Designer',
       email: 'emma.designer@creative.com',
-      phoneNumber: '+639123456784',
+      phoneNumber: '+15550100014',
       organization: 'Creative Studio'
     },
     ticketTypeId: 'early-bird',
@@ -679,7 +682,7 @@ const generateSampleRegistrations = () => [
     userDetails: {
       name: 'Frank Mobile',
       email: 'frank.mobile@apps.dev',
-      phoneNumber: '+639123456785',
+      phoneNumber: '+15550100015',
       organization: 'Mobile Solutions Inc'
     },
     ticketTypeId: 'regular',
@@ -719,7 +722,7 @@ const generateSampleRegistrations = () => [
     userDetails: {
       name: 'Grace Fullstack',
       email: 'grace.fullstack@webdev.co',
-      phoneNumber: '+639123456786',
+      phoneNumber: '+15550100016',
       organization: 'Web Development Co'
     },
     ticketTypeId: 'professional',
@@ -759,7 +762,7 @@ const generateSampleRegistrations = () => [
     userDetails: {
       name: 'Henry Student',
       email: 'henry.student@college.edu',
-      phoneNumber: '+639123456787',
+      phoneNumber: '+15550100017',
       organization: 'Davao College of Technology'
     },
     ticketTypeId: 'student',
@@ -799,7 +802,7 @@ const generateSampleRegistrations = () => [
     userDetails: {
       name: 'Ivy Marketing',
       email: 'ivy.marketing@digital.agency',
-      phoneNumber: '+639123456788',
+      phoneNumber: '+15550100018',
       organization: 'Digital Marketing Agency'
     },
     ticketTypeId: 'early-bird',
@@ -839,7 +842,7 @@ const generateSampleRegistrations = () => [
     userDetails: {
       name: 'Jack Entrepreneur',
       email: 'jack.entrepreneur@startup.ph',
-      phoneNumber: '+639123456789',
+      phoneNumber: '+15550100019',
       organization: 'TechStartup Philippines'
     },
     ticketTypeId: 'professional',
@@ -880,13 +883,13 @@ const generateSampleRegistrations = () => [
     userDetails: {
       name: 'Dr. Lisa Wang',
       email: 'lisa.wang@techcorp.com',
-      phoneNumber: '+639123456790',
+      phoneNumber: '+15550100020',
       organization: 'TechCorp Solutions',
       dietaryRestrictions: 'Vegetarian',
       tshirtSize: 'M',
       emergencyContact: {
         name: 'Michael Wang',
-        phone: '+639123456791'
+        phone: '+15550100021'
       }
     },
     ticketTypeId: 'premium',
@@ -899,13 +902,8 @@ const generateSampleRegistrations = () => [
     paymentDetails: {
       paymentId: 'pay-ai-011',
       paymentMethod: 'gcash',
-      paymentProvider: 'paymongo',
       transactionId: 'GCash-AI-20241201-001',
-      paidAt: Timestamp.fromDate(new Date('2024-12-01T14:30:00Z')),
-      fees: {
-        processingFee: 75,
-        platformFee: 25
-      }
+      paidAt: Timestamp.fromDate(new Date('2024-12-01T14:30:00Z'))
     },
     attendanceStatus: 'checked-in',
     checkInTime: Timestamp.fromDate(new Date('2024-12-15T08:45:00Z')),
@@ -929,7 +927,7 @@ const generateSampleRegistrations = () => [
     userDetails: {
       name: 'James Rodriguez',
       email: 'james.rodriguez@startup.io',
-      phoneNumber: '+639123456792',
+      phoneNumber: '+15550100022',
       organization: 'AI Startup Philippines',
       dietaryRestrictions: 'None',
       tshirtSize: 'L'
@@ -946,13 +944,8 @@ const generateSampleRegistrations = () => [
     paymentDetails: {
       paymentId: 'pay-ai-012',
       paymentMethod: 'gcash',
-      paymentProvider: 'paymongo',
       transactionId: 'GCash-AI-20241125-002',
-      paidAt: Timestamp.fromDate(new Date('2024-11-25T10:15:00Z')),
-      fees: {
-        processingFee: 36,
-        platformFee: 12
-      }
+      paidAt: Timestamp.fromDate(new Date('2024-11-25T10:15:00Z'))
     },
     attendanceStatus: 'checked-in',
     checkInTime: Timestamp.fromDate(new Date('2024-12-15T09:10:00Z')),
@@ -979,13 +972,13 @@ const generateSampleRegistrations = () => [
     userDetails: {
       name: 'Maria Gonzales',
       email: 'maria.gonzales@university.edu.ph',
-      phoneNumber: '+639123456793',
+      phoneNumber: '+15550100023',
       organization: 'University of the Philippines - Mindanao',
       dietaryRestrictions: 'Halal',
       tshirtSize: 'S',
       emergencyContact: {
         name: 'Ana Gonzales',
-        phone: '+639123456794'
+        phone: '+15550100024'
       }
     },
     ticketTypeId: 'student-discount',
@@ -1000,13 +993,8 @@ const generateSampleRegistrations = () => [
     paymentDetails: {
       paymentId: 'pay-ai-013',
       paymentMethod: 'gcash',
-      paymentProvider: 'paymongo',
       transactionId: 'GCash-AI-20241122-003',
-      paidAt: Timestamp.fromDate(new Date('2024-11-22T16:20:00Z')),
-      fees: {
-        processingFee: 19.2,
-        platformFee: 6.4
-      }
+      paidAt: Timestamp.fromDate(new Date('2024-11-22T16:20:00Z'))
     },
     attendanceStatus: 'checked-in',
     checkInTime: Timestamp.fromDate(new Date('2024-12-15T08:55:00Z')),
@@ -1033,7 +1021,7 @@ const generateSampleRegistrations = () => [
     userDetails: {
       name: 'Kevin Tan',
       email: 'kevin.tan@devstudio.ph',
-      phoneNumber: '+639123456795',
+      phoneNumber: '+15550100025',
       organization: 'DevStudio Philippines',
       dietaryRestrictions: 'None',
       tshirtSize: 'XL'
@@ -1048,13 +1036,8 @@ const generateSampleRegistrations = () => [
     paymentDetails: {
       paymentId: 'pay-ai-014',
       paymentMethod: 'gcash',
-      paymentProvider: 'paymongo',
       transactionId: 'GCash-AI-20241205-004',
-      paidAt: Timestamp.fromDate(new Date('2024-12-05T11:45:00Z')),
-      fees: {
-        processingFee: 45,
-        platformFee: 15
-      }
+      paidAt: Timestamp.fromDate(new Date('2024-12-05T11:45:00Z'))
     },
     attendanceStatus: 'checked-in',
     checkInTime: Timestamp.fromDate(new Date('2024-12-15T09:05:00Z')),
@@ -1078,13 +1061,13 @@ const generateSampleRegistrations = () => [
     userDetails: {
       name: 'Sarah Kim',
       email: 'sarah.kim@dataanalytics.com',
-      phoneNumber: '+639123456796',
+      phoneNumber: '+15550100026',
       organization: 'Data Analytics Solutions',
       dietaryRestrictions: 'Vegan',
       tshirtSize: 'M',
       emergencyContact: {
         name: 'John Kim',
-        phone: '+639123456797'
+        phone: '+15550100027'
       }
     },
     ticketTypeId: 'premium',
@@ -1099,13 +1082,8 @@ const generateSampleRegistrations = () => [
     paymentDetails: {
       paymentId: 'pay-ai-015',
       paymentMethod: 'gcash',
-      paymentProvider: 'paymongo',
       transactionId: 'GCash-AI-20241120-005',
-      paidAt: Timestamp.fromDate(new Date('2024-11-20T09:30:00Z')),
-      fees: {
-        processingFee: 60,
-        platformFee: 20
-      }
+      paidAt: Timestamp.fromDate(new Date('2024-11-20T09:30:00Z'))
     },
     attendanceStatus: 'checked-in',
     checkInTime: Timestamp.fromDate(new Date('2024-12-15T08:40:00Z')),
@@ -1132,7 +1110,7 @@ const generateSampleRegistrations = () => [
     userDetails: {
       name: 'Michael Chen',
       email: 'michael.chen@fintech.ph',
-      phoneNumber: '+639123456798',
+      phoneNumber: '+15550100028',
       organization: 'FinTech Innovations',
       dietaryRestrictions: 'None',
       tshirtSize: 'L'
@@ -1149,13 +1127,8 @@ const generateSampleRegistrations = () => [
     paymentDetails: {
       paymentId: 'pay-ai-016',
       paymentMethod: 'gcash',
-      paymentProvider: 'paymongo',
       transactionId: 'GCash-AI-20241128-006',
-      paidAt: Timestamp.fromDate(new Date('2024-11-28T15:10:00Z')),
-      fees: {
-        processingFee: 36,
-        platformFee: 12
-      }
+      paidAt: Timestamp.fromDate(new Date('2024-11-28T15:10:00Z'))
     },
     attendanceStatus: 'checked-in',
     checkInTime: Timestamp.fromDate(new Date('2024-12-15T09:15:00Z')),
@@ -1181,13 +1154,13 @@ const generateSampleRegistrations = () => [
     userDetails: {
       name: 'Anna Santos',
       email: 'anna.santos@college.edu.ph',
-      phoneNumber: '+639123456799',
+      phoneNumber: '+15550100029',
       organization: 'Ateneo de Davao University',
       dietaryRestrictions: 'Lactose intolerant',
       tshirtSize: 'S',
       emergencyContact: {
         name: 'Pedro Santos',
-        phone: '+639123456800'
+        phone: '+15550100030'
       }
     },
     ticketTypeId: 'student-discount',
@@ -1200,13 +1173,8 @@ const generateSampleRegistrations = () => [
     paymentDetails: {
       paymentId: 'pay-ai-017',
       paymentMethod: 'gcash',
-      paymentProvider: 'paymongo',
       transactionId: 'GCash-AI-20241210-007',
-      paidAt: Timestamp.fromDate(new Date('2024-12-10T13:25:00Z')),
-      fees: {
-        processingFee: 24,
-        platformFee: 8
-      }
+      paidAt: Timestamp.fromDate(new Date('2024-12-10T13:25:00Z'))
     },
     attendanceStatus: 'checked-in',
     checkInTime: Timestamp.fromDate(new Date('2024-12-15T09:00:00Z')),
@@ -1229,7 +1197,7 @@ const generateSampleRegistrations = () => [
     userDetails: {
       name: 'David Park',
       email: 'david.park@mlstudio.ai',
-      phoneNumber: '+639123456801',
+      phoneNumber: '+15550100031',
       organization: 'ML Studio AI',
       dietaryRestrictions: 'Gluten-free',
       tshirtSize: 'M'
@@ -1244,13 +1212,8 @@ const generateSampleRegistrations = () => [
     paymentDetails: {
       paymentId: 'pay-ai-018',
       paymentMethod: 'gcash',
-      paymentProvider: 'paymongo',
       transactionId: 'GCash-AI-20241212-008',
-      paidAt: Timestamp.fromDate(new Date('2024-12-12T10:40:00Z')),
-      fees: {
-        processingFee: 75,
-        platformFee: 25
-      }
+      paidAt: Timestamp.fromDate(new Date('2024-12-12T10:40:00Z'))
     },
     attendanceStatus: 'checked-in',
     checkInTime: Timestamp.fromDate(new Date('2024-12-15T08:50:00Z')),
@@ -1747,7 +1710,7 @@ const generateSystemSettings = () => [
   },
   {
     settingKey: 'contact_email',
-    settingValue: 'admin@gdgdavao.org',
+    settingValue: 'admin@example.test',
     description: 'Primary contact email for the organization',
     updatedAt: Timestamp.now(),
     updatedBy: 'admin-001'
@@ -1767,7 +1730,7 @@ async function populateUsers() {
         email: user.email,
         displayName: user.displayName,
         phoneNumber: user.phoneNumber,
-        password: 'password123', // Default password for testing
+        password: seedPassword,
         emailVerified: true
       });
       console.log(`   ✅ Created Auth user: ${user.displayName} (${user.role})`);
@@ -1936,9 +1899,7 @@ async function populateSampleData() {
     console.log('   • 3 Activity logs');
     console.log('');
     console.log('🎯 Test Data Ready:');
-    console.log('   • Login with: admin@gdgdavao.org / password123 (admin role)');
-    console.log('   • Or: maria.organizer@gdgdavao.org / password123 (organizer role)');
-    console.log('   • Or: carlos.dev@gdgdavao.org / password123 (organizer role)');
+    console.log('   • Login with the seeded account emails and APOHUB_SEED_PASSWORD');
     console.log('   • Browse events, view registrations, check analytics');
     console.log('   • Test event creation, editing, and management');
     console.log('   • Use Payment Verification tab to approve/reject pending payments');
@@ -1991,4 +1952,4 @@ module.exports = {
   generateSampleRegistrations, 
   generateSampleFeedback, 
   generateSampleCertificates 
-}; 
+};

@@ -197,16 +197,9 @@ export interface Registration {
 
 export interface PaymentDetails {
   paymentId: string;
-  paymentMethod: 'qrph' | 'gcash' | 'grabpay' | 'card';
-  paymentProvider: 'paymongo';
+  paymentMethod: string;
   transactionId: string;
   paidAt: Timestamp;
-  refundId?: string;
-  refundedAt?: Timestamp;
-  fees: {
-    processingFee: number;
-    platformFee: number;
-  };
 }
 
 // Feedback Types

@@ -2,227 +2,85 @@ rules_version = '2';
 
 service firebase.storage {
   match /b/{bucket}/o {
-    
-    // Helper functions
-    function isAuthenticated() {
-      return request.auth != null;
+    function authenticated() { return request.auth != null; }
+    function admin() {
+      return authenticated() && firestore.exists(/databases/(default)/documents/users/$(request.auth.uid)) &&
+        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin' &&
+        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.isActive == true;
     }
-    
-    function isAdmin() {
-      return request.auth != null && 
-             firestore.exists(/databases/(default)/documents/users/$(request.auth.uid)) &&
-             firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    function organizer() {
+      return authenticated() && firestore.exists(/databases/(default)/documents/users/$(request.auth.uid)) &&
+        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.isActive == true &&
+        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role in ['admin', 'organizer'];
     }
-    
-    function isOrganizer() {
-      return request.auth != null && 
-             firestore.exists(/databases/(default)/documents/users/$(request.auth.uid)) &&
-             (firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'organizer' || 
-              firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin');
+    function ownsEvent(eventId) {
+      return organizer() && firestore.exists(/databases/(default)/documents/events/$(eventId)) &&
+        firestore.get(/databases/(default)/documents/events/$(eventId)).data.organizer.uid == request.auth.uid;
     }
-    
-    function isAdminOrOrganizer() {
-      return request.auth != null && 
-             firestore.exists(/databases/(default)/documents/users/$(request.auth.uid)) &&
-             (firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin' || 
-              firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'organizer');
+    function image() {
+      return request.resource != null && request.resource.size < 5 * 1024 * 1024 &&
+        request.resource.contentType.matches('image/(jpeg|png|gif|webp|heic|heif)');
     }
-    
-    function isValidImageSize() {
-      // Use request.resource when writing; resource is null on create
-      return (request.resource != null ? request.resource.size : resource.size) < 5 * 1024 * 1024; // 5MB limit
+    function document() {
+      return request.resource != null && request.resource.size < 10 * 1024 * 1024 &&
+        request.resource.contentType in ['application/pdf', 'image/jpeg', 'image/png'];
     }
-    
-    function isValidImageType() {
-      let ct = (request.resource != null ? request.resource.contentType : resource.contentType);
-      return ct != null && ct.matches('image/.*');
-    }
-    
-    function isValidDocumentType() {
-      let ct = (request.resource != null ? request.resource.contentType : resource.contentType);
-      return ct != null && (ct in ['application/pdf', 'image/jpeg', 'image/png']);
-    }
-    
-    // Event images - banners, logos, etc.
+
     match /events/{eventId}/images/{imageId} {
-      allow read: if true; // Event images are public
-      allow write: if isOrganizer() && 
-                      isValidImageSize() && 
-                      isValidImageType();
-      allow delete: if isAdmin() || 
-                       (isAuthenticated() && 
-                        firestore.get(/databases/(default)/documents/events/$(eventId)).data.organizer.uid == request.auth.uid);
-    }
-    
-    // Event documents - schedules, materials, etc.
-    match /events/{eventId}/documents/{docId} {
-      allow read: if true; // Event documents are public
-      allow write: if isOrganizer() && 
-                      (request.resource != null ? request.resource.size : resource.size) < 10 * 1024 * 1024 && // 10MB limit
-                      isValidDocumentType();
-      allow delete: if isAdmin() || 
-                       (isAuthenticated() && 
-                        firestore.get(/databases/(default)/documents/events/$(eventId)).data.organizer.uid == request.auth.uid);
-    }
-    
-    // Legacy event-images path (for backward compatibility)
-    match /event-images/{eventId}/{imageId} {
-      allow read: if true; // Event images are public
-      allow write: if (isAdminOrOrganizer() || 
-                      (isAuthenticated() && 
-                       firestore.exists(/databases/(default)/documents/events/$(eventId)) &&
-                       firestore.get(/databases/(default)/documents/events/$(eventId)).data.organizer.uid == request.auth.uid)) && 
-                      isValidImageSize() && 
-                      isValidImageType();
-      allow delete: if isAdmin() || 
-                       (isAuthenticated() && 
-                        firestore.exists(/databases/(default)/documents/events/$(eventId)) &&
-                        firestore.get(/databases/(default)/documents/events/$(eventId)).data.organizer.uid == request.auth.uid);
-    }
-    
-    // Allow folder-level operations for event images (for deletion)
-    match /event-images/{eventId} {
-      allow read: if true; // Event images are public
-      allow delete: if isAdmin() || 
-                       (isAuthenticated() && 
-                        firestore.exists(/databases/(default)/documents/events/$(eventId)) &&
-                        firestore.get(/databases/(default)/documents/events/$(eventId)).data.organizer.uid == request.auth.uid);
-    }
-    
-    // Payment QR codes (legacy path)
-    match /payment-qr/{eventId}/{qrId} {
-      allow read: if true; // Payment QR codes are public
-      allow write: if (isAdminOrOrganizer() || 
-                      (isAuthenticated() && 
-                       firestore.exists(/databases/(default)/documents/events/$(eventId)) &&
-                       firestore.get(/databases/(default)/documents/events/$(eventId)).data.organizer.uid == request.auth.uid)) && 
-                      isValidImageSize() && 
-                      isValidImageType();
-      allow delete: if isAdmin() || 
-                       (isAuthenticated() && 
-                        firestore.exists(/databases/(default)/documents/events/$(eventId)) &&
-                        firestore.get(/databases/(default)/documents/events/$(eventId)).data.organizer.uid == request.auth.uid);
-    }
-    
-    // Allow folder-level operations for payment QR codes (for deletion)
-    match /payment-qr/{eventId} {
-      allow read: if true; // Payment QR codes are public
-      allow delete: if isAdmin() || 
-                       (isAuthenticated() && 
-                        firestore.exists(/databases/(default)/documents/events/$(eventId)) &&
-                        firestore.get(/databases/(default)/documents/events/$(eventId)).data.organizer.uid == request.auth.uid);
-    }
-    
-    // Certificates - Generated certificates (legacy path - single file)
-    match /certificates/{certificateId} {
-      allow read: if true; // Certificates are publicly accessible for verification
-      allow write: if isAdmin() || 
-                      (isAuthenticated() && 
-                       isValidDocumentType() && 
-                       (request.resource != null ? request.resource.size : resource.size) < 2 * 1024 * 1024); // 2MB limit
-      allow delete: if isAdmin();
-    }
-    
-    // Certificates - Generated certificates by event (for anonymous users after feedback)
-    // Allow anonymous uploads for certificates generated after feedback submission
-    match /certificates/{eventId}/{filename} {
-      allow read: if true; // Certificates are publicly accessible for verification
-      // Allow anonymous uploads - permissive rule for certificate generation
-      allow write: if true;
-      allow delete: if isAdmin();
-    }
-    
-    // Registration attachments - Files uploaded during registration
-    match /registrations/{registrationId}/attachments/{attachmentId} {
-      allow read: if isAdmin() || 
-                     (isAuthenticated() && 
-                      firestore.get(/databases/(default)/documents/registrations/$(registrationId)).data.eventId != null &&
-                      firestore.get(/databases/(default)/documents/events/$(firestore.get(/databases/(default)/documents/registrations/$(registrationId)).data.eventId)).data.organizer.uid == request.auth.uid);
-      allow write: if (request.resource != null ? request.resource.size : resource.size) < 5 * 1024 * 1024 && // 5MB limit
-                      isValidDocumentType();
-      allow delete: if isAdmin();
-    }
-    
-    // Payment proof uploads - Allow anonymous uploads for registration flow
-    match /payment-proofs/{registrationId}/{proofId} {
-      // Allow public read for payment proofs (needed for anonymous upload flow to get download URL)
       allow read: if true;
-      // Allow anonymous uploads for payment proof submissions (validated server-side)
-      allow write: if (request.resource != null ? request.resource.size : resource.size) < 5 * 1024 * 1024 && // 5MB limit
-                      (
-                        // Prefer content type when provided
-                        isValidImageType() ||
-                        // Fallback: accept by filename extension when Safari omits contentType
-                        proofId.matches(".*\\.(jpg|jpeg|png|gif|webp|heic|heif)$")
-                      );
-      allow delete: if isAdmin();
+      allow create, update: if ownsEvent(eventId) && image();
+      allow delete: if admin() || ownsEvent(eventId);
     }
-    
-    // Certificate templates
+    match /events/{eventId}/documents/{fileId} {
+      allow read: if true;
+      allow create, update: if ownsEvent(eventId) && document();
+      allow delete: if admin() || ownsEvent(eventId);
+    }
+    match /event-images/{eventId}/{fileId} {
+      allow read: if true;
+      allow create, update: if ownsEvent(eventId) && image();
+      allow delete: if admin() || ownsEvent(eventId);
+    }
+    match /payment-qr/{eventId}/{fileId} {
+      allow read: if true;
+      allow create, update: if ownsEvent(eventId) && image();
+      allow delete: if admin() || ownsEvent(eventId);
+    }
+    match /certificates/{certificateId} {
+      allow read: if true;
+      allow create, update: if admin() && document();
+      allow delete: if admin();
+    }
+    match /certificates/{eventId}/{fileName} {
+      allow read: if true;
+      allow create, update, delete: if admin();
+    }
+    match /payment-proofs/{registrationId}/{proofId} {
+      allow read: if admin() || (authenticated() &&
+        firestore.exists(/databases/(default)/documents/registrations/$(registrationId)) &&
+        ownsEvent(firestore.get(/databases/(default)/documents/registrations/$(registrationId)).data.eventId));
+      // Anonymous proof uploads are handled by a trusted callable function.
+      allow create, update, delete: if admin();
+    }
     match /certificate-templates/{templateId}/{fileId} {
-      allow read: if true; // Templates are public
-      allow write: if isAdmin() && 
-                      isValidImageSize() && 
-                      isValidImageType();
-      allow delete: if isAdmin();
+      allow read: if true;
+      allow create, update: if admin() && image();
+      allow delete: if admin();
     }
-    
-    // Profile pictures
-    match /profile-pictures/{userId}/{imageId} {
-      allow read: if true; // Profile pictures are public
-      allow write: if isAuthenticated() && 
-                      (request.auth.uid == userId || isAdmin()) &&
-                      isValidImageSize() && 
-                      isValidImageType();
-      allow delete: if isAuthenticated() && 
-                       (request.auth.uid == userId || isAdmin());
+    match /profile-pictures/{userId}/{fileId} {
+      allow read: if true;
+      allow create, update: if authenticated() && (request.auth.uid == userId || admin()) && image();
+      allow delete: if authenticated() && (request.auth.uid == userId || admin());
     }
-    
-    // Speaker photos
-    match /speaker-photos/{eventId}/{speakerId}/{photoId} {
-      allow read: if true; // Speaker photos are public
-      allow write: if (isAdminOrOrganizer() || 
-                      (isAuthenticated() && 
-                       firestore.exists(/databases/(default)/documents/events/$(eventId)) &&
-                       firestore.get(/databases/(default)/documents/events/$(eventId)).data.organizer.uid == request.auth.uid)) && 
-                      isValidImageSize() && 
-                      isValidImageType();
-      allow delete: if isAdmin() || 
-                       (isAuthenticated() && 
-                        firestore.exists(/databases/(default)/documents/events/$(eventId)) &&
-                        firestore.get(/databases/(default)/documents/events/$(eventId)).data.organizer.uid == request.auth.uid);
+    match /speaker-photos/{eventId}/{speakerId}/{fileId} {
+      allow read: if true;
+      allow create, update: if ownsEvent(eventId) && image();
+      allow delete: if admin() || ownsEvent(eventId);
     }
-    
-    // Allow folder-level operations for speaker photos (for deletion)
-    match /speaker-photos/{eventId}/{speakerId} {
-      allow read: if true; // Speaker photos are public
-      allow delete: if isAdmin() || 
-                       (isAuthenticated() && 
-                        firestore.exists(/databases/(default)/documents/events/$(eventId)) &&
-                        firestore.get(/databases/(default)/documents/events/$(eventId)).data.organizer.uid == request.auth.uid);
-    }
-    
-    // System files - App assets, templates, etc.
     match /system/{allPaths=**} {
-      allow read: if true; // System files are public
-      allow write: if isAdmin();
-      allow delete: if isAdmin();
+      allow read: if true;
+      allow write, delete: if admin();
     }
-    
-    // User profile images (for admin/organizer accounts)
-    match /users/{userId}/profile/{imageId} {
-      allow read: if true; // Profile images are public
-      allow write: if isAuthenticated() && 
-                      (request.auth.uid == userId || isAdmin()) &&
-                      isValidImageSize() && 
-                      isValidImageType();
-      allow delete: if isAuthenticated() && 
-                       (request.auth.uid == userId || isAdmin());
-    }
-    
-    // Deny all other operations
-    match /{allPaths=**} {
-      allow read, write: if false;
-    }
+    match /{allPaths=**} { allow read, write: if false; }
   }
 }

@@ -100,7 +100,8 @@ const AdminUsersPage: React.FC = () => {
   };
 
   // Check if current user is the superuser
-  const isSuperUser = currentUser?.email === 'davao.gdg@gmail.com';
+  const superUserEmail = import.meta.env.VITE_SUPERUSER_EMAIL || 'admin@example.test';
+  const isSuperUser = currentUser?.email === superUserEmail;
 
   // Check if a user can be deleted
   const canDeleteUser = (user: UserWithMetadata) => {
