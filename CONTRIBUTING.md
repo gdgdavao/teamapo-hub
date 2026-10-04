@@ -104,6 +104,9 @@ git remote add upstream https://github.com/gdgdavao/teamapo-hub.git
 ```
 
 ### 2. Create a Branch
+Use [Conventional Branch](https://conventionalbranch.org/) naming: `<type>/<short-description>`, lowercase with hyphens.
+Types: `feature/`, `bugfix/`, `hotfix/`, `release/`, `chore/`
+
 ```bash
 # Create and checkout a new branch
 git checkout -b feature/your-feature-name
@@ -119,7 +122,7 @@ Follow our [coding guidelines](#coding-guidelines) and ensure:
 - Code follows project conventions
 - Tests pass (when applicable)
 - Documentation is updated
-- Commit messages are clear
+- Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) (see step 5)
 
 ### 4. Test Your Changes
 ```bash
@@ -134,11 +137,14 @@ bun test
 ```
 
 ### 5. Commit and Push
+Follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/): `<type>(<scope>): <description>`
+Types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`
+
 ```bash
 # Stage your changes
 git add .
 
-# Commit with a descriptive message
+# Commit using Conventional Commits
 git commit -m "feat(events): add event search functionality"
 
 # Push to your fork
@@ -274,6 +280,8 @@ Before submitting a pull request, ensure:
 - [ ] Documentation is updated
 - [ ] PR description is clear and complete
 - [ ] Related issues are linked
+- [ ] PR title follows Conventional Commits (e.g. `feat(events): add event search`)
+- [ ] Branch name follows Conventional Branch (e.g. `feature/event-search`)
 
 ### PR Template
 When creating a PR, include:
