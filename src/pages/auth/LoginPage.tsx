@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline';
 import usePageTitle from '../../hooks/usePageTitle';
@@ -10,10 +10,37 @@ import apohubTitle from '@assets/apohub-title.svg';
 const LoginPage: React.FC = () => {
   const { signIn, signInWithGoogle } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  /**
+   * Where to go once signed in.
+   *
+   * The route gate appends `?from=` when it turns a signed-out visitor away, so
+   * a deep link to /attendees?eventId=x survives the detour through this form
+   * instead of dumping everyone on the dashboard.
+   *
+   * Re-validated here rather than trusted: the parameter arrives from the URL,
+   * so `?from=https://evil.example` would otherwise turn the sign-in form into
+   * an open redirect, handing a freshly authenticated session to another origin
+   * by way of a Referer header. A single leading slash with no second one is a
+   * path; `//host` and `/\host` are protocol-relative URLs that also start with
+   * a slash.
+   */
+  const destination = (() => {
+    const from = searchParams.get('from');
+    if (!from) return '/dashboard';
+    if (!from.startsWith('/')) return '/dashboard';
+    if (from.startsWith('//') || from.startsWith('/\\')) return '/dashboard';
+    // Never bounce straight back to the auth area.
+    if (from.startsWith('/auth/login') || from.startsWith('/auth/forgot-password')) {
+      return '/dashboard';
+    }
+    return from;
+  })();
 
   // Set page title
   usePageTitle();
@@ -23,7 +50,7 @@ const LoginPage: React.FC = () => {
     try {
       setLoading(true);
       await signIn(email, password);
-      navigate('/dashboard');
+      navigate(destination);
     } catch (error) {
       logger.error('Login error:', error);
     } finally {
@@ -35,7 +62,7 @@ const LoginPage: React.FC = () => {
     try {
       setLoading(true);
       await signInWithGoogle();
-      navigate('/dashboard');
+      navigate(destination);
     } catch (error) {
       logger.error('Google sign-in error:', error);
     } finally {
@@ -44,7 +71,7 @@ const LoginPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
+    <div className="min-h-screen bg-surface-container-low flex flex-col justify-center py-12 sm:px-6 lg:px-8">
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
         <div className="flex justify-center">
           <img src={apohubTitle} alt="APOHUB" className="h-12 sm:h-16" />
@@ -53,7 +80,7 @@ const LoginPage: React.FC = () => {
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
         <div className="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10">
-          <h2 className="mt-4 mb-8 text-center text-2xl font-bold text-gray-900">
+          <h2 className="mt-4 mb-8 text-center text-2xl font-bold text-on-surface">
             Sign in to your account
           </h2>
           <form className="space-y-6" onSubmit={handleSubmit}>
@@ -96,9 +123,9 @@ const LoginPage: React.FC = () => {
                   className="absolute inset-y-0 right-0 pr-3 flex items-center"
                 >
                   {showPassword ? (
-                    <EyeSlashIcon className="h-5 w-5 text-gray-400" />
+                    <EyeSlashIcon className="h-5 w-5 text-outline-variant" />
                   ) : (
-                    <EyeIcon className="h-5 w-5 text-gray-400" />
+                    <EyeIcon className="h-5 w-5 text-outline-variant" />
                   )}
                 </button>
               </div>
@@ -110,17 +137,17 @@ const LoginPage: React.FC = () => {
                   id="remember-me"
                   name="remember-me"
                   type="checkbox"
-                  className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                  className="h-4 w-4 text-primary focus:ring-primary border-outline-variant rounded"
                 />
-                <label htmlFor="remember-me" className="ml-2 block text-sm text-gray-900">
+                <label htmlFor="remember-me" className="ml-2 block text-sm text-on-surface">
                   Remember me
                 </label>
               </div>
 
               <div className="text-sm">
                 <Link
-                  to="/forgot-password"
-                  className="font-medium text-primary-600 hover:text-primary-500"
+                  to="/auth/forgot-password"
+                  className="font-medium text-primary hover:text-primary-hover"
                 >
                   Forgot your password?
                 </Link>

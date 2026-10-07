@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import {
   User as FirebaseUser,
   signInWithEmailAndPassword,
@@ -10,10 +10,11 @@ import {
   signInWithPopup,
   sendPasswordResetEmail,
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { doc, setDoc, serverTimestamp, updateDoc, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
 import { logger } from '../utils/logger';
-import { User } from '../types';
+import { User, isRole, type Role } from '../types';
+import { defineAbilityFor } from '../auth/ability';
 import toast from 'react-hot-toast';
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
@@ -23,20 +24,34 @@ interface AuthContextType {
   userProfile: User | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string, displayName: string) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   logout: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   updateUserProfile: (data: Partial<User>) => Promise<void>;
-  refreshUserProfile: () => Promise<void>;
   updateAnyUserProfile: (userId: string, data: Partial<User>) => Promise<void>;
-  createUser: (email: string, password: string, displayName: string, role: 'organizer' | 'admin') => Promise<User>;
+  createUser: (email: string, password: string, displayName: string, role: Role) => Promise<User>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const areProfilesEqual = (a: User | null, b: User): boolean => {
+  if (!a) return false;
+  if (a.uid !== b.uid) return false;
+  if (a.email !== b.email) return false;
+  if (a.displayName !== b.displayName) return false;
+  if (a.photoURL !== b.photoURL) return false;
+  if (a.role !== b.role) return false;
+  if (a.isActive !== b.isActive) return false;
+  if (a.phoneNumber !== b.phoneNumber) return false;
+  if (a.organization !== b.organization) return false;
+  if (a.bio !== b.bio) return false;
+  return JSON.stringify(a.socialLinks || {}) === JSON.stringify(b.socialLinks || {}) &&
+         JSON.stringify(a.skills || []) === JSON.stringify(b.skills || []);
+};
+
 type AuthErrorLike = {
   code?: string;
+  message?: string;
 };
 
 const getFriendlySignInErrorMessage = (error: AuthErrorLike) => {
@@ -47,6 +62,9 @@ const getFriendlySignInErrorMessage = (error: AuthErrorLike) => {
     'auth/too-many-requests': 'Too many failed attempts. Please wait a moment and try again.',
     'auth/network-request-failed': 'Network error. Check your connection and try again.',
   };
+
+  // Provisioning failures carry their own message and no auth error code.
+  if (error.message) return error.message;
 
   return signInErrorMessages[error.code ?? ''] ?? 'Unable to sign in. Please try again.';
 };
@@ -64,105 +82,91 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [userProfile, setUserProfile] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const createUserProfile = async (user: FirebaseUser, additionalData?: any) => {
-    if (!user) return;
+  /** Ends the session and clears local state. Used for every refusal above. */
+  const endSession = useCallback(async (message: string) => {
+    toast.error(message);
+    await signOut(auth).catch(() => undefined);
+    setCurrentUser(null);
+    setUserProfile(null);
+    setLoading(false);
+  }, []);
 
-    logger.log('Creating user profile for:', user.uid, user.email);
-    const userRef = doc(db, 'users', user.uid);
-    const userSnap = await getDoc(userRef);
-
-    if (!userSnap.exists()) {
-      logger.log('User document does not exist, creating new one');
-      const { displayName, email, photoURL } = user;
-      
-      // Default role is organizer for authenticated users
-      // Attendees are anonymous and don't have accounts
-      const role: 'organizer' | 'admin' = 'organizer';
-
-      const newUser: Omit<User, 'uid'> = {
-        email: email!,
-        displayName: displayName || email!.split('@')[0],
-        photoURL: photoURL || undefined,
-        role,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-        ...additionalData,
-      };
-
-      try {
-        logger.log('Saving user document to Firestore:', newUser);
-        await setDoc(userRef, newUser);
-        const fullUser: User = { uid: user.uid, ...newUser } as User;
-        setUserProfile(fullUser);
-        logger.log('User profile created successfully:', fullUser);
-        return fullUser;
-      } catch (error) {
-        logger.error('Error creating user profile:', error);
-        throw error;
-      }
-    } else {
-      logger.log('User document exists, loading profile');
-      const userData = userSnap.data() as Omit<User, 'uid'>;
-      const fullUser: User = { uid: user.uid, ...userData };
-      setUserProfile(fullUser);
-      logger.log('User profile loaded:', fullUser);
-      return fullUser;
+  /**
+   * Applies one snapshot of the caller's own users document.
+   *
+   * Returns a refusal message, or null when the profile is usable. The three
+   * refusals are deliberately separate cases:
+   *
+   *  - no document          -> not provisioned. Provision-only by design:
+   *                             firestore.rules requires isAdmin() to create a
+   *                             users doc, so self-service signup is denied.
+   *  - unrecognised role    -> a corrupt or hand-edited document. The old
+   *                             `userSnap.data() as Omit<User,'uid'>` cast
+   *                             accepted any string, and RoleBasedDashboard
+   *                             rendered the admin dashboard for anything that
+   *                             was not literally 'organizer'.
+   *  - isActive === false   -> suspended. Strictly `=== false`: a document
+   *                             written before the field existed reads back
+   *                             undefined, and treating that as suspended would
+   *                             lock out every legacy account on deploy. Such a
+   *                             profile stays signed in with an empty ability,
+   *                             which matches firestore.rules denying anything
+   *                             without isActive == true.
+   */
+  const applyProfile = useCallback((uid: string, data: Record<string, unknown> | undefined): string | null => {
+    if (!data) {
+      logger.warn('No user document for', uid, '- account is not provisioned');
+      return 'This account has not been provisioned. Ask an administrator to create it for you.';
     }
-  };
 
-  const signIn = async (email: string, password: string) => {
+    if (!isRole(data.role)) {
+      logger.error('Unrecognised role in users document for', uid, data.role);
+      return 'Your account role is not recognised. Contact an administrator.';
+    }
+
+    if (data.isActive === false) {
+      logger.warn('Account deactivated:', uid);
+      return 'This account has been deactivated.';
+    }
+
+    const next = { uid, ...data } as User;
+    // Keep the previous object when nothing meaningful changed. The ability
+    // provider memoises on uid/role/isActive, but holding a stable profile
+    // reference also stops every consumer's effect from re-running on an
+    // unrelated field such as updatedAt.
+    setUserProfile((prev) => (prev && areProfilesEqual(prev, next) ? prev : next));
+    return null;
+  }, []);
+
+  const signIn = useCallback(async (email: string, password: string) => {
     try {
-      setLoading(true);
       const result = await signInWithEmailAndPassword(auth, email, password);
-      await createUserProfile(result.user);
       toast.success(`Welcome back, ${result.user.displayName || email}!`);
+      // Deliberately no `setLoading(false)` on success. The profile arrives
+      // through the users-document listener, which is what clears `loading`.
+      // Clearing it here would clear it a frame early and flash /forbidden
+      // before the ability exists.
     } catch (error: any) {
+      setLoading(false);
       logger.error('Sign in error:', error);
       toast.error(getFriendlySignInErrorMessage(error));
       throw error;
-    } finally {
-      setLoading(false);
     }
-  };
+  }, []);
 
-  const signUp = async (email: string, password: string, displayName: string) => {
+  const signInWithGoogle = useCallback(async () => {
     try {
-      setLoading(true);
-      const result = await createUserWithEmailAndPassword(auth, email, password);
-      
-      // Update the user's display name
-      await updateProfile(result.user, { displayName });
-      
-      // Create user profile in Firestore
-      await createUserProfile(result.user);
-      
-      toast.success('Account created successfully!');
-    } catch (error: any) {
-      logger.error('Sign up error:', error);
-      toast.error(error.message || 'Sign up failed');
-      throw error;
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const signInWithGoogle = async () => {
-    try {
-      setLoading(true);
-      const provider = new GoogleAuthProvider();
-      const result = await signInWithPopup(auth, provider);
-      await createUserProfile(result.user);
+      const result = await signInWithPopup(auth, new GoogleAuthProvider());
       toast.success(`Welcome, ${result.user.displayName}!`);
     } catch (error: any) {
+      setLoading(false);
       logger.error('Google sign in error:', error);
       toast.error(error.message || 'Google sign in failed');
       throw error;
-    } finally {
-      setLoading(false);
     }
-  };
+  }, []);
 
-  const logout = async () => {
+  const logout = useCallback(async () => {
     try {
       await signOut(auth);
       setUserProfile(null);
@@ -172,9 +176,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       toast.error('Sign out failed');
       throw error;
     }
-  };
+  }, []);
 
-  const resetPassword = async (email: string) => {
+  const resetPassword = useCallback(async (email: string) => {
     try {
       await sendPasswordResetEmail(auth, email);
       toast.success('Password reset email sent!');
@@ -183,9 +187,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       toast.error(error.message || 'Password reset failed');
       throw error;
     }
-  };
+  }, []);
 
-  const updateUserProfile = async (data: Partial<User>) => {
+  const updateUserProfile = useCallback(async (data: Partial<User>) => {
     if (!currentUser) throw new Error('No user logged in');
 
     try {
@@ -198,9 +202,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await updateDoc(userRef, updateData);
       
       // Update local state
-      if (userProfile) {
-        setUserProfile({ ...userProfile, ...data } as User);
-      }
+      setUserProfile(prev => (prev ? ({ ...prev, ...data } as User) : null));
       
       toast.success('Profile updated successfully!');
     } catch (error: any) {
@@ -208,28 +210,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       toast.error('Profile update failed');
       throw error;
     }
-  };
+  }, [currentUser]);
 
-  const refreshUserProfile = async () => {
-    if (!currentUser) return;
-
-    try {
-      const userRef = doc(db, 'users', currentUser.uid);
-      const userSnap = await getDoc(userRef);
-      
-      if (userSnap.exists()) {
-        const userData = userSnap.data() as Omit<User, 'uid'>;
-        const fullUser: User = { uid: currentUser.uid, ...userData };
-        setUserProfile(fullUser);
-      }
-    } catch (error) {
-      logger.error('Error refreshing user profile:', error);
-    }
-  };
-
-  const updateAnyUserProfile = async (userId: string, data: Partial<User>) => {
+  const updateAnyUserProfile = useCallback(async (userId: string, data: Partial<User>) => {
     if (!currentUser) throw new Error('No user logged in');
-    if (!userProfile || userProfile.role !== 'admin') {
+    if (!defineAbilityFor(userProfile).can('read', 'User')) {
       throw new Error('Only admins can update other users');
     }
 
@@ -247,11 +232,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       toast.error('User profile update failed');
       throw error;
     }
-  };
+  }, [currentUser, userProfile]);
 
-  const createUser = async (email: string, password: string, displayName: string, role: 'organizer' | 'admin'): Promise<User> => {
+  const createUser = useCallback(async (email: string, password: string, displayName: string, role: Role): Promise<User> => {
     if (!currentUser) throw new Error('No user logged in');
-    if (!userProfile || userProfile.role !== 'admin') {
+    if (!defineAbilityFor(userProfile).can('create', 'User')) {
       throw new Error('Only admins can create users');
     }
 
@@ -284,6 +269,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         displayName: displayName,
         photoURL: newUser.photoURL || '',
         role: role,
+        // firestore.rules isOrganizer()/isAdmin() read .data.isActive; omitting it
+        // makes every subsequent rules check fail for this user.
+        isActive: true,
         phoneNumber: '',
         organization: '',
         bio: '',
@@ -334,42 +322,92 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       throw error;
     }
-  };
+  }, [currentUser, userProfile]);
+
+  /**
+   * Holds the unsubscribe for the users-document listener. Kept in a ref
+   * because it changes every time the auth session changes, which must not
+   * re-run the effect that owns it.
+   */
+  const stopProfileListener = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       logger.log('Auth state changed:', user ? `User: ${user.uid} (${user.email})` : 'No user');
-      if (user) {
-        setCurrentUser(user);
-        try {
-          await createUserProfile(user);
-        } catch (error) {
-          logger.error('Failed to create/load user profile:', error);
-        }
-      } else {
+
+      // Always drop the previous listener first, so a sign-out or an account
+      // switch cannot leave a stale subscription writing into state.
+      stopProfileListener.current?.();
+      stopProfileListener.current = null;
+
+      if (!user) {
         setCurrentUser(null);
         setUserProfile(null);
+        setLoading(false);
+        return;
       }
-      setLoading(false);
+
+      setCurrentUser(user);
+
+      // A live listener rather than a one-shot getDoc. A demotion or a
+      // suspension applied by another admin previously went unnoticed until the
+      // tab was reloaded; now the ability rebuilds the moment the document
+      // changes. firestore.rules:68 already permits reading your own document.
+      const uid = user.uid;
+      stopProfileListener.current = onSnapshot(
+        doc(db, 'users', uid),
+        async (snap) => {
+          const refusal = applyProfile(uid, snap.data());
+          if (refusal) {
+            await endSession(refusal);
+            return;
+          }
+          setLoading(false);
+        },
+        (error) => {
+          // A listener error is a transport or permission problem, NOT an
+          // unprovisioned account. The previous getDoc-based version threw
+          // either way, so a dropped connection signed people out. Keep the
+          // session, let the listener retry, and surface it.
+          logger.error('Profile listener error:', error);
+          setLoading(false);
+        },
+      );
     });
 
-    return unsubscribe;
-  }, []);
+    return () => {
+      unsubscribeAuth();
+      stopProfileListener.current?.();
+      stopProfileListener.current = null;
+    };
+  }, [applyProfile, endSession]);
 
-  const value: AuthContextType = {
-    currentUser,
-    userProfile,
-    loading,
-    signIn,
-    signUp,
-    signInWithGoogle,
-    logout,
-    resetPassword,
-    updateUserProfile,
-    refreshUserProfile,
-    updateAnyUserProfile,
-    createUser,
-  };
+  const value: AuthContextType = useMemo(
+    () => ({
+      currentUser,
+      userProfile,
+      loading,
+      signIn,
+      signInWithGoogle,
+      logout,
+      resetPassword,
+      updateUserProfile,
+      updateAnyUserProfile,
+      createUser,
+    }),
+    [
+      currentUser,
+      userProfile,
+      loading,
+      signIn,
+      signInWithGoogle,
+      logout,
+      resetPassword,
+      updateUserProfile,
+      updateAnyUserProfile,
+      createUser,
+    ]
+  );
 
   return (
     <AuthContext.Provider value={value}>
