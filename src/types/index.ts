@@ -1,12 +1,32 @@
 import { Timestamp } from 'firebase/firestore';
 
+/**
+ * The role vocabulary, in one place.
+ *
+ * This union used to be re-declared inline in six places, which is why role
+ * checks had drifted into `role === 'admin'` comparisons scattered across
+ * eleven pages. `isRole` exists for the one place the value is genuinely
+ * untrusted: AuthContext reads a Firestore document and has to decide
+ * whether the stored string is a role at all before trusting it.
+ */
+export const ROLES = ['organizer', 'admin'] as const;
+export type Role = (typeof ROLES)[number];
+
+export function isRole(value: unknown): value is Role {
+  return typeof value === 'string' && (ROLES as readonly string[]).includes(value);
+}
+
 // User Types
 export interface User {
   uid: string;
   email: string;
   displayName: string;
   photoURL?: string;
-  role: 'organizer' | 'admin'; // Removed 'attendee' since attendees are anonymous
+  /** Removed 'attendee' since attendees are anonymous */
+  role: Role;
+  /** Required by firestore.rules isOrganizer()/isAdmin() — a user doc without it
+   *  fails every rules evaluation with "Property isActive is undefined". */
+  isActive: boolean;
   phoneNumber?: string;
   organization?: string;
   bio?: string;
@@ -43,6 +63,8 @@ export interface Event {
   ticketTypes: TicketType[];
   promoCodes?: PromoCode[];
   paymentConfigs?: PaymentConfig[];
+  registrationForm?: FormField[];
+  feedbackForm?: FormField[];
   tags: string[];
   category: EventCategory;
   status: EventStatus;
@@ -176,6 +198,10 @@ export interface Registration {
   paymentLinkStatus?: 'active' | 'consumed' | 'expired';
   attendanceStatus: AttendanceStatus;
   checkInTime?: Timestamp;
+  // NOTE: two field names are written for the same concept across the codebase
+  // (checkInTime in registrationService, checkedInAt in main.py + AdminCheckInPage).
+  // Both are declared so nothing silently reads undefined; unify before P5.
+  checkedInAt?: Timestamp;
   feedbackSubmitted: boolean;
   feedbackRequestSent?: boolean;
   feedbackRequestSentAt?: Timestamp;
@@ -419,11 +445,16 @@ export type PaymentStatus =
   | 'refunded' 
   | 'cancelled';
 
-export type AttendanceStatus = 
-  | 'registered' 
-  | 'confirmed' 
-  | 'checked-in' 
-  | 'no-show' 
+// Values actually persisted by functions/main.py and the admin pages.
+// Note: 'attended' is a UI-only local-state value (AdminCheckInPage maps
+// checked-in -> attended for display) and is never written to Firestore.
+export type AttendanceStatus =
+  | 'registered'
+  | 'confirmed'
+  | 'checked-in'
+  | 'no-show'
+  | 'pending'
+  | 'not_attended'
   | 'cancelled';
 
 export type NotificationType = 

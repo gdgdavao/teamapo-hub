@@ -13,6 +13,14 @@ interface ImportMetaEnv {
   readonly VITE_APP_NAME: string
   readonly VITE_ORGANIZATION: string
   readonly VITE_GEMINI_API: string
+  /**
+   * Email of the one administrator who may delete other admins' accounts.
+   * Declared here because AdminUsersPage read it through `import.meta.env`
+   * with no type, and because it is the client half of the tier that
+   * functions/main.py enforces from its own SUPERUSER_EMAIL. Client-side
+   * only: it decides what the UI offers, never what the server allows.
+   */
+  readonly VITE_SUPERUSER_EMAIL?: string
 }
 
 interface ImportMeta {
