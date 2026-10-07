@@ -21,6 +21,8 @@ import {
 import toast from 'react-hot-toast';
 import DashboardShell from '../../components/shared/DashboardShell';
 import LoadingSpinner from '../../components/shared/UI/LoadingSpinner';
+import { Tabs, TabPanel } from '../../components/shared/UI';
+import type { TabItem } from '../../components/shared/UI';
 import Badge from '../../components/shared/UI/Badge';
 import { EventService } from '../../services/eventService';
 import { asEvent } from '../../auth/ability';
@@ -72,22 +74,23 @@ const EventWorkspacePage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [copiedLink, setCopiedLink] = useState(false);
 
-  // Validate active tab or default to 'overview'
+  // The primitive takes ReactNode icons; TABS holds component references.
+  const tabItems: TabItem[] = useMemo(
+    () =>
+      TABS.map(({ id, label, icon: Icon }) => ({
+        id,
+        label,
+        icon: <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />,
+      })),
+    [],
+  );
+
+  // Validate the active tab against TABS rather than repeating all eight ids in
+  // a second array, which is how a ninth tab would have been added to one and
+  // not the other.
   const activeTab: EventWorkspaceTab = useMemo(() => {
-    const validTabs: EventWorkspaceTab[] = [
-      'overview',
-      'attendees',
-      'check-in',
-      'payments',
-      'emails',
-      'certificates',
-      'feedback',
-      'settings',
-    ];
-    if (tab && validTabs.includes(tab as EventWorkspaceTab)) {
-      return tab as EventWorkspaceTab;
-    }
-    return 'overview';
+    const requested = tab as EventWorkspaceTab | undefined;
+    return requested && TABS.some((t) => t.id === requested) ? requested : 'overview';
   }, [tab]);
 
   // Load event details
@@ -310,49 +313,22 @@ const EventWorkspacePage: React.FC = () => {
           </div>
         </div>
 
-        {/* Tab Navigation (Scrollable on mobile, WCAG 2.2 AA compliant, 48px touch targets) */}
+        {/* Tab navigation. The shared Tabs primitive rather than a fourth
+            hand-rolled tablist: it carries the roving tabindex, so this strip is
+            one tab stop with arrow/Home/End between tabs instead of eight tab
+            presses, and the panel it controls is focusable. */}
         <div className="relative rounded-xl border border-outline-variant bg-white px-2 py-2 sm:px-4 sm:py-2.5 shadow-sm">
-          <nav
-            role="tablist"
-            aria-label="Event management tabs"
-            className="flex space-x-2 overflow-x-auto scrollbar-none [scrollbar-width:none] [-webkit-overflow-scrolling:touch]"
-          >
-            {TABS.map((tabItem) => {
-              const Icon = tabItem.icon;
-              const isActive = activeTab === tabItem.id;
-              return (
-                <button
-                  key={tabItem.id}
-                  role="tab"
-                  id={`tab-${tabItem.id}`}
-                  aria-selected={isActive}
-                  aria-controls={`panel-${tabItem.id}`}
-                  onClick={() => handleTabChange(tabItem.id)}
-                  className={`group inline-flex min-h-[48px] items-center gap-2 whitespace-nowrap rounded-lg px-3.5 py-2.5 text-sm font-medium active:scale-[0.98] transition-[background-color,color,transform] duration-short2 ease-emphasized-standard focus:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
-                    isActive
-                      ? 'bg-primary-container text-primary font-semibold shadow-xs'
-                      : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'
-                  }`}
-                >
-                  <Icon
-                    className={`h-4 w-4 flex-shrink-0 transition-colors duration-fast ease-quart ${
-                      isActive ? 'text-primary' : 'text-outline-variant group-hover:text-on-surface'
-                    }`}
-                  />
-                  <span>{tabItem.label}</span>
-                </button>
-              );
-            })}
-          </nav>
+          <Tabs
+            label="Event management tabs"
+            items={tabItems}
+            activeId={activeTab}
+            onChange={handleTabChange}
+            className="px-1 py-1 sm:px-2"
+          />
         </div>
 
         {/* Tab Panel Content */}
-        <div
-          role="tabpanel"
-          id={`panel-${activeTab}`}
-          aria-labelledby={`tab-${activeTab}`}
-          className="focus:outline-none pb-12 sm:pb-16"
-        >
+        <TabPanel id={activeTab} labelledBy={`tab-${activeTab}`} className="pb-12 sm:pb-16">
           {activeTab === 'overview' && (
             <AdminAnalyticsPage isEventSpecific={true} embedded={true} propEventId={eventId} />
           )}
@@ -377,7 +353,7 @@ const EventWorkspacePage: React.FC = () => {
           {activeTab === 'settings' && (
             <EventSettingsTab event={event} onEventUpdated={setEvent} />
           )}
-        </div>
+        </TabPanel>
       </div>
     </DashboardShell>
   );
