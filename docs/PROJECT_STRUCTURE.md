@@ -6,8 +6,9 @@ A map of the repository. For how the pieces work together, see [Architecture](Ar
 teamapo-hub/
 ├── src/                  React 19 + TypeScript frontend (Vite)
 ├── functions/            Python 2nd-gen Cloud Functions (email, triggers, callables)
-├── tests/                Vitest tests
+├── tests/                Vitest tests (unit/, dom/, rules/)
 ├── scripts/              Dev, seeding and deploy helpers
+├── .github/workflows/    CI: five gates on push and pull_request
 ├── docs/                 Project documentation
 ├── public/               Static assets
 ├── firestore.rules       Firestore security rules
@@ -25,7 +26,8 @@ teamapo-hub/
 | `pages/` | Route-level screens, grouped by role: `admin/`, `organizer/`, `public/`, `auth/`, `payment/`, `feedback/`, `verification/`, `shared/`, `error/` |
 | `components/` | Reusable UI: `admin/`, `organizer/`, `public/` (registration, tickets, promo codes), `shared/` (navbar, form builder/renderer, UI kit), `SEO/` |
 | `services/` | One file per domain talking to Firebase (`eventService`, `registrationService`, `paymentService`, `certificateService`, `emailService`, `feedbackService`, `analyticsService`, `aiService`, `userService`, `formService`, `notificationService`). Pages call services; they do not call Firebase directly |
-| `contexts/` | `AuthContext` (current user and role) |
+| `auth/` | Authorization. `ability.ts` (pure CASL rule table + entity tagging), `AbilityProvider.tsx`, `RequireAbility.tsx` (route gate) |
+| `contexts/` | `AuthContext` (Firebase session and the live users-document profile) |
 | `hooks/` | Shared hooks (`usePageTitle`, `useSEO`) |
 | `config/` | `firebase.ts` (SDK init, emulator wiring) |
 | `types/` | Shared TypeScript types |
@@ -41,7 +43,8 @@ teamapo-hub/
 
 ## `tests/`
 
-- `unit/`: logic tests, no emulator needed (`bun run test:unit`)
+- `unit/`: logic and source-shape tests, node environment, no emulator needed (`bun run test:unit`)
+- `dom/`: component and DOM behaviour tests, jsdom environment (`bun run test:dom`)
 - `rules/`: Firestore security rules tests, need the emulator (`bun run test:rules`)
 
 ## `scripts/`
@@ -60,9 +63,23 @@ teamapo-hub/
 | [Schema.md](Schema.md) | Firestore collections and fields |
 | [Rules.md](Rules.md) | Security rules and access model |
 | [SECURITY_RULES_AUDIT.md](SECURITY_RULES_AUDIT.md) | Rules audit notes |
-| [PRD.md](PRD.md) | Product requirements |
+| [PRD.md](PRD.md) | Product requirements, personas, feature modules |
+| [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | Design system companion: spacing, control geometry, state layer, motion, responsive rules, browser floor, iOS hardening, accessibility, anti-patterns |
+| [MCP_SETUP.md](MCP_SETUP.md) | MCP server configuration for AI agents |
 | [HANDOFF.md](HANDOFF.md) | Handoff notes |
 | `usrjrn.mermaid`, `usrwrkflw.mermaid` | User journey and workflow diagrams |
+
+### Root-level documents
+
+| File | Purpose |
+|---|---|
+| [README.md](../README.md) | Project overview and links |
+| [PRODUCT.md](../PRODUCT.md) | What the product is, who it serves, design principles, accessibility targets |
+| [DESIGN.md](../DESIGN.md) | Material Design 3 tokens in Google Stitch format (machine-consumed) |
+| [AGENTS.md](../AGENTS.md) | Operating rules for AI coding assistants, skill selection matrix |
+| [CONTRIBUTING.md](../CONTRIBUTING.md) | Contribution workflow, coding guidelines, PR process |
+| [SECURITY.md](../SECURITY.md) | How to report a vulnerability. Mirrored at `.github/SECURITY.md` |
+| [CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md) | Community expectations. Mirrored at `.github/CODE_OF_CONDUCT.md` |
 
 ## Where does new code go?
 

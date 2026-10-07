@@ -98,13 +98,16 @@ src/
 ├── main.tsx                     # React DOM entry point
 ├── config/
 │   └── firebase.ts              # Firebase Client SDK initialization & emulator detection
+├── auth/                        # Authorization: permission model, provider, route gate
+│   ├── ability.ts               # Pure CASL rule table + entity tagging helpers
+│   ├── AbilityProvider.tsx      # Publishes the signed-in user's ability
+│   └── RequireAbility.tsx       # Route gate; RequireAnonymous for the sign-in area
 ├── contexts/
-│   └── AuthContext.tsx          # Authentication state, user profile snapshot, role provider
+│   └── AuthContext.tsx          # Firebase session + live users-document profile
 ├── hooks/
-│   ├── usePageTitle.ts          # Context-aware browser tab title updater
-│   └── useDebounce.ts           # Debounce utility hook
+│   └── usePageTitle.ts          # Context-aware browser tab title updater
 ├── types/
-│   └── index.ts                 # Central TypeScript interfaces, enums, and data models
+│   └── index.ts                 # Central TypeScript interfaces, ROLES, and data models
 ├── services/                    # Domain-driven service layer
 │   ├── aiService.ts             # Gemini SDK wrapper with LRU localStorage cache
 │   ├── analyticsService.ts      # Event analytics aggregation and metrics
@@ -118,46 +121,73 @@ src/
 │   ├── registrationService.ts   # Atomic ticket checkout, reservation, and check-in
 │   └── userService.ts           # User and role administration
 ├── pages/
-│   ├── admin/                   # Administrative dashboards, user management, global analytics
-│   ├── organizer/               # Event creator workspace, attendee roster, on-site scanner
-│   ├── public/                  # Public event discovery, registration landing pages
-│   ├── payment/                 # QR payment portals and transaction status screens
+│   ├── admin/                   # Dashboards, user management, analytics, payment review
+│   ├── organizer/               # Organizer dashboard (workspace pages are shared)
+│   ├── public/                  # Public event registration landing page
+│   ├── payment/                 # Proof upload portal and transaction status screens
 │   ├── feedback/                # Attendee feedback submission portal
 │   ├── verification/            # Public certificate authenticity validator
-│   └── auth/                    # Login, signup, password reset
+│   ├── shared/                  # Certificates workspace (role-gated, not public)
+│   └── auth/                    # Login, password reset (self-signup is intentionally absent)
+├── config/
+│   └── app.ts                   # Canonical APP_URL + QR verification hosts
 └── components/                  # Reusable UI components
-    ├── admin/                   # Admin layout, navigation sidebar, stats widgets
-    ├── organizer/               # Event editor forms, attendee tables, check-in scanner
-    ├── shared/                  # Error boundaries, modals, toasts, cards, buttons
-    └── public/                  # Event hero, ticket selector, custom form fields
+    ├── admin/                   # Admin-only widgets
+    ├── organizer/               # Organizer-specific widgets
+    ├── shared/                  # DashboardShell, navbar, SkipLink, form builder/renderer
+    │   └── UI/                  # Button, Input, Badge, Card, Modal, Tabs, DataTable, spinners
+    └── public/                  # Ticket selector, promo codes, registration form
 ```
 
 ### 3.2 Routing & Access Control Hierarchy
-The routing architecture (`src/App.tsx`) enforces strict boundary separation through route guards:
 
-* **`PublicRoute`**: Accessible only by unauthenticated visitors. Redirects logged-in users to `/dashboard`.
-* **`ProtectedRoute`**: Requires valid Firebase Authentication. Includes optional `requiredRole` checking (`'admin'` or `'organizer'`).
-* **Open Routes**: Accessible to all (e.g. `/e/:slug` event registration, `/payment/:registrationId`, `/feedback/:eventId`, `/verify/:code`).
+Routes use a **single role-neutral namespace**. Data scoping — not route paths —
+is what separates admins from organizers, so a new page only needs one route.
 
-```mermaid
-flowchart TD
-    RouteReq[Browser Navigates to Route] --> GuardCheck{Route Guard Type}
-    
-    GuardCheck -- Open Route --> RenderPublic[Render Public Page: Registration / Verify / Payment]
-    
-    GuardCheck -- PublicRoute --> AuthStatus1{Is Logged In?}
-    AuthStatus1 -- Yes --> RedirectDash[Redirect to /dashboard]
-    AuthStatus1 -- No --> RenderAuth[Render Login / Signup / Forgot Password]
-    
-    GuardCheck -- ProtectedRoute --> AuthStatus2{Is Logged In?}
-    AuthStatus2 -- No --> RedirectLogin[Redirect to /login]
-    AuthStatus2 -- Yes --> RoleCheck{Required Role Specified?}
-    
-    RoleCheck -- No --> RenderPage[Render Protected Page]
-    RoleCheck -- Yes --> MatchRole{User Role == Required OR Admin?}
-    MatchRole -- Yes --> RenderPage
-    MatchRole -- No --> RedirectRoot[Redirect to /dashboard]
-```
+Authorization is a **CASL ability** built in `src/auth/ability.ts` from the
+signed-in user's profile. It is a UX layer: `firestore.rules` remains the only
+security boundary. `RequireAbility` reads it and turns a denial into a
+destination.
+
+| Route | Gate | Page |
+| :--- | :--- | :--- |
+| `/auth/login`, `/auth/forgot-password` | `RequireAnonymous` | Sign in, password reset |
+| `/login`, `/signup` | — | Legacy aliases redirecting to `/auth/login` |
+| `/`, `/dashboard` | `RequireAbility read Event` | `RoleBasedDashboard` renders the admin or organizer dashboard |
+| `/events`, `/events/create`, `/events/edit/:eventId` | `RequireAbility read all` | Platform-wide event list and editor (admin only) |
+| `/events/:eventId`, `/events/:eventId/:tab` | `RequireAbility read Event`, then `EventWorkspacePage` checks `manage` against the loaded event | Per-event workspace |
+| `/attendees`, `/check-in`, `/payments`, `/emails`, `/analytics`, `/certificates` | `RequireAbility read Event` | Legacy forwarders into the workspace tab of the same name |
+| `/users` | `RequireAbility read User` | User administration (admin only) |
+| `/forbidden` | open | Signed in but not permitted; says which role was needed |
+| `/e/:slug`, `/events/:eventId/register`, `/payment/*`, `/feedback/:eventId`, `/verify/:code` | open | Attendee-facing |
+| `*` | — | 404 |
+
+Two distinctions the gate depends on:
+
+- **Authentication and permission are different failures.** Signed out goes to
+  the login form carrying `?from=`, so a deep link survives the detour.
+  `LoginPage` re-validates `?from=` rather than trusting it. Signed in without
+  permission goes to `/forbidden`, which can explain why.
+- **Ownership is checked where the entity is, not in the gate.** CASL ignores a
+  rule's conditions when the argument is a subject *type*, so
+  `can('manage', 'Event')` answers true for an organizer whose `manage Event`
+  rule is conditioned on ownership. Route gates therefore only use the
+  unconditioned `read` verbs; `EventWorkspacePage` checks
+  `can('manage', asEvent(event))` once it has loaded the event, and a
+  non-owner falls through to the same "Event not found" shell — they should not
+  learn the event exists.
+
+`tests/unit/routeIntegrity.test.ts` parses the route table and fails the build if any
+`Link`/`navigate` target does not resolve, so a stale path cannot reach production.
+`tests/unit/ability.test.ts` pins the rule table, and
+`tests/dom/requireAbility.test.tsx` pins the gate's four outcomes.
+
+**Data scoping (Data Privacy Act 2012).** `registrations`, `feedback` and `activity_logs`
+are flat collections whose documents carry both `eventId` and a denormalized `organizerUid`.
+`firestore.rules` scopes them with `ownsDocByEventId()`, so an organizer can only ever read or
+modify records for events they own — they cannot read another organizer's attendee PII.
+Existing documents are backfilled by `scripts/backfill-organizer-uid.cjs`; documents without
+the field fall back to an event-ownership check until backfilled.
 
 ### 3.3 Dynamic Certificate Engine
 Certificates are generated via client-side composition or Cloud Functions:
@@ -323,7 +353,7 @@ sequenceDiagram
     Note over PyFn: Event concludes. Organizer triggers feedback blast.
     PyFn->>FS: Create /feedbackTokens for checked-in attendees
     PyFn->>Email: Send feedback request with secure token link
-    Email->>Attendee: Opens link (apohub.gdgdavao.com/feedback/:id?token=XYZ)
+    Email->>Attendee: Opens link (apohub.gdgdavao.org/feedback/:id?token=XYZ)
     Attendee->>Web: Opens Feedback Page
     Web->>PyFn: resolveFeedbackToken(token)
     PyFn-->>Web: Returns Attendee Name & Email
@@ -385,7 +415,7 @@ flowchart LR
 ### 7.1 Multi-Environment Setup
 | Parameter | Local Emulator Environment | Production Environment |
 | :--- | :--- | :--- |
-| **Frontend Host** | Vite Dev Server (`localhost:5173`) | Vercel Edge Network (`apohub.gdgdavao.com`) |
+| **Frontend Host** | Vite Dev Server (`localhost:5173`) | Vercel Edge Network (`apohub.gdgdavao.org`) |
 | **Auth** | Firebase Auth Emulator (`localhost:9099`) | Google Identity Toolkit |
 | **Firestore** | Firestore Emulator (`localhost:8080`) | Cloud Firestore (`asia-southeast2`) |
 | **Cloud Functions** | Functions Emulator (`localhost:5001`) | Cloud Functions v2 / Cloud Run (`asia-southeast2`) |
