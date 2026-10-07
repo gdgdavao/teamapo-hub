@@ -8,14 +8,27 @@ import {
   DocumentTextIcon,
   CurrencyDollarIcon
 } from '@heroicons/react/24/outline';
+import { useSearchParams } from 'react-router-dom';
 import { PaymentService, PaymentVerificationData } from '../../services/paymentService';
 import { useAuth } from '../../contexts/AuthContext';
-import AdminLayout from '../../components/admin/AdminLayout';
+import DashboardShell from '../../components/shared/DashboardShell';
 import { logger } from '../../utils/logger';
 import toast from 'react-hot-toast';
+import { Button, Modal } from '../../components/shared/UI';
 
-const AdminPaymentVerificationPage: React.FC = () => {
-  const { currentUser } = useAuth();
+interface AdminPaymentVerificationPageProps {
+  embedded?: boolean;
+  propEventId?: string;
+}
+
+const AdminPaymentVerificationPage: React.FC<AdminPaymentVerificationPageProps> = ({
+  embedded = false,
+  propEventId
+}) => {
+  const { currentUser, userProfile } = useAuth();
+  const [searchParams] = useSearchParams();
+  const eventId = propEventId || searchParams.get('eventId');
+  const LayoutComponent = DashboardShell;
   const [paymentProofs, setPaymentProofs] = useState<PaymentVerificationData[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('pending');
@@ -27,7 +40,9 @@ const AdminPaymentVerificationPage: React.FC = () => {
     const fetchPaymentProofs = async () => {
       try {
         setLoading(true);
-        const proofsData = await PaymentService.getAllPaymentProofs();
+        const proofsData = eventId 
+          ? await PaymentService.getPaymentProofsByEvent(eventId)
+          : await PaymentService.getAllPaymentProofs();
         setPaymentProofs(proofsData);
       } catch (error) {
         logger.error('Error fetching payment proofs:', error);
@@ -39,7 +54,7 @@ const AdminPaymentVerificationPage: React.FC = () => {
     };
 
     fetchPaymentProofs();
-  }, []);
+  }, [eventId]);
 
   const handleVerification = async (proofId: string, status: 'approved' | 'rejected') => {
     if (!currentUser) {
@@ -60,7 +75,9 @@ const AdminPaymentVerificationPage: React.FC = () => {
       );
 
       // Refresh payment proofs list
-      const updatedProofs = await PaymentService.getAllPaymentProofs();
+      const updatedProofs = eventId
+        ? await PaymentService.getPaymentProofsByEvent(eventId)
+        : await PaymentService.getAllPaymentProofs();
       setPaymentProofs(updatedProofs);
       
       toast.success(`Payment ${status} successfully`);
@@ -80,11 +97,11 @@ const AdminPaymentVerificationPage: React.FC = () => {
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'approved':
-        return <CheckCircleIcon className="w-5 h-5 text-green-500" />;
+        return <CheckCircleIcon className="w-5 h-5 text-success" />;
       case 'rejected':
-        return <XCircleIcon className="w-5 h-5 text-red-500" />;
+        return <XCircleIcon className="w-5 h-5 text-error" />;
       default:
-        return <ClockIcon className="w-5 h-5 text-yellow-500" />;
+        return <ClockIcon className="w-5 h-5 text-warning" />;
     }
   };
 
@@ -100,106 +117,84 @@ const AdminPaymentVerificationPage: React.FC = () => {
   };
 
   if (loading) {
-    return (
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="text-gray-600 mt-4">Loading payment verifications...</p>
+    if (embedded) {
+      return (
+        <div className="py-8 text-center">
+          <div className="motion-essential animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+          <p className="text-on-surface-variant mt-4">Loading payment verifications...</p>
         </div>
-      </div>
+      );
+    }
+    return (
+      <LayoutComponent>
+        <div className="py-lg">
+          <div className="text-center">
+            <div className="motion-essential animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+            <p className="text-on-surface-variant mt-4">Loading payment verifications...</p>
+          </div>
+        </div>
+      </LayoutComponent>
     );
   }
 
-  return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900">Payment Verification</h1>
-        <p className="text-gray-600 mt-2">Review and verify payment proofs from attendees</p>
-      </div>
+  const paymentContent = (
+    <div className="space-y-6">
+      {/*
+        No header block. There is only one shell, DashboardShell,
+        which already emits the page <h1> from the route. This page used to
+        render a second <h1> below it. The descriptive line moved to the
+        shell's `subtitle` prop on the LayoutComponent below, so it is no
+        longer hidden behind `!embedded`.
+      */}
 
-      {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <div className="flex items-center">
-            <ClockIcon className="w-8 h-8 text-yellow-500" />
-            <div className="ml-4">
-              <div className="text-2xl font-bold text-gray-900">
-                {paymentProofs.filter(p => p.verificationStatus === 'pending').length}
-              </div>
-              <div className="text-sm text-gray-600">Pending</div>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <div className="flex items-center">
-            <CheckCircleIcon className="w-8 h-8 text-green-500" />
-            <div className="ml-4">
-              <div className="text-2xl font-bold text-gray-900">
-                {paymentProofs.filter(p => p.verificationStatus === 'approved').length}
-              </div>
-              <div className="text-sm text-gray-600">Approved</div>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <div className="flex items-center">
-            <XCircleIcon className="w-8 h-8 text-red-500" />
-            <div className="ml-4">
-              <div className="text-2xl font-bold text-gray-900">
-                {paymentProofs.filter(p => p.verificationStatus === 'rejected').length}
-              </div>
-              <div className="text-sm text-gray-600">Rejected</div>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <div className="flex items-center">
-            <CurrencyDollarIcon className="w-8 h-8 text-blue-500" />
-            <div className="ml-4">
-              <div className="text-2xl font-bold text-gray-900">
-                ₱{paymentProofs.filter(p => p.verificationStatus === 'approved').reduce((sum, p) => sum + p.ticketPrice, 0).toLocaleString()}
-              </div>
-              <div className="text-sm text-gray-600">Total Revenue</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Filters */}
-      <div className="mb-6">
-        <div className="flex space-x-1 bg-gray-100 p-1 rounded-lg w-fit">
-          {(['all', 'pending', 'approved', 'rejected'] as const).map((status) => (
-            <button
-              key={status}
-              onClick={() => setFilter(status)}
-              className={`px-4 py-2 rounded-md text-sm font-medium capitalize transition-colors ${
-                filter === status
-                  ? 'bg-white text-gray-900 shadow-sm'
-                  : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              {status}
-              {status !== 'all' && (
-                <span className="ml-2 text-xs bg-gray-200 text-gray-600 px-2 py-1 rounded-full">
-                  {paymentProofs.filter(p => p.verificationStatus === status).length}
+      {/* Filters and Revenue Bar */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+        <div className="flex space-x-1 bg-surface-container p-1 rounded-lg w-fit" role="tablist" aria-label="Filter payments by status">
+          {(['all', 'pending', 'approved', 'rejected'] as const).map((status) => {
+            const count = status === 'all' 
+              ? paymentProofs.length 
+              : paymentProofs.filter(p => p.verificationStatus === status).length;
+            return (
+              <button
+                key={status}
+                role="tab"
+                aria-selected={filter === status}
+                onClick={() => setFilter(status)}
+                className={`inline-flex min-h-[44px] items-center px-4 py-2 rounded-md text-sm font-medium capitalize active:scale-[0.97] transition-[color,background-color,transform] duration-short2 ease-emphasized-standard focus:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+                  filter === status
+                    ? 'bg-white text-on-surface shadow-sm font-semibold'
+                    : 'text-on-surface-variant hover:text-on-surface'
+                }`}
+              >
+                <span>{status}</span>
+                <span className={`ml-2 text-xs px-2 py-0.5 rounded-full font-semibold transition-colors duration-fast ease-quart ${
+                  filter === status ? 'bg-primary-container text-primary animate-pop-in motion-reduce:animate-none' : 'bg-surface-container-high text-on-surface-variant'
+                }`}>
+                  {count}
                 </span>
-              )}
-            </button>
-          ))}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="flex items-center gap-2 px-4 py-2 bg-success-container border border-outline-variant rounded-lg self-start sm:self-auto">
+          <CurrencyDollarIcon className="w-5 h-5 text-success" />
+          <div className="text-sm">
+            <span className="text-success font-medium">Verified Revenue: </span>
+            <span className="font-bold text-on-success-container">
+              ₱{paymentProofs.filter(p => p.verificationStatus === 'approved').reduce((sum, p) => sum + p.ticketPrice, 0).toLocaleString()}
+            </span>
+          </div>
         </div>
       </div>
 
       {/* Payment Proofs List */}
-      <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+      <div className="bg-white rounded-lg border border-outline-variant overflow-hidden">
         {filteredProofs.length === 0 ? (
           <div className="text-center py-12">
-            <DocumentTextIcon className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">No payment proofs found</h3>
-            <p className="text-gray-600">
+            <DocumentTextIcon className="w-12 h-12 text-outline-variant mx-auto mb-4" />
+            <h3 className="text-lg font-medium text-on-surface mb-2">No payment proofs found</h3>
+            <p className="text-on-surface-variant">
               {filter === 'all' 
                 ? 'No payment proofs have been submitted yet.'
                 : `No ${filter} payment proofs found.`
@@ -208,54 +203,54 @@ const AdminPaymentVerificationPage: React.FC = () => {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+            <table className="min-w-full divide-y divide-outline-variant">
+              <thead className="bg-surface-container-low">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-on-surface-variant uppercase tracking-wider">
                     Attendee
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-on-surface-variant uppercase tracking-wider">
                     Event
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-on-surface-variant uppercase tracking-wider">
                     Amount
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-on-surface-variant uppercase tracking-wider">
                     Transaction ID
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-on-surface-variant uppercase tracking-wider">
                     Submitted
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-on-surface-variant uppercase tracking-wider">
                     Status
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-on-surface-variant uppercase tracking-wider">
                     Actions
                   </th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
+              <tbody className="bg-white divide-y divide-outline-variant">
                 {filteredProofs.map((proof) => (
-                  <tr key={proof.id} className="hover:bg-gray-50">
+                  <tr key={proof.id} className="hover:bg-surface-container-low transition-colors duration-fast ease-quart">
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div>
-                        <div className="text-sm font-medium text-gray-900">{proof.attendeeName}</div>
-                        <div className="text-sm text-gray-500">{proof.attendeeEmail}</div>
+                        <div className="text-sm font-medium text-on-surface">{proof.attendeeName}</div>
+                        <div className="text-sm text-on-surface-variant">{proof.attendeeEmail}</div>
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div>
-                        <div className="text-sm text-gray-900">{proof.eventTitle}</div>
-                        <div className="text-sm text-gray-500">{new Date(proof.eventDate).toLocaleDateString()}</div>
+                        <div className="text-sm text-on-surface">{proof.eventTitle}</div>
+                        <div className="text-sm text-on-surface-variant">{new Date(proof.eventDate).toLocaleDateString()}</div>
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-on-surface">
                       ₱{proof.ticketPrice.toLocaleString()}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-on-surface">
                       {proof.transactionId || 'N/A'}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-on-surface-variant">
                       {new Date(proof.submittedAt).toLocaleDateString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
@@ -264,10 +259,10 @@ const AdminPaymentVerificationPage: React.FC = () => {
                         <span className="ml-1 capitalize">{proof.verificationStatus}</span>
                       </span>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-on-surface-variant">
                       <button
                         onClick={() => setSelectedProof(proof)}
-                        className="flex items-center text-blue-600 hover:text-blue-900"
+                        className="inline-flex min-h-[40px] items-center text-primary hover:text-on-secondary-container active:scale-[0.97] transition-[color,transform] duration-short2 ease-emphasized-standard font-medium"
                       >
                         <EyeIcon className="w-4 h-4 mr-1" />
                         Review
@@ -283,61 +278,76 @@ const AdminPaymentVerificationPage: React.FC = () => {
 
       {/* Payment Proof Modal */}
       {selectedProof && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="p-6">
-              {/* Header */}
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="text-xl font-semibold text-gray-900">Payment Verification</h2>
-                <button
-                  onClick={() => setSelectedProof(null)}
-                  className="text-gray-400 hover:text-gray-600"
+        <Modal
+          open={!!selectedProof}
+          onClose={() => setSelectedProof(null)}
+          title="Payment Verification"
+          size="lg"
+          footer={
+            selectedProof.verificationStatus === 'pending' ? (
+              <>
+                <Button
+                  variant="tonal"
+                  icon={<CheckCircleIcon className="h-5 w-5" />}
+                  onClick={() => handleVerification(selectedProof.id, 'approved')}
                 >
-                  <XCircleIcon className="w-6 h-6" />
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                  Approve Payment
+                </Button>
+                <Button
+                  variant="danger"
+                  icon={<XCircleIcon className="h-5 w-5" />}
+                  onClick={() => handleVerification(selectedProof.id, 'rejected')}
+                >
+                  Reject Payment
+                </Button>
+                <Button variant="outlined" onClick={() => setSelectedProof(null)}>
+                  Cancel
+                </Button>
+              </>
+            ) : null
+          }
+        >
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 {/* Payment Details */}
                 <div>
-                  <h3 className="text-lg font-medium text-gray-900 mb-4">Payment Details</h3>
+                  <h3 className="text-lg font-medium text-on-surface mb-4">Payment Details</h3>
                   <div className="space-y-4">
-                    <div className="bg-gray-50 rounded-lg p-4">
+                    <div className="bg-surface-container-low rounded-lg p-4">
                       <div className="grid grid-cols-1 gap-3 text-sm">
                         <div>
-                          <span className="font-medium text-gray-700">Attendee:</span>
-                          <div className="text-gray-900">{selectedProof.attendeeName}</div>
-                          <div className="text-gray-500">{selectedProof.attendeeEmail}</div>
+                          <span className="font-medium text-on-surface-variant">Attendee:</span>
+                          <div className="text-on-surface">{selectedProof.attendeeName}</div>
+                          <div className="text-on-surface-variant">{selectedProof.attendeeEmail}</div>
                         </div>
                         <div>
-                          <span className="font-medium text-gray-700">Event:</span>
-                          <div className="text-gray-900">{selectedProof.eventTitle}</div>
-                          <div className="text-gray-500">{new Date(selectedProof.eventDate).toLocaleDateString()}</div>
+                          <span className="font-medium text-on-surface-variant">Event:</span>
+                          <div className="text-on-surface">{selectedProof.eventTitle}</div>
+                          <div className="text-on-surface-variant">{new Date(selectedProof.eventDate).toLocaleDateString()}</div>
                         </div>
                         <div>
-                          <span className="font-medium text-gray-700">Amount:</span>
-                          <div className="text-lg font-semibold text-green-600">₱{selectedProof.ticketPrice.toLocaleString()}</div>
+                          <span className="font-medium text-on-surface-variant">Amount:</span>
+                          <div className="text-lg font-semibold text-success">₱{selectedProof.ticketPrice.toLocaleString()}</div>
                         </div>
                         <div>
-                          <span className="font-medium text-gray-700">Transaction ID:</span>
-                          <div className="text-gray-900 font-mono">{selectedProof.transactionId || 'Not provided'}</div>
+                          <span className="font-medium text-on-surface-variant">Transaction ID:</span>
+                          <div className="text-on-surface font-mono">{selectedProof.transactionId || 'Not provided'}</div>
                         </div>
                         <div>
-                          <span className="font-medium text-gray-700">Submitted:</span>
-                          <div className="text-gray-900">{new Date(selectedProof.submittedAt).toLocaleString()}</div>
+                          <span className="font-medium text-on-surface-variant">Submitted:</span>
+                          <div className="text-on-surface">{new Date(selectedProof.submittedAt).toLocaleString()}</div>
                         </div>
                       </div>
                     </div>
 
                     {/* Current Status */}
-                    <div className="bg-gray-50 rounded-lg p-4">
-                      <h4 className="font-medium text-gray-700 mb-2">Current Status</h4>
+                    <div className="bg-surface-container-low rounded-lg p-4">
+                      <h4 className="font-medium text-on-surface-variant mb-2">Current Status</h4>
                       <div className="flex items-center">
                         {getStatusIcon(selectedProof.verificationStatus)}
                         <span className="ml-2 capitalize font-medium">{selectedProof.verificationStatus}</span>
                       </div>
                       {selectedProof.verificationStatus !== 'pending' && (
-                        <div className="mt-2 text-sm text-gray-600">
+                        <div className="mt-2 text-sm text-on-surface-variant">
                           <div>Verified by: {selectedProof.verifiedBy}</div>
                           <div>Date: {selectedProof.verifiedAt && new Date(selectedProof.verifiedAt).toLocaleString()}</div>
                           {selectedProof.notes && (
@@ -353,19 +363,19 @@ const AdminPaymentVerificationPage: React.FC = () => {
 
                 {/* Payment Proof Image */}
                 <div>
-                  <h3 className="text-lg font-medium text-gray-900 mb-4">Payment Proof</h3>
+                  <h3 className="text-lg font-medium text-on-surface mb-4">Payment Proof</h3>
                   {selectedProof.proofImageUrl ? (
-                    <div className="bg-gray-50 rounded-lg p-4">
+                    <div className="bg-surface-container-low rounded-lg p-4">
                       <img
                         src={selectedProof.proofImageUrl}
                         alt="Payment Proof"
-                        className="w-full max-w-md mx-auto rounded border border-gray-200"
+                        className="w-full max-w-md mx-auto rounded border border-outline-variant"
                       />
                     </div>
                   ) : (
-                    <div className="bg-gray-50 rounded-lg p-8 text-center">
-                      <PhotoIcon className="w-12 h-12 text-gray-400 mx-auto mb-2" />
-                      <p className="text-gray-500">No payment proof image provided</p>
+                    <div className="bg-surface-container-low rounded-lg p-8 text-center">
+                      <PhotoIcon className="w-12 h-12 text-on-surface-variant mx-auto mb-2" />
+                      <p className="text-on-surface-variant">No payment proof image provided</p>
                     </div>
                   )}
                 </div>
@@ -373,49 +383,35 @@ const AdminPaymentVerificationPage: React.FC = () => {
 
               {/* Verification Actions */}
               {selectedProof.verificationStatus === 'pending' && (
-                <div className="mt-8 border-t pt-6">
-                  <h3 className="text-lg font-medium text-gray-900 mb-4">Verification Decision</h3>
-                  
-                  <div className="mb-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Notes (Optional)</label>
-                    <textarea
-                      value={verificationNotes}
-                      onChange={(e) => setVerificationNotes(e.target.value)}
-                      placeholder="Add any notes about this verification..."
-                      rows={3}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
-                  </div>
+                <div className="mt-8 border-t border-outline-variant pt-6">
+                  <h3 className="text-lg font-medium text-on-surface mb-4">Verification Decision</h3>
 
-                  <div className="flex space-x-4">
-                    <button
-                      onClick={() => handleVerification(selectedProof.id, 'approved')}
-                      className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
-                    >
-                      <CheckCircleIcon className="w-4 h-4 mr-2" />
-                      Approve Payment
-                    </button>
-                    <button
-                      onClick={() => handleVerification(selectedProof.id, 'rejected')}
-                      className="flex items-center px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
-                    >
-                      <XCircleIcon className="w-4 h-4 mr-2" />
-                      Reject Payment
-                    </button>
-                    <button
-                      onClick={() => setSelectedProof(null)}
-                      className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
-                    >
-                      Cancel
-                    </button>
-                  </div>
+                  <label className="block text-sm font-medium text-on-surface-variant mb-2" htmlFor="verification-notes">
+                    Notes (Optional)
+                  </label>
+                  <textarea
+                    id="verification-notes"
+                    value={verificationNotes}
+                    onChange={(e) => setVerificationNotes(e.target.value)}
+                    placeholder="Add any notes about this verification..."
+                    rows={3}
+                    className="w-full px-3 py-2 border border-outline-variant rounded-lg bg-surface text-on-surface focus:ring-2 focus:ring-primary focus:border-transparent"
+                  />
                 </div>
               )}
-            </div>
-          </div>
-        </div>
+        </Modal>
       )}
     </div>
+  );
+
+  if (embedded) {
+    return paymentContent;
+  }
+
+  return (
+    <LayoutComponent subtitle="Review and verify payment proofs from attendees">
+      {paymentContent}
+    </LayoutComponent>
   );
 };
 

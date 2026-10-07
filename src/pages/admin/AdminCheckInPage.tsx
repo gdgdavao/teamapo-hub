@@ -10,14 +10,17 @@ import {
   MagnifyingGlassIcon
 } from '@heroicons/react/24/outline';
 import { CheckCircleIcon as CheckCircleSolidIcon, XCircleIcon as XCircleSolidIcon, ExclamationTriangleIcon, InformationCircleIcon } from '@heroicons/react/20/solid';
-import { doc, updateDoc, serverTimestamp, query, collection, where, getDocs } from 'firebase/firestore';
+import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../config/firebase';
-import AdminLayout from '../../components/admin/AdminLayout';
+import { SkeletonList } from '../../components/shared/UI/Skeleton';
+import DashboardShell from '../../components/shared/DashboardShell';
 import { useAuth } from '../../contexts/AuthContext';
 import { Registration as FirestoreRegistration, Event } from '../../types';
 import { ForceCheckInModal, WalkInRegistrationModal } from '../../components/shared/UI';
 import { RegistrationService } from '../../services/registrationService';
+import { EventService } from '../../services/eventService';
 import type { WalkInRegistrationData } from '../../components/shared/UI/WalkInRegistrationModal';
+import { useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { logger } from '../../utils/logger';
 import { BrowserQRCodeReader } from '@zxing/browser';
@@ -207,12 +210,12 @@ const DateWarningAlert: React.FC<DateWarningAlertProps> = ({ event, className = 
   
   const getIcon = () => {
     if (dateStatus.type === 'past' && dateStatus.severity === 'high') {
-      return <ExclamationTriangleIcon className="w-5 h-5 text-red-500" />;
+      return <ExclamationTriangleIcon className="w-5 h-5 text-error" />;
     }
     if (dateStatus.type === 'past') {
-      return <ExclamationTriangleIcon className="w-5 h-5 text-orange-500" />;
+      return <ExclamationTriangleIcon className="w-5 h-5 text-warning" />;
     }
-    return <InformationCircleIcon className="w-5 h-5 text-blue-500" />;
+    return <InformationCircleIcon className="w-5 h-5 text-primary" />;
   };
   
   return (
@@ -224,7 +227,7 @@ const DateWarningAlert: React.FC<DateWarningAlertProps> = ({ event, className = 
             {dateStatus.message}
           </p>
           {!dateStatus.canCheckIn && (
-            <p className="text-xs mt-1 opacity-80">
+            <p className="text-sm mt-1 opacity-80">
               Check-in may not be appropriate for this event date.
             </p>
           )}
@@ -234,8 +237,17 @@ const DateWarningAlert: React.FC<DateWarningAlertProps> = ({ event, className = 
   );
 };
 
-const AdminCheckInPage: React.FC = () => {
+interface AdminCheckInPageProps {
+  embedded?: boolean;
+  propEventId?: string;
+}
+
+const AdminCheckInPage: React.FC<AdminCheckInPageProps> = ({
+  embedded = false,
+  propEventId
+}) => {
   const { userProfile } = useAuth();
+  const [searchParams] = useSearchParams();
   const [registrations, setRegistrations] = useState<Registration[]>([]);
   const [loading, setLoading] = useState(true);
   const [isCameraActive, setIsCameraActive] = useState(false);
@@ -276,24 +288,33 @@ const AdminCheckInPage: React.FC = () => {
   const codeReaderRef = useRef<BrowserQRCodeReader | null>(null);
   const scanningRef = useRef<boolean>(false);
 
-  // Load registrations and events
+  // Events first — the roster is scoped to whichever event is selected.
   useEffect(() => {
-    fetchRegistrations();
-    fetchEvents();
-  }, []);
+    if (userProfile?.uid) fetchEvents();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userProfile?.uid]);
 
-  const fetchRegistrations = async () => {
+  useEffect(() => {
+    if (!currentEvent?.id) {
+      setRegistrations([]);
+      return;
+    }
+    fetchRegistrations(currentEvent.id);
+  }, [currentEvent?.id]);
+
+  const fetchRegistrations = async (eventId: string) => {
     try {
-      // Get all registrations and filter client-side for better debugging
-      const registrationsQuery = query(collection(db, 'registrations'));
-      
-      const snapshot = await getDocs(registrationsQuery);
+      // Scoped to one event: the page only ever displayed the selected event's roster,
+      // so reading the whole collection was pure waste. firestore.rules also scopes
+      // /registrations by organizerUid, so an unscoped read is denied outright.
+      const snapshot = await RegistrationService.getEventRegistrations(eventId);
       const regs: Registration[] = [];
-      
-      for (const doc of snapshot.docs) {
-        const data = doc.data() as FirestoreRegistration;
+
+      for (const reg of snapshot) {
+        const id = reg.id;
+        const data = reg as FirestoreRegistration;
         
-        log.debug('Raw registration data:', { docId: doc.id, data });
+        log.debug('Raw registration data:', { docId: id, data });
         
         // Map paymentStatus to match local interface
         const mapPaymentStatus = (status: any): Registration['paymentStatus'] => {
@@ -324,10 +345,10 @@ const AdminCheckInPage: React.FC = () => {
         
         // Map Firestore data to local interface
         regs.push({
-          id: doc.id,
+          id,
           qrCode: data.qrCode || '', // Include QR code for scanning
           attendee: {
-            id: data.userId || doc.id,
+            id: data.userId || id,
             name: data.userDetails?.name || 'Unknown',
             email: data.userDetails?.email || 'Unknown',
             phone: data.userDetails?.phoneNumber,
@@ -361,22 +382,30 @@ const AdminCheckInPage: React.FC = () => {
 
   const fetchEvents = async () => {
     try {
-      const eventsQuery = query(
-        collection(db, 'events'),
-        where('status', '==', 'published')
-      );
-      
-      const snapshot = await getDocs(eventsQuery);
-      const eventList: Event[] = [];
-      
-      snapshot.forEach(doc => {
-        eventList.push({ id: doc.id, ...doc.data() } as Event);
-      });
-      
+      // Organizers only see events they own: writes to another organizer's roster are
+      // denied by firestore.rules, so offering them would fail mid-queue at the door.
+      const isAdminUser = userProfile?.role === 'admin';
+      const eventList = isAdminUser || !userProfile?.uid
+        ? await EventService.getPublishedEvents()
+        : await EventService.getEventsByOrganizer(userProfile.uid);
+
       setEvents(eventList);
-      if (eventList.length > 0) {
-        setCurrentEvent(eventList[0]);
+      // Honour ?eventId= so a dashboard "Check in" CTA labelled with one
+      // specific event opens that event, not whichever sorts first. Falls back
+      // to the old behaviour when the param is absent or names an event this
+      // user can't see.
+      const requestedId = propEventId || searchParams.get('eventId');
+      const requested = requestedId
+        ? eventList.find((e) => e.id === requestedId)
+        : undefined;
+      if (requestedId && !requested) {
+        const directEvent = await EventService.getEvent(requestedId);
+        if (directEvent) {
+          setCurrentEvent(directEvent);
+          return;
+        }
       }
+      setCurrentEvent(requested ?? eventList[0] ?? null);
     } catch (error) {
       log.error('Error fetching events:', error);
     }
@@ -836,9 +865,9 @@ const AdminCheckInPage: React.FC = () => {
         registeredBy: userProfile.uid
       });
 
-      // Reload registrations to include the new walk-in
-      await fetchRegistrations();
-      await fetchEvents(); // Refresh event data with updated counts
+      // Refresh counts and pull the new walk-in into the roster
+      await fetchEvents();
+      if (currentEvent?.id) await fetchRegistrations(currentEvent.id);
 
       toast.success(`Walk-in registration completed! QR Code: ${result.qrCode}`);
     } catch (error: any) {
@@ -879,29 +908,27 @@ const AdminCheckInPage: React.FC = () => {
   const checkedIn = eventRegistrations.filter(r => r.status === 'attended' && filterBySearch(r));
 
   if (loading) {
-    return (
-      <AdminLayout title="Check-In" subtitle="Loading...">
-        <div className="animate-pulse space-y-6">
-          <div className="h-20 bg-gray-200 rounded-xl"></div>
-          <div className="space-y-4">
-            {[...Array(3)].map((_, i) => (
-              <div key={i} className="h-24 bg-gray-200 rounded-xl"></div>
-            ))}
-          </div>
+    if (embedded) {
+      return (
+        <div className="py-6">
+          <SkeletonList rows={3} />
         </div>
-      </AdminLayout>
+      );
+    }
+    return (
+      <DashboardShell title="Check-In" subtitle="Loading...">
+        <SkeletonList rows={3} />
+      </DashboardShell>
     );
   }
 
-  return (
-    <AdminLayout 
-      title="Check-In Station" 
-      subtitle="Scan QR codes to check in attendees"
-    >
+  const checkInContent = (
+    <>
       <div className="space-y-6">
-        {/* Event Selector */}
-        <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
+      {/* Event Selector (standalone only) */}
+      {!embedded && (
+        <div className="bg-white rounded-xl border border-outline-variant p-4">
+          <label className="block text-sm font-medium text-on-surface-variant mb-2">
             Select Event
           </label>
           <select
@@ -910,7 +937,7 @@ const AdminCheckInPage: React.FC = () => {
               const event = events.find(ev => ev.id === e.target.value);
               setCurrentEvent(event || null);
             }}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="w-full px-3 py-2 border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
           >
             {events.map(event => (
               <option key={event.id} value={event.id}>
@@ -919,26 +946,27 @@ const AdminCheckInPage: React.FC = () => {
             ))}
           </select>
         </div>
+      )}
 
-        {/* Date Warning Alert */}
+      {/* Date Warning Alert */}
         <DateWarningAlert event={currentEvent} />
 
         {/* Walk-In Registration Button - Only show for published/ongoing events */}
         {currentEvent && (currentEvent.status === 'published' || currentEvent.status === 'ongoing') && (
-          <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-4">
+          <div className="bg-gradient-to-r from-surface-container-low to-primary-container border border-outline-variant rounded-xl p-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-3">
-                <div className="bg-blue-100 p-2 rounded-lg">
-                  <UserPlusIcon className="h-6 w-6 text-blue-600" />
+                <div className="bg-secondary-container p-2 rounded-lg">
+                  <UserPlusIcon className="h-6 w-6 text-primary" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-semibold text-gray-900">Walk-In Registration</h3>
-                  <p className="text-xs text-gray-600">Register attendees on-site without online payment</p>
+                  <h3 className="text-sm font-semibold text-on-surface">Walk-In Registration</h3>
+                  <p className="text-sm text-on-surface-variant">Register attendees on-site without online payment</p>
                 </div>
               </div>
               <button
                 onClick={() => setIsWalkInModalOpen(true)}
-                className="px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors flex items-center space-x-2"
+                className="px-4 py-2 bg-primary text-white font-medium rounded-lg hover:bg-primary-hover transition-colors flex items-center space-x-2"
               >
                 <UserPlusIcon className="h-5 w-5" />
                 <span>Add Walk-In</span>
@@ -947,54 +975,35 @@ const AdminCheckInPage: React.FC = () => {
           </div>
         )}
 
-        {/* Quick Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="bg-white rounded-xl border border-gray-200 p-6">
-            <div className="flex items-center">
-              <div className="p-3 bg-green-100 rounded-lg">
-                <CheckCircleSolidIcon className="w-6 h-6 text-green-600" />
-              </div>
-              <div className="ml-4">
-                <p className="text-sm text-gray-600">Checked In</p>
-                <p className="text-2xl font-bold text-gray-900">{checkedIn.length}</p>
-              </div>
-            </div>
-          </div>
-          
-          <div className="bg-white rounded-xl border border-gray-200 p-6">
-            <div className="flex items-center">
-              <div className="p-3 bg-blue-100 rounded-lg">
-                <UserGroupIcon className="w-6 h-6 text-blue-600" />
-              </div>
-              <div className="ml-4">
-                <p className="text-sm text-gray-600">Ready for Check-in</p>
-                <p className="text-2xl font-bold text-gray-900">{readyForCheckin.length}</p>
-              </div>
-            </div>
-          </div>
-          
-          <div className="bg-white rounded-xl border border-gray-200 p-6">
-            <div className="flex items-center">
-              <div className="p-3 bg-purple-100 rounded-lg">
-                <UserGroupIcon className="w-6 h-6 text-purple-600" />
-              </div>
-              <div className="ml-4">
-                <p className="text-sm text-gray-600">Total Approved</p>
-                <p className="text-2xl font-bold text-gray-900">{eventRegistrations.filter(r => r.status === 'approved').length}</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
         {/* Camera Scanner */}
-        <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <div className="text-center">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">QR Code Scanner</h3>
+        <div className="bg-white rounded-xl border border-outline-variant p-6">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6 pb-4 border-b border-outline-variant">
+            <div>
+              <h3 className="text-lg font-semibold text-on-surface">QR Code Scanner</h3>
+              <p className="text-sm text-on-surface-variant">Scan attendee QR badges or search below to check attendees in.</p>
+            </div>
+            <div className="flex items-center gap-3 self-start sm:self-auto bg-surface-container-low border border-outline-variant px-3.5 py-1.5 rounded-lg">
+              <div className="flex items-center gap-2">
+                <CheckCircleSolidIcon className="w-5 h-5 text-success" />
+                <span className="text-sm font-semibold text-on-surface">
+                  {checkedIn.length} / {readyForCheckin.length + checkedIn.length}
+                </span>
+                <span className="text-xs text-on-surface-variant font-medium">Checked In</span>
+              </div>
+              <span className="text-outline-variant">|</span>
+              <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-success-container text-on-success-container">
+                {readyForCheckin.length + checkedIn.length > 0 
+                  ? `${Math.round((checkedIn.length / (readyForCheckin.length + checkedIn.length)) * 100)}%` 
+                  : '0%'}
+              </span>
+            </div>
+          </div>
             
+          <div className="text-center">
             {/* Camera Preview */}
             <div className="mb-6">
               <div className="max-w-md mx-auto">
-                <div className="relative bg-gray-100 rounded-lg overflow-hidden">
+                <div className="relative bg-surface-container rounded-lg overflow-hidden">
                   <video
                     ref={videoRef}
                     className="w-full h-64 object-cover"
@@ -1005,36 +1014,42 @@ const AdminCheckInPage: React.FC = () => {
                   <div className="absolute inset-0 flex items-center justify-center">
                     {!isCameraActive && (
                       <div className="text-center">
-                        <CameraIcon className="mx-auto h-12 w-12 text-gray-400 mb-2" />
-                        <p className="text-sm text-gray-600">Camera not active</p>
+                        <CameraIcon className="mx-auto h-12 w-12 text-outline-variant mb-2" />
+                        <p className="text-sm text-on-surface-variant">Camera not active</p>
                       </div>
                     )}
                   </div>
                   {/* Scanning overlay */}
                   {isCameraActive && (
                     <div className="absolute inset-0 pointer-events-none">
-                      <div className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-48 h-48 border-2 rounded-lg transition-all ${
-                        isScanning ? 'border-blue-500 animate-pulse' : 'border-green-500'
+                      <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-48 border-2 rounded-lg transition-colors duration-fast ease-quart overflow-hidden ${
+                        isScanning ? 'border-primary' : 'border-success'
                       }`}>
+                        {isScanning && (
+                          <div
+                            className="absolute inset-x-0 h-0.5 bg-gradient-to-r from-transparent via-primary to-transparent animate-scanline motion-reduce:hidden pointer-events-none"
+                            style={{ top: '50%' }}
+                          />
+                        )}
                         <div className={`absolute -top-1 -left-1 w-4 h-4 border-t-2 border-l-2 rounded-tl-lg ${
-                          isScanning ? 'border-blue-500' : 'border-green-500'
+                          isScanning ? 'border-primary' : 'border-success'
                         }`}></div>
                         <div className={`absolute -top-1 -right-1 w-4 h-4 border-t-2 border-r-2 rounded-tr-lg ${
-                          isScanning ? 'border-blue-500' : 'border-green-500'
+                          isScanning ? 'border-primary' : 'border-success'
                         }`}></div>
                         <div className={`absolute -bottom-1 -left-1 w-4 h-4 border-b-2 border-l-2 rounded-bl-lg ${
-                          isScanning ? 'border-blue-500' : 'border-green-500'
+                          isScanning ? 'border-primary' : 'border-success'
                         }`}></div>
                         <div className={`absolute -bottom-1 -right-1 w-4 h-4 border-b-2 border-r-2 rounded-br-lg ${
-                          isScanning ? 'border-blue-500' : 'border-green-500'
+                          isScanning ? 'border-primary' : 'border-success'
                         }`}></div>
                       </div>
                       {/* Scanning status indicator */}
                       <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2">
-                        <div className={`px-3 py-1 rounded-full text-xs font-medium ${
+                        <div className={`px-3 py-1 rounded-full text-sm font-medium ${
                           isScanning 
-                            ? 'bg-blue-500 text-white' 
-                            : 'bg-green-500 text-white'
+                            ? 'bg-primary text-white' 
+                            : 'bg-success text-white'
                         }`}>
                           {isScanning ? '🔍 Scanning...' : '✓ Ready'}
                         </div>
@@ -1047,14 +1062,14 @@ const AdminCheckInPage: React.FC = () => {
                   {!isCameraActive ? (
                     <button
                       onClick={startCamera}
-                      className="w-full px-4 py-3 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition-colors"
+                      className="w-full min-h-[48px] px-4 py-3 bg-success text-white font-medium rounded-lg hover:bg-success-hover active:scale-[0.98] transition-[background-color,transform] duration-short2 ease-emphasized-standard"
                     >
                       📷 Start Camera
                     </button>
                   ) : (
                     <button
                       onClick={stopCamera}
-                      className="w-full px-4 py-3 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition-colors"
+                      className="w-full min-h-[48px] px-4 py-3 bg-error text-white font-medium rounded-lg hover:bg-error-hover active:scale-[0.98] transition-[background-color,transform] duration-short2 ease-emphasized-standard"
                     >
                       🛑 Stop Camera
                     </button>
@@ -1071,14 +1086,14 @@ const AdminCheckInPage: React.FC = () => {
                   placeholder="Or enter QR code manually..."
                   value={scannedQRCode}
                   onChange={(e) => setScannedQRCode(e.target.value)}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-center text-lg"
+                  className="w-full px-4 py-3 border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent text-center text-lg"
                   onKeyPress={(e) => e.key === 'Enter' && handleQRCodeScan(scannedQRCode)}
                 />
               </div>
               <button
                 onClick={() => handleQRCodeScan(scannedQRCode)}
                 disabled={!scannedQRCode.trim()}
-                className="w-full px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+                className="w-full px-6 py-3 bg-primary text-white font-medium rounded-lg hover:bg-primary-hover disabled:bg-surface-container-highest disabled:cursor-not-allowed transition-colors"
               >
                 Check In Attendee
               </button>
@@ -1088,28 +1103,28 @@ const AdminCheckInPage: React.FC = () => {
 
         {/* Check-in Result */}
         {checkinResult && (
-          <div className={`bg-white rounded-xl border p-6 ${
+          <div className={`rounded-xl border p-6 ${
             checkinResult.success 
-              ? 'border-green-200 bg-green-50' 
-              : 'border-red-200 bg-red-50'
+              ? 'border-outline-variant bg-success-container animate-success-pop motion-reduce:animate-none' 
+              : 'border-outline-variant bg-error-container animate-micro-shake motion-reduce:animate-none'
           }`}>
             <div className="text-center">
-              <div className={`inline-flex items-center justify-center w-12 h-12 rounded-full ${
-                checkinResult.success ? 'bg-green-100' : 'bg-red-100'
-              } mb-4`}>
+              <div className={`relative inline-flex items-center justify-center w-14 h-14 rounded-full ${
+                checkinResult.success ? 'bg-success/15 ring-4 ring-success/20' : 'bg-error/15 ring-4 ring-error/20'
+              } mb-4 animate-pop-in motion-reduce:animate-none`}>
                 {checkinResult.success ? (
-                  <CheckCircleSolidIcon className="w-6 h-6 text-green-600" />
+                  <CheckCircleSolidIcon className="w-8 h-8 text-success" />
                 ) : (
-                  <XCircleSolidIcon className="w-6 h-6 text-red-600" />
+                  <XCircleSolidIcon className="w-8 h-8 text-error" />
                 )}
               </div>
               <h3 className={`text-lg font-semibold mb-2 ${
-                checkinResult.success ? 'text-green-900' : 'text-red-900'
+                checkinResult.success ? 'text-on-success-container' : 'text-on-error-container'
               }`}>
                 {checkinResult.success ? 'Check-in Successful!' : 'Check-in Failed'}
               </h3>
               <p className={`text-sm ${
-                checkinResult.success ? 'text-green-700' : 'text-red-700'
+                checkinResult.success ? 'text-success font-medium' : 'text-error font-medium'
               }`}>
                 {checkinResult.message}
               </p>
@@ -1118,33 +1133,33 @@ const AdminCheckInPage: React.FC = () => {
         )}
 
         {/* Attendees Management Tabs */}
-        <div className="bg-white rounded-xl border border-gray-200">
+        <div className="bg-white rounded-xl border border-outline-variant">
           {/* Tab Navigation */}
-          <div className="border-b border-gray-200">
+          <div className="border-b border-outline-variant">
             <nav className="flex space-x-8 px-6">
               <button
                 onClick={() => setActiveTab('ready')}
-                className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                className={`py-4 px-1 min-h-[48px] border-b-2 font-medium text-sm transition-[color,border-color,transform] duration-short2 ease-emphasized-standard active:scale-[0.98] ${
                   activeTab === 'ready'
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    ? 'border-primary text-primary'
+                    : 'border-transparent text-on-surface-variant hover:text-on-surface hover:border-outline'
                 }`}
               >
                 Ready for Check-in
-                <span className="ml-2 py-0.5 px-2 rounded-full text-xs bg-blue-100 text-blue-800">
+                <span className="ml-2 py-0.5 px-2 rounded-full text-sm bg-secondary-container text-on-secondary-container">
                   {readyForCheckin.length}
                 </span>
               </button>
               <button
                 onClick={() => setActiveTab('checkedIn')}
-                className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                className={`py-4 px-1 min-h-[48px] border-b-2 font-medium text-sm transition-[color,border-color,transform] duration-short2 ease-emphasized-standard active:scale-[0.98] ${
                   activeTab === 'checkedIn'
-                    ? 'border-green-500 text-green-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    ? 'border-success text-success'
+                    : 'border-transparent text-on-surface-variant hover:text-on-surface hover:border-outline'
                 }`}
               >
                 Checked In
-                <span className="ml-2 py-0.5 px-2 rounded-full text-xs bg-green-100 text-green-800">
+                <span className="ml-2 py-0.5 px-2 rounded-full text-sm bg-success-container text-on-success-container">
                   {checkedIn.length}
                 </span>
               </button>
@@ -1158,12 +1173,12 @@ const AdminCheckInPage: React.FC = () => {
                 <div className="mb-4">
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex-1">
-                      <h3 className="text-lg font-semibold text-gray-900">Attendees Ready for Check-in</h3>
+                      <h3 className="text-lg font-semibold text-on-surface">Attendees Ready for Check-in</h3>
                       {(() => {
                         const dateStatus = getEventDateStatus(currentEvent);
                         if (dateStatus && !dateStatus.canCheckIn) {
                           return (
-                            <p className="text-sm text-amber-600 mt-1 flex items-center">
+                            <p className="text-sm text-warning mt-1 flex items-center">
                               <ExclamationTriangleIcon className="w-4 h-4 mr-1" />
                               {dateStatus.message} - Check-ins should be verified
                             </p>
@@ -1177,19 +1192,19 @@ const AdminCheckInPage: React.FC = () => {
                   {/* Search Bar */}
                   <div className="relative">
                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                      <MagnifyingGlassIcon className="h-5 w-5 text-gray-400" />
+                      <MagnifyingGlassIcon className="h-5 w-5 text-outline-variant" />
                     </div>
                     <input
                       type="text"
                       placeholder="Search by name, email, organization, phone, or registration ID..."
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      className="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder-gray-400"
+                      className="block w-full pl-10 pr-3 py-2.5 border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent placeholder-gray-400"
                     />
                     {searchQuery && (
                       <button
                         onClick={() => setSearchQuery('')}
-                        className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
+                        className="absolute inset-y-0 right-0 pr-3 flex items-center text-outline-variant hover:text-on-surface"
                       >
                         <XMarkIcon className="h-5 w-5" />
                       </button>
@@ -1198,8 +1213,8 @@ const AdminCheckInPage: React.FC = () => {
                   
                   {/* Search results indicator */}
                   {searchQuery && readyForCheckin.length > 0 && (
-                    <div className="mt-2 text-sm text-gray-600">
-                      Found <span className="font-semibold text-blue-600">{readyForCheckin.length}</span> attendee{readyForCheckin.length !== 1 ? 's' : ''} matching "{searchQuery}"
+                    <div className="mt-2 text-sm text-on-surface-variant">
+                      Found <span className="font-semibold text-primary">{readyForCheckin.length}</span> attendee{readyForCheckin.length !== 1 ? 's' : ''} matching "{searchQuery}"
                     </div>
                   )}
                 </div>
@@ -1208,23 +1223,23 @@ const AdminCheckInPage: React.FC = () => {
                   <div className="text-center py-8">
                     {searchQuery ? (
                       <>
-                        <MagnifyingGlassIcon className="mx-auto h-12 w-12 text-gray-400" />
-                        <h3 className="mt-2 text-sm font-medium text-gray-900">No attendees found</h3>
-                        <p className="mt-1 text-sm text-gray-500">
+                        <MagnifyingGlassIcon className="mx-auto h-12 w-12 text-outline-variant" />
+                        <h3 className="mt-2 text-sm font-medium text-on-surface">No attendees found</h3>
+                        <p className="mt-1 text-sm text-on-surface-variant">
                           No attendees match your search "{searchQuery}"
                         </p>
                         <button
                           onClick={() => setSearchQuery('')}
-                          className="mt-3 text-sm text-blue-600 hover:text-blue-800 font-medium"
+                          className="mt-3 text-sm text-primary hover:text-on-secondary-container font-medium"
                         >
                           Clear search
                         </button>
                       </>
                     ) : (
                       <>
-                        <UserGroupIcon className="mx-auto h-12 w-12 text-gray-400" />
-                        <h3 className="mt-2 text-sm font-medium text-gray-900">No attendees ready for check-in</h3>
-                        <p className="mt-1 text-sm text-gray-500">
+                        <UserGroupIcon className="mx-auto h-12 w-12 text-outline-variant" />
+                        <h3 className="mt-2 text-sm font-medium text-on-surface">No attendees ready for check-in</h3>
+                        <p className="mt-1 text-sm text-on-surface-variant">
                           All approved and paid attendees have been checked in.
                         </p>
                       </>
@@ -1233,25 +1248,26 @@ const AdminCheckInPage: React.FC = () => {
                 ) : (
                   <div className="space-y-3 max-h-96 overflow-y-auto">
                     {readyForCheckin.map((registration) => (
-                      <div key={registration.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                      <div key={registration.id} className="flex items-center justify-between p-4 bg-surface-container-low rounded-lg">
                         <div className="flex items-center space-x-3">
-                          <div className="h-10 w-10 bg-blue-100 rounded-full flex items-center justify-center">
-                            <span className="text-sm font-medium text-blue-600">
+                          <div className="h-10 w-10 bg-secondary-container rounded-full flex items-center justify-center">
+                            <span className="text-sm font-medium text-primary">
                               {registration.attendee.name.charAt(0).toUpperCase()}
                             </span>
                           </div>
                           <div>
-                            <p className="font-medium text-gray-900">{registration.attendee.name}</p>
-                            <p className="text-sm text-gray-500">{registration.attendee.email}</p>
+                            <p className="font-medium text-on-surface">{registration.attendee.name}</p>
+                            <p className="text-sm text-on-surface-variant">{registration.attendee.email}</p>
                             {registration.attendee.organization && (
-                              <p className="text-xs text-gray-400">{registration.attendee.organization}</p>
+                              <p className="text-sm text-outline-variant">{registration.attendee.organization}</p>
                             )}
                           </div>
                         </div>
                         <button
                           onClick={() => handleManualCheckin(registration.id)}
-                          className="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors"
+                          className="min-h-[48px] px-4 py-2 bg-success text-white text-sm font-medium rounded-lg hover:bg-success-hover active:scale-[0.97] transition-[color,background-color,transform] duration-short2 ease-emphasized-standard flex items-center gap-1.5"
                         >
+                          <CheckIcon className="w-4 h-4" />
                           Check In
                         </button>
                       </div>
@@ -1263,26 +1279,26 @@ const AdminCheckInPage: React.FC = () => {
               <div>
                 <div className="mb-4">
                   <div className="flex items-center justify-between mb-2">
-                    <h3 className="text-lg font-semibold text-gray-900">Checked In Attendees</h3>
-                    <p className="text-sm text-gray-500">{checkedIn.length} checked in</p>
+                    <h3 className="text-lg font-semibold text-on-surface">Checked In Attendees</h3>
+                    <p className="text-sm text-on-surface-variant">{checkedIn.length} checked in</p>
                   </div>
                   
                   {/* Search Bar */}
                   <div className="relative">
                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                      <MagnifyingGlassIcon className="h-5 w-5 text-gray-400" />
+                      <MagnifyingGlassIcon className="h-5 w-5 text-outline-variant" />
                     </div>
                     <input
                       type="text"
                       placeholder="Search by name, email, organization, phone, or registration ID..."
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      className="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent placeholder-gray-400"
+                      className="block w-full pl-10 pr-3 py-2.5 border border-outline-variant rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent placeholder-gray-400"
                     />
                     {searchQuery && (
                       <button
                         onClick={() => setSearchQuery('')}
-                        className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
+                        className="absolute inset-y-0 right-0 pr-3 flex items-center text-outline-variant hover:text-on-surface"
                       >
                         <XMarkIcon className="h-5 w-5" />
                       </button>
@@ -1291,8 +1307,8 @@ const AdminCheckInPage: React.FC = () => {
                   
                   {/* Search results indicator */}
                   {searchQuery && checkedIn.length > 0 && (
-                    <div className="mt-2 text-sm text-gray-600">
-                      Found <span className="font-semibold text-green-600">{checkedIn.length}</span> checked-in attendee{checkedIn.length !== 1 ? 's' : ''} matching "{searchQuery}"
+                    <div className="mt-2 text-sm text-on-surface-variant">
+                      Found <span className="font-semibold text-success">{checkedIn.length}</span> checked-in attendee{checkedIn.length !== 1 ? 's' : ''} matching "{searchQuery}"
                     </div>
                   )}
                 </div>
@@ -1301,23 +1317,23 @@ const AdminCheckInPage: React.FC = () => {
                   <div className="text-center py-8">
                     {searchQuery ? (
                       <>
-                        <MagnifyingGlassIcon className="mx-auto h-12 w-12 text-gray-400" />
-                        <h3 className="mt-2 text-sm font-medium text-gray-900">No attendees found</h3>
-                        <p className="mt-1 text-sm text-gray-500">
+                        <MagnifyingGlassIcon className="mx-auto h-12 w-12 text-outline-variant" />
+                        <h3 className="mt-2 text-sm font-medium text-on-surface">No attendees found</h3>
+                        <p className="mt-1 text-sm text-on-surface-variant">
                           No checked-in attendees match your search "{searchQuery}"
                         </p>
                         <button
                           onClick={() => setSearchQuery('')}
-                          className="mt-3 text-sm text-green-600 hover:text-green-800 font-medium"
+                          className="mt-3 text-sm text-success hover:text-on-success-container font-medium"
                         >
                           Clear search
                         </button>
                       </>
                     ) : (
                       <>
-                        <CheckCircleIcon className="mx-auto h-12 w-12 text-gray-400" />
-                        <h3 className="mt-2 text-sm font-medium text-gray-900">No attendees checked in yet</h3>
-                        <p className="mt-1 text-sm text-gray-500">
+                        <CheckCircleIcon className="mx-auto h-12 w-12 text-outline-variant" />
+                        <h3 className="mt-2 text-sm font-medium text-on-surface">No attendees checked in yet</h3>
+                        <p className="mt-1 text-sm text-on-surface-variant">
                           Checked in attendees will appear here.
                         </p>
                       </>
@@ -1326,22 +1342,22 @@ const AdminCheckInPage: React.FC = () => {
                 ) : (
                   <div className="space-y-3 max-h-96 overflow-y-auto">
                     {checkedIn.map((registration) => (
-                      <div key={registration.id} className="flex items-center justify-between p-4 bg-green-50 rounded-lg">
+                      <div key={registration.id} className="flex items-center justify-between p-4 bg-success-container rounded-lg">
                         <div className="flex items-center space-x-3">
-                          <div className="h-10 w-10 bg-green-100 rounded-full flex items-center justify-center">
-                            <CheckIcon className="h-5 w-5 text-green-600" />
+                          <div className="h-10 w-10 bg-success-container rounded-full flex items-center justify-center">
+                            <CheckIcon className="h-5 w-5 text-success" />
                           </div>
                           <div>
-                            <p className="font-medium text-gray-900">{registration.attendee.name}</p>
-                            <p className="text-sm text-gray-500">{registration.attendee.email}</p>
+                            <p className="font-medium text-on-surface">{registration.attendee.name}</p>
+                            <p className="text-sm text-on-surface-variant">{registration.attendee.email}</p>
                             {registration.attendee.organization && (
-                              <p className="text-xs text-gray-400">{registration.attendee.organization}</p>
+                              <p className="text-sm text-outline-variant">{registration.attendee.organization}</p>
                             )}
                           </div>
                         </div>
                         <div className="text-right">
-                          <span className="text-sm text-green-600 font-medium">✓ Checked In</span>
-                          <p className="text-xs text-gray-500">Just now</p>
+                          <span className="text-sm text-success font-medium">✓ Checked In</span>
+                          <p className="text-sm text-on-surface-variant">Just now</p>
                         </div>
                       </div>
                     ))}
@@ -1373,7 +1389,20 @@ const AdminCheckInPage: React.FC = () => {
           onSubmit={handleWalkInRegistration}
         />
       )}
-    </AdminLayout>
+    </>
+  );
+
+  if (embedded) {
+    return checkInContent;
+  }
+
+  return (
+    <DashboardShell 
+      title="Check-In Station" 
+      subtitle="Scan QR codes to check in attendees"
+    >
+      {checkInContent}
+    </DashboardShell>
   );
 };
 

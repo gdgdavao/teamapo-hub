@@ -11,6 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
 
 // vi.mock calls must be at the top level — Vitest hoists them before imports.
 vi.mock('firebase/firestore', () => ({
@@ -125,5 +126,27 @@ describe('Dashboard effect dep stability', () => {
       expect(typeof dep).not.toBe('object');
     }
     expect(stableDeps).toHaveLength(2);
+  });
+
+  it('AdminDashboardPage useEffect depends only on primitives', () => {
+    const code = readFileSync('src/pages/admin/AdminDashboardPage.tsx', 'utf-8');
+    // The rule is "primitive deps only", not one particular spelling. Depending
+    // on currentUser or userProfile directly would re-fetch in a loop, because
+    // both are fresh objects on every auth re-render. canReadAll is a boolean
+    // that stands in for userProfile.role.
+    expect(code).toMatch(/fetchDashboardData\(\);[\s\S]*\[currentUser\?\.uid,\s*canReadAll\]/);
+    expect(code).not.toMatch(/fetchDashboardData\(\);[\s\S]*previousPendingCount/);
+    expect(code).not.toMatch(/\[\s*currentUser\s*,/);      // object identity
+    expect(code).not.toMatch(/\[userProfile\.role\]/);       // now a boolean
+  });
+
+  it('DashboardNavbar does not trigger refreshUserProfile in a mount effect', () => {
+    const code = readFileSync('src/components/shared/DashboardNavbar.tsx', 'utf-8');
+    expect(code).not.toContain('refreshUserProfile();');
+  });
+
+  it('DashboardNavbar does not mount NotificationDropdown', () => {
+    const code = readFileSync('src/components/shared/DashboardNavbar.tsx', 'utf-8');
+    expect(code).not.toContain('<NotificationDropdown');
   });
 });

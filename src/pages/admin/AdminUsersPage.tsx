@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useAbility } from '@casl/react';
 import { 
   UserGroupIcon, 
   PlusIcon, 
@@ -13,17 +14,19 @@ import {
   ChevronDownIcon,
   ArrowPathIcon
 } from '@heroicons/react/24/outline';
-import { deleteDoc, doc } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { User } from '../../types';
-import AdminLayout from '../../components/admin/AdminLayout';
+import DashboardShell from '../../components/shared/DashboardShell';
 import { useAuth } from '../../contexts/AuthContext';
 import { UserService, UserWithMetadata } from '../../services/userService';
+import { asUser } from '../../auth/ability';
 import { logger } from '../../utils/logger';
 import toast from 'react-hot-toast';
+import { Button, Modal } from '../../components/shared/UI';
 
 const AdminUsersPage: React.FC = () => {
   const { updateAnyUserProfile, currentUser, createUser } = useAuth();
+  const ability = useAbility();
   const [users, setUsers] = useState<UserWithMetadata[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -61,7 +64,7 @@ const AdminUsersPage: React.FC = () => {
     try {
       await UserService.deleteUser(userId);
       setUsers(users.filter(user => user.uid !== userId));
-      toast.success('User deleted successfully');
+      toast.success('User deleted and signed out everywhere');
       setShowDeleteModal(false);
       setDeletingUser(null);
     } catch (error) {
@@ -99,24 +102,19 @@ const AdminUsersPage: React.FC = () => {
     }
   };
 
-  // Check if current user is the superuser
-  const superUserEmail = import.meta.env.VITE_SUPERUSER_EMAIL || 'admin@example.test';
-  const isSuperUser = currentUser?.email === superUserEmail;
-
-  // Check if a user can be deleted
-  const canDeleteUser = (user: UserWithMetadata) => {
-    // Prevent users from deleting their own account
-    if (user.uid === currentUser?.uid) return false;
-    
-    // Superuser can delete anyone else (except themselves)
-    if (isSuperUser) return true;
-    
-    // Regular admins cannot delete other admins
-    if (user.role === 'admin') return false;
-    
-    // Can delete organizers
-    return true;
-  };
+  // Whether this account may delete a given user. One question, asked of the
+  // ability, rather than a private copy of the rule that the button, the bulk
+  // selection and the confirmation modal each re-derived - they drifted apart,
+  // and the "Cannot Delete" state the button showed was not the rule the bulk
+  // path applied.
+  //
+  // Never yourself, never another admin unless you hold the superuser tier.
+  // firestore.rules grants `delete: if isAdmin()` with neither restriction, so
+  // this is deliberately stricter than the server; functions/main.py's deleteUser
+  // enforces the same shape from SUPERUSER_EMAIL, which is the half that cannot
+  // be bypassed from a browser.
+  const canDeleteUser = (user: UserWithMetadata) =>
+    ability.can('delete', asUser(user as User));
 
   const handleUpdateUser = async (userId: string, updates: Partial<User>) => {
     try {
@@ -155,10 +153,14 @@ const AdminUsersPage: React.FC = () => {
     }
     
     try {
-      await Promise.all(
-        usersToDelete.map(user => deleteDoc(doc(db, 'users', user.uid)))
-      );
-      
+      // Through the same callable as the single delete. This used to write
+      // deleteDoc straight to Firestore, which left the Firebase Auth account
+      // alive: an orphaned account can still sign in, and since every callable
+      // skipped its permission check when the users document was absent, it
+      // reached Admin SDK writes that never pass through firestore.rules. It
+      // also broke AGENTS.md 4.1, which reserves the Firestore SDK for src/services.
+      await Promise.all(usersToDelete.map(user => UserService.deleteUser(user.uid)));
+
       setUsers(users.filter(user => !usersToDelete.map(u => u.uid).includes(user.uid)));
       setSelectedUsers([]);
       toast.success(`${usersToDelete.length} users deleted successfully`);
@@ -246,66 +248,62 @@ const AdminUsersPage: React.FC = () => {
 
   if (loading) {
     return (
-      <AdminLayout title="Users">
+      <DashboardShell title="Users">
         <div className="flex justify-center items-center h-64">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+          <div className="motion-essential animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
         </div>
-      </AdminLayout>
+      </DashboardShell>
     );
   }
 
   return (
-    <AdminLayout
+    <DashboardShell
       title="User Management"
       subtitle="Manage user accounts and permissions"
-      breadcrumbs={[
-        { name: 'Dashboard', href: '/dashboard' },
-        { name: 'Users' }
-      ]}
     >
       <div className="space-y-6">
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+          <div className="bg-white p-6 rounded-lg border border-outline-variant">
             <div className="flex items-center">
-              <UserGroupIcon className="h-8 w-8 text-blue-600" />
+              <UserGroupIcon className="h-8 w-8 text-primary" />
               <div className="ml-3">
-                <p className="text-sm font-medium text-gray-500">Total Users</p>
-                <p className="text-2xl font-bold text-gray-900">{users.length}</p>
+                <p className="text-sm font-medium text-on-surface-variant">Total Users</p>
+                <p className="text-2xl font-bold text-on-surface">{users.length}</p>
               </div>
             </div>
           </div>
           
-          <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+          <div className="bg-white p-6 rounded-lg border border-outline-variant">
             <div className="flex items-center">
-              <UserIcon className="h-8 w-8 text-green-600" />
+              <UserIcon className="h-8 w-8 text-success" />
               <div className="ml-3">
-                <p className="text-sm font-medium text-gray-500">Organizers</p>
-                <p className="text-2xl font-bold text-gray-900">
+                <p className="text-sm font-medium text-on-surface-variant">Organizers</p>
+                <p className="text-2xl font-bold text-on-surface">
                   {users.filter(u => u.role === 'organizer').length}
                 </p>
               </div>
             </div>
           </div>
           
-          <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+          <div className="bg-white p-6 rounded-lg border border-outline-variant">
             <div className="flex items-center">
-              <UserIcon className="h-8 w-8 text-red-600" />
+              <UserIcon className="h-8 w-8 text-error" />
               <div className="ml-3">
-                <p className="text-sm font-medium text-gray-500">Admins</p>
-                <p className="text-2xl font-bold text-gray-900">
+                <p className="text-sm font-medium text-on-surface-variant">Admins</p>
+                <p className="text-2xl font-bold text-on-surface">
                   {users.filter(u => u.role === 'admin').length}
                 </p>
               </div>
             </div>
           </div>
           
-          <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+          <div className="bg-white p-6 rounded-lg border border-outline-variant">
             <div className="flex items-center">
-              <UserIcon className="h-8 w-8 text-yellow-600" />
+              <UserIcon className="h-8 w-8 text-warning" />
               <div className="ml-3">
-                <p className="text-sm font-medium text-gray-500">Active Users</p>
-                <p className="text-2xl font-bold text-gray-900">
+                <p className="text-sm font-medium text-on-surface-variant">Active Users</p>
+                <p className="text-2xl font-bold text-on-surface">
                   {users.filter(u => u.isActive).length}
                 </p>
               </div>
@@ -314,24 +312,24 @@ const AdminUsersPage: React.FC = () => {
         </div>
 
         {/* Filters and Search */}
-        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+        <div className="bg-white p-6 rounded-lg border border-outline-variant">
           <div className="flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-center">
             <div className="flex flex-col sm:flex-row gap-4 flex-1">
               <div className="relative flex-1 max-w-md">
-                <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-outline-variant" />
                 <input
                   type="text"
                   placeholder="Search users..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-10 pr-4 py-2 w-full border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="pl-10 pr-4 py-2 w-full border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
                 />
               </div>
               
               <select
                 value={roleFilter}
                 onChange={(e) => setRoleFilter(e.target.value as typeof roleFilter)}
-                className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="px-4 py-2 border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
               >
                 <option value="all">All Roles</option>
                 <option value="admin">Admin</option>
@@ -342,7 +340,7 @@ const AdminUsersPage: React.FC = () => {
             <div className="flex gap-2">
               <button
                 onClick={fetchUsers}
-                className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors flex items-center gap-2"
+                className="px-4 py-2 bg-inverse-surface text-white rounded-lg hover:bg-inverse-surface transition-colors flex items-center gap-2"
               >
                 <ArrowPathIcon className="h-4 w-4" />
                 Refresh
@@ -350,7 +348,7 @@ const AdminUsersPage: React.FC = () => {
               {selectedUsers.length > 0 && (
                 <button
                   onClick={handleBulkDelete}
-                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex items-center gap-2"
+                  className="px-4 py-2 bg-error text-white rounded-lg hover:bg-error-hover transition-colors flex items-center gap-2"
                 >
                   <TrashIcon className="h-4 w-4" />
                   Delete Selected ({users.filter(user => selectedUsers.includes(user.uid) && canDeleteUser(user)).length})
@@ -358,7 +356,7 @@ const AdminUsersPage: React.FC = () => {
               )}
               <button
                 onClick={() => setShowCreateModal(true)}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
+                className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors flex items-center gap-2"
               >
                 <PlusIcon className="h-4 w-4" />
                 Create User
@@ -368,10 +366,10 @@ const AdminUsersPage: React.FC = () => {
         </div>
 
         {/* Users Table */}
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+        <div className="bg-white rounded-lg border border-outline-variant overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+            <table className="min-w-full divide-y divide-outline-variant">
+              <thead className="bg-surface-container-low">
                 <tr>
                   <th className="px-6 py-3 text-left">
                     <input
@@ -388,11 +386,11 @@ const AdminUsersPage: React.FC = () => {
                           setSelectedUsers([]);
                         }
                       }}
-                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      className="rounded border-outline-variant text-primary focus:ring-primary"
                     />
                   </th>
                   <th 
-                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                    className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider cursor-pointer hover:bg-surface-container"
                     onClick={() => handleSort('name')}
                   >
                     <div className="flex items-center gap-1">
@@ -401,7 +399,7 @@ const AdminUsersPage: React.FC = () => {
                     </div>
                   </th>
                   <th 
-                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                    className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider cursor-pointer hover:bg-surface-container"
                     onClick={() => handleSort('email')}
                   >
                     <div className="flex items-center gap-1">
@@ -410,7 +408,7 @@ const AdminUsersPage: React.FC = () => {
                     </div>
                   </th>
                   <th 
-                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                    className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider cursor-pointer hover:bg-surface-container"
                     onClick={() => handleSort('role')}
                   >
                     <div className="flex items-center gap-1">
@@ -419,7 +417,7 @@ const AdminUsersPage: React.FC = () => {
                     </div>
                   </th>
                   <th 
-                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                    className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider cursor-pointer hover:bg-surface-container"
                     onClick={() => handleSort('createdAt')}
                   >
                     <div className="flex items-center gap-1">
@@ -427,20 +425,20 @@ const AdminUsersPage: React.FC = () => {
                       <SortIcon field="createdAt" />
                     </div>
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider">
                     Last Login
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider">
                     Status
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider">
                     Actions
                   </th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
+              <tbody className="bg-white divide-y divide-outline-variant">
                 {filteredAndSortedUsers.map((user) => (
-                  <tr key={user.uid} className={`hover:bg-gray-50 ${user.uid === currentUser?.uid ? 'bg-blue-50' : ''}`}>
+                  <tr key={user.uid} className={`hover:bg-surface-container-low ${user.uid === currentUser?.uid ? 'bg-surface-container-low' : ''}`}>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <input
                         type="checkbox"
@@ -452,7 +450,7 @@ const AdminUsersPage: React.FC = () => {
                             setSelectedUsers(selectedUsers.filter(id => id !== user.uid));
                           }
                         }}
-                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        className="rounded border-outline-variant text-primary focus:ring-primary"
                         disabled={!canDeleteUser(user)}
                         title={
                           !canDeleteUser(user) 
@@ -472,43 +470,43 @@ const AdminUsersPage: React.FC = () => {
                             className="h-8 w-8 rounded-full mr-3"
                           />
                         ) : (
-                          <div className="h-8 w-8 rounded-full bg-gray-300 mr-3 flex items-center justify-center">
-                            <UserIcon className="h-4 w-4 text-gray-600" />
+                          <div className="h-8 w-8 rounded-full bg-surface-container-highest mr-3 flex items-center justify-center">
+                            <UserIcon className="h-4 w-4 text-on-surface-variant" />
                           </div>
                         )}
                         <div>
-                          <div className="text-sm font-medium text-gray-900 flex items-center gap-2">
+                          <div className="text-sm font-medium text-on-surface flex items-center gap-2">
                             {user.displayName}
                             {user.uid === currentUser?.uid && (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-sm font-medium bg-secondary-container text-on-secondary-container">
                                 You
                               </span>
                             )}
                           </div>
                           {user.organization && (
-                            <div className="text-sm text-gray-500">{user.organization}</div>
+                            <div className="text-sm text-on-surface-variant">{user.organization}</div>
                           )}
                         </div>
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-on-surface">
                       {user.email}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getRoleBadgeColor(user.role)}`}>
+                      <span className={`inline-flex px-2 py-1 text-sm font-semibold rounded-full ${getRoleBadgeColor(user.role)}`}>
                         {user.role}
                       </span>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-on-surface-variant">
                       {user.createdAt?.toDate?.()?.toLocaleDateString() || 
                        (user.createdAt?.seconds ? new Date(user.createdAt.seconds * 1000).toLocaleDateString() : 'Unknown')}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-on-surface-variant">
                       {formatLastLogin(user.lastLogin)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                        user.isActive ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                      <span className={`inline-flex px-2 py-1 text-sm font-semibold rounded-full ${
+                        user.isActive ? 'bg-success-container text-on-success-container' : 'bg-error-container text-on-error-container'
                       }`}>
                         {user.isActive ? 'Active' : 'Inactive'}
                       </span>
@@ -520,7 +518,7 @@ const AdminUsersPage: React.FC = () => {
                             setEditingUser(user);
                             setShowEditModal(true);
                           }}
-                          className="text-blue-600 hover:text-blue-900"
+                          className="text-primary hover:text-on-secondary-container"
                           title="Edit user"
                         >
                           <PencilIcon className="h-4 w-4" />
@@ -531,7 +529,7 @@ const AdminUsersPage: React.FC = () => {
                               setDeletingUser(user);
                               setShowDeleteModal(true);
                             }}
-                            className="text-red-600 hover:text-red-900"
+                            className="text-error hover:text-on-error-container"
                             title="Delete user"
                           >
                             <TrashIcon className="h-4 w-4" />
@@ -547,9 +545,9 @@ const AdminUsersPage: React.FC = () => {
           
           {filteredAndSortedUsers.length === 0 && (
             <div className="text-center py-12">
-              <UserGroupIcon className="mx-auto h-12 w-12 text-gray-400" />
-              <h3 className="mt-2 text-sm font-medium text-gray-900">No users found</h3>
-              <p className="mt-1 text-sm text-gray-500">
+              <UserGroupIcon className="mx-auto h-12 w-12 text-outline-variant" />
+              <h3 className="mt-2 text-sm font-medium text-on-surface">No users found</h3>
+              <p className="mt-1 text-sm text-on-surface-variant">
                 {searchTerm || roleFilter !== 'all' ? 'Try adjusting your filters' : 'No users have been created yet'}
               </p>
             </div>
@@ -558,121 +556,133 @@ const AdminUsersPage: React.FC = () => {
       </div>
 
       {/* Create User Modal */}
-      {showCreateModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">Create New User</h3>
-            <form onSubmit={(e) => {
-              e.preventDefault();
-              const formData = new FormData(e.target as HTMLFormElement);
-              const userData = {
-                email: formData.get('email') as string,
-                displayName: formData.get('displayName') as string,
-                role: formData.get('role') as 'organizer' | 'admin',
-                password: formData.get('password') as string
-              };
-              handleCreateUser(userData);
-            }}>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Email Address
-                  </label>
-                  <input
-                    type="email"
-                    name="email"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    required
-                    placeholder="user@example.com"
-                  />
+      <Modal
+        open={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        title="Create New User"
+        size="md"
+        footer={
+          <>
+            <Button variant="tonal" onClick={() => setShowCreateModal(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" form="create-user-form">
+              Create User
+            </Button>
+          </>
+        }
+      >
+        <form
+          id="create-user-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target as HTMLFormElement);
+            const userData = {
+              email: formData.get('email') as string,
+              displayName: formData.get('displayName') as string,
+              role: formData.get('role') as 'organizer' | 'admin',
+              password: formData.get('password') as string
+            };
+            handleCreateUser(userData);
+          }}
+        >
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-on-surface-variant mb-1">
+                Email Address
+              </label>
+              <input
+                type="email"
+                name="email"
+                className="w-full px-3 py-2 border border-outline-variant rounded-lg bg-surface text-on-surface focus:ring-2 focus:ring-primary focus:border-transparent"
+                required
+                placeholder="user@example.com"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-on-surface-variant mb-1">
+                Display Name
+              </label>
+              <input
+                type="text"
+                name="displayName"
+                className="w-full px-3 py-2 border border-outline-variant rounded-lg bg-surface text-on-surface focus:ring-2 focus:ring-primary focus:border-transparent"
+                required
+                placeholder="John Doe"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-on-surface-variant mb-1">
+                Initial Password
+              </label>
+              <input
+                type="password"
+                name="password"
+                className="w-full px-3 py-2 border border-outline-variant rounded-lg bg-surface text-on-surface focus:ring-2 focus:ring-primary focus:border-transparent"
+                required
+                placeholder="Enter initial password"
+                minLength={6}
+              />
+              <p className="mt-1 text-sm text-on-surface-variant">
+                A password reset email will be sent to the user so they can set their own password.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-on-surface-variant mb-1">
+                Role
+              </label>
+              <select
+                name="role"
+                defaultValue="organizer"
+                className="w-full px-3 py-2 border border-outline-variant rounded-lg bg-surface text-on-surface focus:ring-2 focus:ring-primary focus:border-transparent"
+              >
+                <option value="organizer">Organizer</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+
+            <div className="bg-surface-container-low border border-outline-variant rounded-md p-4">
+              <div className="flex">
+                <div className="flex-shrink-0">
+                  <svg className="h-5 w-5 text-primary" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                  </svg>
                 </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Display Name
-                  </label>
-                  <input
-                    type="text"
-                    name="displayName"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    required
-                    placeholder="John Doe"
-                  />
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Initial Password
-                  </label>
-                  <input
-                    type="password"
-                    name="password"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    required
-                    placeholder="Enter initial password"
-                    minLength={6}
-                  />
-                  <p className="mt-1 text-xs text-gray-500">
-                    A password reset email will be sent to the user so they can set their own password.
+                <div className="ml-3">
+                  <p className="text-sm text-primary">
+                    <strong>Note:</strong> This creates a complete user account in Firebase Authentication and the system database. The user will receive a password reset email to set their own password and can immediately log in with their assigned role.
                   </p>
                 </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Role
-                  </label>
-                  <select
-                    name="role"
-                    defaultValue="organizer"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    <option value="organizer">Organizer</option>
-                    <option value="admin">Admin</option>
-                  </select>
-                </div>
-
-                <div className="bg-blue-50 border border-blue-200 rounded-md p-4">
-                  <div className="flex">
-                    <div className="flex-shrink-0">
-                      <svg className="h-5 w-5 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
-                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
-                      </svg>
-                    </div>
-                    <div className="ml-3">
-                      <p className="text-sm text-blue-800">
-                        <strong>Note:</strong> This creates a complete user account in Firebase Authentication and the system database. The user will receive a password reset email to set their own password and can immediately log in with their assigned role.
-                      </p>
-                    </div>
-                  </div>
-                </div>
               </div>
-              
-              <div className="flex justify-end gap-3 mt-6">
-                <button
-                  type="button"
-                  onClick={() => setShowCreateModal(false)}
-                  className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                >
-                  Create User
-                </button>
-              </div>
-            </form>
+            </div>
           </div>
-        </div>
-      )}
+        </form>
+      </Modal>
 
       {/* Edit User Modal */}
-      {showEditModal && editingUser && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">Edit User</h3>
-            <form onSubmit={(e) => {
+      <Modal
+        open={showEditModal && !!editingUser}
+        onClose={() => setShowEditModal(false)}
+        title="Edit User"
+        size="md"
+        footer={
+          <>
+            <Button variant="tonal" onClick={() => setShowEditModal(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" form="edit-user-form">
+              Save Changes
+            </Button>
+          </>
+        }
+      >
+        {editingUser && (
+          <form
+            id="edit-user-form"
+            onSubmit={(e) => {
               e.preventDefault();
               const formData = new FormData(e.target as HTMLFormElement);
               const updates = {
@@ -680,108 +690,90 @@ const AdminUsersPage: React.FC = () => {
                 role: formData.get('role') as 'organizer' | 'admin'
               };
               handleUpdateUser(editingUser.uid, updates);
-            }}>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Display Name
-                  </label>
-                  <input
-                    type="text"
-                    name="displayName"
-                    defaultValue={editingUser.displayName}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    required
-                  />
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Role
-                  </label>
-                  <select
-                    name="role"
-                    defaultValue={editingUser.role}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    <option value="organizer">Organizer</option>
-                    <option value="admin">Admin</option>
-                  </select>
-                </div>
+            }}
+          >
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-on-surface-variant mb-1">
+                  Display Name
+                </label>
+                <input
+                  type="text"
+                  name="displayName"
+                  defaultValue={editingUser.displayName}
+                  className="w-full px-3 py-2 border border-outline-variant rounded-lg bg-surface text-on-surface focus:ring-2 focus:ring-primary focus:border-transparent"
+                  required
+                />
               </div>
-              
-              <div className="flex justify-end gap-3 mt-6">
-                <button
-                  type="button"
-                  onClick={() => setShowEditModal(false)}
-                  className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+
+              <div>
+                <label className="block text-sm font-medium text-on-surface-variant mb-1">
+                  Role
+                </label>
+                <select
+                  name="role"
+                  defaultValue={editingUser.role}
+                  className="w-full px-3 py-2 border border-outline-variant rounded-lg bg-surface text-on-surface focus:ring-2 focus:ring-primary focus:border-transparent"
                 >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                >
-                  Save Changes
-                </button>
+                  <option value="organizer">Organizer</option>
+                  <option value="admin">Admin</option>
+                </select>
               </div>
-            </form>
-          </div>
-        </div>
-      )}
+            </div>
+          </form>
+        )}
+      </Modal>
 
       {/* Delete Confirmation Modal */}
-      {showDeleteModal && deletingUser && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">Delete User</h3>
-            <p className="text-sm text-gray-600 mb-4">
-              Are you sure you want to delete <strong>{deletingUser.displayName}</strong>? 
+      <Modal
+        open={showDeleteModal && !!deletingUser}
+        onClose={() => setShowDeleteModal(false)}
+        title="Delete User"
+        size="md"
+        footer={
+          <>
+            <Button variant="tonal" onClick={() => setShowDeleteModal(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => deletingUser && handleDeleteUser(deletingUser.uid)}
+              disabled={!deletingUser || !canDeleteUser(deletingUser)}
+            >
+              {!deletingUser || !canDeleteUser(deletingUser) ? 'Cannot Delete' : 'Delete User'}
+            </Button>
+          </>
+        }
+      >
+        {deletingUser && (
+          <>
+            <p className="text-sm text-on-surface-variant mb-4">
+              Are you sure you want to delete <strong>{deletingUser.displayName}</strong>?
               This action cannot be undone.
             </p>
-            {((deletingUser.role === 'admin' && !isSuperUser) || (deletingUser.uid === currentUser?.uid)) && (
-              <div className="bg-yellow-50 border border-yellow-200 rounded-md p-4 mb-4">
+            {!canDeleteUser(deletingUser) && (
+              <div className="bg-surface-container-low border border-outline-variant rounded-md p-4">
                 <div className="flex">
                   <div className="flex-shrink-0">
-                    <svg className="h-5 w-5 text-yellow-400" viewBox="0 0 20 20" fill="currentColor">
+                    <svg className="h-5 w-5 text-primary" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                       <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
                     </svg>
                   </div>
                   <div className="ml-3">
-                    <p className="text-sm text-yellow-800">
-                      <strong>Warning:</strong> {
-                        deletingUser.uid === currentUser?.uid
-                          ? 'You cannot delete your own account for security reasons.'
-                          : 'Admin users cannot be deleted by regular admins for security reasons.'
-                      }
+                    <p className="text-sm text-on-surface">
+                      <strong>Warning:</strong>{' '}
+                      {deletingUser.uid === currentUser?.uid
+                        ? 'You cannot delete your own account for security reasons.'
+                        : 'Admin users cannot be deleted by regular admins for security reasons.'}
                     </p>
                   </div>
                 </div>
               </div>
             )}
-            <div className="flex justify-end gap-3">
-              <button
-                onClick={() => setShowDeleteModal(false)}
-                className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => handleDeleteUser(deletingUser.uid)}
-                disabled={(deletingUser.role === 'admin' && !isSuperUser) || (deletingUser.uid === currentUser?.uid)}
-                className={`px-4 py-2 text-white rounded-lg transition-colors ${
-                  (deletingUser.role === 'admin' && !isSuperUser) || (deletingUser.uid === currentUser?.uid)
-                    ? 'bg-gray-400 cursor-not-allowed'
-                    : 'bg-red-600 hover:bg-red-700'
-                }`}
-              >
-                {(deletingUser.role === 'admin' && !isSuperUser) || (deletingUser.uid === currentUser?.uid) ? 'Cannot Delete' : 'Delete User'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </AdminLayout>
+          </>
+        )}
+      </Modal>
+    </DashboardShell>
   );
 };
 

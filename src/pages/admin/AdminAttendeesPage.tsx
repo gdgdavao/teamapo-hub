@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { 
   MagnifyingGlassIcon, 
   CheckIcon,
@@ -22,8 +22,9 @@ import {
 import { CheckCircleIcon, XCircleIcon, ClockIcon, CurrencyDollarIcon } from '@heroicons/react/20/solid';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../config/firebase';
-import AdminLayout from '../../components/admin/AdminLayout';
-import OrganizerLayout from '../../components/organizer/OrganizerLayout';
+import { SkeletonList } from '../../components/shared/UI/Skeleton';
+import { Button, EmptyState, Modal } from '../../components/shared/UI';
+import DashboardShell from '../../components/shared/DashboardShell';
 import { useAuth } from '../../contexts/AuthContext';
 import { RegistrationService } from '../../services/registrationService';
 import { EventService } from '../../services/eventService';
@@ -32,6 +33,22 @@ import { EmailService } from '../../services/emailService';
 import { Registration as FirestoreRegistration, Event } from '../../types';
 import { getDownloadUrlFromPath } from '../../utils/storageUtils';
 import { logger } from '../../utils/logger';
+import { resolveDisplayStatus, DisplayStatus } from '../../utils/registrationStatus';
+
+/** Options for the status filter, in display order. Drives both the <select>
+ *  and the ?status= deep-link validation so the two can never drift. */
+const STATUS_FILTER_OPTIONS: Array<{ value: DisplayStatus | 'all'; label: string }> = [
+  { value: 'all', label: 'All Status' },
+  { value: 'pending', label: 'Pending Review' },
+  { value: 'approved', label: 'Approved' },
+  { value: 'rejected', label: 'Rejected' },
+  { value: 'paid', label: 'Paid' },
+  { value: 'attended', label: 'Attended' },
+  { value: 'cancelled', label: 'Cancelled' },
+];
+
+const isValidStatusFilter = (value: string | null): value is DisplayStatus =>
+  STATUS_FILTER_OPTIONS.some((opt) => opt.value === value);
 
 // Utility function to format dates
 const formatDate = (dateString: string): string => {
@@ -126,16 +143,33 @@ interface Registration {
   registrationType?: 'online' | 'walk-in';
 }
 
-const AdminAttendeesPage: React.FC = () => {
+interface AdminAttendeesPageProps {
+  embedded?: boolean;
+  propEventId?: string;
+}
+
+const AdminAttendeesPage: React.FC<AdminAttendeesPageProps> = ({
+  embedded = false,
+  propEventId
+}) => {
   const { userProfile } = useAuth();
-  const { eventId } = useParams<{ eventId?: string }>();
+  const { eventId: paramEventId } = useParams<{ eventId?: string }>();
+  const [searchParams] = useSearchParams();
+  const eventId = propEventId || paramEventId || searchParams.get('eventId') || undefined;
+  // Lets the dashboard deep-link straight into a review queue, e.g.
+  // /attendees?status=pending. The value is validated against the same option
+  // list the <select> renders so a hand-edited URL can't inject a filter that
+  // silently matches nothing.
+  const statusParam = searchParams.get('status');
   const isAdmin = userProfile?.role === 'admin';
-  const LayoutComponent = isAdmin ? AdminLayout : OrganizerLayout;
+  const LayoutComponent = DashboardShell;
   
   const [registrations, setRegistrations] = useState<Registration[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<string>(
+    isValidStatusFilter(statusParam) ? statusParam : 'all'
+  );
   const [eventFilter, setEventFilter] = useState<string>(eventId || 'all');
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
   const [ticketTypeFilter, setTicketTypeFilter] = useState<string>('all');
@@ -161,6 +195,15 @@ const AdminAttendeesPage: React.FC = () => {
   const [selectedRegistrations, setSelectedRegistrations] = useState<Set<string>>(new Set());
   const [isSelectAllChecked, setIsSelectAllChecked] = useState(false);
   const [isBulkProcessing, setIsBulkProcessing] = useState(false);
+
+  // Re-sync when the URL changes underneath us. Without this, arriving from a
+  // dashboard CTA while already on /attendees would keep the old filter and
+  // quietly show the wrong queue. The <select> is the source of truth once the
+  // user touches it, so an absent/invalid param resets to 'all' rather than
+  // overwriting their choice with a stale URL.
+  useEffect(() => {
+    setStatusFilter(isValidStatusFilter(statusParam) ? statusParam : 'all');
+  }, [statusParam]);
 
   const getTicketTypeName = useCallback((registration: Registration): string => {
     const matchingEvent = events.find(event => event.id === registration.event.id);
@@ -317,14 +360,18 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
         let organizerEvents: Event[] = [];
         
         if (isAdmin) {
-          // Admin can see all registrations
-          firestoreRegistrations = await RegistrationService.getAllRegistrations();
-          // Fetch all events for filtering
-          organizerEvents = await EventService.getAllEvents();
-        } else if (userProfile.role === 'organizer') {
-          // Organizers can now see all events and their registrations (updated business rule)
-          organizerEvents = await EventService.getAllEvents();
-          firestoreRegistrations = await RegistrationService.getAllRegistrations();
+          // Independent queries — run them together rather than in series.
+          [firestoreRegistrations, organizerEvents] = await Promise.all([
+            RegistrationService.getAllRegistrations(),
+            EventService.getAllEvents()
+          ]);
+        } else if (userProfile.role === 'organizer' && userProfile.uid) {
+          // Organizers see only their own events' attendees (Data Privacy Act 2012).
+          // Unscoped reads here are also denied by firestore.rules.
+          [organizerEvents, firestoreRegistrations] = await Promise.all([
+            EventService.getEventsByOrganizer(userProfile.uid),
+            RegistrationService.getRegistrationsByOrganizer(userProfile.uid)
+          ]);
         } else {
           // Other users see nothing
           organizerEvents = [];
@@ -365,34 +412,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
             return 1;
           })();
 
-          // Map status from Firestore to expected format
-          const getDisplayStatus = (fsReg: FirestoreRegistration): Registration['status'] => {
-            // Attendance takes priority so checked-in attendees always show as attended
-            if (fsReg.attendanceStatus === 'checked-in') {
-              return 'attended';
-            }
-            if (fsReg.attendanceStatus === 'cancelled') {
-              return 'cancelled';
-            }
-
-            // Registration status is next priority
-            if ((fsReg as any).registrationStatus) {
-              const regStatus = (fsReg as any).registrationStatus;
-              if (regStatus === 'approved') return 'approved';
-              if (regStatus === 'rejected') return 'rejected';
-              if (regStatus === 'pending') return 'pending';
-            }
-
-            // Fall back to payment status
-            if (fsReg.paymentStatus === 'paid') {
-              return 'paid';
-            }
-            if (fsReg.paymentStatus === 'pending') {
-              return 'pending';
-            }
-
-            return 'pending'; // Default status
-          };
+          
 
           // Map PaymentStatus to expected format
           const mapPaymentStatus = (status: any): Registration['paymentStatus'] => {
@@ -423,7 +443,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
               venue: event.venue?.name || event.venue?.address || 'TBA',
               ticketPrice: (reg as any).pricing?.currentPrice || (reg.totalAmount && seatQuantity ? (reg.totalAmount / seatQuantity) : 0)
             },
-            status: getDisplayStatus(reg),
+            status: resolveDisplayStatus(reg),
             registrationDate: reg.registrationDate.toDate().toISOString(),
             paymentStatus: mapPaymentStatus(reg.paymentStatus),
             paymentProof: reg.paymentProof ? {
@@ -494,12 +514,10 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
           } : prev);
         }
       } catch (e: any) {
-        // eslint-disable-next-line no-console
         logger.warn('[AdminAttendeesPage] Failed to load latest payment proof', e);
         
         // Show user-friendly message if it's an index error
         if (e?.message?.includes('index') || e?.code === 'failed-precondition') {
-          // eslint-disable-next-line no-console
           logger.error(
             '⚠️ Firestore Index Required!\n\n' +
             'Please create the required index by visiting:\n' +
@@ -919,6 +937,25 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
 
   const { filtered: filteredStats, overall: overallStats } = registrationStats;
 
+  const statusCounts = React.useMemo(() => {
+    const counts: Record<string, number> = {
+      all: registrations.length,
+      pending: 0,
+      approved: 0,
+      rejected: 0,
+      paid: 0,
+      attended: 0,
+      cancelled: 0,
+    };
+    registrations.forEach((r) => {
+      const displayStatus = resolveDisplayStatus(r);
+      if (counts[displayStatus] !== undefined) {
+        counts[displayStatus] += 1;
+      }
+    });
+    return counts;
+  }, [registrations]);
+
   // Bulk selection handlers (must be after filteredRegistrations)
   const selectAllFiltered = () => {
     if (isSelectAllChecked) {
@@ -1124,7 +1161,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
         if (!pendingReg && !approvedRegWithPendingPayment) return reg;
 
         // Start with current registration data
-        let updated = { ...reg };
+        const updated = { ...reg };
 
         // Update registration status if it was pending
         if (pendingReg) {
@@ -1459,17 +1496,17 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'approved':
-        return <CheckCircleIcon className="h-5 w-5 text-success-500" />;
+        return <CheckCircleIcon className="h-5 w-5 text-success" />;
       case 'rejected':
-        return <XCircleIcon className="h-5 w-5 text-secondary-500" />;
+        return <XCircleIcon className="h-5 w-5 text-error" />;
       case 'paid':
-        return <CurrencyDollarIcon className="h-5 w-5 text-accent-500" />;
+        return <CurrencyDollarIcon className="h-5 w-5 text-warning" />;
       case 'attended':
-        return <CheckCircleIcon className="h-5 w-5 text-purple-500" />;
+        return <CheckCircleIcon className="h-5 w-5 text-primary" />;
       case 'cancelled':
-        return <XCircleIcon className="h-5 w-5 text-gray-500" />;
+        return <XCircleIcon className="h-5 w-5 text-on-surface-variant" />;
       default:
-        return <ClockIcon className="h-5 w-5 text-accent-500" />;
+        return <ClockIcon className="h-5 w-5 text-warning" />;
     }
   };
 
@@ -1502,16 +1539,16 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
   };
 
   if (loading) {
+    if (embedded) {
+      return (
+        <div className="py-6">
+          <SkeletonList rows={5} />
+        </div>
+      );
+    }
     return (
       <LayoutComponent title="Attendees" subtitle="Loading attendee registrations...">
-        <div className="animate-pulse space-y-6">
-          <div className="h-20 bg-gray-200 rounded-xl"></div>
-          <div className="space-y-4">
-            {[...Array(5)].map((_, i) => (
-              <div key={i} className="h-24 bg-gray-200 rounded-xl"></div>
-            ))}
-          </div>
-        </div>
+        <SkeletonList rows={5} />
       </LayoutComponent>
     );
   }
@@ -1523,7 +1560,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
           <button 
             onClick={handleBulkApproveRegistrations}
             disabled={isBulkProcessing}
-            className="inline-flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="inline-flex items-center px-4 py-2 bg-success text-white rounded-lg hover:bg-success-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             title="Approve registrations and their pending payments"
           >
             <CheckCircleIcon className="w-4 h-4 mr-2" />
@@ -1532,7 +1569,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
           <button 
             onClick={handleBulkApprovePayments}
             disabled={isBulkProcessing}
-            className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="inline-flex items-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             title="Approve only pending payments"
           >
             <CurrencyDollarIcon className="w-4 h-4 mr-2" />
@@ -1541,7 +1578,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
           <button 
             onClick={handleForceApprove}
             disabled={isBulkProcessing}
-            className="inline-flex items-center px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="inline-flex items-center px-4 py-2 bg-warning text-white rounded-lg hover:bg-warning transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             title="Force approve registrations without payment verification - USE WITH CAUTION"
           >
             <BellIcon className="w-4 h-4 mr-2" />
@@ -1550,7 +1587,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
           <button 
             onClick={handleResendApprovalEmails}
             disabled={isBulkProcessing}
-            className="inline-flex items-center px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="inline-flex items-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             title="Resend approval emails to already approved registrations"
           >
             <EnvelopeIcon className="w-4 h-4 mr-2" />
@@ -1560,7 +1597,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
       )}
       <button 
         onClick={exportToCSV}
-        className="inline-flex items-center px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+        className="inline-flex items-center px-4 py-2 bg-white border border-outline-variant text-on-surface-variant rounded-lg hover:bg-surface-container-low transition-colors"
       >
         <FunnelIcon className="w-4 h-4 mr-2" />
         Export Data
@@ -1568,127 +1605,80 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
     </div>
   );
 
-  return (
-    <LayoutComponent 
-      title={currentEvent ? `${currentEvent.title} - Attendees` : "Attendee Management"} 
-      subtitle={currentEvent 
-        ? `Manage registrations and payments for ${currentEvent.title}`
-        : "Review and manage event registrations and payments efficiently."
-      }
-      actions={headerActions}
-    >
-      {/* Loading Overlay */}
-      {isBulkProcessing && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-8 shadow-2xl flex flex-col items-center space-y-4">
-            <div className="relative">
-              <div className="w-16 h-16 border-4 border-gray-200 rounded-full"></div>
-              <div className="w-16 h-16 border-4 border-primary-600 border-t-transparent rounded-full animate-spin absolute top-0 left-0"></div>
-            </div>
-            <div className="text-center">
-              <p className="text-lg font-semibold text-gray-900">Processing Bulk Operation</p>
-              <p className="text-sm text-gray-600 mt-1">Please wait while we process your request...</p>
-            </div>
-          </div>
+  const pageContent = (
+    <div className={embedded ? "space-y-6" : ""}>
+      {embedded && (
+        <div className="flex flex-wrap items-center justify-end gap-3 pb-2">
+          {headerActions}
         </div>
       )}
+      {/* Loading Overlay */}
+      <Modal
+        open={isBulkProcessing}
+        onClose={() => {}}
+        title="Processing Bulk Operation"
+        size="sm"
+        closeOnBackdrop={false}
+      >
+        <div className="flex flex-col items-center space-y-4 text-center">
+          <div className="relative" aria-hidden="true">
+            <div className="w-16 h-16 border-4 border-outline-variant rounded-full"></div>
+            <div className="w-16 h-16 border-4 border-primary border-t-transparent rounded-full motion-essential animate-spin absolute top-0 left-0"></div>
+          </div>
+          <p className="text-sm text-on-surface-variant">
+            Please wait while we process your request...
+          </p>
+        </div>
+      </Modal>
 
       <div className="space-y-6">
 
 
-        {/* Quick Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 md:gap-6">
-          <div className="bg-white rounded-xl border border-gray-200 p-6">
-            <div className="flex items-center">
-              <div className="p-3 bg-orange-100 rounded-lg">
-                <ClockIcon className="w-6 h-6 text-orange-600" />
-              </div>
-              <div className="ml-4">
-                <p className="text-sm text-gray-600">Pending</p>
-                <p className="text-2xl font-bold text-gray-900">{filteredStats.pending.registrations}</p>
-                <p className="text-xs text-gray-500">Seats: {filteredStats.pending.seats}</p>
-              </div>
-            </div>
-          </div>
-          
-          <div className="bg-white rounded-xl border border-gray-200 p-6">
-            <div className="flex items-center">
-              <div className="p-3 bg-green-100 rounded-lg">
-                <CheckCircleIcon className="w-6 h-6 text-green-600" />
-              </div>
-              <div className="ml-4">
-                <p className="text-sm text-gray-600">Approved</p>
-                <p className="text-2xl font-bold text-gray-900">{filteredStats.approved.registrations}</p>
-                <p className="text-xs text-gray-500">Seats: {filteredStats.approved.seats}</p>
-              </div>
-            </div>
-          </div>
-          
-          <div className="bg-white rounded-xl border border-gray-200 p-6">
-            <div className="flex items-center">
-              <div className="p-3 bg-blue-100 rounded-lg">
-                <CurrencyDollarIcon className="w-6 h-6 text-blue-600" />
-              </div>
-              <div className="ml-4">
-                <p className="text-sm text-gray-600">Paid</p>
-                <p className="text-2xl font-bold text-gray-900">{filteredStats.paid.registrations}</p>
-                <p className="text-xs text-gray-500">Seats: {filteredStats.paid.seats}</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-xl border border-gray-200 p-6">
-            <div className="flex items-center">
-              <div className="p-3 bg-teal-100 rounded-lg">
-                <EyeIcon className="w-6 h-6 text-teal-600" />
-              </div>
-              <div className="ml-4">
-                <p className="text-sm text-gray-600">Attended</p>
-                <p className="text-2xl font-bold text-gray-900">{filteredStats.attended.registrations}</p>
-                <p className="text-xs text-gray-500">Seats: {filteredStats.attended.seats}</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-xl border border-gray-200 p-6">
-            <div className="flex items-center">
-              <div className="p-3 bg-indigo-100 rounded-lg">
-                <UserGroupIcon className="w-6 h-6 text-indigo-600" />
-              </div>
-              <div className="ml-4">
-                <p className="text-sm text-gray-600">Walk-In</p>
-                <p className="text-2xl font-bold text-gray-900">{filteredStats.walkIn.registrations}</p>
-                <p className="text-xs text-gray-500">Seats: {filteredStats.walkIn.seats}</p>
-              </div>
-            </div>
-          </div>
-          
-          <div className="bg-white rounded-xl border border-gray-200 p-6">
-            <div className="flex items-center">
-              <div className="p-3 bg-purple-100 rounded-lg">
-                <UserGroupIcon className="w-6 h-6 text-purple-600" />
-              </div>
-              <div className="ml-4">
-                <p className="text-sm text-gray-600">Total</p>
-                <p className="text-2xl font-bold text-gray-900">{filteredStats.totals.registrations}</p>
-                <p className="text-xs text-gray-500">Seats: {filteredStats.totals.seats}</p>
-              </div>
-            </div>
-          </div>
+        {/* Interactive Status Filter Pills */}
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none [scrollbar-width:none]" role="tablist" aria-label="Filter attendees by status">
+          {STATUS_FILTER_OPTIONS.map((opt) => {
+            const isSelected = statusFilter === opt.value;
+            const count = statusCounts[opt.value] ?? 0;
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                role="tab"
+                aria-selected={isSelected}
+                onClick={() => setStatusFilter(opt.value)}
+                className={`inline-flex min-h-[44px] items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium whitespace-nowrap active:scale-[0.97] transition-[color,background-color,border-color,transform] duration-short2 ease-emphasized-standard focus:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+                  isSelected
+                    ? 'bg-primary text-white shadow-sm'
+                    : 'bg-white text-on-surface-variant hover:bg-surface-container-low border border-outline-variant'
+                }`}
+              >
+                <span>{opt.label}</span>
+                <span
+                  className={`text-xs px-2 py-0.5 rounded-full font-semibold transition-colors duration-fast ease-quart ${
+                    isSelected
+                      ? 'bg-primary-hover text-white animate-pop-in motion-reduce:animate-none'
+                      : 'bg-surface-container text-on-surface-variant'
+                  }`}
+                >
+                  {count}
+                </span>
+              </button>
+            );
+          })}
         </div>
 
         {/* Filters and Search */}
-        <div className="bg-white rounded-xl border border-gray-200 p-6">
+        <div className="bg-white rounded-xl border border-outline-variant p-6">
           {/* Search Bar - Full Width */}
           <div className="mb-4">
             <div className="relative max-w-md">
-              <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+              <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 text-outline-variant h-4 w-4" />
               <input
                 type="text"
                 placeholder="Search attendees..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent w-full"
+                className="pl-10 pr-4 py-2 border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent w-full"
               />
             </div>
           </div>
@@ -1700,14 +1690,11 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
-                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent min-w-[140px] flex-shrink-0"
+                className="px-3 py-2 border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent min-w-[140px] flex-shrink-0"
               >
-                <option value="all">All Status</option>
-                <option value="pending">Pending Review</option>
-                <option value="approved">Approved</option>
-                <option value="rejected">Rejected</option>
-                <option value="paid">Paid</option>
-                <option value="attended">Attended</option>
+                {STATUS_FILTER_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
               </select>
 
               {/* Event Filter or Badge */}
@@ -1715,7 +1702,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
                 <select
                   value={eventFilter}
                   onChange={(e) => setEventFilter(e.target.value)}
-                  className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent min-w-[180px] max-w-[280px] flex-shrink-0"
+                  className="px-3 py-2 border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent min-w-[180px] max-w-[280px] flex-shrink-0"
                 >
                   <option value="all">All Events</option>
                   {events.map(event => (
@@ -1726,7 +1713,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
                 </select>
               ) : (
                 currentEvent && (
-                  <div className="px-3 py-2 bg-blue-100 text-blue-800 rounded-lg border border-blue-200 text-sm font-medium whitespace-nowrap flex-shrink-0">
+                  <div className="px-3 py-2 bg-secondary-container text-on-secondary-container rounded-lg border border-outline-variant text-sm font-medium whitespace-nowrap flex-shrink-0">
                     📅 {currentEvent.title}
                   </div>
                 )
@@ -1737,7 +1724,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
                 <select
                   value={ticketTypeFilter}
                   onChange={(e) => setTicketTypeFilter(e.target.value)}
-                  className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent min-w-[160px] max-w-[240px] flex-shrink-0"
+                  className="px-3 py-2 border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent min-w-[160px] max-w-[240px] flex-shrink-0"
                 >
                   <option value="all">All Ticket Types</option>
                   {availableTicketTypes.map(tt => (
@@ -1752,7 +1739,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
               <select
                 value={priceRangeFilter}
                 onChange={(e) => setPriceRangeFilter(e.target.value)}
-                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent min-w-[140px] flex-shrink-0"
+                className="px-3 py-2 border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent min-w-[140px] flex-shrink-0"
               >
                 <option value="all">All Prices</option>
                 <option value="free">Free</option>
@@ -1766,7 +1753,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
               <select
                 value={registrationTypeFilter}
                 onChange={(e) => setRegistrationTypeFilter(e.target.value)}
-                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent min-w-[140px] flex-shrink-0"
+                className="px-3 py-2 border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent min-w-[140px] flex-shrink-0"
               >
                 <option value="all">All Types</option>
                 <option value="online">🌐 Online</option>
@@ -1775,16 +1762,16 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
             </div>
 
             {/* Results Count */}
-            <div className="flex items-center justify-between text-sm text-gray-500">
+            <div className="flex items-center justify-between text-sm text-on-surface-variant">
               <div>
                 {filteredStats.totals.registrations} attendee{filteredStats.totals.registrations !== 1 ? 's' : ''}
-                <span className="ml-2 text-xs text-gray-400">
+                <span className="ml-2 text-sm text-outline-variant">
                   (Seats: {filteredStats.totals.seats})
                 </span>
               </div>
               <div className="text-right">
                 Showing {filteredStats.totals.registrations} of {overallStats.registrations} attendees
-                <div className="text-xs text-gray-400">
+                <div className="text-sm text-outline-variant">
                   Seats: {filteredStats.totals.seats} / {overallStats.seats}
                 </div>
               </div>
@@ -1793,14 +1780,14 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
         </div>
 
         {/* Tab Navigation */}
-        <div className="bg-white rounded-xl border border-gray-200 p-2">
+        <div className="bg-white rounded-xl border border-outline-variant p-2">
           <div className="flex space-x-2">
             <button
               onClick={() => setViewMode('management')}
               className={`flex-1 px-6 py-3 rounded-lg font-medium transition-colors ${
                 viewMode === 'management'
-                  ? 'bg-blue-600 text-white'
-                  : 'text-gray-600 hover:bg-gray-100'
+                  ? 'bg-primary text-white'
+                  : 'text-on-surface-variant hover:bg-surface-container'
               }`}
             >
               <div className="flex items-center justify-center space-x-2">
@@ -1812,8 +1799,8 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
               onClick={() => setViewMode('details')}
               className={`flex-1 px-6 py-3 rounded-lg font-medium transition-colors ${
                 viewMode === 'details'
-                  ? 'bg-blue-600 text-white'
-                  : 'text-gray-600 hover:bg-gray-100'
+                  ? 'bg-primary text-white'
+                  : 'text-on-surface-variant hover:bg-surface-container'
               }`}
             >
               <div className="flex items-center justify-center space-x-2">
@@ -1826,7 +1813,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
 
         {/* Bulk Selection Toolbar */}
         {filteredRegistrations.length > 0 && (
-          <div className="bg-white rounded-xl border border-gray-200 p-4">
+          <div className="bg-white rounded-xl border border-outline-variant p-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-4">
                 <label className="flex items-center space-x-2 cursor-pointer">
@@ -1834,19 +1821,19 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
                     type="checkbox"
                     checked={isSelectAllChecked}
                     onChange={selectAllFiltered}
-                    className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+                    className="w-5 h-5 text-primary border-outline-variant rounded focus:ring-2 focus:ring-primary"
                   />
-                  <span className="text-sm font-medium text-gray-700">
+                  <span className="text-sm font-medium text-on-surface-variant">
                     Select All ({filteredRegistrations.length})
                   </span>
                 </label>
                 {selectedRegistrations.size > 0 && (
-                  <span className="text-sm text-gray-600">
+                  <span className="text-sm text-on-surface-variant">
                     {selectedRegistrations.size} selected
                   </span>
                 )}
               </div>
-              <div className="text-sm text-gray-500">
+              <div className="text-sm text-on-surface-variant">
                 Showing {filteredRegistrations.length} of {registrations.length} registrations
               </div>
             </div>
@@ -1857,18 +1844,18 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
         {viewMode === 'management' && (
         <div className="dashboard-card">
           {filteredRegistrations.length === 0 ? (
-            <div className="text-center py-12">
-              <UserIcon className="mx-auto h-12 w-12 text-gray-400" />
-              <h3 className="mt-2 text-sm font-medium text-gray-900">No registrations found</h3>
-              <p className="mt-1 text-sm text-gray-500">
-                {searchTerm || statusFilter !== 'all' || eventFilter !== 'all'
+            <EmptyState
+              icon={<UserIcon className="h-6 w-6" />}
+              title="No registrations found"
+              description={
+                searchTerm || statusFilter !== 'all' || eventFilter !== 'all'
                   ? 'Try adjusting your search or filter criteria.'
                   : 'Attendee registrations will appear here once people start signing up for events.'
-                }
-              </p>
-            </div>
+              }
+              compact
+            />
           ) : (
-            <div className="divide-y divide-gray-200">
+            <div className="divide-y divide-outline-variant">
               {filteredRegistrations.map((registration) => {
                 const ticketQuantity = getRegistrationQuantity(registration);
                 const totalAmount = getRegistrationTotalAmount(registration);
@@ -1876,7 +1863,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
                 const ticketTypeName = getTicketTypeName(registration);
 
                 return (
-                <div key={registration.id} className="p-6 hover:bg-gray-50 transition-colors">
+                <div key={registration.id} className="p-6 hover:bg-surface-container-low transition-colors">
                   <div className="flex items-start space-x-4">
 
                     {/* Checkbox */}
@@ -1885,7 +1872,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
                         type="checkbox"
                         checked={selectedRegistrations.has(registration.id)}
                         onChange={() => handleSelectRegistration(registration.id)}
-                        className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                        className="w-5 h-5 text-primary border-outline-variant rounded focus:ring-2 focus:ring-primary cursor-pointer"
                       />
                     </div>
 
@@ -1898,39 +1885,39 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
                           className="h-12 w-12 rounded-full"
                         />
                       ) : (
-                        <div className="h-12 w-12 rounded-full bg-gray-300 flex items-center justify-center">
-                          <UserIcon className="h-6 w-6 text-gray-600" />
+                        <div className="h-12 w-12 rounded-full bg-surface-container-highest flex items-center justify-center">
+                          <UserIcon className="h-6 w-6 text-on-surface-variant" />
                         </div>
                       )}
                     </div>
                     
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center space-x-2 mb-2">
-                        <h3 className="text-lg font-semibold text-gray-900">
+                        <h3 className="text-lg font-semibold text-on-surface">
                           {registration.attendee.name}
                         </h3>
                         <div className="flex items-center space-x-1 flex-wrap">
                           {getStatusIcon(registration.status)}
-                          <span className={`px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(registration.status)}`}>
+                          <span className={`px-2 py-1 text-sm font-medium rounded-full ${getStatusColor(registration.status)}`}>
                             {registration.status}
                           </span>
                           {registration.paymentStatus && (
-                            <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                              registration.paymentStatus === 'paid' ? 'bg-green-100 text-green-800' :
-                              registration.paymentStatus === 'pending' ? 'bg-yellow-100 text-yellow-800' :
-                              'bg-red-100 text-red-800'
+                            <span className={`px-2 py-1 text-sm font-medium rounded-full ${
+                              registration.paymentStatus === 'paid' ? 'bg-success-container text-on-success-container' :
+                              registration.paymentStatus === 'pending' ? 'bg-warning-container text-on-warning-container' :
+                              'bg-error-container text-on-error-container'
                             }`}>
                               Payment: {registration.paymentStatus}
                             </span>
                           )}
                           {registration.paymentStatus === 'pending' && registration.paymentProof && (
-                            <span className="px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-800">
+                            <span className="px-2 py-1 text-sm font-medium rounded-full bg-secondary-container text-on-secondary-container">
                               📄 Proof Submitted
                             </span>
                           )}
                           {/* Registration Type Badge */}
                           {registration.registrationType === 'walk-in' && (
-                            <span className="px-2 py-1 text-xs font-medium rounded-full bg-purple-100 text-purple-800 flex items-center space-x-1">
+                            <span className="px-2 py-1 text-sm font-medium rounded-full bg-surface-container-high text-on-primary-container flex items-center space-x-1">
                               <span>🚶</span>
                               <span>Walk-In</span>
                             </span>
@@ -1938,7 +1925,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
                         </div>
                       </div>
                       
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-gray-600">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-on-surface-variant">
                         <div className="space-y-1">
                           <div className="flex items-center space-x-2">
                             <EnvelopeIcon className="h-4 w-4" />
@@ -1968,7 +1955,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
                           </div>
                           {registration.event.ticketPrice > 0 && (
                             <div className="flex items-center space-x-2">
-                              <span className="text-sm font-medium text-green-600">
+                              <span className="text-sm font-medium text-success">
                                 ₱{registration.event.ticketPrice.toLocaleString()}
                               </span>
                             </div>
@@ -1990,7 +1977,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
                             <span>{formatCurrency(totalAmount)}</span>
                           </div>
                           {promoCodeValue && (
-                            <span className="inline-flex items-center px-2 py-1 text-xs font-medium rounded-full bg-indigo-100 text-indigo-800">
+                            <span className="inline-flex items-center px-2 py-1 text-sm font-medium rounded-full bg-primary-container text-on-primary-container">
                               Promo: {promoCodeValue}
                             </span>
                           )}
@@ -2000,13 +1987,14 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
                   </div>
 
                   {/* Action Button - Only View Details */}
-                  <div className="flex items-center justify-end mt-4 pt-4 border-t border-gray-100">
-                    <button
+                  <div className="flex items-center justify-end mt-4 pt-4 border-t border-outline-variant">
+                    <Button
+                      variant="outlined"
+                      size="sm"
                       onClick={() => handleViewRegistration(registration)}
-                      className="btn-outline text-sm px-4 py-2"
                     >
                       View Details
-                    </button>
+                    </Button>
                   </div>
                 </div>
                 );
@@ -2020,62 +2008,62 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
         {viewMode === 'details' && (
           <div className="dashboard-card">
             {filteredRegistrations.length === 0 ? (
-              <div className="text-center py-12">
-                <UserIcon className="mx-auto h-12 w-12 text-gray-400" />
-                <h3 className="mt-2 text-sm font-medium text-gray-900">No registrations found</h3>
-                <p className="mt-1 text-sm text-gray-500">
-                  {searchTerm || statusFilter !== 'all' || eventFilter !== 'all'
+              <EmptyState
+                icon={<UserIcon className="h-6 w-6" />}
+                title="No registrations found"
+                description={
+                  searchTerm || statusFilter !== 'all' || eventFilter !== 'all'
                     ? 'Try adjusting your search or filter criteria.'
                     : 'Attendee registrations will appear here once people start signing up for events.'
-                  }
-                </p>
-              </div>
+                }
+                compact
+              />
             ) : (
               <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
+                <table className="min-w-full divide-y divide-outline-variant">
+                  <thead className="bg-surface-container-low">
                     <tr>
-                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th scope="col" className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider">
                         <input
                           type="checkbox"
                           checked={isSelectAllChecked}
                           onChange={selectAllFiltered}
-                          className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                          className="w-5 h-5 text-primary border-outline-variant rounded focus:ring-2 focus:ring-primary cursor-pointer"
                         />
                       </th>
-                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th scope="col" className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider">
                         Attendee Name
                       </th>
-                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th scope="col" className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider">
                         Email
                       </th>
-                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th scope="col" className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider">
                         Phone
                       </th>
-                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th scope="col" className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider">
                         Organization
                       </th>
-                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th scope="col" className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider">
                         Event
                       </th>
-                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th scope="col" className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider">
                         Ticket Type
                       </th>
-                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th scope="col" className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider">
                         Tickets
                       </th>
-                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th scope="col" className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider">
                         Total
                       </th>
-                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th scope="col" className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider">
                         Promo Code
                       </th>
-                      <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th scope="col" className="px-6 py-3 text-right text-sm font-medium text-on-surface-variant uppercase tracking-wider">
                         Actions
                       </th>
                     </tr>
                   </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
+                  <tbody className="bg-white divide-y divide-outline-variant">
                     {filteredRegistrations.map((registration) => {
                       const isEditing = editingAttendee === registration.id;
                       const ticketQuantity = getRegistrationQuantity(registration);
@@ -2084,13 +2072,13 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
                       const ticketTypeName = getTicketTypeName(registration);
                       
                       return (
-                        <tr key={registration.id} className={isEditing ? 'bg-blue-50' : 'hover:bg-gray-50'}>
+                        <tr key={registration.id} className={isEditing ? 'bg-surface-container-low' : 'hover:bg-surface-container-low'}>
                           <td className="px-6 py-4 whitespace-nowrap">
                             <input
                               type="checkbox"
                               checked={selectedRegistrations.has(registration.id)}
                               onChange={() => handleSelectRegistration(registration.id)}
-                              className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                              className="w-5 h-5 text-primary border-outline-variant rounded focus:ring-2 focus:ring-primary cursor-pointer"
                             />
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap">
@@ -2099,18 +2087,18 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
                                 type="text"
                                 value={editingDetails?.name || ''}
                                 onChange={(e) => setEditingDetails(prev => prev ? { ...prev, name: e.target.value } : null)}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                className="w-full px-3 py-2 border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
                                 placeholder="Full Name"
                               />
                             ) : (
                               <div className="flex items-center">
                                 <div className="flex-shrink-0 h-10 w-10">
-                                  <div className="h-10 w-10 rounded-full bg-gray-300 flex items-center justify-center">
-                                    <UserIcon className="h-5 w-5 text-gray-600" />
+                                  <div className="h-10 w-10 rounded-full bg-surface-container-highest flex items-center justify-center">
+                                    <UserIcon className="h-5 w-5 text-on-surface-variant" />
                                   </div>
                                 </div>
                                 <div className="ml-4">
-                                  <div className="text-sm font-medium text-gray-900">{registration.attendee.name}</div>
+                                  <div className="text-sm font-medium text-on-surface">{registration.attendee.name}</div>
                                 </div>
                               </div>
                             )}
@@ -2121,11 +2109,11 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
                                 type="email"
                                 value={editingDetails?.email || ''}
                                 onChange={(e) => setEditingDetails(prev => prev ? { ...prev, email: e.target.value } : null)}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                className="w-full px-3 py-2 border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
                                 placeholder="email@example.com"
                               />
                             ) : (
-                              <div className="text-sm text-gray-900">{registration.attendee.email}</div>
+                              <div className="text-sm text-on-surface">{registration.attendee.email}</div>
                             )}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap">
@@ -2134,11 +2122,11 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
                                 type="tel"
                                 value={editingDetails?.phone || ''}
                                 onChange={(e) => setEditingDetails(prev => prev ? { ...prev, phone: e.target.value } : null)}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                className="w-full px-3 py-2 border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
                                 placeholder="Phone Number"
                               />
                             ) : (
-                              <div className="text-sm text-gray-900">{registration.attendee.phone || '-'}</div>
+                              <div className="text-sm text-on-surface">{registration.attendee.phone || '-'}</div>
                             )}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap">
@@ -2147,29 +2135,29 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
                                 type="text"
                                 value={editingDetails?.organization || ''}
                                 onChange={(e) => setEditingDetails(prev => prev ? { ...prev, organization: e.target.value } : null)}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                className="w-full px-3 py-2 border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
                                 placeholder="Organization"
                               />
                             ) : (
-                              <div className="text-sm text-gray-900">{registration.attendee.organization || '-'}</div>
+                              <div className="text-sm text-on-surface">{registration.attendee.organization || '-'}</div>
                             )}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap">
-                            <div className="text-sm text-gray-900">{registration.event.title}</div>
-                            <div className="text-xs text-gray-500">{formatDate(registration.event.date)}</div>
+                            <div className="text-sm text-on-surface">{registration.event.title}</div>
+                            <div className="text-sm text-on-surface-variant">{formatDate(registration.event.date)}</div>
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-on-surface">
                             {ticketTypeName}
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-on-surface">
                             {ticketQuantity}
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-on-surface">
                             {formatCurrency(totalAmount)}
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-on-surface">
                             {promoCodeValue ? (
-                              <span className="inline-flex px-2 py-1 rounded-full bg-indigo-50 text-indigo-700 text-xs font-medium">
+                              <span className="inline-flex px-2 py-1 rounded-full bg-primary-container text-primary text-sm font-medium">
                                 {promoCodeValue}
                               </span>
                             ) : (
@@ -2182,11 +2170,11 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
                                 <button
                                   onClick={() => handleSaveAttendeeDetails(registration.id)}
                                   disabled={savingDetails}
-                                  className="inline-flex items-center px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
+                                  className="inline-flex items-center px-3 py-2 bg-success text-white rounded-lg hover:bg-success-hover transition-colors disabled:opacity-50"
                                 >
                                   {savingDetails ? (
                                     <>
-                                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                                      <div className="motion-essential animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
                                       Saving...
                                     </>
                                   ) : (
@@ -2199,7 +2187,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
                                 <button
                                   onClick={handleCancelEditingDetails}
                                   disabled={savingDetails}
-                                  className="inline-flex items-center px-3 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors disabled:opacity-50"
+                                  className="inline-flex items-center px-3 py-2 bg-inverse-surface text-white rounded-lg hover:bg-inverse-surface transition-colors disabled:opacity-50"
                                 >
                                   <XMarkIcon className="h-4 w-4 mr-1" />
                                   Cancel
@@ -2208,7 +2196,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
                             ) : (
                               <button
                                 onClick={() => handleStartEditingDetails(registration)}
-                                className="text-blue-600 hover:text-blue-900"
+                                className="text-primary hover:text-on-secondary-container"
                               >
                                 Edit Details
                               </button>
@@ -2225,563 +2213,562 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
         )}
 
         {/* Registration Details Modal */}
-        {viewingRegistration && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-75">
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[95vh] overflow-hidden flex flex-col mx-4">
-              {/* Header */}
-              <div className="flex items-center justify-between p-6 border-b border-gray-200 bg-gray-50">
-                <div>
-                  <h2 className="text-xl font-semibold text-gray-900">
-                    Registration Details
-                  </h2>
-                  <p className="text-sm text-gray-600 mt-1">
-                    {viewingRegistration.attendee.name} • {viewingRegistration.event.title}
-                  </p>
-                </div>
-                <button
-                  onClick={() => setViewingRegistration(null)}
-                  className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-                >
-                  <XMarkIcon className="h-6 w-6" />
-                </button>
-              </div>
-              
-              {/* Content */}
-              <div className="flex-1 overflow-y-auto p-6">
-                <div className="space-y-8">
-                  {/* Status Overview */}
-                  <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-4 border border-blue-100">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-4">
-                        <div className="flex items-center space-x-2">
-                          {getStatusIcon(viewingRegistration.status)}
-                          <span className={`px-3 py-1 text-sm font-medium rounded-full ${getStatusColor(viewingRegistration.status)}`}>
-                            {viewingRegistration.status.charAt(0).toUpperCase() + viewingRegistration.status.slice(1)}
-                          </span>
-                        </div>
-                        {viewingRegistration.paymentStatus && (
-                          <div className="flex items-center space-x-2">
-                            <CurrencyDollarIcon className="h-5 w-5 text-gray-500" />
-                            <span className={`px-3 py-1 text-sm font-medium rounded-full ${
-                              viewingRegistration.paymentStatus === 'paid' ? 'bg-green-100 text-green-800' :
-                              viewingRegistration.paymentStatus === 'pending' ? 'bg-yellow-100 text-yellow-800' :
-                              'bg-red-100 text-red-800'
-                            }`}>
-                              Payment: {viewingRegistration.paymentStatus.charAt(0).toUpperCase() + viewingRegistration.paymentStatus.slice(1)}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                      <div className="text-right">
-                        <div className="text-2xl font-bold text-gray-900">
-                          ₱{viewingRegistration.event.ticketPrice.toLocaleString()}
-                        </div>
-                        <div className="text-sm text-gray-600">Ticket Price</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Main Content Grid */}
-                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    {/* Attendee Information */}
-                    <div className="lg:col-span-1">
-                      <div className="bg-white border border-gray-200 rounded-lg p-5">
-                        <div className="flex items-center space-x-3 mb-4">
-                          <div className="p-2 bg-blue-100 rounded-lg">
-                            <UserIcon className="h-5 w-5 text-blue-600" />
-                          </div>
-                          <h3 className="text-lg font-semibold text-gray-900">Attendee</h3>
-                        </div>
-                        
-                        <div className="space-y-4">
-                          <div>
-                            <label className="text-sm font-medium text-gray-700">Name</label>
-                            <p className="text-gray-900 font-medium">{viewingRegistration.attendee.name}</p>
-                          </div>
-                          
-                          <div>
-                            <label className="text-sm font-medium text-gray-700">Email</label>
-                            <p className="text-gray-900">{viewingRegistration.attendee.email}</p>
-                          </div>
-                          
-                          {viewingRegistration.attendee.phone && (
-                            <div>
-                              <label className="text-sm font-medium text-gray-700">Phone</label>
-                              <p className="text-gray-900">{viewingRegistration.attendee.phone}</p>
-                            </div>
-                          )}
-                          
-                          {viewingRegistration.attendee.organization && (
-                            <div>
-                              <label className="text-sm font-medium text-gray-700">Organization</label>
-                              <p className="text-gray-900">{viewingRegistration.attendee.organization}</p>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Event Information */}
-                    <div className="lg:col-span-1">
-                      <div className="bg-white border border-gray-200 rounded-lg p-5">
-                        <div className="flex items-center space-x-3 mb-4">
-                          <div className="p-2 bg-green-100 rounded-lg">
-                            <CalendarDaysIcon className="h-5 w-5 text-green-600" />
-                          </div>
-                          <h3 className="text-lg font-semibold text-gray-900">Event</h3>
-                        </div>
-                        
-                        <div className="space-y-4">
-                          <div>
-                            <label className="text-sm font-medium text-gray-700">Title</label>
-                            <p className="text-gray-900 font-medium">{viewingRegistration.event.title}</p>
-                          </div>
-                          
-                          <div>
-                            <label className="text-sm font-medium text-gray-700">Date & Time</label>
-                            <p className="text-gray-900">{formatDate(viewingRegistration.event.date)}</p>
-                          </div>
-                          
-                          <div>
-                            <label className="text-sm font-medium text-gray-700">Venue</label>
-                            <p className="text-gray-900">{viewingRegistration.event.venue}</p>
-                          </div>
-                          
-                          <div>
-                            <label className="text-sm font-medium text-gray-700">Registration Date</label>
-                            <p className="text-gray-900">{formatDate(viewingRegistration.registrationDate)}</p>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Pricing */}
-                    <div className="lg:col-span-1">
-                      <div className="bg-white border border-gray-200 rounded-lg p-5">
-                        <div className="flex items-center space-x-3 mb-4">
-                          <div className="p-2 bg-yellow-100 rounded-lg">
-                            <CurrencyDollarIcon className="h-5 w-5 text-yellow-600" />
-                          </div>
-                          <h3 className="text-lg font-semibold text-gray-900">Pricing</h3>
-                        </div>
-
-                        <div className="space-y-4">
-                          {(viewingRegistration.promoCode || viewingRegistration.pricing?.promoCode) && (
-                            <div className="bg-green-50 border border-green-200 rounded-lg p-3">
-                              <label className="text-sm font-medium text-green-700">🎫 Promo Code Applied</label>
-                              <p className="text-green-900 font-mono text-sm font-semibold">
-                                {viewingRegistration.promoCode || 
-                                 (typeof viewingRegistration.pricing?.promoCode === 'string' 
-                                   ? viewingRegistration.pricing?.promoCode 
-                                   : viewingRegistration.pricing?.promoCode?.code)}
-                              </p>
-                            </div>
-                          )}
-
-                          {typeof viewingRegistration.quantity === 'number' && (
-                            <div>
-                              <label className="text-sm font-medium text-gray-700">Quantity</label>
-                              <p className="text-gray-900">{viewingRegistration.quantity}</p>
-                            </div>
-                          )}
-
-                          {typeof viewingRegistration.pricing?.originalPrice === 'number' && (
-                            <div>
-                              <label className="text-sm font-medium text-gray-700">Original Price</label>
-                              <p className="text-gray-900">₱{(viewingRegistration.pricing?.originalPrice || 0).toLocaleString()}</p>
-                            </div>
-                          )}
-
-                          {(typeof viewingRegistration.pricing?.discountAmount === 'number' || typeof viewingRegistration.discountAmount === 'number') && (
-                            <div>
-                              <label className="text-sm font-medium text-gray-700">Discount</label>
-                              <p className="text-green-600">-₱{(viewingRegistration.pricing?.discountAmount ?? viewingRegistration.discountAmount ?? 0).toLocaleString()}</p>
-                            </div>
-                          )}
-
-                          {typeof viewingRegistration.pricing?.currentPrice === 'number' && (
-                            <div>
-                              <label className="text-sm font-medium text-gray-700">Discounted Price</label>
-                              <p className="text-gray-900">₱{(viewingRegistration.pricing?.currentPrice || 0).toLocaleString()}</p>
-                            </div>
-                          )}
-
-                          {(typeof viewingRegistration.totalAmount === 'number') && (
-                            <div className="pt-2 border-t border-gray-100">
-                              <label className="text-sm font-medium text-gray-700">Total Amount</label>
-                              <p className="text-gray-900 font-semibold">₱{(viewingRegistration.totalAmount || 0).toLocaleString()}</p>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Ticket Information */}
-                    <div className="lg:col-span-1">
-                      <div className="bg-white border border-gray-200 rounded-lg p-5">
-                        <div className="flex items-center space-x-3 mb-4">
-                          <div className="p-2 bg-indigo-100 rounded-lg">
-                            <DocumentTextIcon className="h-5 w-5 text-indigo-600" />
-                          </div>
-                          <h3 className="text-lg font-semibold text-gray-900">Ticket Details</h3>
-                        </div>
-                        
-                        <div className="space-y-4">
-                          {(() => {
-                            const ticketTypeId = viewingRegistration.ticketTypeId;
-                            const event = events.find(e => e.id === viewingRegistration.event.id);
-                            const ticketType = event?.ticketTypes?.find(tt => tt.id === ticketTypeId);
-                            
-                            return ticketType ? (
-                              <>
-                                <div>
-                                  <label className="text-sm font-medium text-gray-700">Ticket Type</label>
-                                  <p className="text-gray-900 font-medium">{ticketType.name}</p>
-                                </div>
-                                {ticketType.description && (
-                                  <div>
-                                    <label className="text-sm font-medium text-gray-700">Description</label>
-                                    <p className="text-gray-900 text-sm">{ticketType.description}</p>
-                                  </div>
-                                )}
-                                <div>
-                                  <label className="text-sm font-medium text-gray-700">Base Price</label>
-                                  <p className="text-gray-900">₱{ticketType.price.toLocaleString()}</p>
-                                </div>
-                                {ticketType.benefits && ticketType.benefits.length > 0 && (
-                                  <div>
-                                    <label className="text-sm font-medium text-gray-700">Benefits</label>
-                                    <ul className="mt-1 space-y-1">
-                                      {ticketType.benefits.map((benefit, idx) => (
-                                        <li key={idx} className="text-gray-900 text-sm flex items-start">
-                                          <CheckIcon className="h-4 w-4 text-green-500 mr-2 mt-0.5 flex-shrink-0" />
-                                          <span>{benefit}</span>
-                                        </li>
-                                      ))}
-                                    </ul>
-                                  </div>
-                                )}
-                              </>
-                            ) : (
-                              <div className="text-sm text-gray-500">
-                                Ticket type information not available
-                              </div>
-                            );
-                          })()}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Payment Proof */}
-                    {(viewingRegistration.paymentProof || loadingProof) && (
-                      <div className="lg:col-span-1">
-                        <div className="bg-white border border-gray-200 rounded-lg p-5">
-                          <div className="flex items-center space-x-3 mb-4">
-                            <div className="p-2 bg-purple-100 rounded-lg">
-                              <DocumentTextIcon className="h-5 w-5 text-purple-600" />
-                            </div>
-                            <h3 className="text-lg font-semibold text-gray-900">Payment Proof</h3>
-                          </div>
-                          
-                          <div className="space-y-4">
-                            {loadingProof && !viewingRegistration.paymentProof && (
-                              <div className="text-sm text-gray-500">Loading payment proof...</div>
-                            )}
-                            <div>
-                              <label className="text-sm font-medium text-gray-700">Status</label>
-                              {viewingRegistration.paymentProof && (
-                                <div className={`inline-flex px-3 py-1 text-sm font-medium rounded-full ${
-                                  viewingRegistration.paymentProof.verificationStatus === 'approved' 
-                                    ? 'bg-green-100 text-green-800'
-                                    : viewingRegistration.paymentProof.verificationStatus === 'rejected'
-                                    ? 'bg-red-100 text-red-800'
-                                    : 'bg-yellow-100 text-yellow-800'
-                                }`}>
-                                  {viewingRegistration.paymentProof.verificationStatus.charAt(0).toUpperCase() + viewingRegistration.paymentProof.verificationStatus.slice(1)}
-                                </div>
-                              )}
-                            </div>
-
-                            {(viewingRegistration.promoCode || viewingRegistration.pricing?.promoCode) && (
-                              <div>
-                                <label className="text-sm font-medium text-gray-700">Promo Code Used</label>
-                                <p className="text-gray-900 font-mono text-sm bg-blue-50 px-2 py-1 rounded">
-                                  {viewingRegistration.promoCode || 
-                                   (typeof viewingRegistration.pricing?.promoCode === 'string' 
-                                     ? viewingRegistration.pricing?.promoCode 
-                                     : viewingRegistration.pricing?.promoCode?.code)}
-                                </p>
-                              </div>
-                            )}
-                            
-                            {viewingRegistration.paymentProof?.transactionId && (
-                              <div>
-                                <label className="text-sm font-medium text-gray-700">Transaction ID</label>
-                                <p className="text-gray-900 font-mono text-sm">{viewingRegistration.paymentProof.transactionId}</p>
-                              </div>
-                            )}
-                            
-                            {viewingRegistration.paymentProof && (
-                            <div>
-                              <label className="text-sm font-medium text-gray-700">Submitted</label>
-                              <p className="text-gray-900">{formatDate(viewingRegistration.paymentProof.submittedAt)}</p>
-                            </div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Payment Screenshot */}
-                  {viewingRegistration.paymentProof?.proofImageUrl && (
-                    <div className="bg-white border border-gray-200 rounded-lg p-5">
-                      <div className="flex items-center space-x-3 mb-4">
-                        <div className="p-2 bg-orange-100 rounded-lg">
-                          <EyeIcon className="h-5 w-5 text-orange-600" />
-                        </div>
-                        <h3 className="text-lg font-semibold text-gray-900">Payment Screenshot</h3>
-                      </div>
-                      
-                      <div className="flex justify-center">
-                        {(() => {
-                          const cacheKey = viewingRegistration.id + '_proof';
-                          const isLoading = imageLoadingStates[cacheKey];
-                          const convertedUrl = convertedImageUrls[cacheKey];
-                          const originalUrl = viewingRegistration.paymentProof!.proofImageUrl!;
-                          const imageUrl = convertedUrl || originalUrl;
-                          
-                          // Show loading if we're currently converting
-                          if (isLoading === true) {
-                            return (
-                              <div className="flex flex-col items-center justify-center p-8 text-gray-500">
-                                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-600 mb-3"></div>
-                                <p className="text-sm">Loading payment proof image...</p>
-                              </div>
-                            );
-                          }
-                          
-                          // If it's a storage path and we haven't tried converting yet, show a message
-                          if (!originalUrl.startsWith('https://') && isLoading === undefined && !convertedUrl) {
-                            return (
-                              <div className="flex flex-col items-center justify-center p-8 text-gray-500">
-                                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-600 mb-3"></div>
-                                <p className="text-sm">Processing payment proof image...</p>
-                              </div>
-                            );
-                          }
-                          
-                          return (
-                            <div className="relative group cursor-pointer" onClick={() => window.open(imageUrl, '_blank')}>
-                              <img 
-                                src={imageUrl} 
-                                alt="Payment proof"
-                                className="max-w-full h-auto max-h-96 rounded-lg border border-gray-200 transition-transform group-hover:scale-105"
-                                onError={(e) => {
-                                  logger.error('Failed to load payment proof image:', imageUrl);
-                                  // Show error message instead of trying to fallback
-                                  const errorDiv = document.createElement('div');
-                                  errorDiv.className = 'flex flex-col items-center justify-center p-8 text-red-500 border-2 border-dashed border-red-300 rounded-lg';
-                                  errorDiv.innerHTML = `
-                                    <div class="text-red-500 mb-2">⚠️</div>
-                                    <p class="text-sm text-center">Failed to load payment proof image</p>
-                                    <p class="text-xs text-gray-500 mt-1">Path: ${originalUrl}</p>
-                                  `;
-                                  e.currentTarget.parentNode?.replaceChild(errorDiv, e.currentTarget);
-                                }}
-                              />
-                              <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-0 transition-all rounded-lg flex items-center justify-center">
-                                <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-white bg-opacity-95 px-4 py-2 rounded-lg text-sm font-medium shadow-lg">
-                                  <EyeIcon className="h-4 w-4 inline mr-2" />
-                                  Click to enlarge
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })()}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Registration Form Responses */}
-                  {viewingRegistration.formSubmission && Object.keys(viewingRegistration.formSubmission).length > 0 && (
-                    <div className="bg-white border border-gray-200 rounded-lg p-5">
-                      <div className="flex items-center space-x-3 mb-4">
-                        <div className="p-2 bg-teal-100 rounded-lg">
-                          <DocumentTextIcon className="h-5 w-5 text-teal-600" />
-                        </div>
-                        <h3 className="text-lg font-semibold text-gray-900">Registration Form Responses</h3>
-                      </div>
-                      
-                      <div className="space-y-4">
-                        {Object.entries(viewingRegistration.formSubmission).map(([fieldId, value]) => {
-                          // Get the event and its registration form to find field details
-                          const event = events.find(e => e.id === viewingRegistration.event.id);
-                          const formField = (event as any)?.registrationForm?.find((f: any) => f.id === fieldId);
-                          const label = formField?.label || fieldId;
-                          
-                          // Format the value based on type
-                          let displayValue: string | React.ReactNode = '';
-                          
-                          if (value === null || value === undefined || value === '') {
-                            displayValue = <span className="text-gray-400 italic">No response</span>;
-                          } else if (Array.isArray(value)) {
-                            displayValue = value.length > 0 
-                              ? value.join(', ') 
-                              : <span className="text-gray-400 italic">No items selected</span>;
-                          } else if (typeof value === 'boolean') {
-                            displayValue = value ? 'Yes' : 'No';
-                          } else if (typeof value === 'object' && value.name && value.phone) {
-                            // Emergency contact format
-                            displayValue = `${value.name} - ${value.phone}`;
-                          } else {
-                            displayValue = String(value);
-                          }
-                          
-                          return (
-                            <div key={fieldId} className="border-b border-gray-100 pb-3 last:border-0">
-                              <label className="text-sm font-medium text-gray-700 block mb-1">
-                                {label}
-                              </label>
-                              <div className="text-gray-900">
-                                {displayValue}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Notes */}
-                  {viewingRegistration.notes && (
-                    <div className="bg-white border border-gray-200 rounded-lg p-5">
-                      <div className="flex items-center space-x-3 mb-4">
-                        <div className="p-2 bg-yellow-100 rounded-lg">
-                          <ChatBubbleLeftRightIcon className="h-5 w-5 text-yellow-600" />
-                        </div>
-                        <h3 className="text-lg font-semibold text-gray-900">Notes</h3>
-                      </div>
-                      <p className="text-gray-700">{viewingRegistration.notes}</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-              
-              {/* Action Buttons */}
-              <div className="border-t border-gray-200 bg-gray-50 p-6">
-                <div className="flex flex-wrap gap-3 justify-between">
-                  <div className="flex flex-wrap gap-3">
-                    {/* Primary Actions */}
-                    {viewingRegistration.status === 'pending' && (
-                      <button
-                        onClick={async () => {
-                          // Approve registration and payment if proof exists
-                          await handleStatusChange(viewingRegistration.id, 'approved');
-                          if (viewingRegistration.paymentProof && viewingRegistration.paymentProof.verificationStatus === 'pending') {
-                            await handlePaymentVerification(viewingRegistration.id, 'approved');
-                          }
-                          setViewingRegistration(null);
-                        }}
-                        className="inline-flex items-center px-6 py-3 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition-colors shadow-sm"
-                      >
-                        <CheckIcon className="h-5 w-5 mr-2" />
-                        Approve Registration & Payment
-                      </button>
-                    )}
-                    
-                    {/* Payment-only Actions (when registration is already approved) */}
-                    {viewingRegistration.status === 'approved' && viewingRegistration.paymentProof && viewingRegistration.paymentProof.verificationStatus === 'pending' && (
-                      <>
-                        <button
-                          onClick={() => {
-                            handlePaymentVerification(viewingRegistration.id, 'approved');
-                            setViewingRegistration(null);
-                          }}
-                          className="inline-flex items-center px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
-                        >
-                          <CheckIcon className="h-5 w-5 mr-2" />
-                          Approve Payment
-                        </button>
-                        <button
-                          onClick={() => {
-                            handlePaymentVerification(viewingRegistration.id, 'rejected');
-                            setViewingRegistration(null);
-                          }}
-                          className="inline-flex items-center px-6 py-3 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition-colors shadow-sm"
-                        >
-                          <XMarkIcon className="h-5 w-5 mr-2" />
-                          Reject Payment
-                        </button>
-                      </>
-                    )}
-                    
-
-                    
-                    {/* Reject/Cancel Action - for any non-approved status */}
-                    {viewingRegistration.status !== 'rejected' && viewingRegistration.status !== 'cancelled' && (
-                      <button
-                        onClick={() => {
-                          handleStatusChange(viewingRegistration.id, 'rejected');
-                          setViewingRegistration(null);
-                        }}
-                        className="inline-flex items-center px-6 py-3 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition-colors shadow-sm"
-                      >
-                        <XMarkIcon className="h-5 w-5 mr-2" />
-                        Reject Registration
-                      </button>
-                    )}
-                    
-                    <button
-                      onClick={() => setViewingRegistration(null)}
-                      className="inline-flex items-center px-6 py-3 bg-white border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors shadow-sm"
-                    >
-                      Close
-                    </button>
-                  </div>
-
-                  {/* Delete Action - Separated on the right */}
-                  <button
+        <Modal
+          open={!!viewingRegistration}
+          onClose={() => setViewingRegistration(null)}
+          title="Registration Details"
+          size="lg"
+          footer={
+            viewingRegistration ? (
+              <>
+                {/* Primary Actions */}
+                {viewingRegistration.status === 'pending' && (
+                  <Button
                     onClick={async () => {
-                      if (window.confirm(
-                        `Are you sure you want to permanently delete this registration?\n\n` +
-                        `Attendee: ${viewingRegistration.attendee.name}\n` +
-                        `Event: ${viewingRegistration.event.title}\n\n` +
-                        `This will delete:\n` +
-                        `• The registration record\n` +
-                        `• All associated payment proofs\n` +
-                        `• Payment proof images from storage\n\n` +
-                        `This action cannot be undone!`
-                      )) {
-                        try {
-                          // Delete registration and all associated data
-                          await RegistrationService.deleteRegistration(viewingRegistration.id);
-                          
-                          // Remove from local state
-                          setRegistrations(prev => prev.filter(r => r.id !== viewingRegistration.id));
-                          
-                          // Close modal
-                          setViewingRegistration(null);
-                          
-                          // Show success message
-                          alert('Registration deleted successfully');
-                        } catch (error) {
-                          logger.error('Failed to delete registration:', error);
-                          alert('Failed to delete registration. Please try again.');
-                        }
+                      // Approve registration and payment if proof exists
+                      await handleStatusChange(viewingRegistration.id, 'approved');
+                      if (viewingRegistration.paymentProof && viewingRegistration.paymentProof.verificationStatus === 'pending') {
+                        await handlePaymentVerification(viewingRegistration.id, 'approved');
                       }
+                      setViewingRegistration(null);
                     }}
-                    className="inline-flex items-center px-6 py-3 bg-gray-800 text-white font-medium rounded-lg hover:bg-gray-900 transition-colors shadow-sm"
+                    icon={<CheckIcon className="h-5 w-5" />}
                   >
-                    <XMarkIcon className="h-5 w-5 mr-2" />
-                    Delete Registration
-                  </button>
+                    Approve Registration &amp; Payment
+                  </Button>
+                )}
+
+                {/* Payment-only Actions (when registration is already approved) */}
+                {viewingRegistration.status === 'approved' && viewingRegistration.paymentProof && viewingRegistration.paymentProof.verificationStatus === 'pending' && (
+                  <>
+                    <Button
+                      onClick={() => {
+                        handlePaymentVerification(viewingRegistration.id, 'approved');
+                        setViewingRegistration(null);
+                      }}
+                      icon={<CheckIcon className="h-5 w-5" />}
+                    >
+                      Approve Payment
+                    </Button>
+                    <Button
+                      variant="danger"
+                      onClick={() => {
+                        handlePaymentVerification(viewingRegistration.id, 'rejected');
+                        setViewingRegistration(null);
+                      }}
+                      icon={<XMarkIcon className="h-5 w-5" />}
+                    >
+                      Reject Payment
+                    </Button>
+                  </>
+                )}
+
+                {/* Reject/Cancel Action - for any non-approved status */}
+                {viewingRegistration.status !== 'rejected' && viewingRegistration.status !== 'cancelled' && (
+                  <Button
+                    variant="danger"
+                    onClick={() => {
+                      handleStatusChange(viewingRegistration.id, 'rejected');
+                      setViewingRegistration(null);
+                    }}
+                    icon={<XMarkIcon className="h-5 w-5" />}
+                  >
+                    Reject Registration
+                  </Button>
+                )}
+
+                <Button variant="outlined" onClick={() => setViewingRegistration(null)}>
+                  Close
+                </Button>
+
+                {/* Delete Action - kept last; irreversible */}
+                <Button
+                  variant="danger"
+                  className="mr-auto"
+                  onClick={async () => {
+                    if (window.confirm(
+                      `Are you sure you want to permanently delete this registration?\n\n` +
+                      `Attendee: ${viewingRegistration.attendee.name}\n` +
+                      `Event: ${viewingRegistration.event.title}\n\n` +
+                      `This will delete:\n` +
+                      `• The registration record\n` +
+                      `• All associated payment proofs\n` +
+                      `• Payment proof images from storage\n\n` +
+                      `This action cannot be undone!`
+                    )) {
+                      try {
+                        // Delete registration and all associated data
+                        await RegistrationService.deleteRegistration(viewingRegistration.id);
+
+                        // Remove from local state
+                        setRegistrations(prev => prev.filter(r => r.id !== viewingRegistration.id));
+
+                        // Close modal
+                        setViewingRegistration(null);
+
+                        // Show success message
+                        alert('Registration deleted successfully');
+                      } catch (error) {
+                        logger.error('Failed to delete registration:', error);
+                        alert('Failed to delete registration. Please try again.');
+                      }
+                    }
+                  }}
+                  icon={<XMarkIcon className="h-5 w-5" />}
+                >
+                  Delete Registration
+                </Button>
+              </>
+            ) : null
+          }
+        >
+          {viewingRegistration && (
+            <>
+          <p className="mb-4 text-sm text-on-surface-variant">
+            {viewingRegistration.attendee.name} • {viewingRegistration.event.title}
+          </p>
+          <div className="space-y-8">
+            {/* Status Overview */}
+            <div className="bg-gradient-to-r from-surface-container-low to-primary-container rounded-lg p-4 border border-outline-variant">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-4">
+                  <div className="flex items-center space-x-2">
+                    {getStatusIcon(viewingRegistration.status)}
+                    <span className={`px-3 py-1 text-sm font-medium rounded-full ${getStatusColor(viewingRegistration.status)}`}>
+                      {viewingRegistration.status.charAt(0).toUpperCase() + viewingRegistration.status.slice(1)}
+                    </span>
+                  </div>
+                  {viewingRegistration.paymentStatus && (
+                    <div className="flex items-center space-x-2">
+                      <CurrencyDollarIcon className="h-5 w-5 text-on-surface-variant" />
+                      <span className={`px-3 py-1 text-sm font-medium rounded-full ${
+                        viewingRegistration.paymentStatus === 'paid' ? 'bg-surface-container-high text-success' :
+                        viewingRegistration.paymentStatus === 'pending' ? 'bg-warning-container text-on-warning-container' :
+                        'bg-error-container text-on-error-container'
+                      }`}>
+                        Payment: {viewingRegistration.paymentStatus.charAt(0).toUpperCase() + viewingRegistration.paymentStatus.slice(1)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+                <div className="text-right">
+                  <div className="text-2xl font-bold text-on-surface">
+                    ₱{viewingRegistration.event.ticketPrice.toLocaleString()}
+                  </div>
+                  <div className="text-sm text-on-surface-variant">Ticket Price</div>
                 </div>
               </div>
             </div>
-          </div>
-        )}
+
+            {/* Main Content Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Attendee Information */}
+              <div className="lg:col-span-1">
+                <div className="bg-surface border border-outline-variant rounded-lg p-5">
+                  <div className="flex items-center space-x-3 mb-4">
+                    <div className="p-2 bg-surface-container-high rounded-lg">
+                      <UserIcon className="h-5 w-5 text-primary" />
+                    </div>
+                    <h3 className="text-lg font-semibold text-on-surface">Attendee</h3>
+                  </div>
+                        
+                  <div className="space-y-4">
+                    <div>
+                      <label className="text-sm font-medium text-on-surface-variant">Name</label>
+                      <p className="text-on-surface font-medium">{viewingRegistration.attendee.name}</p>
+                    </div>
+                          
+                    <div>
+                      <label className="text-sm font-medium text-on-surface-variant">Email</label>
+                      <p className="text-on-surface">{viewingRegistration.attendee.email}</p>
+                    </div>
+                          
+                    {viewingRegistration.attendee.phone && (
+                      <div>
+                        <label className="text-sm font-medium text-on-surface-variant">Phone</label>
+                        <p className="text-on-surface">{viewingRegistration.attendee.phone}</p>
+                      </div>
+                    )}
+                          
+                    {viewingRegistration.attendee.organization && (
+                      <div>
+                        <label className="text-sm font-medium text-on-surface-variant">Organization</label>
+                        <p className="text-on-surface">{viewingRegistration.attendee.organization}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Event Information */}
+              <div className="lg:col-span-1">
+                <div className="bg-surface border border-outline-variant rounded-lg p-5">
+                  <div className="flex items-center space-x-3 mb-4">
+                    <div className="p-2 bg-surface-container-high rounded-lg">
+                      <CalendarDaysIcon className="h-5 w-5 text-success" />
+                    </div>
+                    <h3 className="text-lg font-semibold text-on-surface">Event</h3>
+                  </div>
+                        
+                  <div className="space-y-4">
+                    <div>
+                      <label className="text-sm font-medium text-on-surface-variant">Title</label>
+                      <p className="text-on-surface font-medium">{viewingRegistration.event.title}</p>
+                    </div>
+                          
+                    <div>
+                      <label className="text-sm font-medium text-on-surface-variant">Date & Time</label>
+                      <p className="text-on-surface">{formatDate(viewingRegistration.event.date)}</p>
+                    </div>
+                          
+                    <div>
+                      <label className="text-sm font-medium text-on-surface-variant">Venue</label>
+                      <p className="text-on-surface">{viewingRegistration.event.venue}</p>
+                    </div>
+                          
+                    <div>
+                      <label className="text-sm font-medium text-on-surface-variant">Registration Date</label>
+                      <p className="text-on-surface">{formatDate(viewingRegistration.registrationDate)}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Pricing */}
+              <div className="lg:col-span-1">
+                <div className="bg-surface border border-outline-variant rounded-lg p-5">
+                  <div className="flex items-center space-x-3 mb-4">
+                    <div className="p-2 bg-warning-container rounded-lg">
+                      <CurrencyDollarIcon className="h-5 w-5 text-warning" />
+                    </div>
+                    <h3 className="text-lg font-semibold text-on-surface">Pricing</h3>
+                  </div>
+
+                  <div className="space-y-4">
+                    {(viewingRegistration.promoCode || viewingRegistration.pricing?.promoCode) && (
+                      <div className="bg-success-container border border-outline-variant rounded-lg p-3">
+                        <label className="text-sm font-medium text-success">🎫 Promo Code Applied</label>
+                        <p className="text-on-success-container font-mono text-sm font-semibold">
+                          {viewingRegistration.promoCode || 
+                           (typeof viewingRegistration.pricing?.promoCode === 'string' 
+                             ? viewingRegistration.pricing?.promoCode 
+                             : viewingRegistration.pricing?.promoCode?.code)}
+                        </p>
+                      </div>
+                    )}
+
+                    {typeof viewingRegistration.quantity === 'number' && (
+                      <div>
+                        <label className="text-sm font-medium text-on-surface-variant">Quantity</label>
+                        <p className="text-on-surface">{viewingRegistration.quantity}</p>
+                      </div>
+                    )}
+
+                    {typeof viewingRegistration.pricing?.originalPrice === 'number' && (
+                      <div>
+                        <label className="text-sm font-medium text-on-surface-variant">Original Price</label>
+                        <p className="text-on-surface">₱{(viewingRegistration.pricing?.originalPrice || 0).toLocaleString()}</p>
+                      </div>
+                    )}
+
+                    {(typeof viewingRegistration.pricing?.discountAmount === 'number' || typeof viewingRegistration.discountAmount === 'number') && (
+                      <div>
+                        <label className="text-sm font-medium text-on-surface-variant">Discount</label>
+                        <p className="text-success">-₱{(viewingRegistration.pricing?.discountAmount ?? viewingRegistration.discountAmount ?? 0).toLocaleString()}</p>
+                      </div>
+                    )}
+
+                    {typeof viewingRegistration.pricing?.currentPrice === 'number' && (
+                      <div>
+                        <label className="text-sm font-medium text-on-surface-variant">Discounted Price</label>
+                        <p className="text-on-surface">₱{(viewingRegistration.pricing?.currentPrice || 0).toLocaleString()}</p>
+                      </div>
+                    )}
+
+                    {(typeof viewingRegistration.totalAmount === 'number') && (
+                      <div className="pt-2 border-t border-outline-variant">
+                        <label className="text-sm font-medium text-on-surface-variant">Total Amount</label>
+                        <p className="text-on-surface font-semibold">₱{(viewingRegistration.totalAmount || 0).toLocaleString()}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Ticket Information */}
+              <div className="lg:col-span-1">
+                <div className="bg-surface border border-outline-variant rounded-lg p-5">
+                  <div className="flex items-center space-x-3 mb-4">
+                    <div className="p-2 bg-primary-container rounded-lg">
+                      <DocumentTextIcon className="h-5 w-5 text-primary" />
+                    </div>
+                    <h3 className="text-lg font-semibold text-on-surface">Ticket Details</h3>
+                  </div>
+                        
+                  <div className="space-y-4">
+                    {(() => {
+                      const ticketTypeId = viewingRegistration.ticketTypeId;
+                      const event = events.find(e => e.id === viewingRegistration.event.id);
+                      const ticketType = event?.ticketTypes?.find(tt => tt.id === ticketTypeId);
+                            
+                      return ticketType ? (
+                        <>
+                          <div>
+                            <label className="text-sm font-medium text-on-surface-variant">Ticket Type</label>
+                            <p className="text-on-surface font-medium">{ticketType.name}</p>
+                          </div>
+                          {ticketType.description && (
+                            <div>
+                              <label className="text-sm font-medium text-on-surface-variant">Description</label>
+                              <p className="text-on-surface text-sm">{ticketType.description}</p>
+                            </div>
+                          )}
+                          <div>
+                            <label className="text-sm font-medium text-on-surface-variant">Base Price</label>
+                            <p className="text-on-surface">₱{ticketType.price.toLocaleString()}</p>
+                          </div>
+                          {ticketType.benefits && ticketType.benefits.length > 0 && (
+                            <div>
+                              <label className="text-sm font-medium text-on-surface-variant">Benefits</label>
+                              <ul className="mt-1 space-y-1">
+                                {ticketType.benefits.map((benefit, idx) => (
+                                  <li key={idx} className="text-on-surface text-sm flex items-start">
+                                    <CheckIcon className="h-4 w-4 text-success mr-2 mt-0.5 flex-shrink-0" />
+                                    <span>{benefit}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <div className="text-sm text-on-surface-variant">
+                          Ticket type information not available
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+              </div>
+
+              {/* Payment Proof */}
+              {(viewingRegistration.paymentProof || loadingProof) && (
+                <div className="lg:col-span-1">
+                  <div className="bg-surface border border-outline-variant rounded-lg p-5">
+                    <div className="flex items-center space-x-3 mb-4">
+                      <div className="p-2 bg-surface-container-high rounded-lg">
+                        <DocumentTextIcon className="h-5 w-5 text-primary" />
+                      </div>
+                      <h3 className="text-lg font-semibold text-on-surface">Payment Proof</h3>
+                    </div>
+                          
+                    <div className="space-y-4">
+                      {loadingProof && !viewingRegistration.paymentProof && (
+                        <div className="text-sm text-on-surface-variant">Loading payment proof...</div>
+                      )}
+                      <div>
+                        <label className="text-sm font-medium text-on-surface-variant">Status</label>
+                        {viewingRegistration.paymentProof && (
+                          <div className={`inline-flex px-3 py-1 text-sm font-medium rounded-full ${
+                            viewingRegistration.paymentProof.verificationStatus === 'approved' 
+                              ? 'bg-surface-container-high text-success'
+                              : viewingRegistration.paymentProof.verificationStatus === 'rejected'
+                              ? 'bg-error-container text-on-error-container'
+                              : 'bg-warning-container text-on-warning-container'
+                          }`}>
+                            {viewingRegistration.paymentProof.verificationStatus.charAt(0).toUpperCase() + viewingRegistration.paymentProof.verificationStatus.slice(1)}
+                          </div>
+                        )}
+                      </div>
+
+                      {(viewingRegistration.promoCode || viewingRegistration.pricing?.promoCode) && (
+                        <div>
+                          <label className="text-sm font-medium text-on-surface-variant">Promo Code Used</label>
+                          <p className="text-on-surface font-mono text-sm bg-surface-container-low px-2 py-1 rounded">
+                            {viewingRegistration.promoCode || 
+                             (typeof viewingRegistration.pricing?.promoCode === 'string' 
+                               ? viewingRegistration.pricing?.promoCode 
+                               : viewingRegistration.pricing?.promoCode?.code)}
+                          </p>
+                        </div>
+                      )}
+                            
+                      {viewingRegistration.paymentProof?.transactionId && (
+                        <div>
+                          <label className="text-sm font-medium text-on-surface-variant">Transaction ID</label>
+                          <p className="text-on-surface font-mono text-sm">{viewingRegistration.paymentProof.transactionId}</p>
+                        </div>
+                      )}
+                            
+                      {viewingRegistration.paymentProof && (
+                      <div>
+                        <label className="text-sm font-medium text-on-surface-variant">Submitted</label>
+                        <p className="text-on-surface">{formatDate(viewingRegistration.paymentProof.submittedAt)}</p>
+                      </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Payment Screenshot */}
+            {viewingRegistration.paymentProof?.proofImageUrl && (
+              <div className="bg-surface border border-outline-variant rounded-lg p-5">
+                <div className="flex items-center space-x-3 mb-4">
+                  <div className="p-2 bg-warning-container rounded-lg">
+                    <EyeIcon className="h-5 w-5 text-warning" />
+                  </div>
+                  <h3 className="text-lg font-semibold text-on-surface">Payment Screenshot</h3>
+                </div>
+                      
+                <div className="flex justify-center">
+                  {(() => {
+                    const cacheKey = viewingRegistration.id + '_proof';
+                    const isLoading = imageLoadingStates[cacheKey];
+                    const convertedUrl = convertedImageUrls[cacheKey];
+                    const originalUrl = viewingRegistration.paymentProof!.proofImageUrl!;
+                    const imageUrl = convertedUrl || originalUrl;
+                          
+                    // Show loading if we're currently converting
+                    if (isLoading === true) {
+                      return (
+                        <div className="flex flex-col items-center justify-center p-8 text-on-surface-variant">
+                          <div className="motion-essential animate-spin rounded-full h-8 w-8 border-b-2 border-primary mb-3"></div>
+                          <p className="text-sm">Loading payment proof image...</p>
+                        </div>
+                      );
+                    }
+                          
+                    // If it's a storage path and we haven't tried converting yet, show a message
+                    if (!originalUrl.startsWith('https://') && isLoading === undefined && !convertedUrl) {
+                      return (
+                        <div className="flex flex-col items-center justify-center p-8 text-on-surface-variant">
+                          <div className="motion-essential animate-spin rounded-full h-8 w-8 border-b-2 border-primary mb-3"></div>
+                          <p className="text-sm">Processing payment proof image...</p>
+                        </div>
+                      );
+                    }
+                          
+                    return (
+                      <div className="relative group cursor-pointer" onClick={() => window.open(imageUrl, '_blank')}>
+                        <img 
+                          src={imageUrl} 
+                          alt="Payment proof"
+                          className="max-w-full h-auto max-h-96 rounded-lg border border-outline-variant transition-transform group-hover:scale-105"
+                          onError={(e) => {
+                            logger.error('Failed to load payment proof image:', imageUrl);
+                            // Show error message instead of trying to fallback
+                            const errorDiv = document.createElement('div');
+                            errorDiv.className = 'flex flex-col items-center justify-center p-8 text-error border-2 border-dashed border-outline-variant rounded-lg';
+                            errorDiv.innerHTML = `
+                              <div class="text-red-500 mb-2">⚠️</div>
+                              <p class="text-sm text-center">Failed to load payment proof image</p>
+                              <p class="text-sm text-on-surface-variant mt-1">Path: ${originalUrl}</p>
+                            `;
+                            e.currentTarget.parentNode?.replaceChild(errorDiv, e.currentTarget);
+                          }}
+                        />
+                        {/* No scrim: the label carries its own white chip,
+                            so the previous `bg-opacity-0 group-hover:bg-opacity-0`
+                            pair was a no-op still paying a `transition-all`. */}
+                        <div className="absolute inset-0 rounded-lg flex items-center justify-center">
+                          <div className="opacity-0 group-hover:opacity-100 motion-reduce:transition-none transition-opacity duration-fast ease-quart bg-surface/95 px-4 py-2 rounded-lg text-sm font-medium shadow-lg">
+                            <EyeIcon className="h-4 w-4 inline mr-2" />
+                            Click to enlarge
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            )}
+
+            {/* Registration Form Responses */}
+            {viewingRegistration.formSubmission && Object.keys(viewingRegistration.formSubmission).length > 0 && (
+              <div className="bg-surface border border-outline-variant rounded-lg p-5">
+                <div className="flex items-center space-x-3 mb-4">
+                  <div className="p-2 bg-success-container rounded-lg">
+                    <DocumentTextIcon className="h-5 w-5 text-success" />
+                  </div>
+                  <h3 className="text-lg font-semibold text-on-surface">Registration Form Responses</h3>
+                </div>
+                      
+                <div className="space-y-4">
+                  {Object.entries(viewingRegistration.formSubmission).map(([fieldId, value]) => {
+                    // Get the event and its registration form to find field details
+                    const event = events.find(e => e.id === viewingRegistration.event.id);
+                    const formField = (event as any)?.registrationForm?.find((f: any) => f.id === fieldId);
+                    const label = formField?.label || fieldId;
+                          
+                    // Format the value based on type
+                    let displayValue: string | React.ReactNode = '';
+                          
+                    if (value === null || value === undefined || value === '') {
+                      displayValue = <span className="text-on-surface-variant italic">No response</span>;
+                    } else if (Array.isArray(value)) {
+                      displayValue = value.length > 0 
+                        ? value.join(', ') 
+                        : <span className="text-on-surface-variant italic">No items selected</span>;
+                    } else if (typeof value === 'boolean') {
+                      displayValue = value ? 'Yes' : 'No';
+                    } else if (typeof value === 'object' && value.name && value.phone) {
+                      // Emergency contact format
+                      displayValue = `${value.name} - ${value.phone}`;
+                    } else {
+                      displayValue = String(value);
+                    }
+                          
+                    return (
+                      <div key={fieldId} className="border-b border-outline-variant pb-3 last:border-0">
+                        <label className="text-sm font-medium text-on-surface-variant block mb-1">
+                          {label}
+                        </label>
+                        <div className="text-on-surface">
+                          {displayValue}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Notes */}
+            {viewingRegistration.notes && (
+              <div className="bg-surface border border-outline-variant rounded-lg p-5">
+                <div className="flex items-center space-x-3 mb-4">
+                  <div className="p-2 bg-warning-container rounded-lg">
+                    <ChatBubbleLeftRightIcon className="h-5 w-5 text-warning" />
+                  </div>
+                  <h3 className="text-lg font-semibold text-on-surface">Notes</h3>
+                </div>
+                <p className="text-on-surface-variant">{viewingRegistration.notes}</p>
+              </div>
+            )}
+            </div>
+            </>
+          )}
+        </Modal>
       </div>
+    </div>
+  );
+
+  if (embedded) {
+    return pageContent;
+  }
+
+  return (
+    <LayoutComponent 
+      title={currentEvent ? `${currentEvent.title} - Attendees` : "Attendee Management"} 
+      subtitle={currentEvent 
+        ? `Manage registrations and payments for ${currentEvent.title}`
+        : "Review and manage event registrations and payments efficiently."
+      }
+      actions={headerActions}
+    >
+      {pageContent}
     </LayoutComponent>
   );
 };

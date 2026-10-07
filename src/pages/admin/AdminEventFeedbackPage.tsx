@@ -12,8 +12,9 @@ import {
   ClockIcon
 } from '@heroicons/react/24/outline';
 import { StarIcon as StarIconSolid } from '@heroicons/react/20/solid';
-import AdminLayout from '../../components/admin/AdminLayout';
+import DashboardShell from '../../components/shared/DashboardShell';
 import FeedbackEmailStatus from '../../components/admin/FeedbackEmailStatus';
+import ProgressBar from '../../components/shared/UI/ProgressBar';
 import { FeedbackService } from '../../services/feedbackService';
 import { EventService } from '../../services/eventService';
 import { Feedback, Event } from '../../types';
@@ -85,8 +86,17 @@ type FieldAggregation =
   | NumberAggregation
   | OtherAggregation;
 
-const AdminEventFeedbackPage: React.FC = () => {
-  const { eventId } = useParams<{ eventId: string }>();
+interface AdminEventFeedbackPageProps {
+  embedded?: boolean;
+  propEventId?: string;
+}
+
+const AdminEventFeedbackPage: React.FC<AdminEventFeedbackPageProps> = ({
+  embedded = false,
+  propEventId
+}) => {
+  const { eventId: paramEventId } = useParams<{ eventId: string }>();
+  const eventId = propEventId || paramEventId;
   const navigate = useNavigate();
   
   const [event, setEvent] = useState<Event | null>(null);
@@ -340,29 +350,41 @@ const AdminEventFeedbackPage: React.FC = () => {
   };
 
   if (loading) {
-    return (
-      <AdminLayout title="Event Feedback" subtitle="Loading feedback responses...">
-        <div className="flex items-center justify-center h-64">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-          <span className="ml-2 text-gray-600">Loading feedback responses...</span>
+    if (embedded) {
+      return (
+        <div className="flex items-center justify-center py-16">
+          <div className="motion-essential animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+          <span className="ml-2 text-on-surface-variant">Loading feedback responses...</span>
         </div>
-      </AdminLayout>
+      );
+    }
+    return (
+      <DashboardShell title="Event Feedback" subtitle="Loading feedback responses...">
+        <div className="flex items-center justify-center h-64">
+          <div className="motion-essential animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+          <span className="ml-2 text-on-surface-variant">Loading feedback responses...</span>
+        </div>
+      </DashboardShell>
     );
   }
 
   if (!event) {
+    const notFoundView = (
+      <div className="text-center py-12">
+        <p className="text-on-surface-variant">Event not found</p>
+        <button
+          onClick={() => navigate('/events')}
+          className="mt-4 px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-hover"
+        >
+          Back to Events
+        </button>
+      </div>
+    );
+    if (embedded) return notFoundView;
     return (
-      <AdminLayout title="Event Not Found" subtitle="The requested event could not be found">
-        <div className="text-center py-12">
-          <p className="text-gray-500">Event not found</p>
-          <button
-            onClick={() => navigate('/events')}
-            className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-          >
-            Back to Events
-          </button>
-        </div>
-      </AdminLayout>
+      <DashboardShell title="Event Not Found" subtitle="The requested event could not be found">
+        {notFoundView}
+      </DashboardShell>
     );
   }
 
@@ -370,29 +392,34 @@ const AdminEventFeedbackPage: React.FC = () => {
   const averageRating = calculateAverageRating();
   const recommendationRate = getRecommendationRate();
 
-  return (
-    <AdminLayout 
-      title={`Feedback: ${event.title}`}
-      subtitle={`${feedbackList.length} response${feedbackList.length !== 1 ? 's' : ''}`}
-      actions={
-        <div className="flex items-center space-x-3">
-          <button
-            onClick={exportToCSV}
-            className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-          >
-            <DocumentArrowDownIcon className="h-4 w-4 mr-2" />
-            Export CSV
-          </button>
-          <button
-            onClick={() => navigate('/events')}
-            className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-          >
-            <ChevronLeftIcon className="h-4 w-4 mr-2" />
-            Back to Events
-          </button>
+  const feedbackActions = (
+    <div className="flex items-center space-x-3">
+      <button
+        onClick={exportToCSV}
+        className="inline-flex items-center px-3 py-2 border border-outline-variant text-sm leading-4 font-medium rounded-md text-on-surface-variant bg-white hover:bg-surface-container-low focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
+      >
+        <DocumentArrowDownIcon className="h-4 w-4 mr-2" />
+        Export CSV
+      </button>
+      {!embedded && (
+        <button
+          onClick={() => navigate('/events')}
+          className="inline-flex items-center px-3 py-2 border border-outline-variant text-sm leading-4 font-medium rounded-md text-on-surface-variant bg-white hover:bg-surface-container-low focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
+        >
+          <ChevronLeftIcon className="h-4 w-4 mr-2" />
+          Back to Events
+        </button>
+      )}
+    </div>
+  );
+
+  const feedbackContent = (
+    <div className={embedded ? "space-y-6" : ""}>
+      {embedded && (
+        <div className="flex justify-end pb-2">
+          {feedbackActions}
         </div>
-      }
-    >
+      )}
       {/* Event Info Header */}
       <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
         <div className="flex items-start justify-between">
@@ -405,8 +432,8 @@ const AdminEventFeedbackPage: React.FC = () => {
               />
             )}
             <div>
-              <h2 className="text-xl font-semibold text-gray-900">{event.title}</h2>
-              <div className="flex items-center space-x-4 mt-2 text-sm text-gray-600">
+              <h2 className="text-xl font-semibold text-on-surface">{event.title}</h2>
+              <div className="flex items-center space-x-4 mt-2 text-sm text-on-surface-variant">
                 <div className="flex items-center">
                   <CalendarDaysIcon className="h-4 w-4 mr-1" />
                   {formatDate(event.startDate)}
@@ -426,9 +453,9 @@ const AdminEventFeedbackPage: React.FC = () => {
 
       {feedbackList.length === 0 ? (
         <div className="bg-white rounded-lg shadow-sm p-12 text-center">
-          <ChatBubbleLeftRightIcon className="mx-auto h-12 w-12 text-gray-400 mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No feedback responses yet</h3>
-          <p className="text-gray-500">
+          <ChatBubbleLeftRightIcon className="mx-auto h-12 w-12 text-outline-variant mb-4" />
+          <h3 className="text-lg font-medium text-on-surface mb-2">No feedback responses yet</h3>
+          <p className="text-on-surface-variant">
             Feedback responses will appear here once attendees start submitting them.
           </p>
         </div>
@@ -436,14 +463,14 @@ const AdminEventFeedbackPage: React.FC = () => {
         <>
           {/* Tabs */}
           <div className="bg-white rounded-lg shadow-sm mb-6">
-            <div className="border-b border-gray-200">
+            <div className="border-b border-outline-variant">
               <nav className="-mb-px flex">
                 <button
                   onClick={() => setActiveTab('summary')}
                   className={`py-4 px-6 border-b-2 font-medium text-sm ${
                     activeTab === 'summary'
-                      ? 'border-blue-500 text-blue-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                      ? 'border-primary text-primary'
+                      : 'border-transparent text-on-surface-variant hover:text-on-surface hover:border-outline'
                   }`}
                 >
                   <ChartBarIcon className="h-4 w-4 inline mr-2" />
@@ -453,8 +480,8 @@ const AdminEventFeedbackPage: React.FC = () => {
                   onClick={() => setActiveTab('individual')}
                   className={`py-4 px-6 border-b-2 font-medium text-sm ${
                     activeTab === 'individual'
-                      ? 'border-blue-500 text-blue-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                      ? 'border-primary text-primary'
+                      : 'border-transparent text-on-surface-variant hover:text-on-surface hover:border-outline'
                   }`}
                 >
                   <EyeIcon className="h-4 w-4 inline mr-2" />
@@ -466,10 +493,10 @@ const AdminEventFeedbackPage: React.FC = () => {
             {activeTab === 'summary' ? (
               <div className="p-6">
                 {/* Header Stats Row */}
-                <div className="flex items-center justify-between mb-6 pb-4 border-b border-gray-200">
+                <div className="flex items-center justify-between mb-6 pb-4 border-b border-outline-variant">
                   <div className="flex items-center space-x-2">
-                    <UsersIcon className="h-5 w-5 text-gray-400" />
-                    <span className="text-lg font-medium text-gray-900">{feedbackList.length} responses</span>
+                    <UsersIcon className="h-5 w-5 text-outline-variant" />
+                    <span className="text-lg font-medium text-on-surface">{feedbackList.length} responses</span>
                   </div>
                 </div>
 
@@ -481,14 +508,14 @@ const AdminEventFeedbackPage: React.FC = () => {
                       if (aggregation.total === 0) return null;
 
                       return (
-                        <div key={field.id} className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+                        <div key={field.id} className="bg-white border border-outline-variant rounded-lg overflow-hidden">
                           {/* Field Header */}
-                          <div className="px-5 py-4 border-b border-gray-100 bg-gray-50">
-                            <h3 className="text-base font-medium text-gray-900">
+                          <div className="px-5 py-4 border-b border-outline-variant bg-surface-container-low">
+                            <h3 className="text-base font-medium text-on-surface">
                               {field.label}
-                              {field.required && <span className="text-red-500 ml-1">*</span>}
+                              {field.required && <span className="text-error ml-1">*</span>}
                             </h3>
-                            <p className="text-sm text-gray-500 mt-0.5">
+                            <p className="text-sm text-on-surface-variant mt-0.5">
                               {aggregation.total} response{aggregation.total !== 1 ? 's' : ''}
                             </p>
                           </div>
@@ -499,18 +526,18 @@ const AdminEventFeedbackPage: React.FC = () => {
                             {aggregation.type === 'rating' && (
                               <div>
                                 <div className="flex items-center mb-4">
-                                  <span className="text-3xl font-bold text-gray-900 mr-2">{aggregation.average}</span>
+                                  <span className="text-3xl font-bold text-on-surface mr-2">{aggregation.average}</span>
                                   <div className="flex items-center">
                                     {[...Array(5)].map((_, i) => (
                                       <StarIconSolid
                                         key={i}
                                         className={`h-5 w-5 ${
-                                          i < Math.round(Number(aggregation.average)) ? 'text-yellow-400' : 'text-gray-300'
+                                          i < Math.round(Number(aggregation.average)) ? 'text-warning-amber' : 'text-outline-variant'
                                         }`}
                                       />
                                     ))}
                                   </div>
-                                  <span className="ml-2 text-sm text-gray-500">average</span>
+                                  <span className="ml-2 text-sm text-on-surface-variant">average</span>
                                 </div>
                                 <div className="space-y-2">
                                   {[5, 4, 3, 2, 1].map(rating => {
@@ -518,14 +545,15 @@ const AdminEventFeedbackPage: React.FC = () => {
                                     const percentage = aggregation.total > 0 ? (count / aggregation.total) * 100 : 0;
                                     return (
                                       <div key={rating} className="flex items-center space-x-3">
-                                        <div className="w-6 text-sm text-gray-600 text-right">{rating}</div>
-                                        <div className="flex-1 bg-gray-100 rounded h-5">
-                                          <div
-                                            className="bg-blue-500 h-5 rounded transition-all duration-300"
-                                            style={{ width: `${percentage}%` }}
-                                          />
-                                        </div>
-                                        <div className="w-12 text-sm text-gray-500 text-right">
+                                      <div className="w-6 text-sm text-on-surface-variant text-right">{rating}</div>
+                                      <ProgressBar
+                                        value={percentage}
+                                        size="lg"
+                                        rounded="sm"
+                                        color="bg-blue-500"
+                                        label={`${rating} star responses`}
+                                      />
+                                        <div className="w-12 text-sm text-on-surface-variant text-right">
                                           {count}
                                         </div>
                                       </div>
@@ -543,14 +571,15 @@ const AdminEventFeedbackPage: React.FC = () => {
                                   const percentage = aggregation.total > 0 ? (count / aggregation.total) * 100 : 0;
                                   return (
                                     <div key={option} className="flex items-center space-x-3">
-                                      <div className="w-32 text-sm text-gray-700 truncate" title={option}>{option}</div>
-                                      <div className="flex-1 bg-gray-100 rounded h-5">
-                                        <div
-                                          className="bg-green-500 h-5 rounded transition-all duration-300"
-                                          style={{ width: `${percentage}%` }}
-                                        />
-                                      </div>
-                                      <div className="w-20 text-sm text-gray-500 text-right">
+                                      <div className="w-32 text-sm text-on-surface-variant truncate" title={option}>{option}</div>
+                                      <ProgressBar
+                                        value={percentage}
+                                        size="lg"
+                                        rounded="sm"
+                                        color="bg-green-500"
+                                        label={option}
+                                      />
+                                      <div className="w-20 text-sm text-on-surface-variant text-right">
                                         {count} ({Math.round(percentage)}%)
                                       </div>
                                     </div>
@@ -567,14 +596,15 @@ const AdminEventFeedbackPage: React.FC = () => {
                                   const percentage = aggregation.total > 0 ? (count / aggregation.total) * 100 : 0;
                                   return (
                                     <div key={option} className="flex items-center space-x-3">
-                                      <div className="w-32 text-sm text-gray-700 truncate" title={option}>{option}</div>
-                                      <div className="flex-1 bg-gray-100 rounded h-5">
-                                        <div
-                                          className="bg-purple-500 h-5 rounded transition-all duration-300"
-                                          style={{ width: `${percentage}%` }}
-                                        />
-                                      </div>
-                                      <div className="w-20 text-sm text-gray-500 text-right">
+                                      <div className="w-32 text-sm text-on-surface-variant truncate" title={option}>{option}</div>
+                                      <ProgressBar
+                                        value={percentage}
+                                        size="lg"
+                                        rounded="sm"
+                                        color="bg-purple-500"
+                                        label={option}
+                                      />
+                                      <div className="w-20 text-sm text-on-surface-variant text-right">
                                         {count} ({Math.round(percentage)}%)
                                       </div>
                                     </div>
@@ -587,26 +617,28 @@ const AdminEventFeedbackPage: React.FC = () => {
                             {aggregation.type === 'checkbox' && (
                               <div className="space-y-2">
                                 <div className="flex items-center space-x-3">
-                                  <div className="w-20 text-sm text-gray-700">Yes</div>
-                                  <div className="flex-1 bg-gray-100 rounded h-5">
-                                    <div
-                                      className="bg-green-500 h-5 rounded transition-all duration-300"
-                                      style={{ width: `${aggregation.total > 0 ? (aggregation.yesCount / aggregation.total) * 100 : 0}%` }}
-                                    />
-                                  </div>
-                                  <div className="w-20 text-sm text-gray-500 text-right">
+                                  <div className="w-20 text-sm text-on-surface-variant">Yes</div>
+                                  <ProgressBar
+                                    value={aggregation.total > 0 ? (aggregation.yesCount / aggregation.total) * 100 : 0}
+                                    size="lg"
+                                    rounded="sm"
+                                    color="bg-green-500"
+                                    label="Yes responses"
+                                  />
+                                  <div className="w-20 text-sm text-on-surface-variant text-right">
                                     {aggregation.yesCount} ({Math.round(aggregation.total > 0 ? (aggregation.yesCount / aggregation.total) * 100 : 0)}%)
                                   </div>
                                 </div>
                                 <div className="flex items-center space-x-3">
-                                  <div className="w-20 text-sm text-gray-700">No</div>
-                                  <div className="flex-1 bg-gray-100 rounded h-5">
-                                    <div
-                                      className="bg-red-400 h-5 rounded transition-all duration-300"
-                                      style={{ width: `${aggregation.total > 0 ? (aggregation.noCount / aggregation.total) * 100 : 0}%` }}
-                                    />
-                                  </div>
-                                  <div className="w-20 text-sm text-gray-500 text-right">
+                                  <div className="w-20 text-sm text-on-surface-variant">No</div>
+                                  <ProgressBar
+                                    value={aggregation.total > 0 ? (aggregation.noCount / aggregation.total) * 100 : 0}
+                                    size="lg"
+                                    rounded="sm"
+                                    color="bg-red-400"
+                                    label="No responses"
+                                  />
+                                  <div className="w-20 text-sm text-on-surface-variant text-right">
                                     {aggregation.noCount} ({Math.round(aggregation.total > 0 ? (aggregation.noCount / aggregation.total) * 100 : 0)}%)
                                   </div>
                                 </div>
@@ -615,18 +647,18 @@ const AdminEventFeedbackPage: React.FC = () => {
 
                             {/* Number Field */}
                             {aggregation.type === 'number' && (
-                              <div className="grid grid-cols-3 gap-4">
-                                <div className="text-center p-3 bg-gray-50 rounded">
-                                  <p className="text-2xl font-bold text-gray-900">{aggregation.average}</p>
-                                  <p className="text-xs text-gray-500">Average</p>
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                                <div className="text-center p-3 bg-surface-container-low rounded">
+                                  <p className="text-2xl font-bold text-on-surface">{aggregation.average}</p>
+                                  <p className="text-sm text-on-surface-variant">Average</p>
                                 </div>
-                                <div className="text-center p-3 bg-gray-50 rounded">
-                                  <p className="text-2xl font-bold text-gray-900">{aggregation.min}</p>
-                                  <p className="text-xs text-gray-500">Min</p>
+                                <div className="text-center p-3 bg-surface-container-low rounded">
+                                  <p className="text-2xl font-bold text-on-surface">{aggregation.min}</p>
+                                  <p className="text-sm text-on-surface-variant">Min</p>
                                 </div>
-                                <div className="text-center p-3 bg-gray-50 rounded">
-                                  <p className="text-2xl font-bold text-gray-900">{aggregation.max}</p>
-                                  <p className="text-xs text-gray-500">Max</p>
+                                <div className="text-center p-3 bg-surface-container-low rounded">
+                                  <p className="text-2xl font-bold text-on-surface">{aggregation.max}</p>
+                                  <p className="text-sm text-on-surface-variant">Max</p>
                                 </div>
                               </div>
                             )}
@@ -635,14 +667,14 @@ const AdminEventFeedbackPage: React.FC = () => {
                             {aggregation.type === 'text' && (
                               <div className="space-y-2 max-h-64 overflow-y-auto">
                                 {aggregation.responses.slice(0, 10).map((response: string, idx: number) => (
-                                  <div key={idx} className="p-3 bg-gray-50 rounded-lg text-sm text-gray-700">
+                                  <div key={idx} className="p-3 bg-surface-container-low rounded-lg text-sm text-on-surface-variant">
                                     {response}
                                   </div>
                                 ))}
                                 {aggregation.responses.length > 10 && (
                                   <button
                                     onClick={() => setActiveTab('individual')}
-                                    className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+                                    className="text-primary hover:text-on-secondary-container text-sm font-medium"
                                   >
                                     View all {aggregation.responses.length} responses →
                                   </button>
@@ -652,7 +684,7 @@ const AdminEventFeedbackPage: React.FC = () => {
 
                             {/* Other/Unknown field type */}
                             {aggregation.type === 'other' && (
-                              <div className="text-sm text-gray-500">
+                              <div className="text-sm text-on-surface-variant">
                                 {aggregation.total} response{aggregation.total !== 1 ? 's' : ''} collected
                               </div>
                             )}
@@ -665,52 +697,53 @@ const AdminEventFeedbackPage: React.FC = () => {
                   /* Fallback when no form fields - show basic stats */
                   <div className="space-y-6">
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                      <div className="bg-gradient-to-r from-blue-50 to-blue-100 rounded-lg p-6">
+                      <div className="bg-gradient-to-r from-surface-container-low to-secondary-container rounded-lg p-6">
                         <div className="flex items-center justify-between">
                           <div>
-                            <p className="text-sm font-medium text-blue-600">Average Rating</p>
-                            <p className="text-3xl font-bold text-blue-900">{averageRating}</p>
+                            <p className="text-sm font-medium text-primary">Average Rating</p>
+                            <p className="text-3xl font-bold text-on-secondary-container">{averageRating}</p>
                           </div>
-                          <StarIconSolid className="h-8 w-8 text-yellow-400" />
+                          <StarIconSolid className="h-8 w-8 text-warning-amber" />
                         </div>
                       </div>
-                      <div className="bg-gradient-to-r from-green-50 to-green-100 rounded-lg p-6">
+                      <div className="bg-gradient-to-r from-success-container to-success-container rounded-lg p-6">
                         <div className="flex items-center justify-between">
                           <div>
-                            <p className="text-sm font-medium text-green-600">Would Recommend</p>
-                            <p className="text-3xl font-bold text-green-900">{recommendationRate}%</p>
+                            <p className="text-sm font-medium text-success">Would Recommend</p>
+                            <p className="text-3xl font-bold text-on-success-container">{recommendationRate}%</p>
                           </div>
-                          <ChatBubbleLeftRightIcon className="h-8 w-8 text-green-500" />
+                          <ChatBubbleLeftRightIcon className="h-8 w-8 text-success" />
                         </div>
                       </div>
-                      <div className="bg-gradient-to-r from-purple-50 to-purple-100 rounded-lg p-6">
+                      <div className="bg-gradient-to-r from-surface-container-low to-surface-container-high rounded-lg p-6">
                         <div className="flex items-center justify-between">
                           <div>
-                            <p className="text-sm font-medium text-purple-600">Total Responses</p>
-                            <p className="text-3xl font-bold text-purple-900">{feedbackList.length}</p>
+                            <p className="text-sm font-medium text-primary">Total Responses</p>
+                            <p className="text-3xl font-bold text-on-primary-container">{feedbackList.length}</p>
                           </div>
-                          <UsersIcon className="h-8 w-8 text-purple-500" />
+                          <UsersIcon className="h-8 w-8 text-primary" />
                         </div>
                       </div>
                     </div>
 
                     {/* Rating Distribution */}
-                    <div className="bg-white border border-gray-200 rounded-lg p-5">
-                      <h3 className="text-base font-medium text-gray-900 mb-4">Rating Distribution</h3>
+                    <div className="bg-white border border-outline-variant rounded-lg p-5">
+                      <h3 className="text-base font-medium text-on-surface mb-4">Rating Distribution</h3>
                       <div className="space-y-2">
                         {[5, 4, 3, 2, 1].map(rating => {
                           const count = ratingDistribution[rating as keyof typeof ratingDistribution];
                           const percentage = feedbackList.length > 0 ? (count / feedbackList.length) * 100 : 0;
                           return (
                             <div key={rating} className="flex items-center space-x-3">
-                              <div className="w-6 text-sm text-gray-600 text-right">{rating}</div>
-                              <div className="flex-1 bg-gray-100 rounded h-5">
-                                <div
-                                  className="bg-blue-500 h-5 rounded transition-all duration-300"
-                                  style={{ width: `${percentage}%` }}
-                                />
-                              </div>
-                              <div className="w-12 text-sm text-gray-500 text-right">{count}</div>
+                              <div className="w-6 text-sm text-on-surface-variant text-right">{rating}</div>
+                              <ProgressBar
+                                value={percentage}
+                                size="lg"
+                                rounded="sm"
+                                color="bg-blue-500"
+                                label={`${rating} star responses`}
+                              />
+                              <div className="w-12 text-sm text-on-surface-variant text-right">{count}</div>
                             </div>
                           );
                         })}
@@ -720,19 +753,19 @@ const AdminEventFeedbackPage: React.FC = () => {
                 )}
               </div>
             ) : (
-              <div className="divide-y divide-gray-200">
+              <div className="divide-y divide-outline-variant">
                 {feedbackList.map((feedback, index) => (
                   <div
                     key={feedback.id}
-                    className={`p-6 hover:bg-gray-50 cursor-pointer transition-colors ${
-                      selectedResponse === index ? 'bg-blue-50 border-l-4 border-blue-500' : ''
+                    className={`p-6 hover:bg-surface-container-low cursor-pointer transition-colors ${
+                      selectedResponse === index ? 'bg-primary-container ring-1 ring-primary' : ''
                     }`}
                     onClick={() => setSelectedResponse(selectedResponse === index ? null : index)}
                   >
                     <div className="flex items-start justify-between">
                       <div className="flex-1">
                         <div className="flex items-center space-x-3 mb-2">
-                          <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-0.5 rounded-full">
+                          <span className="bg-secondary-container text-on-secondary-container text-sm font-medium px-2.5 py-0.5 rounded-full">
                             Response #{index + 1}
                           </span>
                           <div className="flex items-center space-x-1">
@@ -741,18 +774,18 @@ const AdminEventFeedbackPage: React.FC = () => {
                                 key={i}
                                 className={`h-4 w-4 ${
                                   i < getActualRating(feedback)
-                                    ? 'text-yellow-400'
-                                    : 'text-gray-300'
+                                    ? 'text-warning-amber'
+                                    : 'text-outline-variant'
                                 }`}
                               />
                             ))}
-                            <span className="text-sm font-medium text-gray-900 ml-1">
+                            <span className="text-sm font-medium text-on-surface ml-1">
                               {getActualRating(feedback)}/5
                             </span>
                           </div>
                         </div>
                         
-                        <div className="text-sm text-gray-600 mb-2">
+                        <div className="text-sm text-on-surface-variant mb-2">
                           <span className="font-medium">{(feedback as any).userName || (feedback as any).userEmail || 'Anonymous'}</span>
                           <span className="mx-2">•</span>
                           <span>{formatDate(feedback.submittedAt)}</span>
@@ -765,7 +798,7 @@ const AdminEventFeedbackPage: React.FC = () => {
                               const responses = (feedback as any).customResponses || (feedback as any).responses;
                               if (feedback.comments) {
                                 return (
-                                  <p className="text-sm text-gray-600 line-clamp-2">
+                                  <p className="text-sm text-on-surface-variant line-clamp-2">
                                     💬 {feedback.comments}
                                   </p>
                                 );
@@ -776,14 +809,14 @@ const AdminEventFeedbackPage: React.FC = () => {
                                 );
                                 if (firstTextResponse) {
                                   return (
-                                    <p className="text-sm text-gray-600 line-clamp-2">
+                                    <p className="text-sm text-on-surface-variant line-clamp-2">
                                       💬 {String(firstTextResponse[1])}
                                     </p>
                                   );
                                 }
                               }
                               return (
-                                <p className="text-sm text-gray-500 italic">
+                                <p className="text-sm text-on-surface-variant italic">
                                   Click to view detailed responses
                                 </p>
                               );
@@ -807,27 +840,27 @@ const AdminEventFeedbackPage: React.FC = () => {
                                       
                                       return (
                                         <div key={field.id} className="bg-white p-3 rounded border">
-                                          <p className="text-xs font-semibold text-gray-700 mb-1">
+                                          <p className="text-sm font-semibold text-on-surface-variant mb-1">
                                             {field.label}
-                                            {field.required && <span className="text-red-500 ml-1">*</span>}
+                                            {field.required && <span className="text-error ml-1">*</span>}
                                           </p>
-                                          <div className="text-sm text-gray-900">
+                                          <div className="text-sm text-on-surface">
                                             {field.type === 'rating' && (
                                               <div className="flex items-center space-x-1">
                                                 {[...Array(5)].map((_, i) => (
                                                   <StarIconSolid
                                                     key={i}
                                                     className={`h-4 w-4 ${
-                                                      i < Number(value) ? 'text-yellow-400' : 'text-gray-300'
+                                                      i < Number(value) ? 'text-warning-amber' : 'text-outline-variant'
                                                     }`}
                                                   />
                                                 ))}
-                                                <span className="ml-2 text-gray-600">({value}/5)</span>
+                                                <span className="ml-2 text-on-surface-variant">({value}/5)</span>
                                               </div>
                                             )}
                                             {field.type === 'checkbox' && (
-                                              <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${
-                                                value ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
+                                              <span className={`inline-flex items-center px-2 py-1 rounded text-sm font-medium ${
+                                                value ? 'bg-success-container text-on-success-container' : 'bg-surface-container text-on-surface'
                                               }`}>
                                                 {value ? '✓ Yes' : '✗ No'}
                                               </span>
@@ -835,7 +868,7 @@ const AdminEventFeedbackPage: React.FC = () => {
                                             {field.type === 'multiselect' && Array.isArray(value) && (
                                               <div className="flex flex-wrap gap-1">
                                                 {value.map((item: string, idx: number) => (
-                                                  <span key={idx} className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                                                  <span key={idx} className="inline-flex items-center px-2 py-1 rounded-full text-sm font-medium bg-secondary-container text-on-secondary-container">
                                                     {item}
                                                   </span>
                                                 ))}
@@ -857,10 +890,10 @@ const AdminEventFeedbackPage: React.FC = () => {
                                 <div className="grid grid-cols-1 gap-3">
                                   {Object.entries(responses).map(([key, value]) => (
                                     <div key={key} className="bg-white p-3 rounded border">
-                                      <p className="text-xs font-semibold text-gray-700 capitalize mb-1">
+                                      <p className="text-sm font-semibold text-on-surface-variant capitalize mb-1">
                                         {key.replace(/_/g, ' ')}:
                                       </p>
-                                      <p className="text-sm text-gray-900 whitespace-pre-wrap">
+                                      <p className="text-sm text-on-surface whitespace-pre-wrap">
                                         {Array.isArray(value) ? value.join(', ') : String(value)}
                                       </p>
                                     </div>
@@ -879,7 +912,21 @@ const AdminEventFeedbackPage: React.FC = () => {
           </div>
         </>
       )}
-    </AdminLayout>
+    </div>
+  );
+
+  if (embedded) {
+    return feedbackContent;
+  }
+
+  return (
+    <DashboardShell 
+      title={`Feedback: ${event.title}`}
+      subtitle={`${feedbackList.length} response${feedbackList.length !== 1 ? 's' : ''}`}
+      actions={feedbackActions}
+    >
+      {feedbackContent}
+    </DashboardShell>
   );
 };
 

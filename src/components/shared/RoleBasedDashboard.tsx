@@ -1,26 +1,36 @@
 import React from 'react';
-import { Navigate } from 'react-router-dom';
+import { Can } from '@casl/react';
 import { useAuth } from '../../contexts/AuthContext';
 import LoadingSpinner from './UI/LoadingSpinner';
+import AdminDashboardPage from '../../pages/admin/AdminDashboardPage';
+import OrganizerDashboardPage from '../../pages/organizer/OrganizerDashboardPage';
 
+/**
+ * Chooses the dashboard by permission rather than by role.
+ *
+ * This read `userProfile.role === 'organizer' ? <Organizer/> : <Admin/>`, so any
+ * value that was not literally 'organizer' rendered the ADMIN dashboard: an
+ * unrecognised role, a corrupt document, or a future third role added by a
+ * migration. AuthContext now rejects unknown roles before they reach here, and
+ * the fallback direction is the other way round regardless.
+ *
+ * `read 'User'` is admin-only in the ability table - an organizer holds no User
+ * rules at all - which makes it the same discriminator the /users route uses.
+ */
 const RoleBasedDashboard: React.FC = () => {
-  const { currentUser, userProfile, loading } = useAuth();
+  const { userProfile, loading } = useAuth();
 
-  if (loading) {
-    return <LoadingSpinner />;
+  if (loading || !userProfile) {
+    return <LoadingSpinner fullScreen />;
   }
 
-  if (!currentUser || !userProfile) {
-    return <Navigate to="/auth/login" replace />;
-  }
-
-  // Redirect based on role
-  if (userProfile.role === 'organizer') {
-    return <Navigate to="/organizer/dashboard" replace />;
-  }
-
-  // Default to admin dashboard
-  return <Navigate to="/admin/dashboard" replace />;
+  return (
+    <Can do="read" on="User">
+      {({ isAllowed }) =>
+        isAllowed ? <AdminDashboardPage /> : <OrganizerDashboardPage />
+      }
+    </Can>
+  );
 };
 
-export default RoleBasedDashboard; 
+export default RoleBasedDashboard;

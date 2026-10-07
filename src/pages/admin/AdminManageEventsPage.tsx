@@ -1,59 +1,34 @@
 import React, { useState, useEffect } from 'react';
+import { Can } from '@casl/react';
 import { 
   PlusIcon, 
   MagnifyingGlassIcon, 
   EyeIcon,
-  PencilIcon,
-  TrashIcon,
   CalendarDaysIcon,
   UsersIcon,
-  ChartBarIcon,
   FunnelIcon,
   Squares2X2Icon,
   ListBulletIcon,
   ShareIcon,
-  LinkIcon,
-  ChatBubbleLeftRightIcon,
-  XMarkIcon,
-  UserGroupIcon,
-  ArrowPathIcon
+  ArrowRightIcon
 } from '@heroicons/react/24/outline';
 import { CheckCircleIcon, XCircleIcon, ClockIcon } from '@heroicons/react/20/solid';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
+import LoadingSpinner from '../../components/shared/UI/LoadingSpinner';
+import ProgressBar from '../../components/shared/UI/ProgressBar';
 import { EventService } from '../../services/eventService';
 import { RegistrationService } from '../../services/registrationService';
-import { CertificateService } from '../../services/certificateService';
 import { Event } from '../../types';
 import { logger } from '../../utils/logger';
 import toast from 'react-hot-toast';
-import AdminLayout from '../../components/admin/AdminLayout';
-// OrganizerLayout import removed - this page is now admin-only
-import ConfirmationModal from '../../components/shared/UI/ConfirmationModal';
-
-interface DeleteModalState {
-  isOpen: boolean;
-  eventId: string | null;
-  eventTitle: string;
-  isLoading: boolean;
-  message: string;
-  confirmText: string;
-  type: 'danger' | 'warning' | 'info';
-  isForceDelete: boolean;
-}
-
-interface CertificateWarningModalState {
-  isOpen: boolean;
-  eventId: string | null;
-  eventTitle: string;
-  action: 'complete' | 'resend' | null;
-}
+import DashboardShell from '../../components/shared/DashboardShell';
 
 // Removed FeedbackModalState - now using dedicated page
 
-const ManageEventsPage: React.FC = () => {
+const EventsWorkspace: React.FC = () => {
   const navigate = useNavigate();
-  const { userProfile, loading: authLoading, currentUser } = useAuth();
+  const { userProfile, loading: authLoading } = useAuth();
 
   // Dev diagnostics helper (no-ops in production)
   const isDevEnv = process.env.NODE_ENV !== 'production';
@@ -75,43 +50,9 @@ const ManageEventsPage: React.FC = () => {
   const [sortBy, setSortBy] = useState('startDate');
   const [events, setEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
-  const [resendingFeedback, setResendingFeedback] = useState<string | null>(null);
-  const [eventCertificateStatus, setEventCertificateStatus] = useState<Record<string, boolean>>({});
-  const [certificateWarningModal, setCertificateWarningModal] = useState<CertificateWarningModalState>({
-    isOpen: false,
-    eventId: null,
-    eventTitle: '',
-    action: null
-  });
-  const [deleteModal, setDeleteModal] = useState<DeleteModalState>({
-    isOpen: false,
-    eventId: null,
-    eventTitle: '',
-    message: '',
-    confirmText: 'Delete',
-    type: 'warning',
-    isLoading: false,
-    isForceDelete: false
-  });
+
 
   // Removed feedbackModal state - now using dedicated page
-
-  // Redirect non-admin users to dashboard
-  useEffect(() => {
-    if (!authLoading && userProfile && userProfile.role !== 'admin') {
-      toast.error('Only administrators can manage events');
-      navigate('/dashboard');
-    }
-  }, [authLoading, userProfile, navigate]);
-
-  // Don't render the component if user is not admin
-  if (authLoading) {
-    return <div>Loading...</div>;
-  }
-
-  if (!userProfile || userProfile.role !== 'admin') {
-    return null; // Will redirect via useEffect
-  }
 
   // This page is now admin-only, so always fetch all events
   useEffect(() => {
@@ -187,22 +128,6 @@ const ManageEventsPage: React.FC = () => {
             currentAttendees: event.currentAttendees
           }))
         );
-        
-        // Check certificate template status for each event
-        const certificateStatusMap: Record<string, boolean> = {};
-        await Promise.all(
-          eventsWithRealCounts.map(async (event) => {
-            try {
-              const template = await CertificateService.getTemplateForEvent(event.id);
-              certificateStatusMap[event.id] = template !== null;
-            } catch (error) {
-              logger.warn(`Failed to check certificate template for event ${event.id}:`, error);
-              certificateStatusMap[event.id] = false;
-            }
-          })
-        );
-        setEventCertificateStatus(certificateStatusMap);
-        logDiagnostics('Certificate template status', certificateStatusMap);
       } catch (error) {
         logger.error('Error fetching events:', error);
         toast.error('Failed to load events');
@@ -218,15 +143,15 @@ const ManageEventsPage: React.FC = () => {
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'completed':
-        return <CheckCircleIcon className="h-5 w-5 text-green-500" />;
+        return <CheckCircleIcon className="h-5 w-5 text-success" />;
       case 'published':
-        return <CheckCircleIcon className="h-5 w-5 text-blue-500" />;
+        return <CheckCircleIcon className="h-5 w-5 text-primary" />;
       case 'ongoing':
-        return <ClockIcon className="h-5 w-5 text-yellow-500" />;
+        return <ClockIcon className="h-5 w-5 text-warning" />;
       case 'cancelled':
-        return <XCircleIcon className="h-5 w-5 text-red-500" />;
+        return <XCircleIcon className="h-5 w-5 text-error" />;
       default:
-        return <ClockIcon className="h-5 w-5 text-gray-500" />;
+        return <ClockIcon className="h-5 w-5 text-on-surface-variant" />;
     }
   };
 
@@ -245,45 +170,6 @@ const ManageEventsPage: React.FC = () => {
     }
   };
 
-  const getRegistrationStatusIcon = (status: string) => {
-    switch (status) {
-      case 'open':
-        return <CheckCircleIcon className="h-4 w-4 text-green-500" />;
-      case 'closed':
-        return <XCircleIcon className="h-4 w-4 text-red-500" />;
-      case 'walk-in-only':
-        return <UserGroupIcon className="h-4 w-4 text-orange-500" />;
-      default:
-        return <ClockIcon className="h-4 w-4 text-gray-500" />;
-    }
-  };
-
-  const getRegistrationStatusColor = (status: string) => {
-    switch (status) {
-      case 'open':
-        return 'bg-green-100 text-green-800 border-green-200';
-      case 'closed':
-        return 'bg-red-100 text-red-800 border-red-200';
-      case 'walk-in-only':
-        return 'bg-orange-100 text-orange-800 border-orange-200';
-      default:
-        return 'bg-gray-100 text-gray-800 border-gray-200';
-    }
-  };
-
-  const getRegistrationStatusLabel = (status: string) => {
-    switch (status) {
-      case 'open':
-        return 'Open';
-      case 'closed':
-        return 'Closed';
-      case 'walk-in-only':
-        return 'Walk-In Only';
-      default:
-        return 'Unknown';
-    }
-  };
-
   const filteredEvents = events.filter(event => {
     const matchesSearch = event.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          (event.description?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
@@ -295,13 +181,12 @@ const ManageEventsPage: React.FC = () => {
   const sortedEvents = [...filteredEvents].sort((a, b) => {
     switch (sortBy) {
       case 'startDate':
+      {
         // Handle both Firestore timestamps and regular Date objects
         let aDate, bDate;
         
         if (a.startDate?.toDate) {
           aDate = a.startDate.toDate();
-        } else if (a.startDate?.seconds && typeof a.startDate.seconds === 'number') {
-          aDate = new Date(a.startDate.seconds * 1000);
         } else if (a.startDate?.seconds && typeof a.startDate.seconds === 'number') {
           aDate = new Date(a.startDate.seconds * 1000);
         } else {
@@ -322,18 +207,18 @@ const ManageEventsPage: React.FC = () => {
         }
         
         return bDate.getTime() - aDate.getTime();
+      }
       case 'title':
         return a.title.localeCompare(b.title);
       case 'attendees':
         return b.currentAttendees - a.currentAttendees;
       case 'createdAt':
+      {
         // Handle both Firestore timestamps and regular Date objects
         let aCreatedDate, bCreatedDate;
         
         if (a.createdAt?.toDate) {
           aCreatedDate = a.createdAt.toDate();
-        } else if (a.createdAt?.seconds && typeof a.createdAt.seconds === 'number') {
-          aCreatedDate = new Date(a.createdAt.seconds * 1000);
         } else if (a.createdAt?.seconds && typeof a.createdAt.seconds === 'number') {
           aCreatedDate = new Date(a.createdAt.seconds * 1000);
         } else {
@@ -354,18 +239,11 @@ const ManageEventsPage: React.FC = () => {
         }
         
         return bCreatedDate.getTime() - aCreatedDate.getTime();
+      }
       default:
         return 0;
     }
   });
-
-  // Calculate stats based on filtered events
-  const statsData = {
-    totalEvents: sortedEvents.length,
-    totalAttendees: sortedEvents.reduce((sum, e) => sum + e.currentAttendees, 0),
-    publishedEvents: sortedEvents.filter(e => e.status === 'published').length,
-    isFiltered: searchTerm.trim() !== '' || statusFilter !== 'all'
-  };
 
   const formatDate = (timestamp: any) => {
     if (!timestamp) return 'N/A';
@@ -420,245 +298,7 @@ const ManageEventsPage: React.FC = () => {
     return `${currency} ${minPrice.toLocaleString()} - ${maxPrice.toLocaleString()}`;
   };
 
-  const openDeleteModal = (eventId: string, eventTitle: string) => {
-    setDeleteModal({
-      isOpen: true,
-      eventId,
-      eventTitle,
-      isLoading: false,
-      message: `Are you sure you want to delete "${eventTitle}"? This action cannot be undone and will permanently remove the event and all associated data.`,
-      confirmText: 'Delete Event',
-      type: 'danger',
-      isForceDelete: false
-    });
-  };
 
-  const closeDeleteModal = () => {
-    setDeleteModal({
-      isOpen: false,
-      eventId: null,
-      eventTitle: '',
-      isLoading: false,
-      message: '',
-      confirmText: 'Delete Event',
-      type: 'danger',
-      isForceDelete: false
-    });
-  };
-
-  const handleDeleteEvent = async () => {
-    if (!deleteModal.eventId) return;
-    
-    setDeleteModal(prev => ({ ...prev, isLoading: true }));
-    
-    try {
-      // Ensure auth token is fresh before making function calls
-      if (currentUser) {
-        try {
-          await currentUser.getIdToken(true); // Force token refresh
-          logger.log('Auth token refreshed for delete operation');
-        } catch (authError) {
-          logger.error('Auth token refresh failed:', authError);
-          toast.error('Authentication expired. Please sign in again.');
-          setDeleteModal(prev => ({ ...prev, isLoading: false }));
-          return;
-        }
-      }
-      
-      // First try to delete without force
-      await EventService.deleteEvent(deleteModal.eventId, false);
-      setEvents(events.filter(e => e.id !== deleteModal.eventId));
-      toast.success('Event deleted successfully');
-      closeDeleteModal();
-    } catch (error: any) {
-      logger.error('Error deleting event:', error);
-      
-      // Check if the error is due to registrations
-      if (error.message && error.message.includes('registrations')) {
-        // Show a more specific modal for events with registrations
-        setDeleteModal(prev => ({
-          ...prev,
-          isLoading: false,
-          message: `This event has registrations and cannot be deleted normally. This will permanently delete the event and all associated data including registrations. Are you sure you want to proceed?`,
-          confirmText: 'Delete Anyway',
-          type: 'danger'
-        }));
-      } else {
-        toast.error('Failed to delete event');
-        setDeleteModal(prev => ({ ...prev, isLoading: false }));
-      }
-    }
-  };
-
-  const handleForceDelete = async () => {
-    if (!deleteModal.eventId) return;
-    
-    setDeleteModal(prev => ({ ...prev, isLoading: true }));
-    
-    try {
-      // Ensure auth token is fresh before making function calls
-      if (currentUser) {
-        try {
-          await currentUser.getIdToken(true); // Force token refresh
-          logger.log('Auth token refreshed for force delete operation');
-        } catch (authError) {
-          logger.error('Auth token refresh failed:', authError);
-          toast.error('Authentication expired. Please sign in again.');
-          setDeleteModal(prev => ({ ...prev, isLoading: false }));
-          return;
-        }
-      }
-      
-      await EventService.deleteEvent(deleteModal.eventId, true);
-      setEvents(events.filter(e => e.id !== deleteModal.eventId));
-      toast.success('Event deleted successfully');
-      closeDeleteModal();
-    } catch (error) {
-      logger.error('Error force deleting event:', error);
-      toast.error('Failed to delete event');
-      setDeleteModal(prev => ({ ...prev, isLoading: false }));
-    }
-  };
-
-  const handleRegistrationStatusChange = async (eventId: string, newRegistrationStatus: 'open' | 'closed' | 'walk-in-only') => {
-    try {
-      logger.log('🔄 Updating registration status:', { eventId, newRegistrationStatus });
-      
-      // Call the service to update Firebase
-      await EventService.updateRegistrationStatus(eventId, newRegistrationStatus);
-      logger.log('✅ Firebase registration status update successful for event:', eventId);
-      
-      // Update local state
-      setEvents(events.map(e => 
-        e.id === eventId ? { 
-          ...e, 
-          registrationStatus: newRegistrationStatus
-        } : e
-      ));
-      
-      toast.success(`Registration status updated to ${getRegistrationStatusLabel(newRegistrationStatus)}`);
-    } catch (error) {
-      logger.error('❌ Error updating registration status:', error);
-      toast.error('Failed to update registration status');
-    }
-  };
-
-  const handleStatusChange = async (eventId: string, newStatus: string) => {
-    // Check for certificate template if trying to set status to "completed"
-    if (newStatus === 'completed') {
-      const hasCertificate = eventCertificateStatus[eventId];
-      if (!hasCertificate) {
-        const event = events.find(e => e.id === eventId);
-        setCertificateWarningModal({
-          isOpen: true,
-          eventId,
-          eventTitle: event?.title || 'Event',
-          action: 'complete'
-        });
-        return; // Don't proceed with status change
-      }
-    }
-    
-    try {
-      logger.log('🔄 Updating event status:', { eventId, newStatus });
-      
-      // Call the service to update Firebase
-      await EventService.updateEventStatus(eventId, newStatus);
-      logger.log('✅ Firebase update successful for event:', eventId, 'new status:', newStatus);
-      
-      // Update local state - update both status and isPublished
-      const updatedIsPublished = newStatus === 'published';
-      setEvents(events.map(e => 
-        e.id === eventId ? { 
-          ...e, 
-          status: newStatus as Event['status'],
-          isPublished: updatedIsPublished
-        } : e
-      ));
-      
-      logger.log('✅ Local state updated successfully', {
-        eventId,
-        newStatus,
-        isPublished: updatedIsPublished
-      });
-
-      if (isDevEnv) {
-        try {
-          const refreshedEvent = await EventService.getEvent(eventId);
-          logDiagnostics('Post-status update snapshot', {
-            eventId,
-            newStatus,
-            refreshedStatus: refreshedEvent?.status,
-            feedbackRequestsSentAt: refreshedEvent?.feedbackRequestsSentAt?.toDate
-              ? refreshedEvent.feedbackRequestsSentAt.toDate().toISOString()
-              : refreshedEvent?.feedbackRequestsSentAt ?? null,
-            updatedAt: refreshedEvent?.updatedAt?.toDate
-              ? refreshedEvent.updatedAt.toDate().toISOString()
-              : refreshedEvent?.updatedAt ?? null
-          });
-        } catch (snapshotError) {
-          logger.warn('Unable to fetch event snapshot after status update:', snapshotError);
-        }
-      }
-      
-      toast.success('Event status updated successfully');
-    } catch (error) {
-      logger.error('❌ Error updating event status:', error);
-      toast.error('Failed to update event status');
-    }
-  };
-
-  const handleResendFeedbackRequests = async (eventId: string, eventTitle: string) => {
-    if (resendingFeedback) return;
-    
-    // Check for certificate template before allowing resend
-    const hasCertificate = eventCertificateStatus[eventId];
-    if (!hasCertificate) {
-      setCertificateWarningModal({
-        isOpen: true,
-        eventId,
-        eventTitle,
-        action: 'resend'
-      });
-      return; // Don't proceed with resend
-    }
-    
-    const confirmed = window.confirm(
-      `Send feedback request emails to all checked-in attendees for "${eventTitle}"?\n\nThis will send emails to attendees who have not yet submitted feedback.`
-    );
-    
-    if (!confirmed) return;
-    
-    setResendingFeedback(eventId);
-    
-    try {
-      const { httpsCallable } = await import('firebase/functions');
-      const { functions } = await import('../../config/firebase');
-      const resendFeedback = httpsCallable(functions, 'resendEventFeedbackRequests');
-      
-      const result = await resendFeedback({ eventId, force: true }) as any;
-      
-      if (result.data.success) {
-        toast.success(`${result.data.message}`, {
-          duration: 5000,
-          icon: '✉️'
-        });
-        
-        // Refresh event data
-        const refreshedEvent = await EventService.getEvent(eventId);
-        if (refreshedEvent) {
-          setEvents(events.map(e => e.id === eventId ? refreshedEvent : e));
-        }
-      } else {
-        toast.error(result.data.message || 'Failed to send feedback requests');
-      }
-    } catch (error: any) {
-      logger.error('Error resending feedback requests:', error);
-      toast.error(error.message || 'Failed to send feedback requests');
-    } finally {
-      setResendingFeedback(null);
-    }
-  };
 
   const handleShareEvent = (eventId: string, eventTitle: string, eventSlug?: string) => {
     // Use slug-based URL if available, otherwise fall back to ID
@@ -677,10 +317,6 @@ const ManageEventsPage: React.FC = () => {
     });
   };
 
-  const handleViewFeedback = (eventId: string) => {
-    navigate(`/admin/events/${eventId}/feedback`);
-  };
-
   const getPageTitle = () => {
     return 'Events Management';
   };
@@ -689,14 +325,14 @@ const ManageEventsPage: React.FC = () => {
     return 'Create, edit, and manage all events for GDG Davao';
   };
 
-  const LayoutComponent = AdminLayout;
+  const LayoutComponent = DashboardShell;
 
   if (loading) {
     return (
       <LayoutComponent title={getPageTitle()} subtitle={getPageSubtitle()}>
         <div className="flex items-center justify-center h-64">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-          <span className="ml-2 text-gray-600">Loading events...</span>
+          <div className="motion-essential animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+          <span className="ml-2 text-on-surface-variant">Loading events...</span>
         </div>
       </LayoutComponent>
     );
@@ -707,64 +343,33 @@ const ManageEventsPage: React.FC = () => {
       title={getPageTitle()} 
       subtitle={getPageSubtitle()}
       actions={
-        // Create Event functionality removed - only admins can create events
-        null
+        // Home for the "Create Event" action now that it no longer lives on the
+        // dashboard. Gated on the same permission as the /events/create route it
+        // links to, so the CTA and the destination cannot disagree.
+        <Can do="read" on="all" passThrough>
+          <Link
+            to="/events/create"
+            className="inline-flex items-center min-h-[48px] px-4 py-2.5 bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors duration-200 font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+          >
+            <PlusIcon className="w-5 h-5 mr-2" />
+            Create Event
+          </Link>
+        </Can>
       }
     >
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
-          <div className="bg-white rounded-lg shadow-sm p-6">
-            <div className="flex items-center">
-              <CalendarDaysIcon className="h-6 w-6 sm:h-8 sm:w-8 text-blue-600" />
-              <div className="ml-3 sm:ml-4">
-                <p className="text-xs sm:text-sm font-medium text-gray-600">
-                  {statsData.isFiltered ? 'Filtered Events' : 'Total Events'}
-                </p>
-                <p className="text-xl sm:text-2xl font-bold text-gray-900">{statsData.totalEvents}</p>
-              </div>
-            </div>
-          </div>
-          <div className="bg-white rounded-lg shadow-sm p-6">
-            <div className="flex items-center">
-              <UsersIcon className="h-6 w-6 sm:h-8 sm:w-8 text-green-600" />
-              <div className="ml-3 sm:ml-4">
-                <p className="text-xs sm:text-sm font-medium text-gray-600">
-                  {statsData.isFiltered ? 'Filtered Attendees' : 'Total Attendees'}
-                </p>
-                <p className="text-xl sm:text-2xl font-bold text-gray-900">
-                  {statsData.totalAttendees}
-                </p>
-              </div>
-            </div>
-          </div>
-          <div className="bg-white rounded-lg shadow-sm p-6">
-            <div className="flex items-center">
-              <ChartBarIcon className="h-6 w-6 sm:h-8 sm:w-8 text-purple-600" />
-              <div className="ml-3 sm:ml-4">
-                <p className="text-xs sm:text-sm font-medium text-gray-600">
-                  {statsData.isFiltered ? 'Filtered Published' : 'Published Events'}
-                </p>
-                <p className="text-xl sm:text-2xl font-bold text-gray-900">
-                  {statsData.publishedEvents}
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-
         {/* Filters and Search */}
         <div className="bg-white rounded-lg shadow-sm p-6 mb-6 sm:mb-8">
           <div className="flex flex-col space-y-4 sm:space-y-0 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-col sm:flex-row sm:items-center space-y-3 sm:space-y-0 sm:space-x-4">
               {/* Search */}
               <div className="relative">
-                <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-outline-variant" />
                 <input
                   type="text"
                   placeholder="Search events..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm w-full sm:w-64"
+                  className="pl-10 pr-4 py-2 border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent text-sm w-full sm:w-64"
                 />
               </div>
 
@@ -772,7 +377,7 @@ const ManageEventsPage: React.FC = () => {
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
-                className="w-full sm:w-auto px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                className="w-full sm:w-auto px-3 py-2 border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent text-sm"
               >
                 <option value="all">All Status</option>
                 <option value="draft">Draft</option>
@@ -786,7 +391,7 @@ const ManageEventsPage: React.FC = () => {
               <select
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value)}
-                className="w-full sm:w-auto px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                className="w-full sm:w-auto px-3 py-2 border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent text-sm"
               >
                 <option value="startDate">Sort by Date</option>
                 <option value="title">Sort by Title</option>
@@ -799,21 +404,25 @@ const ManageEventsPage: React.FC = () => {
             <div className="flex items-center space-x-2">
               <button
                 onClick={() => setViewMode('grid')}
-                className={`p-2 rounded-lg transition-colors ${
+                className={`p-2 rounded-lg active:scale-[0.96] transition-[color,background-color,transform] duration-short2 ease-emphasized-standard ${
                   viewMode === 'grid' 
-                    ? 'bg-blue-100 text-blue-600' 
-                    : 'text-gray-400 hover:text-gray-600'
+                    ? 'bg-secondary-container text-primary font-semibold' 
+                    : 'text-outline-variant hover:text-on-surface hover:bg-surface-container'
                 }`}
+                title="Grid view"
+                aria-label="Grid view"
               >
                 <Squares2X2Icon className="h-5 w-5" />
               </button>
               <button
                 onClick={() => setViewMode('list')}
-                className={`p-2 rounded-lg transition-colors ${
+                className={`p-2 rounded-lg active:scale-[0.96] transition-[color,background-color,transform] duration-short2 ease-emphasized-standard ${
                   viewMode === 'list' 
-                    ? 'bg-blue-100 text-blue-600' 
-                    : 'text-gray-400 hover:text-gray-600'
+                    ? 'bg-secondary-container text-primary font-semibold' 
+                    : 'text-outline-variant hover:text-on-surface hover:bg-surface-container'
                 }`}
+                title="List view"
+                aria-label="List view"
               >
                 <ListBulletIcon className="h-5 w-5" />
               </button>
@@ -825,35 +434,35 @@ const ManageEventsPage: React.FC = () => {
         {viewMode === 'grid' ? (
           /* Grid View */
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6">
-            {sortedEvents.map((event) => (
-              <div key={event.id} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow">
+            {sortedEvents.map((event, index) => (
+              <div
+                key={event.id}
+                style={{ animationDelay: `${Math.min(index * 30, 150)}ms` }}
+                className="group bg-white rounded-lg shadow-elevation-0 border border-outline-variant overflow-hidden hover:shadow-elevation-1 hover:-translate-y-0.5 transition-[transform,box-shadow] duration-fast ease-quart animate-rise-in motion-reduce:animate-none"
+              >
                 {/* Event Image */}
-                <div className="relative h-48 bg-gray-200">
+                <div className="relative h-48 bg-surface-container-high overflow-hidden">
                   {event.imageUrl ? (
                     <img
                       src={event.imageUrl}
                       alt={event.title}
-                      className="w-full h-full object-cover"
+                      className="w-full h-full object-cover transition-transform duration-base ease-quart group-hover:scale-105"
                     />
                   ) : (
-                    <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-blue-100 to-indigo-200">
-                      <CalendarDaysIcon className="h-12 w-12 text-blue-500" />
+                    <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-secondary-container to-primary-container">
+                      <CalendarDaysIcon className="h-12 w-12 text-primary transition-transform duration-fast ease-quart group-hover:scale-110" />
                     </div>
                   )}
-                  {/* Status Badges */}
-                  <div className="absolute top-3 right-3 flex flex-col gap-2 items-end">
-                    <div className={`flex items-center space-x-1 px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(event.status)}`}>
+                  {/* Status Badge */}
+                  <div className="absolute top-3 right-3 flex items-center">
+                    <div className={`flex items-center space-x-1 px-2.5 py-1 rounded-full text-xs font-semibold shadow-sm ${getStatusColor(event.status)}`}>
                       {getStatusIcon(event.status)}
                       <span className="capitalize">{event.status}</span>
-                    </div>
-                    <div className={`flex items-center space-x-1 px-2 py-1 rounded-full text-xs font-medium border ${getRegistrationStatusColor(event.registrationStatus || 'open')}`}>
-                      {getRegistrationStatusIcon(event.registrationStatus || 'open')}
-                      <span className="capitalize">{getRegistrationStatusLabel(event.registrationStatus || 'open')}</span>
                     </div>
                   </div>
                   {/* Price Badge */}
                   <div className="absolute bottom-3 left-3">
-                    <div className="bg-black bg-opacity-75 text-white px-2 py-1 rounded-md text-xs font-medium">
+                    <div className="bg-black bg-opacity-75 text-white px-2 py-1 rounded-md text-sm font-medium">
                       {formatPrice(event.ticketTypes)}
                     </div>
                   </div>
@@ -863,13 +472,15 @@ const ManageEventsPage: React.FC = () => {
                 <div className="p-4">
                   {/* Title and Category */}
                   <div className="mb-3">
-                    <h3 className="text-lg font-semibold text-gray-900 mb-1 line-clamp-2">
-                      {event.title}
-                    </h3>
-                    <div className="flex items-center space-x-2 text-xs text-gray-500">
-                      <span className="bg-gray-100 px-2 py-1 rounded-md">{event.category}</span>
+                    <Link to={`/events/${event.id}`} className="block group">
+                      <h3 className="text-lg font-semibold text-on-surface mb-1 line-clamp-2 group-hover:text-primary-hover transition-colors">
+                        {event.title}
+                      </h3>
+                    </Link>
+                    <div className="flex items-center space-x-2 text-sm text-on-surface-variant">
+                      <span className="bg-surface-container px-2 py-1 rounded-md">{event.category}</span>
                       {event.tags?.slice(0, 2).map((tag, index) => (
-                        <span key={index} className="bg-blue-100 text-blue-700 px-2 py-1 rounded-md">
+                        <span key={index} className="bg-secondary-container text-primary px-2 py-1 rounded-md">
                           {tag}
                         </span>
                       ))}
@@ -877,25 +488,25 @@ const ManageEventsPage: React.FC = () => {
                   </div>
 
                   {/* Description */}
-                  <p className="text-sm text-gray-600 mb-4 line-clamp-3">
+                  <p className="text-sm text-on-surface-variant mb-4 line-clamp-3">
                     {event.shortDescription || event.description}
                   </p>
 
                   {/* Event Details */}
                   <div className="space-y-2 mb-4">
-                    <div className="flex items-center text-sm text-gray-600">
-                      <CalendarDaysIcon className="h-4 w-4 mr-2 text-gray-400" />
+                    <div className="flex items-center text-sm text-on-surface-variant">
+                      <CalendarDaysIcon className="h-4 w-4 mr-2 text-outline-variant" />
                       <span>{formatDate(event.startDate)}</span>
                     </div>
-                    <div className="flex items-center text-sm text-gray-600">
-                      <UsersIcon className="h-4 w-4 mr-2 text-gray-400" />
+                    <div className="flex items-center text-sm text-on-surface-variant">
+                      <UsersIcon className="h-4 w-4 mr-2 text-outline-variant" />
                       <span>
                         {event.currentAttendees} attendees
                         {event.maxAttendees && ` / ${event.maxAttendees} max`}
                       </span>
                     </div>
-                    <div className="flex items-center text-sm text-gray-600">
-                      <svg className="h-4 w-4 mr-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <div className="flex items-center text-sm text-on-surface-variant">
+                      <svg className="h-4 w-4 mr-2 text-outline-variant" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
                       </svg>
@@ -906,150 +517,43 @@ const ManageEventsPage: React.FC = () => {
                   {/* Attendee Progress Bar */}
                   {event.maxAttendees && (
                     <div className="mb-4">
-                      <div className="flex justify-between text-xs text-gray-600 mb-1">
+                      <div className="flex justify-between text-sm text-on-surface-variant mb-1">
                         <span>Registration Progress</span>
                         <span>{Math.round((event.currentAttendees / event.maxAttendees) * 100)}%</span>
                       </div>
-                      <div className="w-full bg-gray-200 rounded-full h-2">
-                        <div 
-                          className="bg-blue-600 h-2 rounded-full transition-all duration-300" 
-                          style={{ 
-                            width: `${Math.min((event.currentAttendees / event.maxAttendees) * 100, 100)}%` 
-                          }}
-                        ></div>
-                      </div>
+                      <ProgressBar
+                        value={Math.min((event.currentAttendees / event.maxAttendees) * 100, 100)}
+                        size="sm"
+                        color="bg-blue-600"
+                        label="Registration progress"
+                        showValue
+                      />
                     </div>
                   )}
 
-                  {/* Organizer Info */}
-                  <div className="mb-4 p-2 bg-gray-50 rounded-md">
-                    <div className="text-xs text-gray-500">Organizer</div>
-                    <div className="text-sm font-medium text-gray-900">{event.organizer.name}</div>
-                    <div className="text-xs text-gray-600">{event.organizer.email}</div>
-                  </div>
-
-                  {/* Status Selectors */}
-                  <div className="mb-4 space-y-2">
-                    <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Event Status</label>
-                      <select
-                        value={event.status}
-                        onChange={(e) => handleStatusChange(event.id, e.target.value)}
-                        className={`w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm ${
-                          !eventCertificateStatus[event.id] && event.status !== 'completed'
-                            ? 'border-yellow-300 bg-yellow-50'
-                            : 'border-gray-300'
-                        }`}
-                      >
-                        <option value="draft">Draft</option>
-                        <option value="published">Published</option>
-                        <option value="ongoing">Ongoing</option>
-                        <option value="completed">Completed {!eventCertificateStatus[event.id] ? '⚠️' : ''}</option>
-                        <option value="cancelled">Cancelled</option>
-                      </select>
-                      {!eventCertificateStatus[event.id] && (
-                        <div className="mt-1 px-2 py-1 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-700 flex items-center space-x-1">
-                          <svg className="h-3 w-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
-                          </svg>
-                          <span>No certificate template</span>
-                        </div>
-                      )}
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Registration Status</label>
-                      <select
-                        value={event.registrationStatus || 'open'}
-                        onChange={(e) => handleRegistrationStatusChange(event.id, e.target.value as 'open' | 'closed' | 'walk-in-only')}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                      >
-                        <option value="open">Open</option>
-                        <option value="closed">Closed</option>
-                        <option value="walk-in-only">Walk-In Only</option>
-                      </select>
-                      <div className={`mt-1 px-2 py-1 rounded text-xs font-medium flex items-center space-x-1 ${getRegistrationStatusColor(event.registrationStatus || 'open')}`}>
-                        {getRegistrationStatusIcon(event.registrationStatus || 'open')}
-                        <span>{getRegistrationStatusLabel(event.registrationStatus || 'open')}</span>
-                      </div>
-                    </div>
-                  </div>
-
                   {/* Action Buttons */}
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-2">
-                      <Link
-                        to={`/admin/events/${event.id}/attendees`}
-                        className="flex items-center justify-center w-8 h-8 text-blue-600 hover:text-blue-900 hover:bg-blue-50 rounded-lg transition-colors"
-                        title="View Attendees"
-                      >
-                        <EyeIcon className="h-4 w-4" />
-                      </Link>
-                      <Link
-                        to={`/admin/events/edit/${event.id}`}
-                        className="flex items-center justify-center w-8 h-8 text-green-600 hover:text-green-900 hover:bg-green-50 rounded-lg transition-colors"
-                        title="Edit Event"
-                      >
-                        <PencilIcon className="h-4 w-4" />
-                      </Link>
-                      <button
-                        onClick={() => event.status === 'published' ? handleShareEvent(event.id, event.title, event.slug) : null}
-                        className={`flex items-center justify-center w-8 h-8 rounded-lg transition-colors ${
-                          event.status === 'published'
-                            ? 'text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 cursor-pointer'
-                            : 'text-gray-400 cursor-not-allowed bg-gray-50'
-                        }`}
-                        title={event.status === 'published' ? 'Share Registration Link' : 'Event must be published to share'}
-                        disabled={event.status !== 'published'}
-                      >
-                        <ShareIcon className="h-4 w-4" />
-                      </button>
-                      <button
-                        onClick={() => handleViewFeedback(event.id)}
-                        className="flex items-center justify-center w-8 h-8 text-orange-600 hover:text-orange-900 hover:bg-orange-50 rounded-lg transition-colors"
-                        title="View Feedback Responses"
-                      >
-                        <ChatBubbleLeftRightIcon className="h-4 w-4" />
-                      </button>
-                      {event.status === 'completed' && (
-                        <button
-                          onClick={() => handleResendFeedbackRequests(event.id, event.title)}
-                          disabled={resendingFeedback === event.id}
-                          className={`relative flex items-center justify-center w-8 h-8 rounded-lg transition-colors ${
-                            resendingFeedback === event.id
-                              ? 'text-gray-400 bg-gray-50 cursor-not-allowed'
-                              : !eventCertificateStatus[event.id]
-                                ? 'text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 cursor-pointer'
-                                : 'text-purple-600 hover:text-purple-900 hover:bg-purple-50 cursor-pointer'
-                          }`}
-                          title={!eventCertificateStatus[event.id] ? "No Certificate Template - Click to learn more" : "Resend Feedback Request Emails"}
-                        >
-                          <ArrowPathIcon className={`h-4 w-4 ${resendingFeedback === event.id ? 'animate-spin' : ''}`} />
-                          {!eventCertificateStatus[event.id] && (
-                            <span className="absolute -top-1 -right-1 flex h-3 w-3">
-                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-yellow-400 opacity-75"></span>
-                              <span className="relative inline-flex rounded-full h-3 w-3 bg-yellow-500"></span>
-                            </span>
-                          )}
-                        </button>
-                      )}
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <Link
-                        to={`/admin/analytics?eventId=${event.id}`}
-                        className="flex items-center justify-center w-8 h-8 text-purple-600 hover:text-purple-900 hover:bg-purple-50 rounded-lg transition-colors"
-                        title="Analytics"
-                      >
-                        <ChartBarIcon className="h-4 w-4" />
-                      </Link>
-                      <button
-                        onClick={() => openDeleteModal(event.id, event.title)}
-                        className="flex items-center justify-center w-8 h-8 text-red-600 hover:text-red-900 hover:bg-red-50 rounded-lg transition-colors"
-                        title="Delete Event"
-                      >
-                        <TrashIcon className="h-4 w-4" />
-                      </button>
-                    </div>
+                  <div className="flex items-center justify-between pt-3 border-t border-outline-variant">
+                    <Link
+                      to={`/events/${event.id}`}
+                      className="inline-flex min-h-[44px] items-center gap-1.5 px-3.5 py-2 text-sm font-medium rounded-lg bg-primary-container text-primary hover:bg-secondary-container active:scale-[0.98] transition-[background-color,color,transform] duration-fast ease-quart"
+                    >
+                      <span>Manage Event</span>
+                      <ArrowRightIcon className="h-4 w-4 transition-transform duration-fast ease-quart group-hover:translate-x-0.5" />
+                    </Link>
+
+                    <button
+                      onClick={() => event.status === 'published' ? handleShareEvent(event.id, event.title, event.slug) : null}
+                      className={`flex items-center justify-center w-9 h-9 rounded-lg transition-colors ${
+                        event.status === 'published'
+                          ? 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container cursor-pointer'
+                          : 'text-outline-variant cursor-not-allowed'
+                      }`}
+                      title={event.status === 'published' ? 'Share Registration Link' : 'Event must be published to share'}
+                      disabled={event.status !== 'published'}
+                      aria-label="Share Registration Link"
+                    >
+                      <ShareIcon className="h-4 w-4" />
+                    </button>
                   </div>
                 </div>
               </div>
@@ -1061,35 +565,32 @@ const ManageEventsPage: React.FC = () => {
             {/* Desktop Table View */}
             <div className="hidden lg:block">
               <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
+                <table className="min-w-full divide-y divide-outline-variant">
+                  <thead className="bg-surface-container-low">
                     <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider">
                         Event
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider">
                         Date & Venue
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider">
                         Attendees
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider">
                         Pricing
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider">
                         Status
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Organizer
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider">
                         Actions
                       </th>
                     </tr>
                   </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
+                  <tbody className="bg-white divide-y divide-outline-variant">
                     {sortedEvents.map((event) => (
-                      <tr key={event.id} className="hover:bg-gray-50">
+                      <tr key={event.id} className="hover:bg-surface-container-low">
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="flex items-center">
                             {event.imageUrl && (
@@ -1100,31 +601,36 @@ const ManageEventsPage: React.FC = () => {
                               />
                             )}
                             <div>
-                              <div className="text-sm font-medium text-gray-900">{event.title}</div>
-                              <div className="text-sm text-gray-500 truncate max-w-xs">
+                              <Link
+                                to={`/events/${event.id}`}
+                                className="text-sm font-semibold text-on-surface hover:text-primary-hover transition-colors"
+                              >
+                                {event.title}
+                              </Link>
+                              <div className="text-sm text-on-surface-variant truncate max-w-xs">
                                 {event.shortDescription || event.description}
                               </div>
-                              <div className="text-xs text-gray-400 mt-1">
+                              <div className="text-sm text-outline-variant mt-1">
                                 {event.category} • {event.tags?.slice(0, 2).join(', ')}
                               </div>
                             </div>
                           </div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="text-sm text-gray-900">{formatDate(event.startDate)}</div>
-                          <div className="text-sm text-gray-500">
+                          <div className="text-sm text-on-surface">{formatDate(event.startDate)}</div>
+                          <div className="text-sm text-on-surface-variant">
                             {event.venue.type === 'online' ? 'Online' : event.venue.name || event.venue.city}
                           </div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="text-sm text-gray-900">
+                          <div className="text-sm text-on-surface">
                             {event.currentAttendees}
                             {event.maxAttendees && ` / ${event.maxAttendees}`}
                           </div>
                           {event.maxAttendees && (
-                            <div className="w-full bg-gray-200 rounded-full h-2 mt-1">
+                            <div className="w-full bg-surface-container-high rounded-full h-2 mt-1">
                               <div 
-                                className="bg-blue-600 h-2 rounded-full" 
+                                className="bg-primary h-2 rounded-full" 
                                 style={{ 
                                   width: `${(event.currentAttendees / event.maxAttendees) * 100}%` 
                                 }}
@@ -1133,99 +639,36 @@ const ManageEventsPage: React.FC = () => {
                           )}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="text-sm text-gray-900">
+                          <div className="text-sm text-on-surface">
                             {formatPrice(event.ticketTypes)}
                           </div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="flex items-center space-x-2">
+                          <span className={`inline-flex items-center space-x-1.5 text-xs font-medium rounded-full px-2.5 py-1 ${getStatusColor(event.status)}`}>
                             {getStatusIcon(event.status)}
-                            <select
-                              value={event.status}
-                              onChange={(e) => handleStatusChange(event.id, e.target.value)}
-                              className={`text-xs font-medium rounded-full px-2 py-1 border-0 ${getStatusColor(event.status)}`}
-                            >
-                              <option value="draft">Draft</option>
-                              <option value="published">Published</option>
-                              <option value="ongoing">Ongoing</option>
-                              <option value="completed">Completed</option>
-                              <option value="cancelled">Cancelled</option>
-                            </select>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="text-sm text-gray-900">{event.organizer.name}</div>
-                          <div className="text-sm text-gray-500">{event.organizer.email}</div>
+                            <span className="capitalize">{event.status}</span>
+                          </span>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                           <div className="flex items-center space-x-2">
                             <Link
-                              to={`/admin/events/${event.id}/attendees`}
-                              className="text-blue-600 hover:text-blue-900"
-                              title="View Attendees"
+                              to={`/events/${event.id}`}
+                              className="inline-flex items-center px-2.5 py-1.5 text-xs font-semibold rounded-md text-primary bg-primary-container hover:bg-primary-container transition-colors"
+                              title="Open Event Hub"
                             >
-                              <EyeIcon className="h-4 w-4" />
-                            </Link>
-                            <Link
-                              to={`/admin/events/edit/${event.id}`}
-                              className="text-green-600 hover:text-green-900"
-                              title="Edit Event"
-                            >
-                              <PencilIcon className="h-4 w-4" />
+                              Manage
                             </Link>
                             <button
                               onClick={() => event.status === 'published' ? handleShareEvent(event.id, event.title, event.slug) : null}
-                              className={`${
+                              className={`p-1 rounded ${
                                 event.status === 'published'
-                                  ? 'text-indigo-600 hover:text-indigo-900 cursor-pointer'
-                                  : 'text-gray-400 cursor-not-allowed'
+                                  ? 'text-primary hover:text-on-primary-container hover:bg-primary-container cursor-pointer'
+                                  : 'text-outline-variant cursor-not-allowed'
                               }`}
                               title={event.status === 'published' ? 'Share Registration Link' : 'Event must be published to share'}
                               disabled={event.status !== 'published'}
                             >
                               <ShareIcon className="h-4 w-4" />
-                            </button>
-                            <button
-                              onClick={() => handleViewFeedback(event.id)}
-                              className="text-orange-600 hover:text-orange-900"
-                              title="View Feedback Responses"
-                            >
-                              <ChatBubbleLeftRightIcon className="h-4 w-4" />
-                            </button>
-                            {event.status === 'completed' && (
-                              <button
-                                onClick={() => handleResendFeedbackRequests(event.id, event.title)}
-                                disabled={resendingFeedback === event.id}
-                                className={`relative ${
-                                  resendingFeedback === event.id
-                                    ? 'text-gray-400 cursor-not-allowed'
-                                    : !eventCertificateStatus[event.id]
-                                      ? 'text-yellow-600 hover:text-yellow-900 cursor-pointer'
-                                      : 'text-purple-600 hover:text-purple-900 cursor-pointer'
-                                }`}
-                                title={!eventCertificateStatus[event.id] ? "No Certificate Template - Click to learn more" : "Resend Feedback Request Emails"}
-                              >
-                                <ArrowPathIcon className={`h-4 w-4 ${resendingFeedback === event.id ? 'animate-spin' : ''}`} />
-                                {!eventCertificateStatus[event.id] && (
-                                  <span className="absolute -top-1 -right-1 flex h-2 w-2">
-                                    <span className="relative inline-flex rounded-full h-2 w-2 bg-yellow-500"></span>
-                                  </span>
-                                )}
-                              </button>
-                            )}
-                            <Link
-                              to={`/admin/analytics?eventId=${event.id}`}
-                              className="text-purple-600 hover:text-purple-900"
-                              title="Analytics"
-                            >
-                              <ChartBarIcon className="h-4 w-4" />
-                            </Link>
-                            <button
-                              onClick={() => openDeleteModal(event.id, event.title)}
-                              className="text-red-600 hover:text-red-900"
-                              title="Delete Event"
-                            >
-                              <TrashIcon className="h-4 w-4" />
                             </button>
                           </div>
                         </td>
@@ -1239,7 +682,7 @@ const ManageEventsPage: React.FC = () => {
             {/* Mobile Card View */}
             <div className="lg:hidden space-y-3 p-4">
               {sortedEvents.map((event) => (
-                <div key={event.id} className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                <div key={event.id} className="bg-surface-container-low rounded-lg p-4 border border-outline-variant">
                   {/* Event Header */}
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex-1 min-w-0 pr-3">
@@ -1252,13 +695,15 @@ const ManageEventsPage: React.FC = () => {
                           />
                         )}
                         <div>
-                          <h3 className="text-sm font-semibold text-gray-900 truncate">
-                            {event.title}
+                          <h3 className="text-sm font-semibold text-on-surface truncate">
+                            <Link to={`/events/${event.id}`} className="hover:text-primary-hover transition-colors">
+                              {event.title}
+                            </Link>
                           </h3>
-                          <p className="text-xs text-gray-600 mt-1 line-clamp-2">
+                          <p className="text-sm text-on-surface-variant mt-1 line-clamp-2">
                             {event.shortDescription || event.description}
                           </p>
-                          <div className="text-xs text-gray-400 mt-1">
+                          <div className="text-sm text-outline-variant mt-1">
                             {event.category} • {event.tags?.slice(0, 2).join(', ')}
                           </div>
                         </div>
@@ -1270,7 +715,7 @@ const ManageEventsPage: React.FC = () => {
                   </div>
 
                   {/* Event Details */}
-                  <div className="grid grid-cols-2 gap-3 text-xs text-gray-600 mb-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm text-on-surface-variant mb-3">
                     <div>
                       <span className="font-medium">Date:</span>
                       <div>{formatDate(event.startDate)}</div>
@@ -1290,70 +735,34 @@ const ManageEventsPage: React.FC = () => {
                   </div>
 
                   {/* Status and Actions */}
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-3 sm:space-y-0 pt-3 border-t border-gray-200">
-                    <div className="flex items-center space-x-2">
-                      {getStatusIcon(event.status)}
-                      <select
-                        value={event.status}
-                        onChange={(e) => handleStatusChange(event.id, e.target.value)}
-                        className={`text-xs font-medium rounded-lg px-3 py-2 border focus:ring-2 focus:ring-blue-500 ${getStatusColor(event.status)}`}
-                      >
-                        <option value="draft">Draft</option>
-                        <option value="published">Published</option>
-                        <option value="ongoing">Ongoing</option>
-                        <option value="completed">Completed</option>
-                        <option value="cancelled">Cancelled</option>
-                      </select>
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-3 sm:space-y-0 pt-3 border-t border-outline-variant">
+                    <div className="flex items-center">
+                      <span className={`inline-flex items-center space-x-1.5 text-xs font-medium rounded-full px-2.5 py-1 ${getStatusColor(event.status)}`}>
+                        {getStatusIcon(event.status)}
+                        <span className="capitalize">{event.status}</span>
+                      </span>
                     </div>
                     
                     <div className="flex items-center space-x-1">
                       <Link
-                        to={`/admin/events/${event.id}/attendees`}
-                        className="flex items-center justify-center space-x-1 px-2 sm:px-3 py-2 text-blue-600 hover:text-blue-900 hover:bg-blue-50 rounded-lg transition-colors text-xs font-medium min-w-0"
+                        to={`/events/${event.id}`}
+                        className="flex items-center justify-center space-x-1 px-3 py-2 min-h-[44px] bg-primary-container text-primary hover:bg-primary-container rounded-lg transition-colors text-sm font-medium"
                       >
                         <EyeIcon className="h-4 w-4 flex-shrink-0" />
-                        <span className="hidden sm:inline">Attendees</span>
-                      </Link>
-                      <Link
-                        to={`/admin/events/edit/${event.id}`}
-                        className="flex items-center justify-center space-x-1 px-2 sm:px-3 py-2 text-green-600 hover:text-green-900 hover:bg-green-50 rounded-lg transition-colors text-xs font-medium min-w-0"
-                      >
-                        <PencilIcon className="h-4 w-4 flex-shrink-0" />
-                        <span className="hidden sm:inline">Edit</span>
+                        <span>Manage</span>
                       </Link>
                       <button
                         onClick={() => event.status === 'published' ? handleShareEvent(event.id, event.title, event.slug) : null}
-                        className={`flex items-center justify-center space-x-1 px-2 sm:px-3 py-2 rounded-lg transition-colors text-xs font-medium min-w-0 ${
+                        className={`flex items-center justify-center space-x-1 p-2 min-h-[44px] min-w-[44px] rounded-lg transition-colors text-sm font-medium ${
                           event.status === 'published'
-                            ? 'text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 cursor-pointer'
-                            : 'text-gray-400 cursor-not-allowed bg-gray-50'
+                            ? 'text-primary hover:text-on-primary-container hover:bg-primary-container cursor-pointer'
+                            : 'text-outline-variant cursor-not-allowed bg-surface-container-low'
                         }`}
                         title={event.status === 'published' ? 'Share Registration Link' : 'Event must be published to share'}
                         disabled={event.status !== 'published'}
                       >
                         <ShareIcon className="h-4 w-4 flex-shrink-0" />
-                        <span className="hidden sm:inline">Share</span>
-                      </button>
-                      <button
-                        onClick={() => handleViewFeedback(event.id)}
-                        className="flex items-center justify-center space-x-1 px-2 sm:px-3 py-2 text-orange-600 hover:text-orange-900 hover:bg-orange-50 rounded-lg transition-colors text-xs font-medium min-w-0"
-                      >
-                        <ChatBubbleLeftRightIcon className="h-4 w-4 flex-shrink-0" />
-                        <span className="hidden sm:inline">Feedback</span>
-                      </button>
-                      <Link
-                        to={`/admin/analytics?eventId=${event.id}`}
-                        className="flex items-center justify-center space-x-1 px-2 sm:px-3 py-2 text-purple-600 hover:text-purple-900 hover:bg-purple-50 rounded-lg transition-colors text-xs font-medium min-w-0"
-                      >
-                        <ChartBarIcon className="h-4 w-4 flex-shrink-0" />
-                        <span className="hidden sm:inline">Analytics</span>
-                      </Link>
-                      <button
-                        onClick={() => openDeleteModal(event.id, event.title)}
-                        className="flex items-center justify-center space-x-1 px-2 sm:px-3 py-2 text-red-600 hover:text-red-900 hover:bg-red-50 rounded-lg transition-colors text-xs font-medium min-w-0"
-                      >
-                        <TrashIcon className="h-4 w-4 flex-shrink-0" />
-                        <span className="hidden sm:inline">Delete</span>
+                        <span className="sr-only">Share</span>
                       </button>
                     </div>
                   </div>
@@ -1365,116 +774,41 @@ const ManageEventsPage: React.FC = () => {
         
         {sortedEvents.length === 0 && (
           <div className="text-center py-8 sm:py-12 px-4">
-            <CalendarDaysIcon className="mx-auto h-10 w-10 sm:h-12 sm:w-12 text-gray-400" />
-            <h3 className="mt-2 text-sm font-medium text-gray-900">No events found</h3>
-            <p className="mt-1 text-xs sm:text-sm text-gray-500 max-w-sm mx-auto">
+            <CalendarDaysIcon className="mx-auto h-10 w-10 sm:h-12 sm:w-12 text-outline-variant" />
+            <h3 className="mt-2 text-sm font-medium text-on-surface">No events found</h3>
+            <p className="mt-1 text-sm sm:text-sm text-on-surface-variant max-w-sm mx-auto">
               {searchTerm || statusFilter !== 'all' 
                 ? 'Try adjusting your search or filter criteria.'
                 : 'Get started by creating your first event.'
               }
             </p>
             {!searchTerm && statusFilter === 'all' && (
-              <div className="mt-4 sm:mt-6">
-                <Link 
-                to="/events/create"
-                className="inline-flex items-center px-4 py-2.5 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-xl
-                hover:from-blue-600 hover:to-blue-700 transition-all duration-200 shadow-lg hover:shadow-xl font-medium">
-                  <PlusIcon className="w-5 h-5 mr-2" />
-                  Create Event
-                  </Link>
-              </div>
+              <Can do="read" on="all" passThrough>
+                <div className="mt-4 sm:mt-6">
+                  <Link
+                  to="/events/create"
+                  className="inline-flex items-center min-h-[48px] px-4 py-2.5 bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors duration-200 font-medium">
+                    <PlusIcon className="w-5 h-5 mr-2" />
+                    Create Event
+                    </Link>
+                </div>
+              </Can>
             )}
           </div>
         )}
 
-        {/* Delete Confirmation Modal */}
-        <ConfirmationModal
-          isOpen={deleteModal.isOpen}
-          onClose={closeDeleteModal}
-          onConfirm={deleteModal.isForceDelete ? handleForceDelete : handleDeleteEvent}
-          title="Delete Event"
-          message={deleteModal.message}
-          confirmText={deleteModal.confirmText}
-          cancelText="Cancel"
-          type={deleteModal.type}
-          isLoading={deleteModal.isLoading}
-        />
 
-        {/* Certificate Template Warning Modal */}
-        {certificateWarningModal.isOpen && (
-          <div className="fixed inset-0 z-50 overflow-y-auto">
-            <div className="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-              {/* Background overlay */}
-              <div 
-                className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
-                onClick={() => setCertificateWarningModal({ isOpen: false, eventId: null, eventTitle: '', action: null })}
-              />
-              
-              {/* Modal panel */}
-              <div className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
-                <div className="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-                  <div className="sm:flex sm:items-start">
-                    <div className="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-yellow-100 sm:mx-0 sm:h-10 sm:w-10">
-                      <svg className="h-6 w-6 text-yellow-600" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
-                      </svg>
-                    </div>
-                    <div className="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left">
-                      <h3 className="text-lg leading-6 font-medium text-gray-900">
-                        Certificate Template Required
-                      </h3>
-                      <div className="mt-2">
-                        <p className="text-sm text-gray-500">
-                          {certificateWarningModal.action === 'complete' ? (
-                            <>
-                              You cannot mark <strong>"{certificateWarningModal.eventTitle}"</strong> as completed because there is no certificate template configured for this event.
-                              <br /><br />
-                              Feedback emails are only sent to attendees when a certificate template exists, so they can receive their certificates after submitting feedback.
-                            </>
-                          ) : (
-                            <>
-                              You cannot send feedback request emails for <strong>"{certificateWarningModal.eventTitle}"</strong> because there is no certificate template configured for this event.
-                              <br /><br />
-                              Attendees need a certificate template to receive their certificates after submitting feedback.
-                            </>
-                          )}
-                        </p>
-                        <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
-                          <p className="text-sm text-yellow-800">
-                            <strong>To fix this:</strong> Go to the Certificates page and create a certificate template for this event first.
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCertificateWarningModal({ isOpen: false, eventId: null, eventTitle: '', action: null });
-                      navigate('/admin/certificates');
-                    }}
-                    className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-blue-600 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:ml-3 sm:w-auto sm:text-sm"
-                  >
-                    Go to Certificates
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setCertificateWarningModal({ isOpen: false, eventId: null, eventTitle: '', action: null })}
-                    className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:mt-0 sm:w-auto sm:text-sm"
-                  >
-                    Close
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* Feedback modal removed - now using dedicated page */}
       </LayoutComponent>
     );
   };
 
-  export default ManageEventsPage; 
+
+// No role check of its own: /events is gated on `read 'all'` in App.tsx, which
+// only admins hold. The page previously enforced the same rule twice - a
+// redirect effect that fired a toast and a `return null` that blanked the screen
+// while it did - so an organizer saw a flash, an error, and a bounce.
+const ManageEventsPage: React.FC = () => <EventsWorkspace />;
+
+export default ManageEventsPage; 

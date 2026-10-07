@@ -19,11 +19,12 @@ import {
   ExclamationTriangleIcon,
   ArchiveBoxArrowDownIcon,
   UserGroupIcon,
-  XMarkIcon,
   WrenchScrewdriverIcon
 } from '@heroicons/react/24/outline';
-import AdminLayout from '../../components/admin/AdminLayout';
-import OrganizerLayout from '../../components/organizer/OrganizerLayout';
+import { useSearchParams } from 'react-router-dom';
+import DashboardShell from '../../components/shared/DashboardShell';
+import ProgressBar from '../../components/shared/UI/ProgressBar';
+import { Button, Modal } from '../../components/shared/UI';
 import { useAuth } from '../../contexts/AuthContext';
 import { CertificateTemplate, Certificate, TemplateElement, Registration } from '../../types';
 import { CertificateGenerationService } from '../../utils/certificateGeneration';
@@ -91,10 +92,19 @@ const getFullNameFromRegistration = (regData: { customResponses?: Record<string,
   return firstName || null;
 };
 
-const CertificatesPage: React.FC = () => {
+interface CertificatesPageProps {
+  embedded?: boolean;
+  propEventId?: string;
+}
+
+const CertificatesPage: React.FC<CertificatesPageProps> = ({
+  embedded = false,
+  propEventId
+}) => {
   const { userProfile } = useAuth();
-  const isAdmin = userProfile?.role === 'admin';
-  const LayoutComponent = isAdmin ? AdminLayout : OrganizerLayout;
+  const [searchParams] = useSearchParams();
+  const eventId = propEventId || searchParams.get('eventId');
+  const LayoutComponent = DashboardShell;
   
   const [activeTab, setActiveTab] = useState<'templates' | 'issued' | 'builder'>('templates');
   const [templates, setTemplates] = useState<CertificateTemplate[]>([]);
@@ -102,14 +112,14 @@ const CertificatesPage: React.FC = () => {
   const [events, setEvents] = useState<any[]>([]);
   const [editingTemplate, setEditingTemplate] = useState<CertificateTemplate | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedEvent, setSelectedEvent] = useState('');
+  const [selectedEvent, setSelectedEvent] = useState(eventId || '');
   const [loading, setLoading] = useState(false);
   const [selectedCertificates, setSelectedCertificates] = useState<Set<string>>(new Set());
   const [isExporting, setIsExporting] = useState(false);
 
   // Bulk generate state
   const [showBulkGenerateModal, setShowBulkGenerateModal] = useState(false);
-  const [bulkGenerateEventId, setBulkGenerateEventId] = useState('');
+  const [bulkGenerateEventId, setBulkGenerateEventId] = useState(eventId || '');
   const [registrations, setRegistrations] = useState<Registration[]>([]);
   const [loadingRegistrations, setLoadingRegistrations] = useState(false);
   const [selectedRegistrations, setSelectedRegistrations] = useState<Set<string>>(new Set());
@@ -190,9 +200,12 @@ const CertificatesPage: React.FC = () => {
       try {
         setLoading(true);
         
-        // Fetch all data in parallel
+        // Organizers are scoped to their own events (Data Privacy Act 2012)
+        const isAdminUser = userProfile?.role === 'admin';
         const [eventsData, templatesData, certificatesData] = await Promise.all([
-          EventService.getAllEvents(),
+          isAdminUser || !userProfile?.uid
+            ? EventService.getAllEvents()
+            : EventService.getEventsByOrganizer(userProfile.uid),
           CertificateService.getAllTemplates(),
           CertificateService.getAllIssuedCertificates()
         ]);
@@ -544,7 +557,6 @@ const CertificatesPage: React.FC = () => {
       const templateData: Omit<CertificateTemplate, 'id' | 'createdAt' | 'updatedAt' | 'usageCount'> = {
         name: templateName,
         description: templateDescription,
-        eventId: templateEventId || undefined,
         templateImageUrl: uploadedImage,
         dimensions: templateDimensions,
         elements: elements,
@@ -552,6 +564,8 @@ const CertificatesPage: React.FC = () => {
         isActive: true,
         createdBy: userProfile?.uid || 'unknown'
       };
+      // Firestore rejects undefined field values, so omit rather than assign undefined.
+      if (templateEventId) templateData.eventId = templateEventId;
 
       // Create the template
       await CertificateService.createTemplate(templateData);
@@ -589,7 +603,6 @@ const CertificatesPage: React.FC = () => {
       const updatedTemplateData: Omit<CertificateTemplate, 'id' | 'createdAt' | 'updatedAt' | 'usageCount'> = {
         name: templateName,
         description: templateDescription,
-        eventId: templateEventId || undefined,
         templateImageUrl: uploadedImage,
         dimensions: templateDimensions,
         elements: elements,
@@ -597,6 +610,8 @@ const CertificatesPage: React.FC = () => {
         isActive: true,
         createdBy: editingTemplate.createdBy
       };
+      // Firestore rejects undefined field values, so omit rather than assign undefined.
+      if (templateEventId) updatedTemplateData.eventId = templateEventId;
 
       // Update the template
       await CertificateService.updateTemplate(editingTemplate.id, updatedTemplateData);
@@ -683,9 +698,9 @@ const CertificatesPage: React.FC = () => {
         ...recipientData
       });
       toast.success('Certificate generated successfully');
-      
-      // Refresh issued certificates
-      const updatedCertificates = await CertificateService.getAllIssuedCertificates();
+
+      // Refresh only the affected event's certificates
+      const updatedCertificates = await CertificateService.getAllIssuedCertificates(recipientData.eventId);
       setIssuedCertificates(updatedCertificates);
     } catch (error) {
       logger.error('Error generating certificate:', error);
@@ -716,22 +731,6 @@ const CertificatesPage: React.FC = () => {
     }
   };
 
-  // Fetch full name from registration for a certificate
-  const fetchFullNameForCertificate = async (cert: IssuedCertificate): Promise<string | null> => {
-    if (!cert.registrationId) return null;
-    
-    try {
-      const regRef = doc(db, 'registrations', cert.registrationId);
-      const regSnap = await getDoc(regRef);
-      
-      if (regSnap.exists()) {
-        return getFullNameFromRegistration(regSnap.data() as { customResponses?: Record<string, string | boolean | number>; userDetails?: { name?: string } });
-      }
-    } catch (err) {
-      logger.warn(`Could not fetch registration ${cert.registrationId}:`, err);
-    }
-    return null;
-  };
 
   // Check if certificate needs name fix (full name differs from current name)
   const certificateNeedsNameFix = (cert: IssuedCertificate): boolean => {
@@ -880,9 +879,15 @@ const CertificatesPage: React.FC = () => {
     
     const newFullNames: Record<string, string | null> = {};
     let needsFixCount = 0;
-    
+
+    // Every certificate in `eventCerts` belongs to `selectedEvent`, so one indexed
+    // query replaces one getDoc per certificate (was N sequential round-trips).
+    const registrations = await RegistrationService.getEventRegistrations(selectedEvent);
+    const byId = new Map(registrations.map((reg) => [reg.id, reg]));
+
     for (const cert of eventCerts) {
-      const fullName = await fetchFullNameForCertificate(cert);
+      const reg = cert.registrationId ? byId.get(cert.registrationId) : undefined;
+      const fullName = reg ? getFullNameFromRegistration(reg) : null;
       newFullNames[cert.id] = fullName;
       if (fullName && fullName !== cert.recipientName) {
         needsFixCount++;
@@ -1149,9 +1154,10 @@ const CertificatesPage: React.FC = () => {
                cert.recipientEmail === reg.userDetails?.email
       );
       
-      // Apply status filter - check for both 'attended' and 'checked-in' statuses
+      // Filter to attendees only. 'attended' is a UI-only status value; the value
+      // persisted to Firestore is 'checked-in'.
       if (bulkGenerateFilter === 'attended') {
-        if (reg.attendanceStatus !== 'attended' && reg.attendanceStatus !== 'checked-in') return false;
+        if (reg.attendanceStatus !== 'checked-in') return false;
       }
       if (bulkGenerateFilter === 'no-certificate') {
         if (hasCertificate || reg.certificateIssued) return false;
@@ -1197,7 +1203,7 @@ const CertificatesPage: React.FC = () => {
 
   // Get count of attended/checked-in registrations
   const getAttendedCount = () => {
-    return registrations.filter(r => r.attendanceStatus === 'attended' || r.attendanceStatus === 'checked-in').length;
+    return registrations.filter(r => r.attendanceStatus === 'checked-in').length;
   };
 
   const handleClearSelection = () => {
@@ -1300,8 +1306,8 @@ const CertificatesPage: React.FC = () => {
         }
       }
 
-      // Refresh issued certificates
-      const updatedCertificates = await CertificateService.getAllIssuedCertificates();
+      // Refresh only the affected event's certificates
+      const updatedCertificates = await CertificateService.getAllIssuedCertificates(bulkGenerateEventId);
       setIssuedCertificates(updatedCertificates);
 
       if (failCount === 0) {
@@ -1349,19 +1355,19 @@ const CertificatesPage: React.FC = () => {
       {/* Search and Filters */}
       <div className="flex flex-col sm:flex-row gap-4">
         <div className="relative flex-1">
-          <MagnifyingGlassIcon className="w-5 h-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+          <MagnifyingGlassIcon className="w-5 h-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-outline-variant" />
           <input
             type="text"
             placeholder="Search templates..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="w-full pl-10 pr-4 py-2 border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
           />
         </div>
         <select
           value={selectedEvent}
           onChange={(e) => setSelectedEvent(e.target.value)}
-          className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          className="px-4 py-2 border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
         >
           <option value="">All Events</option>
           {events.map(event => (
@@ -1370,7 +1376,7 @@ const CertificatesPage: React.FC = () => {
         </select>
         <button
           onClick={() => setActiveTab('builder')}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors inline-flex items-center gap-2"
+          className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors inline-flex items-center gap-2"
         >
           <SparklesIcon className="w-5 h-5" />
           Create Template
@@ -1380,16 +1386,16 @@ const CertificatesPage: React.FC = () => {
       {/* Templates Grid */}
       {loading ? (
         <div className="flex justify-center items-center py-12">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+          <div className="motion-essential animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
         </div>
       ) : filteredTemplates.length === 0 ? (
         <div className="text-center py-12">
-          <AcademicCapIcon className="w-16 h-16 mx-auto text-gray-400 mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No templates found</h3>
-          <p className="text-gray-500 mb-4">Create your first certificate template to get started.</p>
+          <AcademicCapIcon className="w-16 h-16 mx-auto text-outline-variant mb-4" />
+          <h3 className="text-lg font-medium text-on-surface mb-2">No templates found</h3>
+          <p className="text-on-surface-variant mb-4">Create your first certificate template to get started.</p>
           <button
             onClick={() => setActiveTab('builder')}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors"
           >
             Create Template
           </button>
@@ -1397,8 +1403,8 @@ const CertificatesPage: React.FC = () => {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredTemplates.map(template => (
-            <div key={template.id} className="bg-white rounded-lg shadow-md border border-gray-200 overflow-hidden">
-              <div className="aspect-[4/3] bg-gray-100 relative">
+            <div key={template.id} className="bg-white rounded-lg border border-outline-variant overflow-hidden">
+              <div className="aspect-[4/3] bg-surface-container relative">
                 {template.templateImageUrl ? (
                   <img 
                     src={template.templateImageUrl} 
@@ -1407,35 +1413,35 @@ const CertificatesPage: React.FC = () => {
                   />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center">
-                    <PhotoIcon className="w-12 h-12 text-gray-400" />
+                    <PhotoIcon className="w-12 h-12 text-outline-variant" />
                   </div>
                 )}
                 <div className="absolute top-2 right-2">
                   {template.isActive ? (
-                    <CheckCircleIcon className="w-6 h-6 text-green-500" />
+                    <CheckCircleIcon className="w-6 h-6 text-success" />
                   ) : (
-                    <XCircleIcon className="w-6 h-6 text-gray-400" />
+                    <XCircleIcon className="w-6 h-6 text-outline-variant" />
                   )}
                 </div>
               </div>
               
               <div className="p-4">
-                <h3 className="font-semibold text-gray-900 mb-1">{template.name}</h3>
+                <h3 className="font-semibold text-on-surface mb-1">{template.name}</h3>
                 {template.description && (
-                  <p className="text-sm text-gray-600 mb-2">{template.description}</p>
+                  <p className="text-sm text-on-surface-variant mb-2">{template.description}</p>
                 )}
                 {template.eventId && (
-                  <p className="text-xs text-blue-600 mb-2">
+                  <p className="text-sm text-primary mb-2">
                     {events.find(e => e.id === template.eventId)?.title || 'Unknown Event'}
                   </p>
                 )}
                 
                 {/* CORS Warning for external URLs */}
                 {template.templateImageUrl && !CertificateService.isFirebaseStorageUrl(template.templateImageUrl) && (
-                  <div className="mb-3 p-2 bg-yellow-50 border border-yellow-200 rounded-lg">
+                  <div className="mb-3 p-2 bg-warning-container border border-outline-variant rounded-lg">
                     <div className="flex items-start gap-2">
-                      <ExclamationTriangleIcon className="w-4 h-4 text-yellow-600 flex-shrink-0 mt-0.5" />
-                      <div className="text-xs text-yellow-700">
+                      <ExclamationTriangleIcon className="w-4 h-4 text-warning flex-shrink-0 mt-0.5" />
+                      <div className="text-sm text-warning">
                         <p className="font-medium">External image URL</p>
                         <p>Re-upload to Firebase for CORS compliance</p>
                       </div>
@@ -1446,7 +1452,7 @@ const CertificatesPage: React.FC = () => {
                 <div className="flex gap-2">
                   <button
                     onClick={() => handlePreviewTemplate(template)}
-                    className="flex-1 px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors inline-flex items-center justify-center gap-1"
+                    className="flex-1 px-3 py-2 text-sm bg-surface-container text-on-surface-variant rounded-lg hover:bg-surface-container-high transition-colors inline-flex items-center justify-center gap-1"
                   >
                     <EyeIcon className="w-4 h-4" />
                     Preview
@@ -1456,7 +1462,7 @@ const CertificatesPage: React.FC = () => {
                     <button
                       onClick={() => handleReuploadImage(template)}
                       disabled={loading}
-                      className="px-3 py-2 text-sm bg-yellow-100 text-yellow-700 rounded-lg hover:bg-yellow-200 transition-colors disabled:opacity-50"
+                      className="px-3 py-2 text-sm bg-warning-container text-warning rounded-lg hover:bg-warning-container transition-colors disabled:opacity-50"
                       title="Re-upload to Firebase Storage"
                     >
                       <ArrowPathIcon className="w-4 h-4" />
@@ -1464,7 +1470,7 @@ const CertificatesPage: React.FC = () => {
                   )}
                   <button
                     onClick={() => deleteTemplate(template.id)}
-                    className="px-3 py-2 text-sm bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors"
+                    className="px-3 py-2 text-sm bg-error-container text-error rounded-lg hover:bg-error-container transition-colors"
                   >
                     <TrashIcon className="w-4 h-4" />
                   </button>
@@ -1482,19 +1488,19 @@ const CertificatesPage: React.FC = () => {
       {/* Search and Filters */}
       <div className="flex flex-col sm:flex-row gap-4">
         <div className="relative flex-1">
-          <MagnifyingGlassIcon className="w-5 h-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+          <MagnifyingGlassIcon className="w-5 h-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-outline-variant" />
           <input
             type="text"
             placeholder="Search by name, email, or template..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="w-full pl-10 pr-4 py-2 border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
           />
         </div>
         <select
           value={selectedEvent}
           onChange={(e) => setSelectedEvent(e.target.value)}
-          className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          className="px-4 py-2 border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
         >
           <option value="">All Events</option>
           {events.map(event => (
@@ -1505,7 +1511,7 @@ const CertificatesPage: React.FC = () => {
         {selectedEvent && (
           <button
             onClick={handleLoadFullNames}
-            className="px-3 py-2 text-sm bg-amber-100 border border-amber-300 text-amber-800 rounded-lg hover:bg-amber-200 transition-colors inline-flex items-center gap-2"
+            className="px-3 py-2 text-sm bg-warning-container border border-outline-variant text-on-warning-container rounded-lg hover:bg-warning-container transition-colors inline-flex items-center gap-2"
             title="Load full names from registrations to check for name mismatches"
           >
             <WrenchScrewdriverIcon className="w-4 h-4" />
@@ -1516,40 +1522,39 @@ const CertificatesPage: React.FC = () => {
 
       {/* Regeneration Progress */}
       {isRegenerating && (
-        <div className="p-4 bg-amber-50 rounded-lg border border-amber-200">
+        <div className="p-4 bg-warning-container rounded-lg border border-outline-variant">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium text-amber-700">
+            <span className="text-sm font-medium text-warning">
               Regenerating certificates...
             </span>
-            <span className="text-sm text-amber-600">
+            <span className="text-sm text-warning">
               {regenerateProgress.current} / {regenerateProgress.total}
             </span>
           </div>
-          <div className="w-full h-3 bg-amber-200 rounded-full overflow-hidden">
-            <div 
-              className="h-full bg-amber-600 transition-all duration-300 ease-out"
-              style={{ 
-                width: `${regenerateProgress.total > 0 
-                  ? (regenerateProgress.current / regenerateProgress.total) * 100 
-                  : 0}%` 
-              }}
-            />
-          </div>
+          <ProgressBar
+            value={regenerateProgress.total > 0
+              ? (regenerateProgress.current / regenerateProgress.total) * 100
+              : 0}
+            size="md"
+            color="bg-amber-600"
+            label="Certificate regeneration progress"
+            showValue
+          />
         </div>
       )}
 
       {/* Bulk Export Controls */}
       {filteredCertificates.length > 0 && (
-        <div className="flex flex-wrap items-center gap-3 p-4 bg-gray-50 rounded-lg border border-gray-200">
+        <div className="flex flex-wrap items-center gap-3 p-4 bg-surface-container-low rounded-lg border border-outline-variant">
           <div className="flex items-center gap-2">
             <input
               type="checkbox"
               checked={selectedCertificates.size === filteredCertificates.length && filteredCertificates.length > 0}
               onChange={handleSelectAll}
-              className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+              className="w-4 h-4 text-primary border-outline-variant rounded focus:ring-primary"
               aria-label="Select all certificates"
             />
-            <span className="text-sm text-gray-600">
+            <span className="text-sm text-on-surface-variant">
               {selectedCertificates.size > 0 
                 ? `${selectedCertificates.size} of ${filteredCertificates.length} selected`
                 : `Select all (${filteredCertificates.length})`
@@ -1565,12 +1570,12 @@ const CertificatesPage: React.FC = () => {
               <button
                 onClick={handleBulkRegenerateNames}
                 disabled={isRegenerating || !filteredCertificates.some(c => selectedCertificates.has(c.id) && certificateNeedsNameFix(c))}
-                className="px-3 py-2 text-sm bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
+                className="px-3 py-2 text-sm bg-warning text-white rounded-lg hover:bg-warning transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
                 title="Regenerate selected certificates with corrected full names"
               >
                 {isRegenerating ? (
                   <>
-                    <ArrowPathIcon className="w-4 h-4 animate-spin" />
+                    <ArrowPathIcon className="w-4 h-4 motion-essential animate-spin" />
                     Fixing...
                   </>
                 ) : (
@@ -1586,7 +1591,7 @@ const CertificatesPage: React.FC = () => {
               <button
                 onClick={() => setShowRegenerateWarningModal(true)}
                 disabled={isRegenerating}
-                className="px-3 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
+                className="px-3 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
                 title="Regenerate selected certificates with updated template"
               >
                 <ArrowPathIcon className="w-4 h-4" />
@@ -1596,7 +1601,7 @@ const CertificatesPage: React.FC = () => {
             <button
               onClick={handleExportCSV}
               disabled={selectedCertificates.size === 0}
-              className="px-3 py-2 text-sm bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
+              className="px-3 py-2 text-sm bg-white border border-outline-variant text-on-surface-variant rounded-lg hover:bg-surface-container-low transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
             >
               <DocumentTextIcon className="w-4 h-4" />
               Export CSV
@@ -1604,11 +1609,11 @@ const CertificatesPage: React.FC = () => {
             <button
               onClick={handleBulkExport}
               disabled={selectedCertificates.size === 0 || isExporting}
-              className="px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
+              className="px-3 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
             >
               {isExporting ? (
                 <>
-                  <ArrowPathIcon className="w-4 h-4 animate-spin" />
+                  <ArrowPathIcon className="w-4 h-4 motion-essential animate-spin" />
                   Exporting...
                 </>
               ) : (
@@ -1625,71 +1630,71 @@ const CertificatesPage: React.FC = () => {
       {/* Certificates Table */}
       {loading ? (
         <div className="flex justify-center items-center py-12">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+          <div className="motion-essential animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
         </div>
       ) : filteredCertificates.length === 0 ? (
         <div className="text-center py-12">
-          <DocumentTextIcon className="w-16 h-16 mx-auto text-gray-400 mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No certificates found</h3>
-          <p className="text-gray-500">No certificates have been issued yet.</p>
+          <DocumentTextIcon className="w-16 h-16 mx-auto text-outline-variant mb-4" />
+          <h3 className="text-lg font-medium text-on-surface mb-2">No certificates found</h3>
+          <p className="text-on-surface-variant">No certificates have been issued yet.</p>
         </div>
       ) : (
         <div className="bg-white rounded-lg shadow overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+            <table className="min-w-full divide-y divide-outline-variant">
+              <thead className="bg-surface-container-low">
                 <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12">
+                  <th className="px-4 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider w-12">
                     <input
                       type="checkbox"
                       checked={selectedCertificates.size === filteredCertificates.length && filteredCertificates.length > 0}
                       onChange={handleSelectAll}
-                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                      className="w-4 h-4 text-primary border-outline-variant rounded focus:ring-primary"
                       aria-label="Select all certificates"
                     />
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider">
                     Recipient
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider">
                     Template
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider">
                     Event
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider">
                     Issue Date
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider">
                     Status
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider">
                     Actions
                   </th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
+              <tbody className="bg-white divide-y divide-outline-variant">
                 {filteredCertificates.map(certificate => (
                   <tr 
                     key={certificate.id}
-                    className={selectedCertificates.has(certificate.id) ? 'bg-blue-50' : ''}
+                    className={selectedCertificates.has(certificate.id) ? 'bg-surface-container-low' : ''}
                   >
                     <td className="px-4 py-4 whitespace-nowrap">
                       <input
                         type="checkbox"
                         checked={selectedCertificates.has(certificate.id)}
                         onChange={() => handleSelectCertificate(certificate.id)}
-                        className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                        className="w-4 h-4 text-primary border-outline-variant rounded focus:ring-primary"
                         aria-label={`Select certificate for ${certificate.recipientName}`}
                       />
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div>
-                        <div className="text-sm font-medium text-gray-900 flex items-center gap-1">
+                        <div className="text-sm font-medium text-on-surface flex items-center gap-1">
                           {certificate.recipientName}
                           {certificateNeedsNameFix(certificate) && (
                             <span 
-                              className="inline-flex items-center text-amber-600" 
+                              className="inline-flex items-center text-warning" 
                               title={`Should be: ${certificateFullNames[certificate.id]}`}
                             >
                               <ExclamationTriangleIcon className="w-4 h-4" />
@@ -1697,29 +1702,29 @@ const CertificatesPage: React.FC = () => {
                           )}
                         </div>
                         {certificateNeedsNameFix(certificate) && (
-                          <div className="text-xs text-amber-600">
+                          <div className="text-sm text-warning">
                             Should be: {certificateFullNames[certificate.id]}
                           </div>
                         )}
-                        <div className="text-sm text-gray-500">{certificate.recipientEmail}</div>
+                        <div className="text-sm text-on-surface-variant">{certificate.recipientEmail}</div>
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-on-surface">
                       {certificate.templateName}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-on-surface">
                       {certificate.eventTitle}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-on-surface-variant">
                       {new Date(certificate.issuedDate).toLocaleDateString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${
+                      <span className={`inline-flex px-2 py-1 text-sm font-medium rounded-full ${
                         certificate.status === 'issued' 
-                          ? 'bg-green-100 text-green-800'
+                          ? 'bg-success-container text-on-success-container'
                           : certificate.status === 'verified'
-                          ? 'bg-blue-100 text-blue-800'
-                          : 'bg-red-100 text-red-800'
+                          ? 'bg-secondary-container text-on-secondary-container'
+                          : 'bg-error-container text-on-error-container'
                       }`}>
                         {certificate.status}
                       </span>
@@ -1729,7 +1734,7 @@ const CertificatesPage: React.FC = () => {
                         <button 
                           onClick={() => certificate.certificateUrl && window.open(certificate.certificateUrl, '_blank')}
                           disabled={!certificate.certificateUrl}
-                          className="text-blue-600 hover:text-blue-900 disabled:text-gray-300 disabled:cursor-not-allowed p-1 rounded hover:bg-blue-50 transition-colors"
+                          className="text-primary hover:text-on-secondary-container disabled:text-outline-variant disabled:cursor-not-allowed p-1 rounded hover:bg-surface-container-low transition-colors"
                           title="View certificate"
                           aria-label={`View certificate for ${certificate.recipientName}`}
                         >
@@ -1759,7 +1764,7 @@ const CertificatesPage: React.FC = () => {
                             }
                           }}
                           disabled={!certificate.certificateUrl}
-                          className="text-green-600 hover:text-green-900 disabled:text-gray-300 disabled:cursor-not-allowed p-1 rounded hover:bg-green-50 transition-colors"
+                          className="text-success hover:text-on-success-container disabled:text-outline-variant disabled:cursor-not-allowed p-1 rounded hover:bg-success-container transition-colors"
                           title="Download certificate"
                           aria-label={`Download certificate for ${certificate.recipientName}`}
                         >
@@ -1770,7 +1775,7 @@ const CertificatesPage: React.FC = () => {
                             const verifyUrl = `${window.location.origin}/verify/${certificate.verificationCode}`;
                             window.open(verifyUrl, '_blank');
                           }}
-                          className="text-purple-600 hover:text-purple-900 p-1 rounded hover:bg-purple-50 transition-colors"
+                          className="text-primary hover:text-on-primary-container p-1 rounded hover:bg-surface-container-low transition-colors"
                           title="View verification page"
                           aria-label={`View verification page for ${certificate.recipientName}`}
                         >
@@ -1781,12 +1786,12 @@ const CertificatesPage: React.FC = () => {
                           <button 
                             onClick={() => handleRegenerateCertificateName(certificate)}
                             disabled={regeneratingCertId === certificate.id}
-                            className="text-amber-600 hover:text-amber-900 disabled:text-gray-300 disabled:cursor-not-allowed p-1 rounded hover:bg-amber-50 transition-colors"
+                            className="text-warning hover:text-on-warning-container disabled:text-outline-variant disabled:cursor-not-allowed p-1 rounded hover:bg-warning-container transition-colors"
                             title={`Fix name to: ${certificateFullNames[certificate.id]}`}
                             aria-label={`Fix certificate name for ${certificate.recipientName}`}
                           >
                             {regeneratingCertId === certificate.id ? (
-                              <ArrowPathIcon className="w-4 h-4 animate-spin" />
+                              <ArrowPathIcon className="w-4 h-4 motion-essential animate-spin" />
                             ) : (
                               <WrenchScrewdriverIcon className="w-4 h-4" />
                             )}
@@ -1809,8 +1814,8 @@ const CertificatesPage: React.FC = () => {
     
     return (
     <div className="max-w-7xl mx-auto">
-      <div className="bg-white rounded-lg shadow-md border border-gray-200 p-6">
-        <h2 className="text-xl font-semibold text-gray-900 mb-6">
+      <div className="bg-white rounded-lg border border-outline-variant p-6">
+        <h2 className="text-xl font-semibold text-on-surface mb-6">
           {editingTemplate ? 'Edit Certificate Template' : 'Create Certificate Template'}
         </h2>
         
@@ -1820,39 +1825,39 @@ const CertificatesPage: React.FC = () => {
             {/* Basic Info */}
           <div className="space-y-6">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-on-surface-variant mb-2">
                 Template Name *
               </label>
               <input
                 type="text"
                 value={templateName}
                 onChange={(e) => setTemplateName(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full px-3 py-2 border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
                 placeholder="Enter template name"
               />
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-on-surface-variant mb-2">
                 Description
               </label>
               <textarea
                 value={templateDescription}
                 onChange={(e) => setTemplateDescription(e.target.value)}
                 rows={3}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full px-3 py-2 border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
                 placeholder="Enter template description"
               />
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-on-surface-variant mb-2">
                 Event (Optional)
               </label>
               <select
                 value={templateEventId}
                 onChange={(e) => setTemplateEventId(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full px-3 py-2 border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
               >
                 <option value="">Select an event (optional)</option>
                 {events.map(event => (
@@ -1862,19 +1867,19 @@ const CertificatesPage: React.FC = () => {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-on-surface-variant mb-2">
                 Upload Template Image *
               </label>
               <div
                 onClick={() => fileInputRef.current?.click()}
-                className="w-full h-32 border-2 border-dashed border-gray-300 rounded-lg flex items-center justify-center cursor-pointer hover:border-blue-400 transition-colors"
+                className="w-full h-32 border-2 border-dashed border-outline-variant rounded-lg flex items-center justify-center cursor-pointer hover:border-primary transition-colors"
               >
                 {uploadedImage ? (
                   <img src={uploadedImage} alt="Template" className="h-full object-contain" />
                 ) : (
                   <div className="text-center">
-                    <CloudArrowUpIcon className="w-8 h-8 text-gray-400 mx-auto mb-2" />
-                    <p className="text-sm text-gray-500">Click to upload template image</p>
+                    <CloudArrowUpIcon className="w-8 h-8 text-outline-variant mx-auto mb-2" />
+                    <p className="text-sm text-on-surface-variant">Click to upload template image</p>
                   </div>
                 )}
               </div>
@@ -1888,24 +1893,24 @@ const CertificatesPage: React.FC = () => {
             </div>
 
             {/* Template Dimensions */}
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Width (px)</label>
+                <label className="block text-sm font-medium text-on-surface-variant mb-2">Width (px)</label>
                 <input
                   type="number"
                   value={templateDimensions.width}
                   readOnly
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-600"
+                  className="w-full px-3 py-2 border border-outline-variant rounded-lg bg-surface-container-low text-on-surface-variant"
                   placeholder="Upload image to auto-detect"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Height (px)</label>
+                <label className="block text-sm font-medium text-on-surface-variant mb-2">Height (px)</label>
                 <input
                   type="number"
                   value={templateDimensions.height}
                   readOnly
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-600"
+                  className="w-full px-3 py-2 border border-outline-variant rounded-lg bg-surface-container-low text-on-surface-variant"
                   placeholder="Upload image to auto-detect"
                 />
               </div>
@@ -1915,18 +1920,18 @@ const CertificatesPage: React.FC = () => {
             {/* Template Elements Section */}
             <div className="space-y-6">
               <div className="flex items-center justify-between">
-                <h3 className="text-lg font-medium text-gray-900">Template Elements</h3>
+                <h3 className="text-lg font-medium text-on-surface">Template Elements</h3>
                 <div className="flex gap-2">
                     <button
                     onClick={() => addElement('text')}
-                    className="px-3 py-1 text-sm bg-blue-100 text-blue-700 rounded hover:bg-blue-200 transition-colors flex items-center gap-1"
+                    className="px-3 py-1 text-sm bg-secondary-container text-primary rounded hover:bg-surface-container-high transition-colors flex items-center gap-1"
                   >
                     <DocumentTextIcon className="w-4 h-4" />
                     Add Text
                     </button>
                     <button
                     onClick={() => addElement('qrcode')}
-                    className="px-3 py-1 text-sm bg-green-100 text-green-700 rounded hover:bg-green-200 transition-colors flex items-center gap-1"
+                    className="px-3 py-1 text-sm bg-success-container text-success rounded hover:bg-success-container transition-colors flex items-center gap-1"
                   >
                     <QrCodeIcon className="w-4 h-4" />
                     Add QR Code
@@ -1940,15 +1945,15 @@ const CertificatesPage: React.FC = () => {
                     key={element.id}
                     className={`p-3 border rounded-lg cursor-pointer transition-colors ${
                       selectedElement === element.id
-                        ? 'border-blue-500 bg-blue-50'
-                        : 'border-gray-200 hover:border-gray-300'
+                        ? 'border-primary bg-surface-container-low'
+                        : 'border-outline-variant hover:border-outline'
                     }`}
                     onClick={() => setSelectedElement(element.id)}
                   >
                     <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                        {element.type === 'text' && <DocumentTextIcon className="w-4 h-4 text-blue-500" />}
-                        {element.type === 'qrcode' && <QrCodeIcon className="w-4 h-4 text-green-500" />}
+                        {element.type === 'text' && <DocumentTextIcon className="w-4 h-4 text-primary" />}
+                        {element.type === 'qrcode' && <QrCodeIcon className="w-4 h-4 text-success" />}
                         <span className="text-sm font-medium capitalize">{element.type}</span>
                       </div>
                     <button
@@ -1956,12 +1961,12 @@ const CertificatesPage: React.FC = () => {
                           e.stopPropagation();
                           deleteElement(element.id);
                         }}
-                        className="p-1 text-red-500 hover:bg-red-100 rounded"
+                        className="p-1 text-error hover:bg-error-container rounded"
                       >
                         <TrashIcon className="w-4 h-4" />
                     </button>
                   </div>
-                    <p className="text-xs text-gray-500 mt-1 truncate">
+                    <p className="text-sm text-on-surface-variant mt-1 truncate">
                       {element.content || `${element.type} element`}
                     </p>
                   </div>
@@ -1971,79 +1976,79 @@ const CertificatesPage: React.FC = () => {
               {/* Element Properties */}
               {selectedElementData && (
                 <div className="border-t pt-4">
-                  <h4 className="font-medium text-gray-900 mb-3">Element Properties</h4>
+                  <h4 className="font-medium text-on-surface mb-3">Element Properties</h4>
                   <div className="space-y-3">
                     <div>
-                      <label className="block text-xs font-medium text-gray-700 mb-1">Content</label>
+                      <label className="block text-sm font-medium text-on-surface-variant mb-1">Content</label>
                       <textarea
                         value={selectedElementData.content}
                         onChange={(e) => updateElement(selectedElement!, { content: e.target.value })}
                         rows={2}
-                        className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-transparent"
+                        className="w-full px-2 py-1 text-sm border border-outline-variant rounded focus:ring-1 focus:ring-primary focus:border-transparent"
                         placeholder="Enter content or template variables like {{ recipientName }}"
                       />
                   </div>
 
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1">X Position (%)</label>
+                        <label className="block text-sm font-medium text-on-surface-variant mb-1">X Position (%)</label>
                         <input
                           type="number"
                           value={selectedElementData.position.x}
                           onChange={(e) => updateElement(selectedElement!, { 
                             position: { ...selectedElementData.position, x: parseFloat(e.target.value) || 0 }
                           })}
-                          className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-transparent"
+                          className="w-full px-2 py-1 text-sm border border-outline-variant rounded focus:ring-1 focus:ring-primary focus:border-transparent"
                         />
               </div>
                       <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1">Y Position (%)</label>
+                        <label className="block text-sm font-medium text-on-surface-variant mb-1">Y Position (%)</label>
                         <input
                           type="number"
                           value={selectedElementData.position.y}
                           onChange={(e) => updateElement(selectedElement!, { 
                             position: { ...selectedElementData.position, y: parseFloat(e.target.value) || 0 }
                           })}
-                          className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-transparent"
+                          className="w-full px-2 py-1 text-sm border border-outline-variant rounded focus:ring-1 focus:ring-primary focus:border-transparent"
                         />
                       </div>
                     </div>
 
                     {selectedElementData.type === 'text' && (
                       <>
-                        <div className="grid grid-cols-2 gap-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                           <div>
-                            <label className="block text-xs font-medium text-gray-700 mb-1">Font Size</label>
+                            <label className="block text-sm font-medium text-on-surface-variant mb-1">Font Size</label>
                             <input
                               type="number"
                               value={selectedElementData.style.fontSize || 16}
                               onChange={(e) => updateElement(selectedElement!, { 
                                 style: { ...selectedElementData.style, fontSize: parseInt(e.target.value) || 16 }
                               })}
-                              className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-transparent"
+                              className="w-full px-2 py-1 text-sm border border-outline-variant rounded focus:ring-1 focus:ring-primary focus:border-transparent"
                             />
                           </div>
                           <div>
-                            <label className="block text-xs font-medium text-gray-700 mb-1">Color</label>
+                            <label className="block text-sm font-medium text-on-surface-variant mb-1">Color</label>
                             <input
                               type="color"
                               value={selectedElementData.style.color || '#000000'}
                               onChange={(e) => updateElement(selectedElement!, { 
                                 style: { ...selectedElementData.style, color: e.target.value }
                               })}
-                              className="w-full h-8 border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-transparent"
+                              className="w-full h-8 border border-outline-variant rounded focus:ring-1 focus:ring-primary focus:border-transparent"
                             />
                           </div>
                         </div>
 
                         <div>
-                          <label className="block text-xs font-medium text-gray-700 mb-1">Font Family</label>
+                          <label className="block text-sm font-medium text-on-surface-variant mb-1">Font Family</label>
                           <select
                             value={selectedElementData.style.fontFamily || 'Arial'}
                             onChange={(e) => updateElement(selectedElement!, { 
                               style: { ...selectedElementData.style, fontFamily: e.target.value }
                             })}
-                            className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-transparent"
+                            className="w-full px-2 py-1 text-sm border border-outline-variant rounded focus:ring-1 focus:ring-primary focus:border-transparent"
                           >
                             <option value="Arial">Arial</option>
                             <option value="Times New Roman">Times New Roman</option>
@@ -2054,13 +2059,13 @@ const CertificatesPage: React.FC = () => {
                   </div>
 
                         <div>
-                          <label className="block text-xs font-medium text-gray-700 mb-1">Text Align</label>
+                          <label className="block text-sm font-medium text-on-surface-variant mb-1">Text Align</label>
                           <select
                             value={selectedElementData.style.align || 'left'}
                             onChange={(e) => updateElement(selectedElement!, { 
                               style: { ...selectedElementData.style, align: e.target.value as 'left' | 'center' | 'right' }
                             })}
-                            className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-transparent"
+                            className="w-full px-2 py-1 text-sm border border-outline-variant rounded focus:ring-1 focus:ring-primary focus:border-transparent"
                           >
                             <option value="left">Left</option>
                             <option value="center">Center</option>
@@ -2072,7 +2077,7 @@ const CertificatesPage: React.FC = () => {
 
                     {selectedElementData.type === 'qrcode' && (
                       <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1">Size (px)</label>
+                        <label className="block text-sm font-medium text-on-surface-variant mb-1">Size (px)</label>
                         <input
                           type="number"
                           value={selectedElementData.position.width || 100}
@@ -2082,7 +2087,7 @@ const CertificatesPage: React.FC = () => {
                               position: { ...selectedElementData.position, width: size, height: size }
                             });
                           }}
-                          className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-transparent"
+                          className="w-full px-2 py-1 text-sm border border-outline-variant rounded focus:ring-1 focus:ring-primary focus:border-transparent"
                         />
               </div>
             )}
@@ -2095,14 +2100,14 @@ const CertificatesPage: React.FC = () => {
           {/* Template Preview Section */}
           <div>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-medium text-gray-900">Template Preview</h3>
+              <h3 className="text-lg font-medium text-on-surface">Template Preview</h3>
               {uploadedImage && (
-                <div className="text-sm text-gray-500">
+                <div className="text-sm text-on-surface-variant">
                   {templateDimensions.width} × {templateDimensions.height} pixels
                 </div>
               )}
             </div>
-            <div className="border border-gray-300 rounded-lg p-6 bg-gray-50">
+            <div className="border border-outline-variant rounded-lg p-6 bg-surface-container-low">
               {uploadedImage ? (
                 <div className="relative">
                   <canvas
@@ -2111,7 +2116,7 @@ const CertificatesPage: React.FC = () => {
                     onMouseMove={handleMouseMove}
                     onMouseUp={handleMouseUp}
                     onMouseLeave={handleMouseUp}
-                    className={`w-full max-w-4xl mx-auto border border-gray-200 rounded bg-white shadow-lg ${
+                    className={`w-full max-w-4xl mx-auto border border-outline-variant rounded bg-white shadow-lg ${
                       isDragging ? 'cursor-grabbing' : hoveredElement ? 'cursor-grab' : 'cursor-default'
                     }`}
                       style={{
@@ -2122,11 +2127,11 @@ const CertificatesPage: React.FC = () => {
                   
                 </div>
               ) : (
-                <div className="w-full h-96 bg-gray-200 rounded flex items-center justify-center">
+                <div className="w-full h-96 bg-surface-container-high rounded flex items-center justify-center">
                   <div className="text-center">
-                    <PhotoIcon className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-                    <p className="text-lg text-gray-500 mb-2">Upload a template image to start building</p>
-                    <p className="text-sm text-gray-400">The canvas will automatically resize to match your image dimensions</p>
+                    <PhotoIcon className="w-16 h-16 text-outline-variant mx-auto mb-4" />
+                    <p className="text-lg text-on-surface-variant mb-2">Upload a template image to start building</p>
+                    <p className="text-sm text-outline-variant">The canvas will automatically resize to match your image dimensions</p>
                   </div>
                 </div>
               )}
@@ -2138,7 +2143,7 @@ const CertificatesPage: React.FC = () => {
             <button
               onClick={editingTemplate ? updateTemplate : createTemplate}
               disabled={loading || !uploadedImage || !templateName.trim()}
-              className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+              className="flex-1 px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-hover disabled:bg-surface-container-highest disabled:cursor-not-allowed transition-colors"
             >
               {loading 
                 ? (editingTemplate ? 'Updating...' : 'Creating...') 
@@ -2150,7 +2155,7 @@ const CertificatesPage: React.FC = () => {
                 setEditingTemplate(null);
                 resetForm();
               }}
-              className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition-colors"
+              className="px-4 py-2 bg-surface-container-highest text-on-surface-variant rounded-lg hover:bg-surface-container-highest transition-colors"
             >
               Cancel
             </button>
@@ -2186,7 +2191,7 @@ const CertificatesPage: React.FC = () => {
           ctx.save();
 
           switch (element.type) {
-            case 'text':
+            case 'text': {
               // Set font properties
               const fontSize = element.style.fontSize || 16;
               const fontFamily = element.style.fontFamily || 'Arial';
@@ -2207,8 +2212,9 @@ const CertificatesPage: React.FC = () => {
               }
               ctx.fillText(sampleText, x, y);
               break;
+            }
               
-            case 'qrcode':
+            case 'qrcode': {
         // Draw QR code placeholder
               const size = element.position.width || 100;
         ctx.fillStyle = '#000000';
@@ -2216,6 +2222,7 @@ const CertificatesPage: React.FC = () => {
         ctx.fillStyle = '#ffffff';
               ctx.fillRect(x - size/2 + 10, y - size/2 + 10, size - 20, size - 20);
               break;
+            }
           }
           
           // Draw selection and hover indicators
@@ -2286,33 +2293,51 @@ const CertificatesPage: React.FC = () => {
     }
   }, [uploadedImage, elements, selectedElement, hoveredElement, templateDimensions]);
 
-  return (
-    <LayoutComponent>
+  const certContent = (
+    <>
       <div className="space-y-6">
-        {/* Header */}
+      {/* Header */}
+      {!embedded && (
         <div className="flex items-center justify-between">
+          {/*
+            h2, not h1. LayoutComponent is DashboardShell, which already emits
+            the page's <h1> from the route; this used to be a second <h1> on
+            the same screen. Demoted to h2 so the document outline has exactly
+            one top-level heading while the action stays here.
+          */}
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Certificate Management</h1>
-            <p className="text-gray-600">Create templates and manage issued certificates</p>
+            <h2 className="text-xl font-bold text-on-surface">Certificate Management</h2>
           </div>
           <button
             onClick={handleOpenBulkGenerate}
-            className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors inline-flex items-center gap-2"
+            className="px-4 py-2 bg-success text-white rounded-lg hover:bg-success-hover transition-colors inline-flex items-center gap-2"
           >
             <UserGroupIcon className="w-5 h-5" />
             Bulk Generate
           </button>
         </div>
+      )}
+      {embedded && (
+        <div className="flex justify-end">
+          <button
+            onClick={handleOpenBulkGenerate}
+            className="px-4 py-2 bg-success text-white rounded-lg hover:bg-success-hover transition-colors inline-flex items-center gap-2"
+          >
+            <UserGroupIcon className="w-5 h-5" />
+            Bulk Generate
+          </button>
+        </div>
+      )}
 
         {/* Tabs */}
-        <div className="border-b border-gray-200">
+        <div className="border-b border-outline-variant">
           <nav className="flex space-x-8">
             <button
               onClick={() => setActiveTab('templates')}
               className={`py-2 px-1 border-b-2 font-medium text-sm ${
                 activeTab === 'templates'
-                  ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-on-surface-variant hover:text-on-surface hover:border-outline'
               }`}
             >
               <AcademicCapIcon className="w-5 h-5 inline mr-2" />
@@ -2322,8 +2347,8 @@ const CertificatesPage: React.FC = () => {
               onClick={() => setActiveTab('issued')}
               className={`py-2 px-1 border-b-2 font-medium text-sm ${
                 activeTab === 'issued'
-                  ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-on-surface-variant hover:text-on-surface hover:border-outline'
               }`}
             >
               <DocumentTextIcon className="w-5 h-5 inline mr-2" />
@@ -2333,8 +2358,8 @@ const CertificatesPage: React.FC = () => {
               onClick={() => setActiveTab('builder')}
               className={`py-2 px-1 border-b-2 font-medium text-sm ${
                 activeTab === 'builder'
-                  ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-on-surface-variant hover:text-on-surface hover:border-outline'
               }`}
             >
               <SparklesIcon className="w-5 h-5 inline mr-2" />
@@ -2350,416 +2375,367 @@ const CertificatesPage: React.FC = () => {
       </div>
 
       {/* Bulk Generate Modal */}
-      {showBulkGenerateModal && (
-        <div className="fixed inset-0 z-50 overflow-y-auto">
-          <div className="flex min-h-screen items-center justify-center p-4">
-            <div 
-              className="fixed inset-0 bg-black bg-opacity-50 transition-opacity"
+      <Modal
+        open={showBulkGenerateModal}
+        onClose={handleCloseBulkGenerate}
+        title="Bulk Generate Certificates"
+        size="lg"
+        footer={
+          <>
+            <span className="mr-auto text-sm text-on-surface-variant">
+              {selectedRegistrations.size > 0 && (
+                <span>{selectedRegistrations.size} attendee(s) selected</span>
+              )}
+            </span>
+            <Button
+              variant="outlined"
               onClick={handleCloseBulkGenerate}
-              aria-hidden="true"
-            />
-            
-            <div className="relative w-full max-w-4xl bg-white rounded-xl shadow-2xl">
-              {/* Modal Header */}
-              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-                <div>
-                  <h2 className="text-xl font-semibold text-gray-900">Bulk Generate Certificates</h2>
-                  <p className="text-sm text-gray-500 mt-1">Generate certificates for multiple attendees at once</p>
-                </div>
-                <button
-                  onClick={handleCloseBulkGenerate}
-                  className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors"
-                  aria-label="Close modal"
-                >
-                  <XMarkIcon className="w-6 h-6" />
-                </button>
-              </div>
+              disabled={bulkGenerating}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleBulkGenerate}
+              loading={bulkGenerating}
+              disabled={selectedRegistrations.size === 0 || !templates.some(t => t.eventId === bulkGenerateEventId && t.isActive)}
+              icon={!bulkGenerating && <SparklesIcon className="h-5 w-5" />}
+            >
+              {bulkGenerating ? 'Generating...' : 'Generate Certificates'}
+            </Button>
+          </>
+        }
+      >
+        <p className="mb-4 text-sm text-on-surface-variant">
+          Generate certificates for multiple attendees at once
+        </p>
 
-              {/* Modal Body */}
-              <div className="px-6 py-4 max-h-[70vh] overflow-y-auto">
-                {/* Event Selection */}
-                <div className="mb-6">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Select Event *
-                  </label>
-                  <select
-                    value={bulkGenerateEventId}
-                    onChange={(e) => {
-                      setBulkGenerateEventId(e.target.value);
-                      handleLoadRegistrations(e.target.value);
-                    }}
-                    disabled={bulkGenerating}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent disabled:bg-gray-100"
-                  >
-                    <option value="">Choose an event...</option>
-                    {events.map(event => {
-                      const hasTemplate = templates.some(t => t.eventId === event.id && t.isActive);
-                      return (
-                        <option key={event.id} value={event.id}>
-                          {event.title} {hasTemplate ? '✓' : '(No template)'}
-                        </option>
-                      );
-                    })}
-                  </select>
-                  {bulkGenerateEventId && !templates.some(t => t.eventId === bulkGenerateEventId && t.isActive) && (
-                    <p className="mt-2 text-sm text-red-600 flex items-center gap-1">
-                      <ExclamationTriangleIcon className="w-4 h-4" />
-                      This event has no active certificate template. Please create one first.
-                    </p>
-                  )}
-                </div>
+        {/* Event Selection */}
+        <div className="mb-6">
+          <label className="block text-sm font-medium text-on-surface-variant mb-2">
+            Select Event *
+          </label>
+          <select
+            value={bulkGenerateEventId}
+            onChange={(e) => {
+              setBulkGenerateEventId(e.target.value);
+              handleLoadRegistrations(e.target.value);
+            }}
+            disabled={bulkGenerating}
+            className="w-full px-4 py-2 border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent disabled:bg-surface-container"
+          >
+            <option value="">Choose an event...</option>
+            {events.map(event => {
+              const hasTemplate = templates.some(t => t.eventId === event.id && t.isActive);
+              return (
+                <option key={event.id} value={event.id}>
+                  {event.title} {hasTemplate ? '✓' : '(No template)'}
+                </option>
+              );
+            })}
+          </select>
+          {bulkGenerateEventId && !templates.some(t => t.eventId === bulkGenerateEventId && t.isActive) && (
+            <p className="mt-2 text-sm text-error flex items-center gap-1">
+              <ExclamationTriangleIcon className="w-4 h-4" />
+              This event has no active certificate template. Please create one first.
+            </p>
+          )}
+        </div>
 
-                {/* Filter Tabs */}
-                {bulkGenerateEventId && registrations.length > 0 && (
-                  <div className="mb-4">
-                    <div className="flex gap-2 border-b border-gray-200">
-                      <button
-                        onClick={() => setBulkGenerateFilter('all')}
-                        disabled={bulkGenerating}
-                        className={`px-4 py-2 text-sm font-medium transition-colors ${
-                          bulkGenerateFilter === 'all'
-                            ? 'text-green-600 border-b-2 border-green-600'
-                            : 'text-gray-500 hover:text-gray-700'
-                        }`}
-                      >
-                        All ({registrations.length})
-                      </button>
-                      <button
-                        onClick={() => setBulkGenerateFilter('attended')}
-                        disabled={bulkGenerating}
-                        className={`px-4 py-2 text-sm font-medium transition-colors ${
-                          bulkGenerateFilter === 'attended'
-                            ? 'text-green-600 border-b-2 border-green-600'
-                            : 'text-gray-500 hover:text-gray-700'
-                        }`}
-                      >
-                        Attended ({getAttendedCount()})
-                      </button>
-                      <button
-                        onClick={() => setBulkGenerateFilter('no-certificate')}
-                        disabled={bulkGenerating}
-                        className={`px-4 py-2 text-sm font-medium transition-colors ${
-                          bulkGenerateFilter === 'no-certificate'
-                            ? 'text-green-600 border-b-2 border-green-600'
-                            : 'text-gray-500 hover:text-gray-700'
-                        }`}
-                      >
-                        No Certificate ({getRegistrationsWithoutCertificateCount()})
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Search and Selection Controls */}
-                {bulkGenerateEventId && registrations.length > 0 && (
-                  <div className="mb-4 flex flex-col sm:flex-row gap-3">
-                    {/* Search Box */}
-                    <div className="relative flex-1">
-                      <MagnifyingGlassIcon className="w-5 h-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                      <input
-                        type="text"
-                        placeholder="Search by name or email..."
-                        value={attendeeSearchTerm}
-                        onChange={(e) => setAttendeeSearchTerm(e.target.value)}
-                        disabled={bulkGenerating}
-                        className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent disabled:bg-gray-100"
-                      />
-                    </div>
-                    
-                    {/* Quick Selection Buttons */}
-                    <div className="flex gap-2">
-                      <button
-                        onClick={handleSelectAllRegistrations}
-                        disabled={bulkGenerating || getFilteredRegistrations().length === 0}
-                        className="px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        Select All
-                      </button>
-                      <button
-                        onClick={handleClearSelection}
-                        disabled={bulkGenerating || selectedRegistrations.size === 0}
-                        className="px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        Clear
-                      </button>
-                      <button
-                        onClick={handleInvertSelection}
-                        disabled={bulkGenerating || getFilteredRegistrations().length === 0}
-                        className="px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        Invert
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Progress Bar */}
-                {bulkGenerating && (
-                  <div className="mb-4 p-4 bg-green-50 rounded-lg border border-green-200">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-medium text-green-700">
-                        Generating certificates...
-                      </span>
-                      <span className="text-sm text-green-600">
-                        {bulkGenerateProgress.current} / {bulkGenerateProgress.total}
-                      </span>
-                    </div>
-                    <div className="w-full h-3 bg-green-200 rounded-full overflow-hidden">
-                      <div 
-                        className="h-full bg-green-600 transition-all duration-300 ease-out"
-                        style={{ 
-                          width: `${bulkGenerateProgress.total > 0 
-                            ? (bulkGenerateProgress.current / bulkGenerateProgress.total) * 100 
-                            : 0}%` 
-                        }}
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {/* Registrations Table */}
-                {loadingRegistrations ? (
-                  <div className="flex justify-center items-center py-12">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600"></div>
-                  </div>
-                ) : bulkGenerateEventId && getFilteredRegistrations().length === 0 ? (
-                  <div className="text-center py-12">
-                    <UserGroupIcon className="w-12 h-12 mx-auto text-gray-400 mb-3" />
-                    <p className="text-gray-500">No attendees found matching the selected filter.</p>
-                  </div>
-                ) : bulkGenerateEventId && getFilteredRegistrations().length > 0 ? (
-                  <div className="border border-gray-200 rounded-lg overflow-hidden">
-                    <table className="min-w-full divide-y divide-gray-200">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          <th className="px-4 py-3 text-left w-12">
-                            <input
-                              type="checkbox"
-                              checked={selectedRegistrations.size === getFilteredRegistrations().length && getFilteredRegistrations().length > 0}
-                              onChange={handleSelectAllRegistrations}
-                              disabled={bulkGenerating}
-                              className="w-4 h-4 text-green-600 border-gray-300 rounded focus:ring-green-500"
-                              aria-label="Select all attendees"
-                            />
-                          </th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Attendance</th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Certificate</th>
-                        </tr>
-                      </thead>
-                      <tbody className="bg-white divide-y divide-gray-200">
-                        {getFilteredRegistrations().map(reg => (
-                          <tr 
-                            key={reg.id}
-                            onClick={() => !bulkGenerating && handleSelectRegistration(reg.id)}
-                            className={`cursor-pointer transition-colors ${selectedRegistrations.has(reg.id) ? 'bg-green-50 hover:bg-green-100' : 'hover:bg-gray-50'}`}
-                          >
-                            <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                              <input
-                                type="checkbox"
-                                checked={selectedRegistrations.has(reg.id)}
-                                onChange={() => handleSelectRegistration(reg.id)}
-                                disabled={bulkGenerating}
-                                className="w-4 h-4 text-green-600 border-gray-300 rounded focus:ring-green-500"
-                                aria-label={`Select ${getFullNameFromRegistration(reg) || reg.userDetails?.name}`}
-                              />
-                            </td>
-                            <td className="px-4 py-3 text-sm font-medium text-gray-900">
-                              {getFullNameFromRegistration(reg) || reg.userDetails?.name || 'Unknown'}
-                            </td>
-                            <td className="px-4 py-3 text-sm text-gray-500">
-                              {reg.userDetails?.email || 'N/A'}
-                            </td>
-                            <td className="px-4 py-3">
-                              <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${
-                                reg.attendanceStatus === 'attended' || reg.attendanceStatus === 'checked-in'
-                                  ? 'bg-green-100 text-green-800'
-                                  : reg.attendanceStatus === 'registered' || reg.attendanceStatus === 'pending'
-                                  ? 'bg-blue-100 text-blue-800'
-                                  : 'bg-gray-100 text-gray-800'
-                              }`}>
-                                {reg.attendanceStatus === 'checked-in' ? 'Checked In' : (reg.attendanceStatus || 'Registered')}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3">
-                              {hasIssuedCertificate(reg) ? (
-                                <span className="inline-flex items-center gap-1 text-green-600 text-sm">
-                                  <CheckCircleIcon className="w-4 h-4" />
-                                  Issued
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 text-gray-400 text-sm">
-                                  <XCircleIcon className="w-4 h-4" />
-                                  Not issued
-                                </span>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : null}
-              </div>
-
-              {/* Modal Footer */}
-              <div className="flex items-center justify-between px-6 py-4 border-t border-gray-200 bg-gray-50">
-                <div className="text-sm text-gray-500">
-                  {selectedRegistrations.size > 0 && (
-                    <span>{selectedRegistrations.size} attendee(s) selected</span>
-                  )}
-                </div>
-                <div className="flex gap-3">
-                  <button
-                    onClick={handleCloseBulkGenerate}
-                    disabled={bulkGenerating}
-                    className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleBulkGenerate}
-                    disabled={bulkGenerating || selectedRegistrations.size === 0 || !templates.some(t => t.eventId === bulkGenerateEventId && t.isActive)}
-                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
-                  >
-                    {bulkGenerating ? (
-                      <>
-                        <ArrowPathIcon className="w-4 h-4 animate-spin" />
-                        Generating...
-                      </>
-                    ) : (
-                      <>
-                        <SparklesIcon className="w-4 h-4" />
-                        Generate Certificates
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
+        {/* Filter Tabs */}
+        {bulkGenerateEventId && registrations.length > 0 && (
+          <div className="mb-4">
+            <div className="flex gap-2 border-b border-outline-variant">
+              <button
+                onClick={() => setBulkGenerateFilter('all')}
+                disabled={bulkGenerating}
+                className={`px-4 py-2 text-sm font-medium transition-colors ${
+                  bulkGenerateFilter === 'all'
+                    ? 'text-success border-b-2 border-success'
+                    : 'text-on-surface-variant hover:text-on-surface-variant'
+                }`}
+              >
+                All ({registrations.length})
+              </button>
+              <button
+                onClick={() => setBulkGenerateFilter('attended')}
+                disabled={bulkGenerating}
+                className={`px-4 py-2 text-sm font-medium transition-colors ${
+                  bulkGenerateFilter === 'attended'
+                    ? 'text-success border-b-2 border-success'
+                    : 'text-on-surface-variant hover:text-on-surface-variant'
+                }`}
+              >
+                Attended ({getAttendedCount()})
+              </button>
+              <button
+                onClick={() => setBulkGenerateFilter('no-certificate')}
+                disabled={bulkGenerating}
+                className={`px-4 py-2 text-sm font-medium transition-colors ${
+                  bulkGenerateFilter === 'no-certificate'
+                    ? 'text-success border-b-2 border-success'
+                    : 'text-on-surface-variant hover:text-on-surface-variant'
+                }`}
+              >
+                No Certificate ({getRegistrationsWithoutCertificateCount()})
+              </button>
             </div>
           </div>
-        </div>
-      )}
+        )}
+
+        {/* Search and Selection Controls */}
+        {bulkGenerateEventId && registrations.length > 0 && (
+          <div className="mb-4 flex flex-col sm:flex-row gap-3">
+            {/* Search Box */}
+            <div className="relative flex-1">
+              <MagnifyingGlassIcon className="w-5 h-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-on-surface-variant" />
+              <input
+                type="text"
+                placeholder="Search by name or email..."
+                value={attendeeSearchTerm}
+                onChange={(e) => setAttendeeSearchTerm(e.target.value)}
+                disabled={bulkGenerating}
+                className="w-full pl-10 pr-4 py-2 border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent disabled:bg-surface-container"
+              />
+            </div>
+                    
+            {/* Quick Selection Buttons */}
+            <div className="flex gap-2">
+              <button
+                onClick={handleSelectAllRegistrations}
+                disabled={bulkGenerating || getFilteredRegistrations().length === 0}
+                className="px-3 py-2 text-sm bg-surface-container text-on-surface-variant rounded-lg hover:bg-surface-container-high transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Select All
+              </button>
+              <button
+                onClick={handleClearSelection}
+                disabled={bulkGenerating || selectedRegistrations.size === 0}
+                className="px-3 py-2 text-sm bg-surface-container text-on-surface-variant rounded-lg hover:bg-surface-container-high transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Clear
+              </button>
+              <button
+                onClick={handleInvertSelection}
+                disabled={bulkGenerating || getFilteredRegistrations().length === 0}
+                className="px-3 py-2 text-sm bg-surface-container text-on-surface-variant rounded-lg hover:bg-surface-container-high transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Invert
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Progress Bar */}
+        {bulkGenerating && (
+          <div className="mb-4 p-4 bg-surface-container-low rounded-lg border border-outline-variant">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-medium text-success">
+                Generating certificates...
+              </span>
+              <span className="text-sm text-success">
+                {bulkGenerateProgress.current} / {bulkGenerateProgress.total}
+              </span>
+            </div>
+            <ProgressBar
+              value={bulkGenerateProgress.total > 0
+                ? (bulkGenerateProgress.current / bulkGenerateProgress.total) * 100
+                : 0}
+              size="md"
+              color="bg-success"
+              label="Bulk certificate generation progress"
+              showValue
+            />
+          </div>
+        )}
+
+        {/* Registrations Table */}
+        {loadingRegistrations ? (
+          <div className="flex justify-center items-center py-12">
+            <div className="motion-essential animate-spin rounded-full h-8 w-8 border-b-2 border-success"></div>
+          </div>
+        ) : bulkGenerateEventId && getFilteredRegistrations().length === 0 ? (
+          <div className="text-center py-12">
+            <UserGroupIcon className="w-12 h-12 mx-auto text-on-surface-variant mb-3" />
+            <p className="text-on-surface-variant">No attendees found matching the selected filter.</p>
+          </div>
+        ) : bulkGenerateEventId && getFilteredRegistrations().length > 0 ? (
+          <div className="border border-outline-variant rounded-lg overflow-hidden">
+            <table className="min-w-full divide-y divide-outline-variant">
+              <thead className="bg-surface-container-low">
+                <tr>
+                  <th className="px-4 py-3 text-left w-12">
+                    <input
+                      type="checkbox"
+                      checked={selectedRegistrations.size === getFilteredRegistrations().length && getFilteredRegistrations().length > 0}
+                      onChange={handleSelectAllRegistrations}
+                      disabled={bulkGenerating}
+                      className="w-4 h-4 text-success border-outline-variant rounded focus:ring-primary"
+                      aria-label="Select all attendees"
+                    />
+                  </th>
+                  <th className="px-4 py-3 text-left text-sm font-medium text-on-surface-variant uppercase">Name</th>
+                  <th className="px-4 py-3 text-left text-sm font-medium text-on-surface-variant uppercase">Email</th>
+                  <th className="px-4 py-3 text-left text-sm font-medium text-on-surface-variant uppercase">Attendance</th>
+                  <th className="px-4 py-3 text-left text-sm font-medium text-on-surface-variant uppercase">Certificate</th>
+                </tr>
+              </thead>
+              <tbody className="bg-surface divide-y divide-outline-variant">
+                {getFilteredRegistrations().map(reg => (
+                  <tr 
+                    key={reg.id}
+                    onClick={() => !bulkGenerating && handleSelectRegistration(reg.id)}
+                    className={`cursor-pointer transition-colors ${selectedRegistrations.has(reg.id) ? 'bg-surface-container-low hover:bg-surface-container-high' : 'hover:bg-surface-container-low'}`}
+                  >
+                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selectedRegistrations.has(reg.id)}
+                        onChange={() => handleSelectRegistration(reg.id)}
+                        disabled={bulkGenerating}
+                        className="w-4 h-4 text-success border-outline-variant rounded focus:ring-primary"
+                        aria-label={`Select ${getFullNameFromRegistration(reg) || reg.userDetails?.name}`}
+                      />
+                    </td>
+                    <td className="px-4 py-3 text-sm font-medium text-on-surface">
+                      {getFullNameFromRegistration(reg) || reg.userDetails?.name || 'Unknown'}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-on-surface-variant">
+                      {reg.userDetails?.email || 'N/A'}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`inline-flex px-2 py-1 text-sm font-medium rounded-full ${
+                        reg.attendanceStatus === 'checked-in'
+                          ? 'bg-surface-container-high text-success'
+                          : reg.attendanceStatus === 'registered' || reg.attendanceStatus === 'pending'
+                          ? 'bg-surface-container-high text-primary'
+                          : 'bg-surface-container text-on-surface'
+                      }`}>
+                        {reg.attendanceStatus === 'checked-in' ? 'Checked In' : (reg.attendanceStatus || 'Registered')}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      {hasIssuedCertificate(reg) ? (
+                        <span className="inline-flex items-center gap-1 text-success text-sm">
+                          <CheckCircleIcon className="w-4 h-4" />
+                          Issued
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-on-surface-variant text-sm">
+                          <XCircleIcon className="w-4 h-4" />
+                          Not issued
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </Modal>
 
       {/* Regenerate with Template Warning Modal */}
-      {showRegenerateWarningModal && (
-        <div className="fixed inset-0 z-50 overflow-y-auto">
-          <div className="flex min-h-screen items-center justify-center p-4">
-            <div 
-              className="fixed inset-0 bg-black bg-opacity-50 transition-opacity"
-              onClick={() => !isRegenerating && setShowRegenerateWarningModal(false)}
-              aria-hidden="true"
-            />
-            
-            <div className="relative w-full max-w-lg bg-white rounded-xl shadow-2xl">
-              {/* Modal Header */}
-              <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-200 bg-amber-50">
-                <div className="flex-shrink-0 w-10 h-10 flex items-center justify-center rounded-full bg-amber-100">
-                  <ExclamationTriangleIcon className="w-6 h-6 text-amber-600" />
-                </div>
-                <div>
-                  <h2 className="text-lg font-semibold text-gray-900">Regenerate Certificates</h2>
-                  <p className="text-sm text-amber-700">This action will overwrite existing certificates</p>
-                </div>
-              </div>
+      <Modal
+        open={showRegenerateWarningModal}
+        onClose={() => !isRegenerating && setShowRegenerateWarningModal(false)}
+        title="Regenerate Certificates"
+        size="md"
+        closeOnBackdrop={!isRegenerating}
+        footer={
+          <>
+            <Button
+              variant="outlined"
+              onClick={() => setShowRegenerateWarningModal(false)}
+              disabled={isRegenerating}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleRegenerateWithTemplate}
+              loading={isRegenerating}
+              icon={!isRegenerating && <ArrowPathIcon className="h-5 w-5" />}
+            >
+              {isRegenerating
+                ? 'Regenerating...'
+                : `Regenerate ${selectedCertificates.size} Certificate(s)`}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-on-surface-variant">
+            This action will overwrite existing certificates
+          </p>
+          <div className="p-4 bg-surface-container border border-outline-variant rounded-lg">
+            <h3 className="font-medium text-on-surface mb-2">⚠️ Warning</h3>
+            <ul className="text-sm text-on-surface-variant space-y-1 list-disc list-inside">
+              <li>This will regenerate <strong>{selectedCertificates.size}</strong> certificate(s) using the <strong>current template</strong></li>
+              <li>The previous certificate images will be <strong>overwritten</strong></li>
+              <li>Verification codes will remain the same</li>
+              <li>This action <strong>cannot be undone</strong></li>
+            </ul>
+          </div>
 
-              {/* Modal Body */}
-              <div className="px-6 py-5">
-                <div className="space-y-4">
-                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
-                    <h3 className="font-medium text-amber-800 mb-2">⚠️ Warning</h3>
-                    <ul className="text-sm text-amber-700 space-y-1 list-disc list-inside">
-                      <li>This will regenerate <strong>{selectedCertificates.size}</strong> certificate(s) using the <strong>current template</strong></li>
-                      <li>The previous certificate images will be <strong>overwritten</strong></li>
-                      <li>Verification codes will remain the same</li>
-                      <li>This action <strong>cannot be undone</strong></li>
-                    </ul>
-                  </div>
+          {/* Reason Input */}
+          <div>
+            <label className="block text-sm font-medium text-on-surface-variant mb-2">
+              Reason for regeneration (optional)
+            </label>
+            <select
+              value={regenerateReason}
+              onChange={(e) => setRegenerateReason(e.target.value as typeof regenerateReason)}
+              disabled={isRegenerating}
+              className="w-full px-4 py-2 border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent disabled:bg-surface-container"
+            >
+              <option value="">Select a reason...</option>
+              <option value="template_fix">Template was updated/fixed</option>
+              <option value="name_fix">Name correction needed</option>
+            </select>
+          </div>
 
-                  {/* Reason Input */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Reason for regeneration (optional)
-                    </label>
-                    <select
-                      value={regenerateReason}
-                      onChange={(e) => setRegenerateReason(e.target.value as typeof regenerateReason)}
-                      disabled={isRegenerating}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent disabled:bg-gray-100"
-                    >
-                      <option value="">Select a reason...</option>
-                      <option value="template_fix">Template was updated/fixed</option>
-                      <option value="name_fix">Name correction needed</option>
-                    </select>
-                  </div>
-
-                  {/* Info Box */}
-                  <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                    <p className="text-sm text-blue-700">
-                      <strong>When to use:</strong> Use this when the certificate template had visual issues 
-                      (wrong logo, incorrect text, design problems) that have been fixed and you need to 
-                      regenerate certificates with the corrected template.
-                    </p>
-                  </div>
-                </div>
-
-                {/* Progress Bar */}
-                {isRegenerating && (
-                  <div className="mt-4 p-4 bg-green-50 rounded-lg border border-green-200">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-medium text-green-700">
-                        Regenerating certificates...
-                      </span>
-                      <span className="text-sm text-green-600">
-                        {regenerateProgress.current} / {regenerateProgress.total}
-                      </span>
-                    </div>
-                    <div className="w-full h-3 bg-green-200 rounded-full overflow-hidden">
-                      <div 
-                        className="h-full bg-green-600 transition-all duration-300 ease-out"
-                        style={{ 
-                          width: `${regenerateProgress.total > 0 
-                            ? (regenerateProgress.current / regenerateProgress.total) * 100 
-                            : 0}%` 
-                        }}
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Modal Footer */}
-              <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50">
-                <button
-                  onClick={() => setShowRegenerateWarningModal(false)}
-                  disabled={isRegenerating}
-                  className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleRegenerateWithTemplate}
-                  disabled={isRegenerating}
-                  className="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
-                >
-                  {isRegenerating ? (
-                    <>
-                      <ArrowPathIcon className="w-4 h-4 animate-spin" />
-                      Regenerating...
-                    </>
-                  ) : (
-                    <>
-                      <ArrowPathIcon className="w-4 h-4" />
-                      Regenerate {selectedCertificates.size} Certificate(s)
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
+          {/* Info Box */}
+          <div className="p-3 bg-surface-container-low border border-outline-variant rounded-lg">
+            <p className="text-sm text-primary">
+              <strong>When to use:</strong> Use this when the certificate template had visual issues 
+              (wrong logo, incorrect text, design problems) that have been fixed and you need to 
+              regenerate certificates with the corrected template.
+            </p>
           </div>
         </div>
-      )}
+
+        {/* Progress Bar */}
+        {isRegenerating && (
+          <div className="mt-4 p-4 bg-surface-container-low rounded-lg border border-outline-variant">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-medium text-success">
+                Regenerating certificates...
+              </span>
+              <span className="text-sm text-success">
+                {regenerateProgress.current} / {regenerateProgress.total}
+              </span>
+            </div>
+            <ProgressBar
+              value={regenerateProgress.total > 0
+                ? (regenerateProgress.current / regenerateProgress.total) * 100
+                : 0}
+              size="md"
+              color="bg-success"
+              label="Certificate regeneration progress"
+              showValue
+            />
+          </div>
+        )}
+      </Modal>
+    </>
+  );
+
+  if (embedded) {
+    return certContent;
+  }
+
+  return (
+    <LayoutComponent subtitle="Create templates and manage issued certificates">
+      {certContent}
     </LayoutComponent>
   );
 };

@@ -12,7 +12,6 @@ import {
   Clock,
   MailOpen,
   AlertCircle,
-  X,
   Edit3
 } from 'lucide-react';
 import { EmailService, EmailLog, EmailTemplate } from '../../services/emailService';
@@ -20,13 +19,26 @@ import { EventService } from '../../services/eventService';
 import { RegistrationService } from '../../services/registrationService';
 import { Event, Registration } from '../../types';
 import { logger } from '../../utils/logger';
-import AdminLayout from '../../components/admin/AdminLayout';
+import DashboardShell from '../../components/shared/DashboardShell';
+import ProgressBar from '../../components/shared/UI/ProgressBar';
+import { Button, Modal } from '../../components/shared/UI';
+import { useAuth } from '../../contexts/AuthContext';
 
 type DeliveryStatus = 'queued' | 'sent' | 'delivered' | 'delivery_delayed' | 'bounced' | 'complained' | 'unknown';
 type EmailLogWithStatus = EmailLog & { deliveryStatus?: DeliveryStatus };
 
-const AdminEmailManagementPage = () => {
-  const { eventId } = useParams<{ eventId?: string }>();
+interface AdminEmailManagementPageProps {
+  embedded?: boolean;
+  propEventId?: string;
+}
+
+const AdminEmailManagementPage: React.FC<AdminEmailManagementPageProps> = ({
+  embedded = false,
+  propEventId
+}) => {
+  const { eventId: paramEventId } = useParams<{ eventId?: string }>();
+  const eventId = propEventId || paramEventId;
+  const { userProfile } = useAuth();
   
   const [emails, setEmails] = useState<EmailLogWithStatus[]>([]);
   const [filteredEmails, setFilteredEmails] = useState<EmailLogWithStatus[]>([]);
@@ -74,21 +86,22 @@ const AdminEmailManagementPage = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      // Load events
-      const eventsData = await EventService.getAllEvents();
-      setEvents(eventsData);
+      // Load events — organizers are scoped to their own (Data Privacy Act 2012)
+      const isAdminUser = userProfile?.role === 'admin';
 
-      // Load emails based on event selection
-      let emailsData: EmailLogWithStatus[];
+      // All three reads are independent, so issue them together instead of in series.
+      const [eventsData, emailsData, regsData] = await Promise.all([
+        isAdminUser || !userProfile?.uid
+          ? EventService.getAllEvents()
+          : EventService.getEventsByOrganizer(userProfile.uid),
+        eventId ? EmailService.getEventEmails(eventId) : EmailService.getAllEmails(),
+        eventId ? RegistrationService.getEventRegistrations(eventId) : Promise.resolve([])
+      ]);
+
+      setEvents(eventsData);
       if (eventId) {
-        emailsData = await EmailService.getEventEmails(eventId);
         setSelectedEvent(eventId);
-        
-        // Load event-specific registrations
-        const regsData = await RegistrationService.getEventRegistrations(eventId);
         setRegistrations(regsData);
-      } else {
-        emailsData = await EmailService.getAllEmails();
       }
 
       // Initially set emails without delivery status (for performance)
@@ -533,7 +546,7 @@ const AdminEmailManagementPage = () => {
     const status = email.deliveryStatus;
     if (status === 'delivered') {
       return (
-        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-medium bg-success-container text-on-success-container">
           <CheckCircle className="h-3 w-3 mr-1" />
           Delivered
         </span>
@@ -541,7 +554,7 @@ const AdminEmailManagementPage = () => {
     }
     if (status === 'sent' || status === 'queued') {
       return (
-        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-medium bg-secondary-container text-on-secondary-container">
           <MailOpen className="h-3 w-3 mr-1" />
           Sent
         </span>
@@ -549,7 +562,7 @@ const AdminEmailManagementPage = () => {
     }
     if (status === 'delivery_delayed') {
       return (
-        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-medium bg-warning-container text-on-warning-container">
           <Clock className="h-3 w-3 mr-1" />
           Delayed
         </span>
@@ -557,7 +570,7 @@ const AdminEmailManagementPage = () => {
     }
     if (status === 'bounced') {
       return (
-        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800 border border-red-300">
+        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-medium bg-error-container text-on-error-container border border-outline-variant">
           <XCircle className="h-3 w-3 mr-1" />
           BOUNCED
         </span>
@@ -565,81 +578,69 @@ const AdminEmailManagementPage = () => {
     }
     if (status === 'complained') {
       return (
-        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-800 border border-orange-300">
+        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-medium bg-warning-container text-on-warning-container border border-outline-variant">
           <AlertCircle className="h-3 w-3 mr-1" />
           Complained
         </span>
       );
     }
     return (
-      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
+      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-sm font-medium bg-surface-container text-on-surface-variant">
         <Clock className="h-3 w-3 mr-1" />
         Unknown
       </span>
     );
   };
 
-  return (
-    <AdminLayout>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">Email Management</h1>
-          <p className="text-gray-600">Manage and track all emails sent to attendees</p>
-        </div>
+  const emailContent = (
+    <div className="space-y-6">
+      {/*
+        No header block here. This page renders inside DashboardShell, which is
+        DashboardShell, and the shell already emits the page's <h1> - deriving
+        "Email management" from the URL when no title prop is passed. The page
+        used to render its own <h1> as well, so every email screen showed two
+        stacked headings at two different sizes with two different top margins.
+        The descriptive line now rides on the shell's `subtitle`, which also
+        means it survives in embedded mode instead of being hidden behind
+        `!embedded`.
+      */}
 
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-8">
-          <div className="bg-white rounded-lg shadow-sm p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-600">Total Emails</p>
-                <p className="text-2xl font-bold text-gray-900">{emailStats.total}</p>
-              </div>
-              <Mail className="h-8 w-8 text-blue-600" />
+        {/* Delivery Health Summary Strip */}
+        <div className="bg-white rounded-xl border border-outline-variant px-4 py-3 mb-4 shadow-sm flex flex-wrap items-center justify-between gap-3 text-sm">
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="font-semibold text-on-surface flex items-center gap-1.5">
+              <Mail className="h-4 w-4 text-primary" />
+              Delivery Health:
+            </span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-on-surface-variant">Total:</span>
+              <span className="font-semibold text-on-surface">{emailStats.total}</span>
             </div>
+            <div className="flex items-center gap-1.5">
+              <CheckCircle className="h-4 w-4 text-success" />
+              <span className="text-on-surface-variant">Delivered:</span>
+              <span className="font-semibold text-success">{emailStats.successful}</span>
+            </div>
+            {emailStats.failed > 0 && (
+              <div className="flex items-center gap-1.5">
+                <XCircle className="h-4 w-4 text-error" />
+                <span className="text-on-surface-variant">Failed:</span>
+                <span className="font-semibold text-error">{emailStats.failed}</span>
+              </div>
+            )}
+            {emailStats.bounced > 0 && (
+              <div className="flex items-center gap-1.5">
+                <AlertCircle className="h-4 w-4 text-warning" />
+                <span className="text-on-surface-variant">Bounced:</span>
+                <span className="font-semibold text-warning">{emailStats.bounced}</span>
+              </div>
+            )}
           </div>
-
-          <div className="bg-white rounded-lg shadow-sm p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-600">Successful</p>
-                <p className="text-2xl font-bold text-green-600">{emailStats.successful}</p>
-              </div>
-              <CheckCircle className="h-8 w-8 text-green-600" />
-            </div>
-          </div>
-
-          <div className="bg-white rounded-lg shadow-sm p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-600">Failed</p>
-                <p className="text-2xl font-bold text-red-600">{emailStats.failed}</p>
-              </div>
-              <XCircle className="h-8 w-8 text-red-600" />
-            </div>
-          </div>
-
-          <div className="bg-white rounded-lg shadow-sm p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-600">Bounced</p>
-                <p className="text-2xl font-bold text-red-600">{emailStats.bounced}</p>
-              </div>
-              <AlertCircle className="h-8 w-8 text-red-600" />
-            </div>
-          </div>
-
-          <div className="bg-white rounded-lg shadow-sm p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-600">Success Rate</p>
-                <p className="text-2xl font-bold text-gray-900">
-                  {emailStats.total > 0 ? Math.round((emailStats.successful / emailStats.total) * 100) : 0}%
-                </p>
-              </div>
-              <MailOpen className="h-8 w-8 text-purple-600" />
-            </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-on-surface-variant font-medium">Success Rate:</span>
+            <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-success-container text-success">
+              {emailStats.total > 0 ? Math.round((emailStats.successful / emailStats.total) * 100) : 0}%
+            </span>
           </div>
         </div>
 
@@ -651,7 +652,7 @@ const AdminEmailManagementPage = () => {
               <button
                 onClick={handleBulkResend}
                 disabled={selectedEmails.length === 0 || bulkResending}
-                className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="inline-flex items-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Send className="h-4 w-4 mr-2" />
                 {bulkResending 
@@ -664,7 +665,7 @@ const AdminEmailManagementPage = () => {
               <button
                 onClick={handleSelectAllBounced}
                 disabled={filteredEmails.filter(e => e.deliveryStatus === 'bounced' || e.deliveryStatus === 'complained').length === 0}
-                className="inline-flex items-center px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="inline-flex items-center px-4 py-2 bg-error-container text-error rounded-lg hover:bg-error-container transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <AlertCircle className="h-4 w-4 mr-2" />
                 Select Bounced
@@ -672,7 +673,7 @@ const AdminEmailManagementPage = () => {
 
               <button
                 onClick={loadData}
-                className="inline-flex items-center px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+                className="inline-flex items-center px-4 py-2 bg-surface-container text-on-surface-variant rounded-lg hover:bg-surface-container-high transition-colors"
               >
                 <RefreshCw className="h-4 w-4 mr-2" />
                 Refresh
@@ -681,38 +682,38 @@ const AdminEmailManagementPage = () => {
               <button
                 onClick={fetchBouncedEmailsFromResend}
                 disabled={fetchingFromResend}
-                className="inline-flex items-center px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="inline-flex items-center px-4 py-2 bg-warning text-white rounded-lg hover:bg-warning transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 title="Fetch ALL emails directly from Resend API"
               >
-                <Download className={`h-4 w-4 mr-2 ${fetchingFromResend ? 'animate-spin' : ''}`} />
+                <Download className={`h-4 w-4 mr-2 ${fetchingFromResend ? 'motion-essential animate-spin' : ''}`} />
                 Get Bounced from Resend
               </button>
 
               <button
                 onClick={refreshDeliveryStatuses}
                 disabled={refreshingStatuses || emails.length === 0}
-                className="inline-flex items-center px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="inline-flex items-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 title="Update delivery status for current emails"
               >
-                <RefreshCw className={`h-4 w-4 mr-2 ${refreshingStatuses ? 'animate-spin' : ''}`} />
+                <RefreshCw className={`h-4 w-4 mr-2 ${refreshingStatuses ? 'motion-essential animate-spin' : ''}`} />
                 Update Delivery Status
               </button>
 
               <button
                 onClick={handleExportEmails}
                 disabled={filteredEmails.length === 0}
-                className="inline-flex items-center px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="inline-flex items-center px-4 py-2 bg-surface-container text-on-surface-variant rounded-lg hover:bg-surface-container-high transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Download className="h-4 w-4 mr-2" />
                 Export CSV
               </button>
             </div>
 
-            <div className="flex items-center gap-2 text-sm text-gray-600">
+            <div className="flex items-center gap-2 text-sm text-on-surface-variant">
               <Filter className="h-4 w-4" />
               {filteredEmails.length} of {emails.length} emails
               {selectedEmails.length > 0 && (
-                <span className="ml-2 text-blue-600 font-medium">
+                <span className="ml-2 text-primary font-medium">
                   ({selectedEmails.length} selected)
                 </span>
               )}
@@ -725,33 +726,35 @@ const AdminEmailManagementPage = () => {
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             {/* Search */}
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-outline-variant" />
               <input
                 type="text"
                 placeholder="Search by email or name..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full pl-10 pr-4 py-2 border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
               />
             </div>
 
             {/* Event Filter */}
-            <select
-              value={selectedEvent}
-              onChange={(e) => setSelectedEvent(e.target.value)}
-              className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            >
-              <option value="all">All Events</option>
-              {events.map(event => (
-                <option key={event.id} value={event.id}>{event.title}</option>
-              ))}
-            </select>
+            {!eventId && !embedded && (
+              <select
+                value={selectedEvent}
+                onChange={(e) => setSelectedEvent(e.target.value)}
+                className="px-4 py-2 border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+              >
+                <option value="all">All Events</option>
+                {events.map(event => (
+                  <option key={event.id} value={event.id}>{event.title}</option>
+                ))}
+              </select>
+            )}
 
             {/* Email Type Filter */}
             <select
               value={selectedEmailType}
               onChange={(e) => setSelectedEmailType(e.target.value)}
-              className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="px-4 py-2 border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
             >
               <option value="all">All Types</option>
               <option value="email_confirmation_sent">Registration Confirmation</option>
@@ -765,7 +768,7 @@ const AdminEmailManagementPage = () => {
             <select
               value={selectedStatus}
               onChange={(e) => setSelectedStatus(e.target.value)}
-              className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="px-4 py-2 border border-outline-variant rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
             >
               <option value="all">All Status</option>
               <option value="success">✅ Successful (Delivered/Sent)</option>
@@ -780,75 +783,75 @@ const AdminEmailManagementPage = () => {
         <div className="bg-white rounded-lg shadow-sm overflow-hidden">
           {loading ? (
             <div className="flex items-center justify-center py-12">
-              <RefreshCw className="h-8 w-8 text-blue-600 animate-spin" />
+              <RefreshCw className="h-8 w-8 text-primary motion-essential animate-spin" />
             </div>
           ) : filteredEmails.length === 0 ? (
             <div className="text-center py-12">
-              <Mail className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-              <p className="text-gray-600">No emails found</p>
+              <Mail className="h-12 w-12 text-outline-variant mx-auto mb-4" />
+              <p className="text-on-surface-variant">No emails found</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
+              <table className="min-w-full divide-y divide-outline-variant">
+                <thead className="bg-surface-container-low">
                   <tr>
                     <th className="px-4 py-3 text-left">
                       <input
                         type="checkbox"
                         checked={selectedEmails.length === filteredEmails.length && filteredEmails.length > 0}
                         onChange={handleToggleSelectAll}
-                        className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                        className="h-4 w-4 text-primary border-outline-variant rounded focus:ring-primary"
                         aria-label="Select all emails"
                       />
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider">
                       Timestamp
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider">
                       Recipient
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider">
                       Type
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider">
                       Event
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider">
                       Status
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-sm font-medium text-on-surface-variant uppercase tracking-wider">
                       Actions
                     </th>
                   </tr>
                 </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
+                <tbody className="bg-white divide-y divide-outline-variant">
                   {filteredEmails.map((email) => (
                     <tr 
                       key={email.id} 
-                      className={`hover:bg-gray-50 ${selectedEmails.includes(email.id) ? 'bg-blue-50' : ''}`}
+                      className={`hover:bg-surface-container-low ${selectedEmails.includes(email.id) ? 'bg-surface-container-low' : ''}`}
                     >
                       <td className="px-4 py-4">
                         <input
                           type="checkbox"
                           checked={selectedEmails.includes(email.id)}
                           onChange={() => handleToggleEmailSelection(email.id)}
-                          className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                          className="h-4 w-4 text-primary border-outline-variant rounded focus:ring-primary"
                           aria-label={`Select email to ${email.userEmail}`}
                         />
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-on-surface">
                         {email.timestamp.toDate().toLocaleString()}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm font-medium text-gray-900">{email.userName}</div>
-                        <div className="text-sm text-gray-500">{email.userEmail}</div>
+                        <div className="text-sm font-medium text-on-surface">{email.userName}</div>
+                        <div className="text-sm text-on-surface-variant">{email.userEmail}</div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getEmailTypeColor(email.type)}`}>
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-sm font-medium ${getEmailTypeColor(email.type)}`}>
                           {getEmailTypeLabel(email.type)}
                         </span>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-on-surface-variant">
                         {email.eventTitle || 'N/A'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
@@ -858,12 +861,12 @@ const AdminEmailManagementPage = () => {
                         <button
                           onClick={() => handleOpenResendModal(email)}
                           disabled={resendingEmail === email.id}
-                          className="inline-flex items-center px-2 py-1 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="inline-flex items-center px-2 py-1 text-primary hover:text-on-secondary-container hover:bg-surface-container-low rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                           title="Resend email (with option to change recipient)"
                           aria-label={`Resend email to ${email.userEmail}`}
                         >
                           {resendingEmail === email.id ? (
-                            <RefreshCw className="h-4 w-4 animate-spin" />
+                            <RefreshCw className="h-4 w-4 motion-essential animate-spin" />
                           ) : (
                             <>
                               <Edit3 className="h-4 w-4 mr-1" />
@@ -881,168 +884,160 @@ const AdminEmailManagementPage = () => {
         </div>
 
         {/* Resend Email Modal */}
-        {showResendModal && resendTarget && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-lg shadow-xl max-w-lg w-full p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-xl font-semibold text-gray-900">Resend Email</h3>
-                <button
-                  onClick={handleCloseResendModal}
-                  className="text-gray-400 hover:text-gray-600 transition-colors"
-                  aria-label="Close modal"
-                >
-                  <X className="h-6 w-6" />
-                </button>
+        <Modal
+          open={showResendModal && !!resendTarget}
+          onClose={handleCloseResendModal}
+          title="Resend Email"
+          size="md"
+          footer={
+            <>
+              <Button variant="tonal" onClick={handleCloseResendModal}>
+                Cancel
+              </Button>
+              <Button
+                onClick={handleResendFromModal}
+                loading={resendingFromModal}
+                disabled={!isValidEmail(overrideEmail)}
+                icon={<Send className="h-5 w-5" />}
+              >
+                {resendingFromModal ? 'Sending...' : 'Resend Email'}
+              </Button>
+            </>
+          }
+        >
+          {resendTarget && (
+            <div className="space-y-4">
+              {/* Original Email Info */}
+              <div className="bg-surface-container-low rounded-lg p-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <span className="text-on-surface-variant">Original Type:</span>
+                    <span className={`ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-sm font-medium ${getEmailTypeColor(resendTarget.type)}`}>
+                      {getEmailTypeLabel(resendTarget.type)}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-on-surface-variant">Event:</span>
+                    <span className="ml-2 text-on-surface font-medium">{resendTarget.eventTitle || 'N/A'}</span>
+                  </div>
+                  <div>
+                    <span className="text-on-surface-variant">Original Recipient:</span>
+                    <span className="ml-2 text-on-surface">{resendTarget.userName}</span>
+                  </div>
+                  <div>
+                    <span className="text-on-surface-variant">Status:</span>
+                    <span className="ml-2">{renderDeliveryStatus(resendTarget)}</span>
+                  </div>
+                </div>
               </div>
-              
-              <div className="space-y-4">
-                {/* Original Email Info */}
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <span className="text-gray-500">Original Type:</span>
-                      <span className={`ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${getEmailTypeColor(resendTarget.type)}`}>
-                        {getEmailTypeLabel(resendTarget.type)}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-gray-500">Event:</span>
-                      <span className="ml-2 text-gray-900 font-medium">{resendTarget.eventTitle || 'N/A'}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-500">Original Recipient:</span>
-                      <span className="ml-2 text-gray-900">{resendTarget.userName}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-500">Status:</span>
-                      <span className="ml-2">{renderDeliveryStatus(resendTarget)}</span>
-                    </div>
-                  </div>
-                </div>
 
-                {/* Email Type Selector */}
-                <div>
-                  <label htmlFor="resend-email-type" className="block text-sm font-medium text-gray-700 mb-2">
-                    Email Type to Send
-                  </label>
-                  <select
-                    id="resend-email-type"
-                    value={resendEmailType}
-                    onChange={(e) => setResendEmailType(e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    <option value="email_confirmation_sent">Registration Confirmation</option>
-                    <option value="payment_notification_sent">Payment Notification</option>
-                    <option value="event_reminder_sent">Event Reminder</option>
-                    <option value="feedback_request_sent">Feedback & Certificate</option>
-                    <option value="checkin_notification_sent">Check-in Confirmation</option>
-                  </select>
-                  {resendEmailType !== resendTarget.type && (
-                    <p className="mt-1 text-xs text-blue-600">
-                      ℹ️ Will send as <strong>{getEmailTypeLabel(resendEmailType)}</strong> instead of original type
-                    </p>
-                  )}
-                </div>
-
-                {/* Email Address Input */}
-                <div>
-                  <label htmlFor="override-email" className="block text-sm font-medium text-gray-700 mb-2">
-                    Recipient Email Address
-                  </label>
-                  <input
-                    id="override-email"
-                    type="email"
-                    value={overrideEmail}
-                    onChange={(e) => setOverrideEmail(e.target.value)}
-                    placeholder="Enter email address"
-                    className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                      overrideEmail && !isValidEmail(overrideEmail) 
-                        ? 'border-red-300 bg-red-50' 
-                        : 'border-gray-300'
-                    }`}
-                    aria-describedby="email-help"
-                  />
-                  <p id="email-help" className="mt-1 text-xs text-gray-500">
-                    Change the email address if the original bounced or is incorrect
+              {/* Email Type Selector */}
+              <div>
+                <label htmlFor="resend-email-type" className="block text-sm font-medium text-on-surface-variant mb-2">
+                  Email Type to Send
+                </label>
+                <select
+                  id="resend-email-type"
+                  value={resendEmailType}
+                  onChange={(e) => setResendEmailType(e.target.value)}
+                  className="w-full px-4 py-2 border border-outline-variant rounded-lg bg-surface text-on-surface focus:ring-2 focus:ring-primary focus:border-transparent"
+                >
+                  <option value="email_confirmation_sent">Registration Confirmation</option>
+                  <option value="payment_notification_sent">Payment Notification</option>
+                  <option value="event_reminder_sent">Event Reminder</option>
+                  <option value="feedback_request_sent">Feedback &amp; Certificate</option>
+                  <option value="checkin_notification_sent">Check-in Confirmation</option>
+                </select>
+                {resendEmailType !== resendTarget.type && (
+                  <p className="mt-1 text-sm text-primary">
+                    ℹ️ Will send as <strong>{getEmailTypeLabel(resendEmailType)}</strong> instead of original type
                   </p>
-                  {overrideEmail && !isValidEmail(overrideEmail) && (
-                    <p className="mt-1 text-xs text-red-600">Please enter a valid email address</p>
-                  )}
-                </div>
-
-                {/* Summary of changes */}
-                {(overrideEmail !== resendTarget.userEmail || resendEmailType !== resendTarget.type) && isValidEmail(overrideEmail) && (
-                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-                    <div className="flex items-start">
-                      <AlertCircle className="h-5 w-5 text-yellow-600 mr-2 mt-0.5 flex-shrink-0" />
-                      <div className="text-sm text-yellow-800">
-                        <strong>Changes to apply:</strong>
-                        <ul className="mt-1 list-disc list-inside">
-                          {overrideEmail !== resendTarget.userEmail && (
-                            <li>Send to <span className="font-medium">{overrideEmail}</span> instead of <span className="line-through">{resendTarget.userEmail}</span></li>
-                          )}
-                          {resendEmailType !== resendTarget.type && (
-                            <li>Send as <span className="font-medium">{getEmailTypeLabel(resendEmailType)}</span> instead of {getEmailTypeLabel(resendTarget.type)}</li>
-                          )}
-                        </ul>
-                      </div>
-                    </div>
-                  </div>
                 )}
               </div>
 
-              {/* Actions */}
-              <div className="flex justify-end gap-3 mt-6">
-                <button
-                  onClick={handleCloseResendModal}
-                  className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleResendFromModal}
-                  disabled={resendingFromModal || !isValidEmail(overrideEmail)}
-                  className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {resendingFromModal ? (
-                    <>
-                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                      Sending...
-                    </>
-                  ) : (
-                    <>
-                      <Send className="h-4 w-4 mr-2" />
-                      Resend Email
-                    </>
-                  )}
-                </button>
+              {/* Email Address Input */}
+              <div>
+                <label htmlFor="override-email" className="block text-sm font-medium text-on-surface-variant mb-2">
+                  Recipient Email Address
+                </label>
+                <input
+                  id="override-email"
+                  type="email"
+                  value={overrideEmail}
+                  onChange={(e) => setOverrideEmail(e.target.value)}
+                  placeholder="Enter email address"
+                  className={`w-full px-4 py-2 border rounded-lg bg-surface text-on-surface focus:ring-2 focus:ring-primary focus:border-transparent ${
+                    overrideEmail && !isValidEmail(overrideEmail)
+                      ? 'border-error bg-surface-container-low'
+                      : 'border-outline-variant'
+                  }`}
+                  aria-describedby="email-help"
+                  aria-invalid={!!(overrideEmail && !isValidEmail(overrideEmail))}
+                />
+                <p id="email-help" className="mt-1 text-sm text-on-surface-variant">
+                  Change the email address if the original bounced or is incorrect
+                </p>
+                {overrideEmail && !isValidEmail(overrideEmail) && (
+                  <p className="mt-1 text-sm text-error">Please enter a valid email address</p>
+                )}
               </div>
+
+              {/* Summary of changes */}
+              {(overrideEmail !== resendTarget.userEmail || resendEmailType !== resendTarget.type) && isValidEmail(overrideEmail) && (
+                <div className="bg-surface-container-low border border-outline-variant rounded-lg p-3">
+                  <div className="flex items-start">
+                    <AlertCircle className="h-5 w-5 text-primary mr-2 mt-0.5 flex-shrink-0" />
+                    <div className="text-sm text-on-surface">
+                      <strong>Changes to apply:</strong>
+                      <ul className="mt-1 list-disc list-inside">
+                        {overrideEmail !== resendTarget.userEmail && (
+                          <li>Send to <span className="font-medium">{overrideEmail}</span> instead of <span className="line-through">{resendTarget.userEmail}</span></li>
+                        )}
+                        {resendEmailType !== resendTarget.type && (
+                          <li>Send as <span className="font-medium">{getEmailTypeLabel(resendEmailType)}</span> instead of {getEmailTypeLabel(resendTarget.type)}</li>
+                        )}
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
-          </div>
-        )}
+          )}
+        </Modal>
 
         {/* Bulk Progress Overlay */}
-        {bulkResending && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full mx-4">
-              <div className="text-center">
-                <RefreshCw className="h-12 w-12 text-blue-600 animate-spin mx-auto mb-4" />
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">Resending Emails</h3>
-                <p className="text-gray-600 mb-4">
-                  Processing {bulkProgress.current} of {bulkProgress.total}...
-                </p>
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div 
-                    className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                    style={{ width: `${(bulkProgress.current / bulkProgress.total) * 100}%` }}
-                  />
-                </div>
-              </div>
-            </div>
+        <Modal
+          open={bulkResending}
+          onClose={() => {}}
+          title="Resending Emails"
+          size="sm"
+          closeOnBackdrop={false}
+        >
+          <div className="text-center">
+            <RefreshCw className="h-12 w-12 text-primary motion-essential animate-spin mx-auto mb-4" aria-hidden="true" />
+            <p className="text-on-surface-variant mb-4">
+              Processing {bulkProgress.current} of {bulkProgress.total}...
+            </p>
+            <ProgressBar
+              value={(bulkProgress.current / bulkProgress.total) * 100}
+              size="sm"
+              color="bg-primary"
+              label="Bulk resend progress"
+              showValue
+            />
           </div>
-        )}
+        </Modal>
       </div>
-    </AdminLayout>
+  );
+
+  if (embedded) {
+    return emailContent;
+  }
+
+  return (
+    <DashboardShell subtitle="Manage and track all emails sent to attendees">
+      {emailContent}
+    </DashboardShell>
   );
 };
 
