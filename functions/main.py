@@ -69,6 +69,109 @@ def get_db():
             raise
     return _db
 
+
+# -----------------------------------------------------------------------------
+# Callable authorization helpers
+# -----------------------------------------------------------------------------
+#
+# These used to be nine hand-copied blocks, one per callable, and all nine read:
+#
+#     user_doc = get_db().collection('users').document(req.auth.uid).get()
+#     if user_doc.exists:                      # <-- the whole check, inside this
+#         user_data = user_doc.to_dict()
+#         is_admin = user_data.get('role') == 'admin'
+#         is_organizer = req.auth.uid == organizer_uid
+#         if not (is_admin or is_organizer):
+#             raise https_fn.HttpsError(...)
+#
+# Two problems with that shape:
+#
+#   1. It fails OPEN. With no `else`, a caller who is authenticated but has no
+#      users document skips the check entirely and the callable proceeds. A
+#      users document can go missing - deleting the doc from Firestore without
+#      deleting the Firebase Auth account is exactly how - and a suspended
+#      account that the rules would deny still reaches Admin SDK writes that
+#      bypass firestore.rules completely.
+#   2. It never checks isActive, which firestore.rules requires at
+#      isAdmin()/isOrganizer(). A suspended admin kept full callable access.
+#
+# The replacement is the pattern docs/Rules.md section 6.2 already documents,
+# which checkInAttendee was even cited for while not actually implementing.
+# It fails closed and checks isActive.
+
+def _caller_profile(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """Return the caller's users document, or raise.
+
+    Distinguishes the three ways a caller is not allowed in:
+    not authenticated, authenticated without a provisioned profile, and
+    authenticated but suspended.
+    """
+    if not req.auth:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.UNAUTHENTICATED,
+            message="Authentication required"
+        )
+
+    user_doc = get_db().collection('users').document(req.auth.uid).get()
+    if not user_doc.exists:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
+            message="Account is not provisioned. Contact an administrator."
+        )
+
+    user_data = user_doc.to_dict() or {}
+    # Strict `is not True` rather than `not ...`. A document written before the
+    # field existed reads back as None, and treating that as suspended would
+    # lock out every legacy account.
+    if user_data.get('isActive') is not True:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
+            message="This account has been deactivated"
+        )
+
+    return user_data
+
+
+def require_elevated(req: https_fn.CallableRequest, organizer_uid: Optional[str] = None) -> Dict[str, Any]:
+    """Require an active administrator, or the organizer who owns the event.
+
+    Returns the caller's profile so callers can read role-specific fields.
+    """
+    user_data = _caller_profile(req)
+    if user_data.get('role') == 'admin':
+        return user_data
+    if organizer_uid is not None and req.auth.uid == organizer_uid:
+        return user_data
+    raise https_fn.HttpsError(
+        code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
+        message="Only organizers and administrators can perform this action"
+    )
+
+
+def require_admin(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """Require an active administrator. Organizer ownership is not enough."""
+    user_data = _caller_profile(req)
+    if user_data.get('role') != 'admin':
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
+            message="Only administrators can perform this action"
+        )
+    return user_data
+
+
+def is_super_user(req: https_fn.CallableRequest) -> bool:
+    """Whether the caller holds the superuser tier.
+
+    Configured server-side through the SUPERUSER_EMAIL env var, mirroring the
+    client's VITE_SUPERUSER_EMAIL. It has to exist on both sides: the browser
+    copy only decides which button is enabled, so without this an admin could
+    simply call deleteUser on another admin directly.
+    """
+    configured = os.environ.get('SUPERUSER_EMAIL', '').strip().lower()
+    if not configured or not req.auth:
+        return False
+    return (req.auth.token.get('email') or '').strip().lower() == configured
+
 # Alias for backward compatibility - use get_db() function instead
 
 
@@ -373,19 +476,9 @@ def initialize_event(req: https_fn.CallableRequest) -> Dict[str, Any]:
         event_data = event_doc.to_dict()
         organizer_uid = event_data.get('organizer', {}).get('uid')
         
-        # Check if user is organizer or admin
-        user_doc = get_db().collection('users').document(req.auth.uid).get()
-        if user_doc.exists:
-            user_data = user_doc.to_dict()
-            is_admin = user_data.get('role') == 'admin'
-            is_organizer = req.auth.uid == organizer_uid
-            
-            if not (is_admin or is_organizer):
-                raise https_fn.HttpsError(
-                    code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
-                    message="Permission denied"
-                )
-        
+        # Fails closed: unprovisioned and suspended callers are rejected here.
+        require_elevated(req, organizer_uid)
+
         # Initialize analytics document
         analytics_ref = get_db().collection('event_analytics').document(event_id)
         analytics_ref.set({
@@ -511,19 +604,9 @@ def publish_event(req: https_fn.CallableRequest) -> Dict[str, Any]:
         event_data = event_doc.to_dict()
         organizer_uid = event_data.get('organizer', {}).get('uid')
         
-        # Check permissions
-        user_doc = get_db().collection('users').document(req.auth.uid).get()
-        if user_doc.exists:
-            user_data = user_doc.to_dict()
-            is_admin = user_data.get('role') == 'admin'
-            is_organizer = req.auth.uid == organizer_uid
-            
-            if not (is_admin or is_organizer):
-                raise https_fn.HttpsError(
-                    code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
-                    message="Permission denied"
-                )
-        
+        # Fails closed: unprovisioned and suspended callers are rejected here.
+        require_elevated(req, organizer_uid)
+
         # Final validation before publishing (skip future date check since event already exists)
         validation_result = EventService.validate_event_data(event_data, is_edit_mode=True)
         if not validation_result['isValid']:
@@ -599,19 +682,9 @@ def duplicate_event(req: https_fn.CallableRequest) -> Dict[str, Any]:
         original_event_data = original_event_doc.to_dict()
         organizer_uid = original_event_data.get('organizer', {}).get('uid')
         
-        # Check permissions
-        user_doc = get_db().collection('users').document(req.auth.uid).get()
-        if user_doc.exists:
-            user_data = user_doc.to_dict()
-            is_admin = user_data.get('role') == 'admin'
-            is_organizer = req.auth.uid == organizer_uid
-            
-            if not (is_admin or is_organizer):
-                raise https_fn.HttpsError(
-                    code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
-                    message="Permission denied"
-                )
-        
+        # Fails closed: unprovisioned and suspended callers are rejected here.
+        require_elevated(req, organizer_uid)
+
         # Create new event document
         new_event_ref = get_db().collection('events').document()
         new_event_id = new_event_ref.id
@@ -697,19 +770,9 @@ def get_event_statistics(req: https_fn.CallableRequest) -> Dict[str, Any]:
         event_data = event_doc.to_dict()
         organizer_uid = event_data.get('organizer', {}).get('uid')
         
-        # Check permissions
-        user_doc = get_db().collection('users').document(req.auth.uid).get()
-        if user_doc.exists:
-            user_data = user_doc.to_dict()
-            is_admin = user_data.get('role') == 'admin'
-            is_organizer = req.auth.uid == organizer_uid
-            
-            if not (is_admin or is_organizer):
-                raise https_fn.HttpsError(
-                    code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
-                    message="Permission denied"
-                )
-        
+        # Fails closed: unprovisioned and suspended callers are rejected here.
+        require_elevated(req, organizer_uid)
+
         # Generate statistics
         statistics = EventService.generate_event_statistics(event_id)
         
@@ -769,19 +832,9 @@ def getEventAnalytics(req: https_fn.CallableRequest) -> Dict[str, Any]:
         event_data = event_doc.to_dict()
         organizer_uid = event_data.get('organizer', {}).get('uid')
         
-        # Check permissions
-        user_doc = get_db().collection('users').document(req.auth.uid).get()
-        if user_doc.exists:
-            user_data = user_doc.to_dict()
-            is_admin = user_data.get('role') == 'admin'
-            is_organizer = req.auth.uid == organizer_uid
-            
-            if not (is_admin or is_organizer):
-                raise https_fn.HttpsError(
-                    code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
-                    message="Permission denied"
-                )
-        
+        # Fails closed: unprovisioned and suspended callers are rejected here.
+        require_elevated(req, organizer_uid)
+
         # Get analytics data
         analytics_ref = get_db().collection('event_analytics').document(event_id)
         analytics_doc = analytics_ref.get()
@@ -849,19 +902,9 @@ def deleteEventData(req: https_fn.CallableRequest) -> Dict[str, Any]:
         event_data = event_doc.to_dict()
         organizer_uid = event_data.get('organizer', {}).get('uid')
         
-        # Check permissions
-        user_doc = get_db().collection('users').document(req.auth.uid).get()
-        if user_doc.exists:
-            user_data = user_doc.to_dict()
-            is_admin = user_data.get('role') == 'admin'
-            is_organizer = req.auth.uid == organizer_uid
-            
-            if not (is_admin or is_organizer):
-                raise https_fn.HttpsError(
-                    code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
-                    message="Permission denied"
-                )
-        
+        # Fails closed: unprovisioned and suspended callers are rejected here.
+        require_elevated(req, organizer_uid)
+
         # Check if event has registrations
         registrations = get_db().collection('registrations').where(
             filter=FieldFilter('eventId', '==', event_id)
@@ -1087,6 +1130,9 @@ def createAnonymousRegistration(req: https_fn.CallableRequest) -> Dict[str, Any]
             'paymentLinkToken': token,
             'paymentLinkExpiresAt': datetime.utcnow() + timedelta(hours=24),
             'paymentLinkStatus': 'active',
+            # Denormalized owner so firestore.rules can scope attendee PII without a
+            # per-document get(). See scripts/backfill-organizer-uid.cjs for existing docs.
+            'organizerUid': (event.get('organizer') or {}).get('uid', ''),
         }
         if isinstance(form.get('customResponses'), dict):
             registration['customResponses'] = form['customResponses']
@@ -1241,7 +1287,8 @@ def registerForEvent(req: https_fn.CallableRequest) -> Dict[str, Any]:
             'paymentStatus': 'unpaid' if event_data.get('ticketTypes', [{}])[0].get('price', 0) > 0 else 'free',
             'attendanceStatus': 'not_attended',
             'createdAt': firestore.SERVER_TIMESTAMP,
-            'updatedAt': firestore.SERVER_TIMESTAMP
+            'updatedAt': firestore.SERVER_TIMESTAMP,
+            'organizerUid': (event_data.get('organizer') or {}).get('uid', ''),
         }
         
         registration_ref.set(registration)
@@ -1315,7 +1362,6 @@ def processPaymentVerification(req: https_fn.CallableRequest) -> Dict[str, Any]:
         registration_data = registration_doc.to_dict()
         event_id = registration_data.get('eventId')
         
-        # Check permissions (organizer or admin)
         event_ref = get_db().collection('events').document(event_id)
         event_doc = event_ref.get()
         
@@ -1328,19 +1374,9 @@ def processPaymentVerification(req: https_fn.CallableRequest) -> Dict[str, Any]:
         event_data = event_doc.to_dict()
         organizer_uid = event_data.get('organizer', {}).get('uid')
         
-        # Check permissions
-        user_doc = get_db().collection('users').document(req.auth.uid).get()
-        if user_doc.exists:
-            user_data = user_doc.to_dict()
-            is_admin = user_data.get('role') == 'admin'
-            is_organizer = req.auth.uid == organizer_uid
-            
-            if not (is_admin or is_organizer):
-                raise https_fn.HttpsError(
-                    code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
-                    message="Permission denied"
-                )
-        
+        # Fails closed: unprovisioned and suspended callers are rejected here.
+        require_elevated(req, organizer_uid)
+
         # Update registration status
         update_data = {
             'updatedAt': firestore.SERVER_TIMESTAMP
@@ -1680,7 +1716,11 @@ def generateCertificate(req: https_fn.CallableRequest) -> Dict[str, Any]:
             'userId': attendee_id,
             'eventTitle': event_data.get('title', 'Event'),
             'attendeeName': user_data.get('displayName', 'Attendee'),
-            'attendeeEmail': user_data.get('email', ''),
+            # No attendeeEmail: /certificates is allow read: if true so the public
+            # verification portal can read it. Nothing in the client reads the email
+            # off this doc, so storing it only widened the Data Privacy Act 2012
+            # exposure. Notification emails read the registration instead.
+            # Existing docs: bun run firebase:scrub-certificate-emails
             'issueDate': firestore.SERVER_TIMESTAMP,
             'credentialId': f"APOHUB-{event_id[:8]}-{attendee_id[:8]}-{certificate_id[:8]}",
             'status': 'issued',
@@ -1751,19 +1791,9 @@ def checkInAttendee(req: https_fn.CallableRequest) -> Dict[str, Any]:
         event_data = event_doc.to_dict()
         organizer_uid = event_data.get('organizer', {}).get('uid')
         
-        # Check permissions
-        user_doc = get_db().collection('users').document(req.auth.uid).get()
-        if user_doc.exists:
-            user_data = user_doc.to_dict()
-            is_admin = user_data.get('role') == 'admin'
-            is_organizer = req.auth.uid == organizer_uid
-            
-            if not (is_admin or is_organizer):
-                raise https_fn.HttpsError(
-                    code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
-                    message="Permission denied"
-                )
-        
+        # Fails closed: unprovisioned and suspended callers are rejected here.
+        require_elevated(req, organizer_uid)
+
         # Find registration
         registration_query = get_db().collection('registrations').where(
             filter=FieldFilter('eventId', '==', event_id)
@@ -1848,19 +1878,9 @@ def bulkProcessPayments(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
                 message="Registration IDs are required"
             )
-        
-        # Check admin permissions
-        user_doc = get_db().collection('users').document(req.auth.uid).get()
-        if user_doc.exists:
-            user_data = user_doc.to_dict()
-            is_admin = user_data.get('role') == 'admin'
-            
-            if not is_admin:
-                raise https_fn.HttpsError(
-                    code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
-                    message="Admin access required for bulk operations"
-                )
-        
+
+        require_admin(req)
+
         processed_count = 0
         failed_count = 0
         results = []
@@ -1919,6 +1939,91 @@ def bulkProcessPayments(req: https_fn.CallableRequest) -> Dict[str, Any]:
             code=https_fn.FunctionsErrorCode.INTERNAL,
             message="Internal server error during bulk processing"
         )
+
+
+@https_fn.on_call()
+def deleteUser(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """Delete a user account completely: the Auth identity and the Firestore doc.
+
+    The client used to call a function with this name that did not exist, so the
+    single-user delete button always failed. It then fell back to deleting the
+    users document straight from the browser, which left the Firebase Auth
+    account alive. That orphan is not cosmetic: the account can still sign in,
+    AuthContext throws when it finds no profile and signs the client out, but
+    that does nothing to the ID token, and every callable's permission check was
+    skipped when the users document was absent. So an orphaned account could
+    reach Admin SDK writes that never pass through firestore.rules.
+
+    Both halves are deleted here, in that order. Deleting the document first
+    would re-open that window whenever the Auth call failed.
+
+    Idempotent per AGENTS.md 3.4: deleting an already-deleted account succeeds
+    rather than erroring, so a retry after a dropped response is safe.
+    """
+    if not req.auth:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.UNAUTHENTICATED,
+            message="Authentication required"
+        )
+
+    target_uid = req.data.get('userId')
+    if not target_uid or not isinstance(target_uid, str):
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+            message="A userId is required"
+        )
+
+    caller = require_admin(req)
+
+    if target_uid == req.auth.uid:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
+            message="You cannot delete your own account"
+        )
+
+    target_ref = get_db().collection('users').document(target_uid)
+    target_doc = target_ref.get()
+
+    if target_doc.exists:
+        target_role = (target_doc.to_dict() or {}).get('role')
+        # Only the superuser tier may remove another administrator. The client's
+        # VITE_SUPERUSER_EMAIL only decides which button is enabled; without this
+        # check an admin could call deleteUser on a peer directly.
+        if target_role == 'admin' and not is_super_user(req):
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
+                message="Only a superuser can delete another administrator"
+            )
+
+    # Auth first. If this raises for any reason other than the account already
+    # being gone, the Firestore document survives and the caller retries.
+    auth_deleted = False
+    try:
+        auth.delete_user(target_uid)
+        auth_deleted = True
+    except auth.UserNotFoundError:
+        # Already gone - the retry-safe path.
+        logger.info(f"deleteUser: Auth account {target_uid} already absent")
+    except Exception as auth_error:
+        logger.error(f"deleteUser: Auth delete failed for {target_uid}: {auth_error}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Could not remove the authentication account. Nothing was deleted."
+        )
+
+    if target_doc.exists:
+        target_ref.delete()
+
+    logger.info(
+        f"deleteUser: {caller.get('email', req.auth.uid)} deleted account {target_uid} "
+        f"(auth_removed={auth_deleted})"
+    )
+
+    return {
+        'success': True,
+        'message': f'User {target_uid} deleted',
+        'authAccountRemoved': auth_deleted,
+    }
 
 
 # Callable utilities for notifications/emails
