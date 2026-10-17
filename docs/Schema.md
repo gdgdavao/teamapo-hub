@@ -21,7 +21,6 @@ TeamApo Hub utilizes a NoSQL data architecture powered by **Google Cloud Firesto
 ```mermaid
 erDiagram
     USERS ||--o{ EVENTS : "organizes"
-    USERS ||--o{ NOTIFICATIONS : "receives"
     USERS ||--o{ ACTIVITY_LOGS : "triggers"
     
     EVENTS ||--o{ REGISTRATIONS : "has"
@@ -62,6 +61,7 @@ Stores administrative and organizer accounts. Attendee accounts are deliberately
 | `bio` | `string` | No | - | Professional biography or summary. |
 | `skills` | `array<string>` | No | `[]` | List of technical skill tags. |
 | `socialLinks` | `map` | No | `{}` | Social links (`github`, `linkedin`, `twitter`, `website`). |
+| `permissions` | `map` | No | `DEFAULT_ORGANIZER_PERMISSIONS` | Fine-grained functional permissions for organizers (Hybrid RBAC + ABPAC). Defines `events` (`canCreate`, `canUpdate`, `canDelete`), `attendees` (`canRead`, `canUpdate`, `canDelete`, `canExport`), `checkin` (`canCheckIn`), `payments` (`canVerify`), `certificates` (`canManage`), and `feedback` (`canRead`). Admin accounts ignore this field and retain full unrestricted capabilities across the platform. |
 | `createdAt` | `timestamp` | Yes | `serverTimestamp()` | Timestamp of account registration. |
 | `updatedAt` | `timestamp` | Yes | `serverTimestamp()` | Timestamp of last profile modification. |
 
@@ -322,27 +322,7 @@ Pre-aggregated rollups and metrics calculated per event to power real-time dashb
 
 ---
 
-### 3.11 `notifications`
-In-app alerts and notifications displayed in organizer and administrator notification panels.
-
-* **Document ID**: Auto-generated ID (`notificationId`)
-* **Security**: Only the user whose UID matches `userId` can read, update, or delete. System / anonymous triggers can create notifications.
-
-| Field | Type | Required | Description |
-| :--- | :--- | :---: | :--- |
-| `id` | `string` | Yes | Notification ID. |
-| `userId` | `string` | Yes | Target admin/organizer UID. |
-| `type` | `string` | Yes | Notification type (e.g. `'admin_pending_attendee'`, `'admin_payment_verified'`). |
-| `title` | `string` | Yes | Short headline. |
-| `message` | `string` | Yes | Detailed body message. |
-| `data` | `map` | No | Contextual metadata payload (e.g. `{ eventId, registrationId }`). |
-| `isRead` | `boolean` | Yes | Read flag (`false` upon creation). |
-| `isEmailSent` | `boolean` | Yes | Whether mirrored notification email was dispatched. |
-| `createdAt` | `timestamp` | Yes | Timestamp. |
-
----
-
-### 3.12 `system`
+### 3.11 `system`
 Global system configuration documents, feature flags, and platform-wide constants.
 
 * **Document ID**: Config category name (e.g. `general`, `integrations`, `maintenance`)
@@ -470,10 +450,6 @@ The following composite indexes are deployed via [firestore.indexes.json](../fir
 ### Collection Group: `activity_logs`
 1. `(type ASC, timestamp DESC)` — Filter logs by event/action type.
 2. `(userId ASC, timestamp DESC)` — Filter logs by triggering user.
-
-### Collection Group: `notifications`
-1. `(userId ASC, createdAt DESC)` — User notification feed.
-2. `(userId ASC, type ASC, createdAt DESC)` — Categorized user notifications.
 
 ---
 

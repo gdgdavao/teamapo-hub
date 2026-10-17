@@ -146,7 +146,7 @@ describe('RequireAnonymous', () => {
                 </RequireAnonymous>
               }
             />
-            <Route path="/dashboard" element={<div>DASHBOARD</div>} />
+            <Route path="/" element={<div>HOME</div>} />
           </Routes>
         </AbilityProvider>
       </MemoryRouter>,
@@ -159,10 +159,35 @@ describe('RequireAnonymous', () => {
     expect(screen.getByText('LOGIN FORM')).toBeInTheDocument();
   });
 
-  it('sends a signed-in visitor to the dashboard', () => {
+  it('sends a signed-in visitor to home', () => {
     authState.currentUser = { uid: 'admin-1' };
     authState.loading = false;
     renderLogin(true);
-    expect(screen.getByText('DASHBOARD')).toBeInTheDocument();
+    expect(screen.getByText('HOME')).toBeInTheDocument();
+  });
+
+  it('sends a signed-in visitor to the destination specified in ?from=', () => {
+    authState.currentUser = { uid: 'admin-1' };
+    authState.loading = false;
+    render(
+      <MemoryRouter initialEntries={['/auth/login?from=%2Fevents%2Fe1%2Fpreview']}>
+        <AbilityProvider value={ADMIN}>
+          <Routes>
+            <Route
+              path="/auth/login"
+              element={
+                <RequireAnonymous>
+                  <div>LOGIN FORM</div>
+                </RequireAnonymous>
+              }
+            />
+            <Route path="/events/:eventId/preview" element={<div>EVENT PREVIEW</div>} />
+            <Route path="/" element={<div>HOME</div>} />
+          </Routes>
+        </AbilityProvider>
+      </MemoryRouter>,
+    );
+    expect(screen.getByText('EVENT PREVIEW')).toBeInTheDocument();
+    expect(screen.queryByText('HOME')).not.toBeInTheDocument();
   });
 });

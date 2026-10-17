@@ -1,3 +1,4 @@
+import { APP_URL } from '../config/app';
 import { CertificateTemplate, Certificate } from '../types';
 import { logger } from './logger';
 
@@ -138,7 +139,7 @@ export class CertificateGenerationService {
         ctx.textAlign = (element.style.align as CanvasTextAlign) || 'left';
 
         // Replace template variables with actual values
-        let text = element.content
+        const text = element.content
           .replace(/\{\{\s*recipientName\s*\}\}/g, request.recipientName)
           .replace(/\{\{\s*verificationCode\s*\}\}/g, verificationCode)
           .replace(/\{\{\s*eventTitle\s*\}\}/g, request.eventTitle)
@@ -279,7 +280,7 @@ export class CertificateGenerationService {
         verificationCode = this.generateVerificationCode();
       }
     }
-    const verificationUrl = `https://apohub.gdgdavao.org/verify/${verificationCode}`;
+    const verificationUrl = `${APP_URL}/verify/${verificationCode}`;
 
     try {
       // Create a canvas to generate the certificate

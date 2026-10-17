@@ -21,6 +21,7 @@ import { httpsCallable } from 'firebase/functions';
 import { logger } from '../utils/logger';
 import { sendPasswordResetEmail } from 'firebase/auth';
 import { auth, db, storage, functions } from '../config/firebase';
+import { AUTH_ACTION_CODE_SETTINGS } from '../config/app';
 import { User } from '../types';
 
 export interface UserWithMetadata extends User {
@@ -176,13 +177,33 @@ export class UserService {
   static async updateUserProfile(userId: string, updates: Partial<User>): Promise<void> {
     try {
       const userRef = doc(db, this.USERS_COLLECTION, userId);
-      await updateDoc(userRef, {
-        ...updates,
-        updatedAt: serverTimestamp()
-      });
+      // Clean undefined keys to maintain zero-undefined invariant
+      const sanitizedUpdates: Record<string, any> = { updatedAt: serverTimestamp() };
+      for (const [key, val] of Object.entries(updates)) {
+        if (val !== undefined) {
+          sanitizedUpdates[key] = val;
+        }
+      }
+      await updateDoc(userRef, sanitizedUpdates);
     } catch (error) {
       logger.error('Error updating user profile:', error);
       throw new Error('Failed to update user profile');
+    }
+  }
+
+  /**
+   * Update organizer granular permissions (admin only)
+   */
+  static async updateUserPermissions(userId: string, permissions: User['permissions']): Promise<void> {
+    try {
+      const userRef = doc(db, this.USERS_COLLECTION, userId);
+      await updateDoc(userRef, {
+        permissions: permissions ?? null,
+        updatedAt: serverTimestamp(),
+      });
+    } catch (error) {
+      logger.error('Error updating user permissions:', error);
+      throw new Error('Failed to update user permissions');
     }
   }
 
@@ -283,7 +304,7 @@ export class UserService {
    */
   static async sendPasswordReset(email: string): Promise<void> {
     try {
-      await sendPasswordResetEmail(auth, email);
+      await sendPasswordResetEmail(auth, email, AUTH_ACTION_CODE_SETTINGS);
     } catch (error) {
       logger.error('Error sending password reset:', error);
       throw new Error('Failed to send password reset email');

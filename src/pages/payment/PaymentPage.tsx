@@ -1,33 +1,34 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { 
-  CreditCardIcon, 
-  QrCodeIcon, 
+import { useParams, useLocation } from 'react-router-dom';
+import {
+  CreditCardIcon,
+  QrCodeIcon,
   PhotoIcon,
-  CheckCircleIcon,
   ExclamationTriangleIcon,
   BanknotesIcon
 } from '@heroicons/react/24/outline';
+import { InformationCircleIcon } from '@heroicons/react/20/solid';
 import { EventService } from '../../services/eventService';
 import { PaymentService } from '../../services/paymentService';
 import { RegistrationService } from '../../services/registrationService';
+import { Button, Card, EmptyState, Input, LoadingSpinner, Select, Textarea } from '../../components/UI';
 import { Event, Registration, PaymentConfig } from '../../types';
+import { toDateSafe } from '../../utils/dateUtils';
 import { logger } from '../../utils/logger';
 import toast from 'react-hot-toast';
 
 const PaymentPage: React.FC = () => {
   const { registrationId } = useParams<{ registrationId: string }>();
-  const navigate = useNavigate();
   const location = useLocation();
   
   const [registration, setRegistration] = useState<Registration | null>(null);
   const [event, setEvent] = useState<Event | null>(null);
-  // Multiple payment configurations support
   const [paymentConfigs, setPaymentConfigs] = useState<PaymentConfig[]>([]);
   const [selectedPaymentConfigId, setSelectedPaymentConfigId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [formDisabled, setFormDisabled] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   
   // Payment proof form state
   const [paymentProof, setPaymentProof] = useState({
@@ -61,12 +62,15 @@ const PaymentPage: React.FC = () => {
   const loadRegistrationData = async () => {
     try {
       setLoading(true);
+      setErrorMessage(null);
       
       // Check if this is a temporary registration (from session storage)
       if (registrationId!.startsWith('temp_')) {
         const tempData = sessionStorage.getItem(`temp_registration_${registrationId}`);
         if (!tempData) {
-          throw new Error('Registration session expired. Please start over.');
+          setErrorMessage('Your registration session has expired. Please restart your registration.');
+          setLoading(false);
+          return;
         }
         
         const tempRegistration = JSON.parse(tempData);
@@ -75,7 +79,9 @@ const PaymentPage: React.FC = () => {
         const sessionAge = Date.now() - tempRegistration.timestamp;
         if (sessionAge > 24 * 60 * 60 * 1000) {
           sessionStorage.removeItem(`temp_registration_${registrationId}`);
-          throw new Error('Registration session expired. Please start over.');
+          setErrorMessage('Your registration session has expired. Please restart your registration.');
+          setLoading(false);
+          return;
         }
         
         // Create a mock registration object for the UI
@@ -98,7 +104,9 @@ const PaymentPage: React.FC = () => {
         // Get event details
         const eventData = await EventService.getEvent(tempRegistration.eventId);
         if (!eventData) {
-          throw new Error('Event not found');
+          setErrorMessage('Event not found or is no longer published.');
+          setLoading(false);
+          return;
         }
         setEvent(eventData);
         
@@ -116,34 +124,44 @@ const PaymentPage: React.FC = () => {
         return;
       }
       
-      // Resolve public payment access through the token-verifying callable.
+      // Enforce secure payment token from email link
       const paymentToken = new URLSearchParams(location.search).get('t');
-      const registrationData = paymentToken
-        ? await RegistrationService.getRegistrationByPaymentToken(registrationId!, paymentToken)
-        : await RegistrationService.getRegistrationById(registrationId!);
-      if (!registrationData) {
-        throw new Error('Registration not found');
+      if (!paymentToken) {
+        setErrorMessage('A valid payment authorization token is required to view and submit payment. Please use the secure link sent to your confirmation email.');
+        setLoading(false);
+        return;
       }
+
+      const registrationData = await RegistrationService.getRegistrationByPaymentToken(registrationId!, paymentToken);
+      if (!registrationData) {
+        setErrorMessage('Payment registration not found or authorization token is invalid.');
+        setLoading(false);
+        return;
+      }
+
       // If payment already submitted or completed, block access to payment form
       const status = (registrationData as any).paymentStatus as string | undefined;
       if (status && status !== 'pending') {
-        // If processing or paid, send to success page; otherwise to home with info
         if (status === 'processing' || status === 'paid') {
-          toast('This payment link has already been used.', { icon: 'ℹ️' });
+          toast('This payment link has already been used.', {
+            icon: <InformationCircleIcon className="h-5 w-5 text-primary" aria-hidden="true" />
+          });
           window.location.replace('/payment/success');
           return;
         }
-        toast.error('This payment link is no longer available.');
-        window.location.replace('/');
+        setErrorMessage('This payment link is no longer available.');
+        setLoading(false);
         return;
       }
       setRegistration(registrationData);
 
       // If a payment proof already exists (pending/approved), block access
       try {
-        const latestProof = await PaymentService.getLatestPaymentProofByRegistrationId(registrationData.id);
+        const latestProof = await PaymentService.getLatestPaymentProofByRegistrationId(registrationData.id, registrationData.eventId);
         if (latestProof && latestProof.verificationStatus !== 'rejected') {
-          toast('Payment already submitted for this registration.', { icon: 'ℹ️' });
+          toast('Payment already submitted for this registration.', {
+            icon: <InformationCircleIcon className="h-5 w-5 text-primary" aria-hidden="true" />
+          });
           window.location.replace('/payment/success');
           return;
         }
@@ -152,26 +170,28 @@ const PaymentPage: React.FC = () => {
       }
 
       // Token check to enforce expiring, one-time links
-       const token = paymentToken;
+      const token = paymentToken;
       const regToken = (registrationData as any).paymentLinkToken as string | undefined;
       const exp = (registrationData as any).paymentLinkExpiresAt as any;
       const linkStatus = (registrationData as any).paymentLinkStatus as string | undefined;
       let notExpired = true;
       if (exp) {
         try {
-          const expDate = typeof exp?.toDate === 'function' ? exp.toDate() : new Date(exp.seconds ? exp.seconds * 1000 : exp);
-          notExpired = expDate.getTime() > Date.now();
+          const expDate = toDateSafe(exp);
+          notExpired = expDate ? expDate.getTime() > Date.now() : true;
         } catch { /* ignore */ }
       }
       if (regToken) {
         if (linkStatus && linkStatus !== 'active') {
-          toast('This payment link has already been used.', { icon: 'ℹ️' });
+          toast('This payment link has already been used.', {
+            icon: <InformationCircleIcon className="h-5 w-5 text-primary" aria-hidden="true" />
+          });
           window.location.replace('/payment/success');
           return;
         }
         if (!token || token !== regToken || !notExpired) {
-          toast.error('Payment link expired or invalid.');
-          window.location.replace('/');
+          setErrorMessage('Payment link has expired or is invalid. Please contact the event organizer.');
+          setLoading(false);
           return;
         }
       }
@@ -179,7 +199,9 @@ const PaymentPage: React.FC = () => {
       // Get event details
       const eventData = await EventService.getEvent(registrationData.eventId);
       if (!eventData) {
-        throw new Error('Event not found');
+        setErrorMessage('Event not found or is no longer published.');
+        setLoading(false);
+        return;
       }
       setEvent(eventData);
       
@@ -198,8 +220,7 @@ const PaymentPage: React.FC = () => {
       
     } catch (error) {
       logger.error('Error loading registration data:', error);
-      toast.error('Failed to load payment information');
-      window.location.replace('/');
+      setErrorMessage('Failed to load payment information. The link may have expired or is invalid.');
     } finally {
       setLoading(false);
     }
@@ -214,14 +235,14 @@ const PaymentPage: React.FC = () => {
       const hasValidExtension = validExtensions.some(ext => fileName.endsWith(`.${ext}`));
       
       if (!file.type.startsWith('image/') && !hasValidExtension) {
-        toast.error('Please select a valid image file (JPG, PNG, GIF, WebP, HEIC)');
+        toast.error('Invalid image format. Please select a JPG, PNG, GIF, WebP, or HEIC file.');
         e.target.value = ''; // Reset input
         return;
       }
       
       // Validate file size (5MB limit)
       if (file.size > 5 * 1024 * 1024) {
-        toast.error('Image must be smaller than 5MB');
+        toast.error('Image exceeds file size limit. Please choose an image smaller than 5MB.');
         e.target.value = ''; // Reset input
         return;
       }
@@ -377,9 +398,8 @@ const PaymentPage: React.FC = () => {
       toast.dismiss(uploadToast);
       
       // Do NOT auto-complete registration. Keep status pending for manual verification.
-      toast.success('Payment proof submitted successfully! Awaiting verification.', {
+      toast.success('Payment proof submitted. Awaiting verification.', {
         duration: 4000,
-        icon: '✅'
       });
       
       // Hard redirect to prevent back button access
@@ -396,7 +416,7 @@ const PaymentPage: React.FC = () => {
       }
       
       // Show detailed error message with user-friendly text
-      let errorMessage = 'Failed to submit payment proof';
+      let errorMessage = 'Failed to submit payment proof. Please try again.';
       
       if (error.message) {
         if (error.message.includes('permission') || error.message.includes('insufficient')) {
@@ -422,76 +442,83 @@ const PaymentPage: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+      <div className="max-w-6xl 2xl:max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12">
         <div className="flex items-center justify-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+          <LoadingSpinner size="lg" />
         </div>
       </div>
     );
   }
 
-  if (!registration || !event) {
+  if (errorMessage || !registration || !event) {
     return (
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <div className="bg-red-50 border border-red-200 rounded-lg p-6 text-center">
-          <ExclamationTriangleIcon className="h-12 w-12 text-red-500 mx-auto mb-4" />
-          <h2 className="text-xl font-semibold text-red-800 mb-2">Registration Not Found</h2>
-          <p className="text-red-600">The registration you're looking for doesn't exist or has been removed.</p>
-        </div>
+      <div className="max-w-6xl 2xl:max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12">
+        <Card padding="lg">
+          <EmptyState
+            icon={<ExclamationTriangleIcon className="h-10 w-10 text-warning" />}
+            title="Payment Access Restricted"
+            description={errorMessage || "The registration you're looking for doesn't exist or has been removed."}
+            action={
+              <Button variant="outlined" onClick={() => window.location.href = '/'}>
+                Return to Home
+              </Button>
+            }
+          />
+        </Card>
       </div>
     );
   }
 
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+    <div className="max-w-6xl 2xl:max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12">
       {/* Header */}
       <div className="text-center mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">Complete Your Payment</h1>
-        <p className="text-gray-600">Event: {event.title}</p>
-        <p className="text-base text-gray-500">Registration ID: {registration.id}</p>
+        <h1 className="text-3xl font-bold text-on-surface mb-2">Complete Your Payment</h1>
+        <p className="text-on-surface-variant break-words">Event: {event.title}</p>
+        <p className="text-base text-on-surface-variant font-mono break-all">Registration ID: {registration.id}</p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
         {/* Payment Information */}
         <div className="space-y-6">
           {/* Payment Amount */}
-          <div className="bg-white rounded-xl shadow-lg border border-gray-100 p-6">
-            <h2 className="text-lg font-bold text-gray-900 mb-4 flex items-center">
-              <BanknotesIcon className="h-5 w-5 text-green-500 mr-2" />
+          <Card padding="lg">
+            <h2 className="text-lg font-bold text-on-surface mb-4 flex items-center gap-2">
+              <BanknotesIcon className="h-5 w-5 shrink-0 text-success" aria-hidden="true" />
               Payment Summary
             </h2>
             <div className="space-y-3">
-              <div className="flex justify-between">
-                <span className="text-gray-600">Ticket Price:</span>
-                <span className="font-semibold">₱{registration.originalAmount.toLocaleString()}</span>
+              <div className="flex justify-between gap-3">
+                <span className="text-on-surface-variant">Ticket Price:</span>
+                <span className="shrink-0 font-semibold tabular-nums">₱{registration.originalAmount.toLocaleString()}</span>
               </div>
               {registration.discountAmount > 0 && (
-                <div className="flex justify-between text-green-600">
+                <div className="flex justify-between gap-3 text-success">
                   <span>Discount:</span>
-                  <span>-₱{registration.discountAmount.toLocaleString()}</span>
+                  <span className="shrink-0 tabular-nums">-₱{registration.discountAmount.toLocaleString()}</span>
                 </div>
               )}
-              <div className="border-t pt-3">
-                <div className="flex justify-between text-lg font-bold">
+              <div className="border-t border-outline-variant pt-3">
+                <div className="flex justify-between gap-3 text-lg font-bold">
                   <span>Total Amount:</span>
-                  <span className="text-blue-600">₱{registration.totalAmount.toLocaleString()}</span>
+                  <span className="shrink-0 text-primary tabular-nums">₱{registration.totalAmount.toLocaleString()}</span>
                 </div>
               </div>
             </div>
-          </div>
+          </Card>
 
           {/* Payment Methods */}
           {selectedConfig && (
-            <div className="bg-white rounded-xl shadow-lg border border-gray-100 p-6">
-              <h2 className="text-lg font-bold text-gray-900 mb-4 flex items-center">
-                <CreditCardIcon className="h-5 w-5 text-blue-500 mr-2" />
+            <Card padding="lg">
+              <h2 className="text-lg font-bold text-on-surface mb-4 flex items-center gap-2">
+                <CreditCardIcon className="h-5 w-5 shrink-0 text-primary" aria-hidden="true" />
                 Payment Instructions
               </h2>
               {/* Payment Method Selector (multiple configs) */}
               {paymentConfigs.length > 1 && (
                 <div className="mb-6">
-                  <label className="mb-2 block text-base font-medium text-gray-700">Choose a payment method</label>
-                  <select
+                  <Select
+                    label="Choose a payment method"
                     value={selectedPaymentConfigId || ''}
                     onChange={(e) => {
                       const id = e.target.value;
@@ -501,24 +528,20 @@ const PaymentPage: React.FC = () => {
                         setPaymentProof(prev => ({ ...prev, paymentMethod: cfg.name || cfg.id }));
                       }
                     }}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    {paymentConfigs.map(cfg => (
-                      <option key={cfg.id} value={cfg.id}>{cfg.name}</option>
-                    ))}
-                  </select>
+                    options={paymentConfigs.map(cfg => ({ value: cfg.id, label: cfg.name }))}
+                  />
                 </div>
               )}
-              
+
               {/* Bank Details */}
               <div className="mb-6">
-                <h3 className="mb-3 text-lg font-medium text-gray-800">Bank Transfer Details:</h3>
-                <div className="bg-gray-50 rounded-lg p-4 space-y-2">
-                  <div><span className="font-medium">Bank:</span> {selectedConfig.bankDetails.bankName}</div>
-                  <div><span className="font-medium">Account Name:</span> {selectedConfig.bankDetails.accountName}</div>
-                  <div><span className="font-medium">Account Number:</span> {selectedConfig.bankDetails.accountNumber}</div>
+                <h3 className="mb-3 text-lg font-medium text-on-surface">Bank Transfer Details:</h3>
+                <div className="rounded-lg bg-surface-container-low p-4 space-y-2">
+                  <div className="break-words"><span className="font-medium">Bank:</span> {selectedConfig.bankDetails.bankName}</div>
+                  <div className="break-words"><span className="font-medium">Account Name:</span> {selectedConfig.bankDetails.accountName}</div>
+                  <div className="break-all font-mono"><span className="font-medium font-sans">Account Number:</span> {selectedConfig.bankDetails.accountNumber}</div>
                   {selectedConfig.bankDetails.swiftCode && (
-                    <div><span className="font-medium">SWIFT Code:</span> {selectedConfig.bankDetails.swiftCode}</div>
+                    <div className="break-all font-mono"><span className="font-medium font-sans">SWIFT Code:</span> {selectedConfig.bankDetails.swiftCode}</div>
                   )}
                 </div>
               </div>
@@ -526,15 +549,15 @@ const PaymentPage: React.FC = () => {
               {/* QR Code */}
               {selectedConfig.qrCodeUrl && (
                 <div className="mb-6">
-                  <h3 className="mb-3 flex items-center text-lg font-medium text-gray-800">
-                    <QrCodeIcon className="h-4 w-4 mr-1" />
+                  <h3 className="mb-3 flex items-center gap-1 text-lg font-medium text-on-surface">
+                    <QrCodeIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
                     Scan QR Code:
                   </h3>
                   <div className="flex justify-center">
                     <img
                       src={selectedConfig.qrCodeUrl}
                       alt="Payment QR Code"
-                      className="w-64 h-128 border border-gray-200 rounded-lg shadow-lg"
+                      className="w-64 h-auto border border-outline-variant rounded-lg shadow-elevation-1"
                     />
                   </div>
                 </div>
@@ -543,62 +566,57 @@ const PaymentPage: React.FC = () => {
               {/* Payment Instructions */}
               {selectedConfig.instructions && (
                 <div className="mb-6">
-                  <h3 className="mb-3 text-lg font-medium text-gray-800">Instructions:</h3>
-                  <div className="bg-blue-50 rounded-lg p-4">
-                    <p className="text-gray-700 whitespace-pre-line">{selectedConfig.instructions}</p>
+                  <h3 className="mb-3 text-lg font-medium text-on-surface">Instructions:</h3>
+                  <div className="rounded-lg bg-primary-container p-4">
+                    <p className="text-on-primary-container whitespace-pre-line break-words">{selectedConfig.instructions}</p>
                   </div>
                 </div>
               )}
-            </div>
+            </Card>
           )}
           {!selectedConfig && (
-            <div className="bg-yellow-50 rounded-xl border border-yellow-200 p-6">
-              <h3 className="font-semibold text-yellow-800 mb-2">Payment method not available</h3>
-              <p className="text-yellow-700">This event has no active payment methods configured. Please contact the organizer.</p>
+            <div className="rounded-xl border border-outline-variant bg-warning-container p-8">
+              <h3 className="font-semibold text-on-warning-container mb-2">Payment method not available</h3>
+              <p className="text-on-warning-container">This event has no active payment methods configured. Please contact the organizer.</p>
             </div>
           )}
         </div>
 
         {/* Payment Proof Submission */}
-        <div className="bg-white rounded-xl shadow-lg border border-gray-100 p-6">
-          <h2 className="text-lg font-bold text-gray-900 mb-4 flex items-center">
-            <PhotoIcon className="h-5 w-5 text-purple-500 mr-2" />
+        <Card padding="lg">
+          <h2 className="text-lg font-bold text-on-surface mb-4 flex items-center gap-2">
+            <PhotoIcon className="h-5 w-5 shrink-0 text-primary" aria-hidden="true" />
             Submit Payment Proof
           </h2>
-          
+
           {formDisabled && (
-            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-              <p className="text-blue-800 font-medium">✓ Payment proof submitted successfully!</p>
-              <p className="text-base text-blue-600">Redirecting to confirmation page...</p>
+            <div className="mb-4 rounded-lg border border-primary-container bg-primary-container p-3">
+              <p className="font-medium text-on-primary-container">Payment proof submitted successfully!</p>
+              <p className="text-base text-primary">Redirecting to confirmation page...</p>
             </div>
           )}
-          
+
           <form onSubmit={handleSubmitPaymentProof} className="space-y-4">
             {/* Transaction ID */}
             {selectedConfig?.requiresTransactionId && (
-              <div>
-                <label className="mb-2 block text-base font-medium text-gray-700">
-                  Transaction ID <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={paymentProof.transactionId}
-                  onChange={(e) => setPaymentProof(prev => ({ ...prev, transactionId: e.target.value }))}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="Enter your transaction/reference number"
-                  required={selectedConfig.requiresTransactionId}
-                  disabled={formDisabled}
-                />
-              </div>
+              <Input
+                mono
+                label="Transaction ID"
+                required={selectedConfig.requiresTransactionId}
+                value={paymentProof.transactionId}
+                onChange={(e) => setPaymentProof(prev => ({ ...prev, transactionId: e.target.value }))}
+                placeholder="Enter your transaction/reference number"
+                disabled={formDisabled}
+              />
             )}
 
-            {/* Selected Payment Method (auto from config) */}
+            {/* Selected Payment Method (auto from config). A read-only value,
+                not a control - the attendee did not choose it and must not be
+                able to change it here. */}
             {selectedConfig && (
               <div>
-                <label className="mb-1 block text-base font-medium text-gray-700">
-                  Payment Method
-                </label>
-                <div className="px-4 py-3 border border-gray-200 rounded-xl bg-gray-50 text-gray-800">
+                <p className="mb-2xs text-sm font-medium text-on-surface">Payment Method</p>
+                <div className="rounded-md border border-outline-variant bg-surface-container-low px-field-x py-field-y text-on-surface break-words">
                   {selectedConfig.name}
                 </div>
               </div>
@@ -606,79 +624,62 @@ const PaymentPage: React.FC = () => {
 
             {/* Payment Proof Image */}
             {selectedConfig?.requiresProof && (
+              <Input
+                type="file"
+                accept="image/*"
+                label="Payment Proof Image"
+                required={selectedConfig.requiresProof}
+                onChange={handleImageUpload}
+                disabled={formDisabled}
+              />
+            )}
+
+            {/* Preview */}
+            {paymentProof.proofImagePreview && (
               <div>
-                <label className="mb-2 block text-base font-medium text-gray-700">
-                  Payment Proof Image <span className="text-red-500">*</span>
-                </label>
-                <div className="space-y-3">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handleImageUpload}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    required={selectedConfig.requiresProof}
-                    disabled={formDisabled}
-                  />
-                  
-                  {paymentProof.proofImagePreview && (
-                    <div className="mt-3">
-                      <p className="mb-2 text-base text-gray-600">Preview:</p>
-                      <img 
-                        src={paymentProof.proofImagePreview} 
-                        alt="Payment proof preview"
-                        className="w-full max-w-xs border border-gray-200 rounded-lg"
-                      />
-                    </div>
-                  )}
-                </div>
+                <p className="mb-2 text-base text-on-surface-variant">Preview:</p>
+                <img
+                  src={paymentProof.proofImagePreview}
+                  alt="Payment proof preview"
+                  className="w-full max-w-xs border border-outline-variant rounded-lg"
+                />
               </div>
             )}
 
             {/* Notes */}
-            <div>
-              <label className="mb-2 block text-base font-medium text-gray-700">
-                Additional Notes (Optional)
-              </label>
-              <textarea
-                value={paymentProof.notes}
-                onChange={(e) => setPaymentProof(prev => ({ ...prev, notes: e.target.value }))}
-                className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                rows={3}
-                placeholder="Any additional information about your payment..."
-                disabled={formDisabled}
-              />
-            </div>
+            <Textarea
+              label="Additional Notes"
+              hint="Optional"
+              value={paymentProof.notes}
+              onChange={(e) => setPaymentProof(prev => ({ ...prev, notes: e.target.value }))}
+              rows={3}
+              placeholder="Any additional information about your payment..."
+              disabled={formDisabled}
+            />
 
             {/* Submit Button */}
-            <button
+            <Button
               type="submit"
-              disabled={submitting || !selectedConfig || formDisabled}
-              className="w-full bg-blue-600 text-white py-4 px-6 rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 font-semibold text-lg shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
+              size="lg"
+              fullWidth
+              loading={submitting}
+              disabled={!selectedConfig || formDisabled}
             >
-              {submitting ? (
-                <div className="flex items-center justify-center">
-                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
-                  Submitting...
-                </div>
-              ) : formDisabled ? (
-                'Payment Submitted ✓'
-              ) : (
-                'Complete Registration'
-              )}
-            </button>
+              {formDisabled ? 'Payment Submitted' : 'Complete Registration'}
+            </Button>
           </form>
 
           {/* Status Info */}
-          <div className="mt-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-            <div className="flex items-start">
-              <ExclamationTriangleIcon className="h-5 w-5 text-yellow-500 mt-0.5 mr-2" />
-              <div className="text-base text-yellow-800">
+          <div className="mt-6 rounded-lg border border-outline-variant bg-warning-container p-4">
+            <div className="flex items-start gap-2">
+              <ExclamationTriangleIcon className="h-5 w-5 shrink-0 mt-0.5 text-warning" aria-hidden="true" />
+              <div className="min-w-0 text-base text-on-warning-container">
                 <p className="font-medium">Important:</p>
                 <p>Your payment will be verified by our team. You'll receive a confirmation email once approved. This may take 1-2 business days.</p>
               </div>
             </div>
           </div>
-        </div>
+        </Card>
       </div>
     </div>
   );

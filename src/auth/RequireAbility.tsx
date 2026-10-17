@@ -3,7 +3,8 @@ import { Navigate, useLocation } from 'react-router-dom';
 import { useAbility } from '@casl/react';
 import { useAuth } from '../contexts/AuthContext';
 import type { AppAction, AppSubject } from './ability';
-import LoadingSpinner from '../components/shared/UI/LoadingSpinner';
+import { LoadingSpinner } from '../components/UI';
+import { resolveLoginDestination } from '../utils/authRedirect';
 
 interface RequireAbilityProps {
   children: React.ReactNode;
@@ -62,13 +63,16 @@ const RequireAbility: React.FC<RequireAbilityProps> = ({ children, ability, on }
  */
 export const RequireAnonymous: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { currentUser, loading } = useAuth();
+  const location = useLocation();
 
   if (loading) {
     return <LoadingSpinner fullScreen />;
   }
 
   if (currentUser) {
-    return <Navigate to="/dashboard" replace />;
+    const from = new URLSearchParams(location.search).get('from');
+    const destination = resolveLoginDestination(from);
+    return <Navigate to={destination} replace />;
   }
 
   return <>{children}</>;

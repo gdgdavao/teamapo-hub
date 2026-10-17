@@ -525,12 +525,27 @@ const generateSampleRegistrations = () => [
     totalAmount: 500,
     currency: 'PHP',
     paymentStatus: 'paid',
+    paymentDetails: {
+      paymentId: 'pay-reg-001',
+      paymentMethod: 'gcash',
+      transactionId: 'GCash-20241215-001',
+      paidAt: Timestamp.fromDate(new Date('2024-12-15T10:00:00Z'))
+    },
     attendanceStatus: 'registered',
     feedbackSubmitted: false,
     certificateIssued: false,
     qrCode: 'QR-REG-001-ALICE',
     registrationDate: Timestamp.fromDate(new Date('2024-12-15')),
     updatedAt: Timestamp.now(),
+    paymentProof: {
+      id: 'proof-001',
+      registrationId: 'reg-001',
+      proofImageUrl: 'https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?w=400',
+      transactionId: 'GCash-20241215-001',
+      submittedAt: Timestamp.fromDate(new Date('2024-12-15T10:00:00Z')),
+      verificationStatus: 'approved',
+      notes: 'Paid via GCash'
+    },
     pricing: {
       ticketTypeId: 'early-bird',
       originalPrice: 500,
@@ -556,12 +571,27 @@ const generateSampleRegistrations = () => [
     totalAmount: 750,
     currency: 'PHP',
     paymentStatus: 'paid',
+    paymentDetails: {
+      paymentId: 'pay-reg-002',
+      paymentMethod: 'maya',
+      transactionId: 'Maya-20241220-002',
+      paidAt: Timestamp.fromDate(new Date('2024-12-20T11:00:00Z'))
+    },
     attendanceStatus: 'registered',
     feedbackSubmitted: false,
     certificateIssued: false,
     qrCode: 'QR-REG-002-BOB',
     registrationDate: Timestamp.fromDate(new Date('2024-12-20')),
     updatedAt: Timestamp.now(),
+    paymentProof: {
+      id: 'proof-002',
+      registrationId: 'reg-002',
+      proofImageUrl: 'https://images.unsplash.com/photo-1563013544-824ae1b704d3?w=400',
+      transactionId: 'Maya-20241220-002',
+      submittedAt: Timestamp.fromDate(new Date('2024-12-20T11:00:00Z')),
+      verificationStatus: 'approved',
+      notes: 'Paid via Maya'
+    },
     pricing: {
       ticketTypeId: 'regular',
       originalPrice: 750,
@@ -620,12 +650,27 @@ const generateSampleRegistrations = () => [
     totalAmount: 3000,
     currency: 'PHP',
     paymentStatus: 'paid',
+    paymentDetails: {
+      paymentId: 'pay-reg-004',
+      paymentMethod: 'bank_transfer',
+      transactionId: 'BPI-20250115-004',
+      paidAt: Timestamp.fromDate(new Date('2025-01-15T15:00:00Z'))
+    },
     attendanceStatus: 'registered',
     feedbackSubmitted: false,
     certificateIssued: false,
     qrCode: 'QR-REG-004-DIANA',
     registrationDate: Timestamp.fromDate(new Date('2025-01-15')),
     updatedAt: Timestamp.now(),
+    paymentProof: {
+      id: 'proof-004',
+      registrationId: 'reg-004',
+      proofImageUrl: 'https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?w=400',
+      transactionId: 'BPI-20250115-004',
+      submittedAt: Timestamp.fromDate(new Date('2025-01-15T15:00:00Z')),
+      verificationStatus: 'approved',
+      notes: 'Paid via BPI bank transfer'
+    },
     pricing: {
       ticketTypeId: 'professional',
       originalPrice: 3000,
@@ -634,7 +679,7 @@ const generateSampleRegistrations = () => [
       isEarlyBird: false
     }
   },
-  // PENDING PAYMENT REGISTRATIONS - These need verification
+  // PAID REGISTRATIONS - Payment verified, all with approved proofs
   {
     id: 'reg-005',
     eventId: 'event-001',
@@ -651,7 +696,13 @@ const generateSampleRegistrations = () => [
     discountAmount: 0,
     totalAmount: 500,
     currency: 'PHP',
-    paymentStatus: 'pending',
+    paymentStatus: 'paid',
+    paymentDetails: {
+      paymentId: 'pay-reg-005',
+      paymentMethod: 'gcash',
+      transactionId: 'GCash-20250102-001234',
+      paidAt: Timestamp.fromDate(new Date('2025-01-02T14:30:00Z'))
+    },
     attendanceStatus: 'registered',
     feedbackSubmitted: false,
     certificateIssued: false,
@@ -664,7 +715,7 @@ const generateSampleRegistrations = () => [
       proofImageUrl: 'https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?w=400',
       transactionId: 'GCash-20250102-001234',
       submittedAt: Timestamp.fromDate(new Date('2025-01-02T14:30:00Z')),
-      verificationStatus: 'pending',
+      verificationStatus: 'approved',
       notes: 'Payment via GCash - Screenshot attached'
     },
     pricing: {
@@ -691,7 +742,13 @@ const generateSampleRegistrations = () => [
     discountAmount: 0,
     totalAmount: 750,
     currency: 'PHP',
-    paymentStatus: 'pending',
+    paymentStatus: 'paid',
+    paymentDetails: {
+      paymentId: 'pay-reg-006',
+      paymentMethod: 'maya',
+      transactionId: 'Maya-20250103-567890',
+      paidAt: Timestamp.fromDate(new Date('2025-01-03T09:15:00Z'))
+    },
     attendanceStatus: 'registered',
     feedbackSubmitted: false,
     certificateIssued: false,
@@ -704,7 +761,7 @@ const generateSampleRegistrations = () => [
       proofImageUrl: 'https://images.unsplash.com/photo-1563013544-824ae1b704d3?w=400',
       transactionId: 'Maya-20250103-567890',
       submittedAt: Timestamp.fromDate(new Date('2025-01-03T09:15:00Z')),
-      verificationStatus: 'pending',
+      verificationStatus: 'approved',
       notes: 'Paid through Maya wallet'
     },
     pricing: {
@@ -731,7 +788,13 @@ const generateSampleRegistrations = () => [
     discountAmount: 0,
     totalAmount: 3000,
     currency: 'PHP',
-    paymentStatus: 'pending',
+    paymentStatus: 'paid',
+    paymentDetails: {
+      paymentId: 'pay-reg-007',
+      paymentMethod: 'bank_transfer',
+      transactionId: 'BPI-20250104-112233',
+      paidAt: Timestamp.fromDate(new Date('2025-01-04T16:45:00Z'))
+    },
     attendanceStatus: 'registered',
     feedbackSubmitted: false,
     certificateIssued: false,
@@ -744,7 +807,7 @@ const generateSampleRegistrations = () => [
       proofImageUrl: 'https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?w=400',
       transactionId: 'BPI-20250104-112233',
       submittedAt: Timestamp.fromDate(new Date('2025-01-04T16:45:00Z')),
-      verificationStatus: 'pending',
+      verificationStatus: 'approved',
       notes: 'Bank transfer - BPI Online Banking'
     },
     pricing: {
@@ -771,7 +834,13 @@ const generateSampleRegistrations = () => [
     discountAmount: 0,
     totalAmount: 1500,
     currency: 'PHP',
-    paymentStatus: 'pending',
+    paymentStatus: 'paid',
+    paymentDetails: {
+      paymentId: 'pay-reg-008',
+      paymentMethod: 'gcash',
+      transactionId: 'GCash-20250105-445566',
+      paidAt: Timestamp.fromDate(new Date('2025-01-05T11:20:00Z'))
+    },
     attendanceStatus: 'registered',
     feedbackSubmitted: false,
     certificateIssued: false,
@@ -784,7 +853,7 @@ const generateSampleRegistrations = () => [
       proofImageUrl: 'https://images.unsplash.com/photo-1563013544-824ae1b704d3?w=400',
       transactionId: 'GCash-20250105-445566',
       submittedAt: Timestamp.fromDate(new Date('2025-01-05T11:20:00Z')),
-      verificationStatus: 'pending',
+      verificationStatus: 'approved',
       notes: 'Student payment via GCash - ID verification attached'
     },
     pricing: {
@@ -811,7 +880,13 @@ const generateSampleRegistrations = () => [
     discountAmount: 0,
     totalAmount: 500,
     currency: 'PHP',
-    paymentStatus: 'pending',
+    paymentStatus: 'paid',
+    paymentDetails: {
+      paymentId: 'pay-reg-009',
+      paymentMethod: 'maya',
+      transactionId: 'PayMaya-20250106-778899',
+      paidAt: Timestamp.fromDate(new Date('2025-01-06T13:10:00Z'))
+    },
     attendanceStatus: 'registered',
     feedbackSubmitted: false,
     certificateIssued: false,
@@ -824,7 +899,7 @@ const generateSampleRegistrations = () => [
       proofImageUrl: 'https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?w=400',
       transactionId: 'PayMaya-20250106-778899',
       submittedAt: Timestamp.fromDate(new Date('2025-01-06T13:10:00Z')),
-      verificationStatus: 'pending',
+      verificationStatus: 'approved',
       notes: 'PayMaya transaction - Receipt screenshot'
     },
     pricing: {
@@ -851,7 +926,13 @@ const generateSampleRegistrations = () => [
     discountAmount: 0,
     totalAmount: 3000,
     currency: 'PHP',
-    paymentStatus: 'pending',
+    paymentStatus: 'paid',
+    paymentDetails: {
+      paymentId: 'pay-reg-010',
+      paymentMethod: 'bank_transfer',
+      transactionId: 'UnionBank-20250107-334455',
+      paidAt: Timestamp.fromDate(new Date('2025-01-07T10:30:00Z'))
+    },
     attendanceStatus: 'registered',
     feedbackSubmitted: false,
     certificateIssued: false,
@@ -864,7 +945,7 @@ const generateSampleRegistrations = () => [
       proofImageUrl: 'https://images.unsplash.com/photo-1563013544-824ae1b704d3?w=400',
       transactionId: 'UnionBank-20250107-334455',
       submittedAt: Timestamp.fromDate(new Date('2025-01-07T10:30:00Z')),
-      verificationStatus: 'pending',
+      verificationStatus: 'approved',
       notes: 'UnionBank online transfer'
     },
     pricing: {
@@ -913,6 +994,15 @@ const generateSampleRegistrations = () => [
     qrCode: 'QR-REG-011-LISA',
     registrationDate: Timestamp.fromDate(new Date('2024-11-20')),
     updatedAt: Timestamp.now(),
+    paymentProof: {
+      id: 'proof-ai-011',
+      registrationId: 'reg-011',
+      proofImageUrl: 'https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?w=400',
+      transactionId: 'GCash-AI-20241201-001',
+      submittedAt: Timestamp.fromDate(new Date('2024-12-01T14:30:00Z')),
+      verificationStatus: 'approved',
+      notes: 'Payment via GCash'
+    },
     pricing: {
       ticketTypeId: 'premium',
       originalPrice: 2500,
@@ -955,6 +1045,15 @@ const generateSampleRegistrations = () => [
     qrCode: 'QR-REG-012-JAMES',
     registrationDate: Timestamp.fromDate(new Date('2024-11-18')),
     updatedAt: Timestamp.now(),
+    paymentProof: {
+      id: 'proof-ai-012',
+      registrationId: 'reg-012',
+      proofImageUrl: 'https://images.unsplash.com/photo-1563013544-824ae1b704d3?w=400',
+      transactionId: 'GCash-AI-20241125-002',
+      submittedAt: Timestamp.fromDate(new Date('2024-11-25T10:15:00Z')),
+      verificationStatus: 'approved',
+      notes: 'Payment via GCash'
+    },
     pricing: {
       ticketTypeId: 'professional',
       originalPrice: 1500,
@@ -1004,6 +1103,15 @@ const generateSampleRegistrations = () => [
     qrCode: 'QR-REG-013-MARIA',
     registrationDate: Timestamp.fromDate(new Date('2024-11-15')),
     updatedAt: Timestamp.now(),
+    paymentProof: {
+      id: 'proof-ai-013',
+      registrationId: 'reg-013',
+      proofImageUrl: 'https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?w=400',
+      transactionId: 'GCash-AI-20241122-003',
+      submittedAt: Timestamp.fromDate(new Date('2024-11-22T16:20:00Z')),
+      verificationStatus: 'approved',
+      notes: 'Payment via GCash'
+    },
     pricing: {
       ticketTypeId: 'student-discount',
       originalPrice: 800,
@@ -1047,6 +1155,15 @@ const generateSampleRegistrations = () => [
     qrCode: 'QR-REG-014-KEVIN',
     registrationDate: Timestamp.fromDate(new Date('2024-12-03')),
     updatedAt: Timestamp.now(),
+    paymentProof: {
+      id: 'proof-ai-014',
+      registrationId: 'reg-014',
+      proofImageUrl: 'https://images.unsplash.com/photo-1563013544-824ae1b704d3?w=400',
+      transactionId: 'GCash-AI-20241205-004',
+      submittedAt: Timestamp.fromDate(new Date('2024-12-05T11:45:00Z')),
+      verificationStatus: 'approved',
+      notes: 'Payment via GCash'
+    },
     pricing: {
       ticketTypeId: 'professional',
       originalPrice: 1500,
@@ -1093,6 +1210,15 @@ const generateSampleRegistrations = () => [
     qrCode: 'QR-REG-015-SARAH',
     registrationDate: Timestamp.fromDate(new Date('2024-11-18')),
     updatedAt: Timestamp.now(),
+    paymentProof: {
+      id: 'proof-ai-015',
+      registrationId: 'reg-015',
+      proofImageUrl: 'https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?w=400',
+      transactionId: 'GCash-AI-20241120-005',
+      submittedAt: Timestamp.fromDate(new Date('2024-11-20T09:30:00Z')),
+      verificationStatus: 'approved',
+      notes: 'Payment via GCash'
+    },
     pricing: {
       ticketTypeId: 'premium',
       originalPrice: 2500,
@@ -1137,6 +1263,15 @@ const generateSampleRegistrations = () => [
     qrCode: 'QR-REG-016-MICHAEL',
     registrationDate: Timestamp.fromDate(new Date('2024-11-26')),
     updatedAt: Timestamp.now(),
+    paymentProof: {
+      id: 'proof-ai-016',
+      registrationId: 'reg-016',
+      proofImageUrl: 'https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?w=400',
+      transactionId: 'GCash-AI-20241128-006',
+      submittedAt: Timestamp.fromDate(new Date('2024-11-28T15:10:00Z')),
+      verificationStatus: 'approved',
+      notes: 'Payment via GCash'
+    },
     pricing: {
       ticketTypeId: 'professional',
       originalPrice: 1500,
@@ -1183,6 +1318,15 @@ const generateSampleRegistrations = () => [
     qrCode: 'QR-REG-017-ANNA',
     registrationDate: Timestamp.fromDate(new Date('2024-12-08')),
     updatedAt: Timestamp.now(),
+    paymentProof: {
+      id: 'proof-ai-017',
+      registrationId: 'reg-017',
+      proofImageUrl: 'https://images.unsplash.com/photo-1563013544-824ae1b704d3?w=400',
+      transactionId: 'GCash-AI-20241210-007',
+      submittedAt: Timestamp.fromDate(new Date('2024-12-10T13:25:00Z')),
+      verificationStatus: 'approved',
+      notes: 'Payment via GCash'
+    },
     pricing: {
       ticketTypeId: 'student-discount',
       originalPrice: 800,
@@ -1223,6 +1367,15 @@ const generateSampleRegistrations = () => [
     qrCode: 'QR-REG-018-DAVID',
     registrationDate: Timestamp.fromDate(new Date('2024-12-10')),
     updatedAt: Timestamp.now(),
+    paymentProof: {
+      id: 'proof-ai-018',
+      registrationId: 'reg-018',
+      proofImageUrl: 'https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?w=400',
+      transactionId: 'GCash-AI-20241212-008',
+      submittedAt: Timestamp.fromDate(new Date('2024-12-12T10:40:00Z')),
+      verificationStatus: 'approved',
+      notes: 'Payment via GCash'
+    },
     pricing: {
       ticketTypeId: 'premium',
       originalPrice: 2500,
@@ -1557,7 +1710,7 @@ const generateSampleCertificates = () => [
     eventDate: 'December 15, 2024',
     completionDate: Timestamp.fromDate(new Date('2024-12-15T17:00:00Z')),
     certificateUrl: 'https://certificates.gdgdavao.org/ai-ml-2024/cert-ai-011.pdf',
-    verificationUrl: 'https://gdgdavao.org/verify/GDG-AI-ML-2024-011',
+    verificationUrl: 'https://apohub.gdgdavao.org/verify/GDG-AI-ML-2024-011',
     isVerified: true,
     templateId: 'ai-workshop-premium',
     metadata: {
@@ -1580,7 +1733,7 @@ const generateSampleCertificates = () => [
     eventDate: 'December 15, 2024',
     completionDate: Timestamp.fromDate(new Date('2024-12-15T17:00:00Z')),
     certificateUrl: 'https://certificates.gdgdavao.org/ai-ml-2024/cert-ai-012.pdf',
-    verificationUrl: 'https://gdgdavao.org/verify/GDG-AI-ML-2024-012',
+    verificationUrl: 'https://apohub.gdgdavao.org/verify/GDG-AI-ML-2024-012',
     isVerified: true,
     templateId: 'ai-workshop-professional',
     metadata: {
@@ -1603,7 +1756,7 @@ const generateSampleCertificates = () => [
     eventDate: 'December 15, 2024',
     completionDate: Timestamp.fromDate(new Date('2024-12-15T17:00:00Z')),
     certificateUrl: 'https://certificates.gdgdavao.org/ai-ml-2024/cert-ai-013.pdf',
-    verificationUrl: 'https://gdgdavao.org/verify/GDG-AI-ML-2024-013',
+    verificationUrl: 'https://apohub.gdgdavao.org/verify/GDG-AI-ML-2024-013',
     isVerified: true,
     templateId: 'ai-workshop-student',
     metadata: {
@@ -1626,7 +1779,7 @@ const generateSampleCertificates = () => [
     eventDate: 'December 15, 2024',
     completionDate: Timestamp.fromDate(new Date('2024-12-15T17:00:00Z')),
     certificateUrl: 'https://certificates.gdgdavao.org/ai-ml-2024/cert-ai-014.pdf',
-    verificationUrl: 'https://gdgdavao.org/verify/GDG-AI-ML-2024-014',
+    verificationUrl: 'https://apohub.gdgdavao.org/verify/GDG-AI-ML-2024-014',
     isVerified: true,
     templateId: 'ai-workshop-professional',
     metadata: {
@@ -1649,7 +1802,7 @@ const generateSampleCertificates = () => [
     eventDate: 'December 15, 2024',
     completionDate: Timestamp.fromDate(new Date('2024-12-15T17:00:00Z')),
     certificateUrl: 'https://certificates.gdgdavao.org/ai-ml-2024/cert-ai-015.pdf',
-    verificationUrl: 'https://gdgdavao.org/verify/GDG-AI-ML-2024-015',
+    verificationUrl: 'https://apohub.gdgdavao.org/verify/GDG-AI-ML-2024-015',
     isVerified: true,
     templateId: 'ai-workshop-premium',
     metadata: {
@@ -1672,7 +1825,7 @@ const generateSampleCertificates = () => [
     eventDate: 'December 15, 2024',
     completionDate: Timestamp.fromDate(new Date('2024-12-15T17:00:00Z')),
     certificateUrl: 'https://certificates.gdgdavao.org/ai-ml-2024/cert-ai-018.pdf',
-    verificationUrl: 'https://gdgdavao.org/verify/GDG-AI-ML-2024-018',
+    verificationUrl: 'https://apohub.gdgdavao.org/verify/GDG-AI-ML-2024-018',
     isVerified: true,
     templateId: 'ai-workshop-premium',
     metadata: {
@@ -1784,6 +1937,16 @@ async function populateRegistrations() {
   
   for (const registration of registrations) {
     await db.collection('registrations').doc(registration.id).set(registration);
+    if (registration.paymentProof) {
+      await db.collection('paymentProofs').doc(registration.paymentProof.id).set({
+        ...registration.paymentProof,
+        eventId: registration.eventId,
+        attendeeName: registration.userDetails.name,
+        attendeeEmail: registration.userDetails.email,
+        amount: registration.totalAmount,
+        paymentMethod: registration.paymentDetails?.paymentMethod || 'gcash'
+      });
+    }
     console.log(`   ✅ Created registration: ${registration.userDetails.name}`);
   }
   console.log(`   📊 Total registrations created: ${registrations.length}`);
@@ -1890,9 +2053,7 @@ async function populateSampleData() {
     console.log('📋 What was created:');
     console.log('   • 3 Auth Users + Firestore Documents (1 admin, 2 organizers)');
     console.log('   • 5 Events (3 published, 1 completed with full data, 1 draft)');
-    console.log('   • 18 Registrations across different events');
-    console.log('     - 10 with paid status (confirmed attendees)');
-    console.log('     - 8 with pending payment status (need verification)');
+    console.log('   • 18 Registrations across different events (all paid & verified, with proofs attached for paid tickets)');
     console.log('   • 8 Feedback submissions (7 for AI/ML workshop + 1 for React)');
     console.log('   • 7 Certificates (6 for AI/ML workshop + 1 for React)');
     console.log('   • 4 System settings');
@@ -1902,13 +2063,7 @@ async function populateSampleData() {
     console.log('   • Login with the seeded account emails and APOHUB_SEED_PASSWORD');
     console.log('   • Browse events, view registrations, check analytics');
     console.log('   • Test event creation, editing, and management');
-    console.log('   • Use Payment Verification tab to approve/reject pending payments');
-    console.log('');
-    console.log('💳 Payment Verification Testing:');
-    console.log('   • 8 registrations need payment verification');
-    console.log('   • Navigate to Attendees page → Payment Verification tab');
-    console.log('   • Approve or reject pending payments');
-    console.log('   • Test payment workflow integration');
+    console.log('   • Filter attendees using the "Awaiting verification" toggle in Attendees tab');
     console.log('');
     console.log('🤖 Featured Event - AI/ML Workshop (event-005):');
     console.log('   • Complete event with 8 approved attendees (all paid)');
@@ -1921,7 +2076,7 @@ async function populateSampleData() {
     console.log('   • Perfect for testing analytics, feedback, and certificates');
     console.log('');
     console.log('📊 Next Steps:');
-    console.log('   1. Start your app: npm run dev:emulator');
+    console.log('   1. Start your app: bun run dev:emulator');
     console.log('   2. Visit: http://localhost:5173');
     console.log('   3. Check Emulator UI: http://localhost:4000');
     console.log('   4. Start testing your features!');

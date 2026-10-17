@@ -9,13 +9,15 @@ import {
   serverTimestamp,
   Timestamp,
   limit,
-  startAfter,
   setDoc
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '../config/firebase';
 import { logger } from '../utils/logger';
 import { EventAnalytics } from '../types';
+import { computeGrowthPct } from '../utils/growth';
+import { countWithinWindow } from '../utils/analyticsBuckets';
+import { toDateSafe } from '../utils/dateUtils';
 
 export interface DashboardStats {
   totalEvents: number;
@@ -24,9 +26,9 @@ export interface DashboardStats {
   certificatesIssued: number;
   upcomingEvents: number;
   monthlyGrowth: {
-    events: number;
-    registrations: number;
-    certificates: number;
+    events: number | null;
+    registrations: number | null;
+    certificates: number | null;
   };
   totalRevenue: number;
   pendingPayments: number;
@@ -83,82 +85,32 @@ export class AnalyticsService {
 
   /**
    * Get comprehensive dashboard statistics
+   *
+   * Four reads, not ten. This used to fan out to six extra range queries —
+   * this-month and last-month over events, registrations and certificates —
+   * plus two `issuedAt` fallbacks to `createdAt`, all alongside the three full
+   * collection reads it already held. Every one of those numbers was derivable
+   * from snapshots already in hand, so each extra query was a document read
+   * billed per visit and an index dependency, for a value that could not differ.
    */
   static async getDashboardStats(): Promise<DashboardStats> {
     try {
-      // Get current date for time-based queries
       const now = new Date();
-      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-      const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-      const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0);
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+      const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0);
+      const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
 
-      // Run all queries in parallel for better performance
-      const [
-        // Totals
-        eventsSnapshot,
-        registrationsSnapshot,
-        certificatesSnapshot,
-        // Upcoming events (published and future)
-        upcomingEventsSnapshot,
-        // Month-scoped snapshots for growth calculations
-        eventsThisMonthSnap,
-        eventsLastMonthSnap,
-        regsThisMonthSnap,
-        regsLastMonthSnap,
-        certsThisMonthSnap,
-        certsLastMonthSnap
-      ] = await Promise.all([
-        getDocs(collection(db, this.EVENTS_COLLECTION)),
-        getDocs(collection(db, this.REGISTRATIONS_COLLECTION)),
-        getDocs(collection(db, this.CERTIFICATES_COLLECTION)),
-        getDocs(query(
-          collection(db, this.EVENTS_COLLECTION),
-          where('isPublished', '==', true),
-          where('startDate', '>', Timestamp.fromDate(now))
-        )),
-        // Events created this month vs last month (uses createdAt)
-        getDocs(query(
-          collection(db, this.EVENTS_COLLECTION),
-          where('createdAt', '>=', Timestamp.fromDate(startOfMonth))
-        )),
-        getDocs(query(
-          collection(db, this.EVENTS_COLLECTION),
-          where('createdAt', '>=', Timestamp.fromDate(startOfLastMonth)),
-          where('createdAt', '<=', Timestamp.fromDate(endOfLastMonth))
-        )),
-        // Registrations this month vs last month (uses registrationDate)
-        getDocs(query(
-          collection(db, this.REGISTRATIONS_COLLECTION),
-          where('registrationDate', '>=', Timestamp.fromDate(startOfMonth))
-        )),
-        getDocs(query(
-          collection(db, this.REGISTRATIONS_COLLECTION),
-          where('registrationDate', '>=', Timestamp.fromDate(startOfLastMonth)),
-          where('registrationDate', '<=', Timestamp.fromDate(endOfLastMonth))
-        )),
-        // Certificates issued this month vs last month (uses issuedAt or createdAt if present)
-        getDocs(query(
-          collection(db, this.CERTIFICATES_COLLECTION),
-          where('issuedAt', '>=', Timestamp.fromDate(startOfMonth))
-        )).catch(async () => {
-          // Fallback to createdAt if issuedAt not indexed/available
-          return getDocs(query(
-            collection(db, this.CERTIFICATES_COLLECTION),
-            where('createdAt', '>=', Timestamp.fromDate(startOfMonth))
-          ));
-        }),
-        getDocs(query(
-          collection(db, this.CERTIFICATES_COLLECTION),
-          where('issuedAt', '>=', Timestamp.fromDate(startOfLastMonth)),
-          where('issuedAt', '<=', Timestamp.fromDate(endOfLastMonth))
-        )).catch(async () => {
-          return getDocs(query(
-            collection(db, this.CERTIFICATES_COLLECTION),
-            where('createdAt', '>=', Timestamp.fromDate(startOfLastMonth)),
-            where('createdAt', '<=', Timestamp.fromDate(endOfLastMonth))
-          ));
-        })
-      ]);
+      const [eventsSnapshot, registrationsSnapshot, certificatesSnapshot, upcomingEventsSnapshot] =
+        await Promise.all([
+          getDocs(collection(db, this.EVENTS_COLLECTION)),
+          getDocs(collection(db, this.REGISTRATIONS_COLLECTION)), // firestore:unscoped-ok - admin platform totals
+          getDocs(collection(db, this.CERTIFICATES_COLLECTION)), // firestore:unscoped-ok - admin platform totals
+          getDocs(query(
+            collection(db, this.EVENTS_COLLECTION),
+            where('isPublished', '==', true),
+            where('startDate', '>', Timestamp.fromDate(now))
+          )),
+        ]);
 
       // Helper function to filter out placeholder documents
       const filterPlaceholderDocs = (docs: any[]) => {
@@ -192,23 +144,31 @@ export class AnalyticsService {
       // For approvals, align with pending payments as a proxy in current flow
       const pendingApprovals = pendingPayments;
 
-      // Growth calculations
-      const safeLen = (snap: any) => (snap && snap.docs ? snap.docs.length : 0);
-      const growthPct = (curr: number, prev: number) => {
-        if (prev <= 0) return curr > 0 ? 100 : 0;
-        return Math.round(((curr - prev) / prev) * 100);
-      };
+      // Month-over-month counts, taken off the snapshots above.
+      //
+      // `issuedAt` with a `createdAt` fallback used to be resolved by catching a
+      // failed query and re-issuing it, which meant the fallback could apply to
+      // one month and not the other. Reading both fields per document makes the
+      // two months answer the same question.
+      const certTimestamp = (doc: any) => doc.issuedAt ?? doc.createdAt;
+      const eventTimes = realEventsData.map((doc) => doc.data().createdAt);
+      const regTimes = realRegistrationsData.map((doc) => doc.data().registrationDate);
+      const certTimes = realCertificatesData.map((doc) => certTimestamp(doc.data()));
 
-      const eventsThisMonth = safeLen(eventsThisMonthSnap);
-      const eventsLastMonth = safeLen(eventsLastMonthSnap);
-      const regsThisMonth = safeLen(regsThisMonthSnap);
-      const regsLastMonth = safeLen(regsLastMonthSnap);
-      const certsThisMonth = safeLen(certsThisMonthSnap);
-      const certsLastMonth = safeLen(certsLastMonthSnap);
+      const eventsThisMonth = countWithinWindow(eventTimes, startOfMonth);
+      const eventsLastMonth = countWithinWindow(eventTimes, startOfLastMonth, endOfLastMonth);
+      const registrationsThisMonth = countWithinWindow(regTimes, startOfMonth);
+      const registrationsLastMonth = countWithinWindow(regTimes, startOfLastMonth, endOfLastMonth);
+      const certificatesThisMonth = countWithinWindow(certTimes, startOfMonth);
+      const certificatesLastMonth = countWithinWindow(certTimes, startOfLastMonth, endOfLastMonth);
+
+      // Delegates to the pure helper, which returns null when there is no
+      // prior-month baseline. See utils/growth.ts for why that matters.
+      const growthPct = computeGrowthPct;
 
       const eventsGrowth = growthPct(eventsThisMonth, eventsLastMonth);
-      const registrationsGrowth = growthPct(regsThisMonth, regsLastMonth);
-      const certificatesGrowth = growthPct(certsThisMonth, certsLastMonth);
+      const registrationsGrowth = growthPct(registrationsThisMonth, registrationsLastMonth);
+      const certificatesGrowth = growthPct(certificatesThisMonth, certificatesLastMonth);
 
       return {
         totalEvents: realEventsData.length,
@@ -217,9 +177,11 @@ export class AnalyticsService {
         certificatesIssued: realCertificatesData.length,
         upcomingEvents: realUpcomingEventsData.length,
         monthlyGrowth: {
-          events: Math.round(eventsGrowth),
-          registrations: Math.round(registrationsGrowth),
-          certificates: Math.round(certificatesGrowth)
+          // Already rounded by growthPct; passed through as-is so "no baseline"
+          // stays null instead of being coerced to 0.
+          events: eventsGrowth,
+          registrations: registrationsGrowth,
+          certificates: certificatesGrowth
         },
         totalRevenue,
         pendingPayments
@@ -238,7 +200,6 @@ export class AnalyticsService {
       const [
         eventSnapshot,
         registrationsSnapshot,
-        checkedInSnapshot,
         feedbackSnapshot,
         certificatesSnapshot
       ] = await Promise.all([
@@ -246,11 +207,6 @@ export class AnalyticsService {
         getDocs(query(
           collection(db, this.REGISTRATIONS_COLLECTION),
           where('eventId', '==', eventId)
-        )),
-        getDocs(query(
-          collection(db, this.REGISTRATIONS_COLLECTION),
-          where('eventId', '==', eventId),
-          where('attendanceStatus', '==', 'checked-in')
         )),
         getDocs(query(
           collection(db, this.FEEDBACK_COLLECTION),
@@ -281,7 +237,7 @@ export class AnalyticsService {
 
       // Filter out placeholder documents
       const realRegistrations = filterPlaceholderDocs(registrationsSnapshot.docs);
-      const realCheckedIn = filterPlaceholderDocs(checkedInSnapshot.docs);
+      const realCheckedInCount = realRegistrations.filter(doc => doc.data().attendanceStatus === 'checked-in').length;
       const realFeedback = filterPlaceholderDocs(feedbackSnapshot.docs);
       const realCertificates = filterPlaceholderDocs(certificatesSnapshot.docs);
 
@@ -366,9 +322,9 @@ export class AnalyticsService {
       
       // First, add all event promo codes (even if unused)
       eventPromoCodes.forEach((promoCode: any) => {
-        const validUntilDate = promoCode.validUntil?.toDate ? promoCode.validUntil.toDate() : new Date(promoCode.validUntil);
-        const validFromDate = promoCode.validFrom?.toDate ? promoCode.validFrom.toDate() : new Date(promoCode.validFrom);
-        const isExpired = validUntilDate < now;
+        const validUntilDate = toDateSafe(promoCode.validUntil);
+        const _validFromDate = toDateSafe(promoCode.validFrom);
+        const isExpired = validUntilDate ? validUntilDate < now : false;
         const usageStats = promoCodeMap.get(promoCode.code) || { count: 0, discount: 0, revenue: 0 };
         
         promoCodeUsageMap.set(promoCode.code, {
@@ -445,7 +401,7 @@ export class AnalyticsService {
 
       return {
         registrations: realRegistrations.length,
-        checkedIn: realCheckedIn.length,
+        checkedIn: realCheckedInCount,
         noShows: noShowRegistrations.length, // Only count explicit no-shows
         revenue,
         feedbackResponses: realFeedback.length,
@@ -643,50 +599,6 @@ export class AnalyticsService {
     } catch (error) {
       logger.error('Error fetching revenue analytics:', error);
       throw new Error('Failed to fetch revenue analytics');
-    }
-  }
-
-  /**
-   * Get user engagement analytics
-   */
-  static async getUserEngagementAnalytics(): Promise<{
-    totalUsers: number;
-    activeUsers: number;
-    repeatAttendees: number;
-    averageEventsPerUser: number;
-  }> {
-    try {
-      // Get all registrations
-      const registrationsSnapshot = await getDocs(collection(db, this.REGISTRATIONS_COLLECTION));
-      
-      // Group by user email to find unique users and repeat attendees
-      const userRegistrations: Record<string, number> = {};
-      
-      registrationsSnapshot.docs.forEach(doc => {
-        const data = doc.data();
-        const userEmail = data.userDetails?.email;
-        if (userEmail) {
-          userRegistrations[userEmail] = (userRegistrations[userEmail] || 0) + 1;
-        }
-      });
-      
-      const totalUsers = Object.keys(userRegistrations).length;
-      const repeatAttendees = Object.values(userRegistrations).filter(count => count > 1).length;
-      const totalRegistrations = Object.values(userRegistrations).reduce((sum, count) => sum + count, 0);
-      const averageEventsPerUser = totalUsers > 0 ? totalRegistrations / totalUsers : 0;
-      
-      // Consider users with more than 1 registration as active
-      const activeUsers = repeatAttendees;
-      
-      return {
-        totalUsers,
-        activeUsers,
-        repeatAttendees,
-        averageEventsPerUser: Math.round(averageEventsPerUser * 100) / 100
-      };
-    } catch (error) {
-      logger.error('Error fetching user engagement analytics:', error);
-      throw new Error('Failed to fetch user engagement analytics');
     }
   }
 

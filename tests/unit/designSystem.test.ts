@@ -5,7 +5,7 @@ import { join, relative, sep } from 'node:path';
 const ROOT = process.cwd();
 const SRC = join(ROOT, 'src');
 /** The primitive layer. Raw form controls are only allowed in here. */
-const UI_PRIMITIVES = ['src', 'components', 'shared', 'UI'].join(sep);
+const UI_PRIMITIVES = ['src', 'components', 'UI'].join(sep);
 
 function sourceFiles(): string[] {
   const out: string[] = [];
@@ -329,14 +329,21 @@ describe('touch target floor', () => {
 describe('raw form controls outside the primitive layer', () => {
   /**
    * Migration-progress metric, not a hard gate. Raw <input / <select /
-   * <textarea> live in src/components/shared/UI/ (Button, Input, Select,
+   * <textarea> live in src/components/UI/ (Button, Input, Select,
    * Textarea) and should exist nowhere else; every other occurrence is a
    * control that has not been migrated onto the primitive yet.
    *
    * LOWER RAW_FORM_CONTROL_BASELINE as migration proceeds. It may only ever go
    * down: raising it to unblock a feature re-opens debt that was already paid.
+   *
+   * 94 -> 97 in the route-folder refactor, and the three are not new debt:
+   * WalkInRegistrationModal (3) sat inside src/components/UI/ purely because
+   * that was where shared code lived, and it was therefore exempted from this
+   * count. It is a feature component and now sits with the check-in tab that
+   * owns it, so it is correctly counted. Nothing was written; the exemption
+   * just stopped applying to a file that never deserved it.
    */
-  const RAW_FORM_CONTROL_BASELINE = 143;
+  const RAW_FORM_CONTROL_BASELINE = 97;
 
   const FORM_CONTROL = /<(input|select|textarea)\b/g;
 
@@ -357,7 +364,7 @@ describe('raw form controls outside the primitive layer', () => {
 
     expect(
       total,
-      `Raw form controls outside src/components/shared/UI/: ${total} ` +
+      `Raw form controls outside src/components/UI/: ${total} ` +
         `(baseline ${RAW_FORM_CONTROL_BASELINE}).\n` +
         'Swap each for the shared Input / Select / Textarea primitive, then lower ' +
         'RAW_FORM_CONTROL_BASELINE to the new count.\n' +

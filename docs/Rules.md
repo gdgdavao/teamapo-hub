@@ -32,30 +32,36 @@ flowchart TD
     AuthCheck -- Yes --> UserDoc[Lookup /users/request.auth.uid]
     
     UserDoc --> RoleCheck{User Role in Firestore}
-    RoleCheck -- role == 'admin' --> AdminPerms[Full Administrative Access]
-    RoleCheck -- role == 'organizer' --> OrgPerms[Organizer Access (Scoped to Own Events)]
+    RoleCheck -- role == 'admin' --> AdminPerms[Full Administrative Access: RBAC]
+    RoleCheck -- role == 'organizer' --> OrgPerms[Organizer Access: ABPAC via users/uid.permissions & Ownership]
     RoleCheck -- Not found / Other --> Deny[Default Deny]
 ```
 
-### 2.0 Client-Side Authorization (CASL) — A UX Layer, Not A Boundary
+### 2.0 Hybrid RBAC + ABPAC Architecture & Client-Side CASL Alignment
 
-`src/auth/ability.ts` builds a CASL ability from the signed-in user's profile,
-and `RequireAbility` uses it to decide what to render. **It enforces nothing.**
-`firestore.rules` is the only security boundary; the ability exists so the UI
-never offers an action the server will reject, and so a denial can be explained
-rather than bounced.
+TeamApo Hub implements a **Hybrid RBAC (Role-Based Access Control) + ABPAC (Attribute-Based Policy Access Control)** authorization architecture:
+1. **Unrestricted Admin (RBAC)**: The `admin` role maintains full platform-wide access across all collections, subcollections, routes, and cloud functions.
+2. **Granular Organizer Capabilities (ABPAC)**: Organizers operate under fine-grained domain permissions stored in `users/{userId}.permissions` (`events`, `attendees`, `checkin`, `payments`, `certificates`, `feedback`) that are evaluated in tandem with document ownership attributes (`organizer.uid == auth.uid` or `organizerUid == auth.uid`).
+3. **Resource Lifecycle Constraints (ABAC)**: Completed or cancelled events (`status in ['completed', 'cancelled']`) are frozen from updates and subcollection modifications for non-administrators. Force-deletion of events containing active registrations is reserved for administrators.
+4. **Dual-Layer Synchronization**: `src/auth/ability.ts` builds a CASL ability from the signed-in user's profile and permissions, and `RequireAbility` uses it to decide what to render. **`firestore.rules` is the authoritative security boundary; CASL is the client-side UX alignment layer.** Whenever a rule clause changes, the matching ability rule must change with it.
 
-The table below is the contract between the two. If a rules clause changes, the
-matching ability rule has to change with it, or the UI will start lying.
+The table below defines the strict 1:1 contract between CASL and `firestore.rules`:
 
 | CASL rule | Mirrors |
 | :--- | :--- |
 | absent — no profile, `isActive !== true`, or an unrecognised role | `isAdmin()` / `isOrganizer()` requiring `isActive == true`. Fail-closed at every branch. |
-| `read` on `Event`, `Registration`, `Certificate`, `PaymentProof` (unconditioned) | Reaching the workspace at all. Area access only — it says nothing about a specific row. |
+| `read` on `Event`, `Registration`, `Certificate`, `PaymentProof`, `Feedback` (unconditioned) | Reaching the workspace at all. Area access gated by granular functional permissions (`attendees.canRead`, `certificates.canManage`, `payments.canVerify`, `feedback.canRead`). |
 | `read 'all'` | `allow list: if isAdmin()` and the unscoped `getAllEvents()` / `getUsers()` reads. Admin only. |
-| `manage Event` where `organizer.uid == uid` | `ownsEvent(eventId)` / `canManageEvent(eventId)` |
-| `update`/`delete` on `Registration`, `Certificate`, `PaymentProof` where `organizerUid == uid` | `ownsDocByEventId(data)`, the `organizerUid` fast path |
-| `create Event` | `allow create: if isAdmin() \|\| (isOrganizer() && organizer.uid == auth.uid)`. Granted but unexercised: `/events/create` is admin-only, because self-serve event creation is a product decision. |
+| `manage Event` where `organizer.uid == uid` and active lifecycle | Granted only if both `events.canUpdate !== false` and `events.canDelete === true` on active events (`status not in ['completed', 'cancelled']`). |
+| `update Event` where `organizer.uid == uid` and active lifecycle | `ownsEvent(eventId) && hasPerm('events', 'canUpdate') && !(resource.data.status in ['completed', 'cancelled'])`. Completed/cancelled events are frozen from organizer edits. |
+| `delete Event` where `organizer.uid == uid` | `ownsEvent(eventId) && hasPerm('events', 'canDelete')`. Client UI also prevents non-admins from force-deleting events with existing attendee registrations. |
+| `update` on `Registration` where `organizerUid == uid` | `ownsDocByEventId(data) && hasPerm('attendees', 'canUpdate')` |
+| `delete` on `Registration` where `organizerUid == uid` | `ownsDocByEventId(data) && hasPerm('attendees', 'canDelete')` |
+| `export` on `Registration` | UI gating on `attendees.canExport !== false` for attendee CSV and email log downloads. |
+| `checkin` on `Registration` where `organizerUid == uid` | `attendees.canUpdate !== false && checkin.canCheckIn !== false` for QR scanning and manual check-ins. |
+| `update` on `Certificate` where `organizerUid == uid` | `ownsDocByEventId(data) && hasPerm('certificates', 'canManage')` |
+| `update`/`delete` on `PaymentProof` where `organizerUid == uid` | `ownsEvent(data.eventId) && hasPerm('payments', 'canVerify')` |
+| `create Event` | `allow create: if isAdmin() \|\| (isOrganizer() && hasPerm('events', 'canCreate') && request.resource.data.organizer.uid == request.auth.uid)`. |
 | `read`/`create User`, `update User` where `uid != me` | `match /users/{userId}` |
 | `delete User` where `uid != me` and `role != 'admin'` | **Stricter than the rules.** `firestore.rules` says `allow delete: if isAdmin()` with neither restriction. See §4.4. |
 | `functions/main.py` `require_elevated` / `require_admin` | `isAdmin() \|\| ownsEvent(eventId)`, plus the `isActive == true` check the callable layer used to omit |
@@ -159,7 +165,6 @@ function isValidDocumentType() {
 | `/activity_logs/{logId}` | Authenticated | Authenticated | Authenticated | **Denied** | Authenticated | Immutable audit trail. |
 | `/event_analytics/{id}` | Authenticated | Authenticated | Authenticated | Authenticated | Authenticated | Admin/organizer analytics rollups. |
 | `/paymentProofs/{proofId}` | Event Admin / Organizer | Event Admin / Organizer | Admin / Organizer / Trusted Function | Event Admin / Organizer | Event Admin / Organizer | Direct anonymous reads and creates are denied; proof submission must use a trusted function. |
-| `/notifications/{notifId}` | Recipient | Recipient | Public / System | Recipient | Recipient | User can only read/mutate their own notifications (`request.auth.uid == resource.data.userId`). |
 | `/system/{docId}` | Authenticated | Authenticated | Authenticated | Authenticated | Authenticated | Platform-wide operational configs. |
 | `/{document=**}` | **Denied** | **Denied** | **Denied** | **Denied** | **Denied** | Catch-all default deny. |
 
@@ -319,7 +324,6 @@ def checkInAttendee(req: https_fn.CallableRequest) -> Dict[str, Any]:
 ### 6.3 Environment Variables & Secrets Handling
 Sensitive third-party credentials are kept outside client bundles and git history:
 * `RESEND_API_KEY`: Kept on server runtime for transactional email dispatch.
-* `GEMINI_API`: Kept on server or loaded through secured environment variables for AI generation.
 
 ---
 
@@ -417,7 +421,7 @@ historically illustrative and drifted from the real components, which cost reade
 misleading example. Refer to the component file for its actual props and use the shared
 `Button` rather than reimplementing it.
 
-The current `Button` contract (`src/components/shared/UI/Button.tsx`) is:
+The current `Button` contract (`src/components/UI/Button.tsx`) is:
 
 | Prop | Type | Notes |
 |---|---|---|
@@ -556,7 +560,7 @@ Prefer `gap-*` on a flex or grid parent over margins on the children: see
 
 **Never hand-roll hover or active states.** Add the `md-state-layer` class and let the
 state layer in `src/index.css` do it. Variant-specific `hover:bg-*` strings are only
-allowed inside `src/components/shared/UI/`, which `tests/unit/designSystem.test.ts`
+allowed inside `src/components/UI/`, which `tests/unit/designSystem.test.ts`
 enforces.
 
 ### 10.3 Mobile-First Responsiveness
@@ -687,11 +691,17 @@ logger.warn('Token nearing expiration:', expiresAt);
 logger.error('Payment verification failed:', error);
 ```
 
-### 13.2 Toast Notifications UX
-Use `react-hot-toast` for user-facing feedback:
-* `toast.success('Action succeeded')`: Confirmations (e.g. "Ticket confirmed", "Check-in successful").
-* `toast.error('Helpful error message')`: Recoverable failures (e.g. "Invalid voucher code").
-* `toast.loading('Processing...')`: Asynchronous operations (e.g. "Uploading payment proof...").
+### 13.2 Toast Notifications UX & Design System
+Centralized notifications use `react-hot-toast` rendered through `<AppToaster />` from `@/components/UI`. Never create ad-hoc notification elements.
+
+- **Placement & Responsiveness**: Top-center with safe-area padding on mobile viewports (< 640px) with clearance for device notches; top-right on desktop (≥ 640px).
+- **Surface Styling**: Semantic Material 3 role tokens (`success-container`, `error-container`, `secondary-container`, `surface-container-high`). NO colored side-stripe borders (strictly banned).
+- **Dismiss & Interaction**: Interactive tap-to-dismiss plus dedicated close button (`min-h-control min-w-control`, 48px target). 4s timeout for success/info, 6s for errors to ensure readability.
+- **Copy Guidance**:
+  - `toast.success('Action completed.')`: Past-tense completions. One sentence. No emojis, no exclamation marks.
+  - `toast.error('Failed action. Recovery advice.')`: Actionable failures ending with next step.
+  - `toast.loading('Processing...')`: Active gerund operations.
+  - `toast('Informational notice.')`: Informational neutral notices (automatically styled with M3 secondary container and SVG info icon).
 
 ---
 
@@ -724,9 +734,8 @@ import { db } from '@/config/firebase';
 import { EventService } from '@/services/eventService';
 import { logger } from '@/utils/logger';
 
-// 4. UI Components
-import { Button } from '@/components/shared/UI/Button';
-import LoadingSpinner from '@/components/shared/UI/LoadingSpinner';
+// 4. UI Components — from the barrel, never by file path
+import { Button, LoadingSpinner } from '@/components/UI';
 
 // 5. Types and Interfaces
 import type { Event, TicketType } from '@/types';

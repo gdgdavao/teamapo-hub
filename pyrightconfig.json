@@ -1,0 +1,9 @@
+{
+  "include": ["functions"],
+  "pythonVersion": "3.13",
+  "venvPath": ".",
+  "venv": "functions/venv",
+  "reportOptionalMemberAccess": "none",
+  "reportAttributeAccessIssue": "none",
+  "reportPrivateImportUsage": "none"
+}

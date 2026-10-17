@@ -4,6 +4,11 @@
   "outputDirectory": "dist",
   "routes": [
     { "handle": "filesystem" },
+    {
+      "src": "^/dashboard/?$",
+      "status": 308,
+      "dest": "/"
+    },
     { "src": "/(.*)", "dest": "/index.html" }
   ]
 }

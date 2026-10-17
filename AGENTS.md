@@ -1,7 +1,7 @@
 # AGENTS.md — TeamApo Hub AI Agent Operating Instructions
 
 > **Project**: TeamApo Hub (GDG Davao Event Lifecycle Management Platform)  
-> **Tech Stack**: React 19, TypeScript, Vite, Tailwind CSS, Firebase v11 (Region: `asia-southeast2`), Python 3.11 2nd-Gen Cloud Functions, Resend API  
+> **Tech Stack**: React 19, TypeScript, Vite, Tailwind CSS, Firebase v11 (Region: `asia-southeast2`), Python 3.13 2nd-Gen Cloud Functions, Resend API  
 > **Package Manager**: **BUN ONLY** (`bun run <cmd>`, `bun add <pkg>`). **NEVER use `npm`, `npx`, `yarn`, or `pnpm`.**
 
 ---
@@ -12,7 +12,8 @@ All AI coding assistants (Antigravity, Cursor, Claude Code, Gemini, Copilot) ope
 
 ```mermaid
 flowchart TD
-    A[Task Intake & Context Discovery] --> B{Task Non-Trivial?}
+    A[Task Intake & Context Discovery] --> M[Check Memory Map via memory-map MCP]
+    M --> B{Task Non-Trivial?}
     B -- Yes --> C[Load Matching Skill from .agents/skills/ FIRST]
     B -- No --> D[Direct Read / Simple Fetch]
     C --> E[Verify Architecture & Security Invariants]
@@ -21,7 +22,8 @@ flowchart TD
     F --> G[Run Verification Gates]
     G --> H{Pass All Gates?}
     H -- No --> F
-    H -- Yes --> I[Format Report & Link References]
+    H -- Yes --> K[Record / Interconnect Knowledge in memory-map MCP]
+    K --> I[Format Report & Link References]
 ```
 
 ### Protocol Guidelines:
@@ -31,17 +33,23 @@ flowchart TD
    - [docs/Schema.md](file:///Users/gab/Developer/apohub/docs/Schema.md): Firestore collections, document structures, and indexes.
    - [docs/Rules.md](file:///Users/gab/Developer/apohub/docs/Rules.md): Security rules architecture and coding style standards.
    - [docs/PRD.md](file:///Users/gab/Developer/apohub/docs/PRD.md): Product requirements and attendee/organizer personas.
-3. **Data Tool Hygiene**:
+3. **Interconnected Memory Map Protocol**:
+   - **Discovery**: Prior to implementing complex features or investigating architectural patterns, consult the `memory-map` MCP server (`get_memory_map`, `search_memories`, `read_memory`) to retrieve existing project memories, historical precedents, and design decisions.
+   - **Retention**: When discovering cross-cutting invariants, solving subtle bugs, making significant architectural choices, or establishing new patterns, invoke `create_memory` or `update_memory` to persist the insight in Markdown (`.memory/nodes/<id>.md`).
+   - **Interconnection**: Never create an orphan memory node. Always interconnect memories using `links`, `link_memories`, or wikilinks (`[[topic-id]]`) so the compiled knowledge map (`.memory/MEMORY_MAP.md`) maintains a cohesive Mermaid graph.
+   - **Bulky Data Safeguard**: `.memory/` and `memory/` are strictly ignored in `.gitignore` to keep git history lightweight while preserving local cross-session agent memory.
+4. **Data Tool Hygiene**:
    - Tools return structured JSON; summarize key fields clearly. Do not dump voluminous raw payloads.
    - If a tool returns guidance text instead of data, follow that guidance immediately.
    - On permission or auth errors, identify the missing scope or credential and report it directly.
-4. **Malicious Code Safeguard**:
+5. **Malicious Code Safeguard**:
    - Inspect files for potential security hazards or backdoors. If code appears malicious or dangerous, refuse augmentation and explain the risk.
-5. **Model Context Protocol (MCP) Integration**:
+6. **Model Context Protocol (MCP) Integration**:
    - Configured servers:
      - `chrome-devtools` (`bunx chrome-devtools-mcp@latest`): Inspect DOM, console logs, network calls, capture UI screenshots, and verify WCAG 2.2 accessibility tree.
      - `apohub-dev` (`bun run scripts/mcp/server.ts`): Emulator health checks, invoke Python Cloud Functions, and inspect Firestore collections with automatic DPA 2012 PII sanitization.
      - `firebase` (`bunx firebase-tools mcp`): Rules, indexes, and cloud management.
+     - `memory-map` (`bun run scripts/mcp/memory-server.ts`): Interconnected Markdown Memory Map for long-term project knowledge retention, graph exploration, and decision logging.
    - Agent configurations are available at:
      - `.mcp.json`: Antigravity (AGY), Claude Code, Windsurf, Zed, and agent-agnostic MCP clients.
      - `opencode.json`: OpenCode AI assistant.
@@ -88,7 +96,7 @@ Match incoming tasks to the appropriate installed skill in `.agents/skills/`:
 - Extract common logic into reusable modules:
   - Business logic & API calls: `src/services/`
   - Reusable custom hooks: `src/hooks/`
-  - Presentation primitives: `src/components/shared/UI/` (`Button`, `Card`, `Modal`, `Input`, `Badge`)
+  - Presentation primitives: `src/components/UI/` (`Button`, `Card`, `Modal`, `Input`, `Badge`, `SegmentedControl`)
 - Never copy-paste query logic, date calculations, or badge rendering across pages.
 - Centralize notifications using `react-hot-toast`. Never create ad-hoc notification mechanisms.
 
@@ -102,30 +110,70 @@ Match incoming tasks to the appropriate installed skill in `.agents/skills/`:
 
 ## 4. Repository Structure & Layering Boundaries
 
+`src/pages/` is organised by **route cluster, never by role**. There is no
+`admin/` or `organizer/` folder: `src/auth/ability.ts` decides what a signed-in
+user may open, so a folder named after a role would assert access the code does
+not actually gate. A component lives under `pages/` when exactly one route owns
+it, and under `components/` when it is shared.
+
 ```
 apohub/
 ├── src/
 │   ├── auth/             # Authorization: CASL ability, AbilityProvider, RequireAbility gate
-│   ├── components/        # UI components (presentational & interactive)
-│   │   ├── admin/         # Admin management panels
-│   │   ├── organizer/     # Organizer dashboards & scanners
-│   │   ├── public/        # Public attendee-facing views
-│   │   └── shared/        # Reusable shared UI primitives (Button, Card, Modal, Tabs, etc.)
-│   ├── config/            # Firebase client config & app environment constants
-│   ├── contexts/          # React Contexts (AuthContext for the Firebase session)
-│   ├── hooks/             # Custom reusable hooks (usePageTitle, useMediaQuery, etc.)
-│   ├── pages/             # Page components mapped to React Router v7 routes
-│   ├── services/          # STRICT SERVICE LAYER: All Firestore & external API access
-│   ├── types/             # Shared TypeScript type definitions (incl. ROLES)
-│   └── utils/             # Pure utility functions (pricing, dates, QR, PDF)
-├── functions/             # Python 3.11 2nd Gen Cloud Functions (main.py, email_service.py)
-├── docs/                  # System specifications (Architecture, PRD, Rules, Schema)
-├── scripts/               # Maintenance, emulator, and migration scripts
+│   ├── components/       # Shared UI. UI/ is the primitive layer (import from the barrel)
+│   │   ├── UI/           # Button, Input, Select, Textarea, Field, Badge, Card, Modal,
+│   │   │                 # ConfirmationModal, Tabs, DataTable, EmptyState, ProgressBar,
+│   │   │                 # SimpleBarChart, Skeleton, LoadingSpinner, SegmentedControl
+│   │   ├── ErrorBoundary.tsx
+│   │   └── FormattedLabelText.tsx
+│   ├── config/           # Firebase client config & app environment constants
+│   ├── contexts/         # React Contexts (AuthContext for the Firebase session)
+│   ├── hooks/            # Custom reusable hooks (usePageTitle, useSEO, useMediaQuery, ...)
+│   ├── layout/           # AppShell, AppNavbar, SkipLink
+│   ├── pages/            # One folder per route cluster
+│   │   ├── home/         # / — HomePage (PlatformHome for unscoped reads | ScopedHome for own reads),
+│   │   │                 #     StatStrip, TrendPanel
+│   │   ├── events/       # /events — EventListPage, EventEditorPage,
+│   │   │                 #   components/ (PhotoUpload, FormBuilder, PromoCodeManager),
+│   │   │                 #   workspace/ (EventWorkspacePage + tabs/*Tab, LegacyRedirect)
+│   │   ├── users/        # /users
+│   │   ├── auth/         # /auth/login, /auth/forgot-password
+│   │   ├── registration/ # /e/:slug — RegistrationPage + components/
+│   │   ├── payment/      # /payment/*
+│   │   ├── feedback/     # /feedback/:eventId + FormRenderer
+│   │   ├── verification/ # /verify, /verify/:code
+│   │   └── errors/       # /forbidden and the * catch-all
+│   ├── services/         # STRICT SERVICE LAYER: All Firestore & external API access
+│   ├── types/            # Shared TypeScript type definitions (incl. ROLES)
+│   └── utils/            # Pure utility functions (pricing, dates, QR, PDF)
+├── functions/            # Python 3.13 2nd Gen Cloud Functions (main.py, email_service.py)
+├── docs/                 # System specifications (Architecture, PRD, Rules, Schema)
+├── scripts/              # Maintenance, emulator, and migration scripts
 └── tests/
-    ├── unit/              # Vitest unit tests (service, logic, architecture tests)
-    ├── dom/               # Vitest + jsdom component render tests
-    └── rules/             # Firebase Security Rules unit test suite
+    ├── unit/             # Vitest unit tests (service, logic, architecture tests)
+    ├── dom/              # Vitest + jsdom component render tests
+    └── rules/            # Firebase Security Rules unit test suite
 ```
+
+### Naming
+- **`*Page.tsx` means it is a route.** The seven workspace panels are `*Tab.tsx`
+  under `pages/events/workspace/tabs/`. A retired slug keeps resolving through
+  `REMOVED_TAB_REDIRECTS` in `EventWorkspacePage.tsx` rather than falling through
+  to Overview, which reads as "this event has no data" instead of "that screen
+  moved".
+- **A panel takes a required `eventId` prop** from `EventWorkspacePage`. No panel
+  reads the route, and no component carries an `embedded` flag. If a component
+  needs `embedded`, it is really two screens and wants to be two files.
+- **Screens that differ by data scope are named for the scope, not the role**
+  (`PlatformHome` vs `ScopedHome`): the difference is which Firestore
+  reads they may run, which is what `firestore.rules` enforces.
+- **No one-file wrapper folders.** `components/Foo/Foo.tsx` alongside
+  `components/Foo/index.ts` gives one component two import paths, which is
+  exactly how a primitive's geometry drifts. Make the folder only once it holds
+  more than the component (its test, its styles, a subcomponent).
+- **Shared types are declared once in `types/`.** Do not re-declare a shape
+  next to whichever component needed it first — that is how a page ends up
+  importing a type across page boundaries.
 
 ### Layering Boundary Rules:
 1. **Pages/Components MUST NOT call Firestore SDK directly**:
@@ -138,7 +186,11 @@ apohub/
 4. **Authorization Goes Through CASL, Never Through `role` Comparisons**:
    - Add permissions in `src/auth/ability.ts`. Never write `userProfile.role === 'admin'` to decide what a user may see or do.
    - `role === 'admin'` is legitimate **only** for display text (labels, page titles) and for data filtering inside a list an account may already read.
+   - **Choosing which query to run is authorization too.** `getAllEvents()` / `getDashboardStats()` / `getAllRegistrations()` are unscoped reads that only a platform-wide reader may issue; branch on `useAbility().can('read', 'all')`, never on the role string. Getting this wrong is a DPA 2012 problem, not a styling one.
    - Read `docs/Rules.md` §2.0 before adding a rule: it maps every ability rule to the `firestore.rules` clause it mirrors. `firestore.rules` stays the security boundary; CASL is UX and must never be treated as enforcement.
+5. **One Import Path Per Component**:
+   - Import primitives from the `@/components/UI` barrel, never by file path. Two paths for one component is how its geometry and colours drift apart across the app. `tests/unit/designSystem.test.ts` and the import-shape assertions catch regressions.
+   - The barrel re-exports **primitives only**. A component owned by one page is imported by its own path from that page; `components/` and `pages/` never import from each other.
 
 ---
 
@@ -178,6 +230,22 @@ apohub/
 - Sensitive links and post-event actions (feedback, payment submission) use private token documents (`feedbackTokens`) managed server-side.
 - Never expose attendee emails, phone numbers, or GCash reference numbers in public or unscoped documents.
 
+### 5.4 Hybrid RBAC + ABPAC Alignment Invariant (CRITICAL)
+- **Dual-Layer Contract**:
+  - `firestore.rules` is the authoritative security boundary.
+  - CASL (`src/auth/ability.ts`) is the client-side UX alignment layer that drives UI rendering, gates, and route protection.
+  - **These two layers MUST remain 1:1 synchronized at all times.** If a capability, domain flag, or lifecycle condition is altered in one, the other must mirror it. Always consult and update [docs/Rules.md](file:///Users/gab/Developer/apohub/docs/Rules.md) §2.0.
+- **Role Invariants**:
+  - **`admin` (RBAC)**: Unrestricted platform-wide access across all routes, collections, and security rules.
+  - **`organizer` (ABPAC)**: Granular functional capabilities stored on `users/{userId}.permissions` (`events`, `attendees`, `checkin`, `payments`, `certificates`, `feedback`) evaluated strictly in tandem with resource ownership attributes (`event.organizer.uid == auth.uid` or `registration.organizerUid == auth.uid`).
+- **Resource Lifecycle Constraints (ABAC)**:
+  - Events with `status in ['completed', 'cancelled']` are strictly frozen from updates and subcollection writes for non-administrators.
+  - Force-deletion of events containing active attendee registrations is reserved exclusively for platform administrators.
+- **Backward Compatibility**:
+  - Existing organizer accounts without explicit `permissions` maps must inherit standard full organizer permissions (`events.canDelete: true`, etc.) without account lockout.
+  - In `firestore.rules`, the `hasPerm(domain, action)` helper inspects `users/{auth.uid}.permissions` and defaults to permitted when undefined.
+- **Automated Verification**: Enforced by [tests/unit/ability.test.ts](file:///Users/gab/Developer/apohub/tests/unit/ability.test.ts) (CASL matrix) and [tests/rules/firestore.rules.test.ts](file:///Users/gab/Developer/apohub/tests/rules/firestore.rules.test.ts) (Security rules unit test suite).
+
 ---
 
 ## 6. Frontend & UI/UX Standards
@@ -187,7 +255,7 @@ apohub/
   - High-contrast text legible in both bright tropical sunlight and dim auditorium lighting.
   - Minimum **48px touch targets** for all mobile buttons, QR scanners, and form inputs.
   - Fast mobile camera check-in operations via `@zxing/browser`.
-- **UI Primitives**: Always reuse shared primitives from `src/components/shared/UI/`:
+- **UI Primitives**: Always reuse shared primitives from `src/components/UI/`:
   - `Button`: Features built-in `loading` spinner and automatic double-click suppression.
   - `Modal`: Accessible dialogs with proper keyboard focus trapping and escape dismissal.
   - `Card`, `Badge`, `Input`: Consistent padding, border-radius, and typography tokens.

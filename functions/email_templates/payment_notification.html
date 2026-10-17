@@ -1,20 +1,29 @@
-<p>
+<p style="margin: 0 0 16px 0; font-size: 15px; line-height: 1.6; color: #1f1f1f;">
   {{intro_paragraph}}
 </p>
-<br />
-<div style="background-color: {{status_bg_color}}; border: 1px solid {{status_border_color}}; border-radius: 8px; padding: 20px; margin: 20px 0;">
-  <h3 style="color: {{status_text_color}}; margin-top: 0;">{{status_message}}</h3>
-  <p style="color: {{status_text_color}}; margin-bottom: 0;">Registration ID: {{registration_id}}</p>
+<div style="background-color: {{status_bg_color}}; border: 1px solid {{status_border_color}}; border-radius: 8px; padding: 16px 20px; margin: 20px 0;">
+  <h3 style="margin: 0 0 4px 0; font-family: 'Google Sans', Roboto, -apple-system, BlinkMacSystemFont, Arial, sans-serif; font-size: 16px; font-weight: 600; color: {{status_text_color}};">
+    {{status_message}}
+  </h3>
+  <p style="margin: 0; font-size: 13px; font-weight: 500; color: {{status_text_color}};">
+    Registration ID: <span style="font-family: monospace; font-size: 14px; font-weight: 600;">{{registration_id}}</span>
+  </p>
 </div>
 {{payment_instructions_section}}
 {{qr_code_section}}
-<div style="background-color: #e7f3ff; border: 1px solid #b3d9ff; border-radius: 8px; padding: 20px; margin: 20px 0;">
-  <h3 style="color: #0066cc; margin-top: 0;">Next Steps</h3>
-  <ul style="color: #0066cc;">
+<div style="background-color: #f8fafd; border: 1px solid #dadce0; border-radius: 8px; padding: 16px 20px; margin: 20px 0;">
+  <h3 style="margin: 0 0 10px 0; font-family: 'Google Sans', Roboto, -apple-system, BlinkMacSystemFont, Arial, sans-serif; font-size: 15px; font-weight: 600; color: #1f1f1f;">
+    Next Steps
+  </h3>
+  <ul style="margin: 0; padding-left: 20px; font-size: 14px; line-height: 1.6; color: #5f6368;">
     {{next_steps}}
     <li>Keep this email for your records</li>
   </ul>
 </div>
-<p>{{contact_prompt}}</p>
-<br />
-<p>Googleyness,<br />Google Developer Groups - Davao</p>
+<p style="margin: 16px 0; font-size: 14px; line-height: 1.5; color: #5f6368;">
+  {{contact_prompt}}
+</p>
+<p style="margin: 24px 0 0 0; font-size: 15px; line-height: 1.5; color: #1f1f1f;">
+  Googleyness,<br />
+  <strong style="color: #0b57d0; font-family: 'Google Sans', Roboto, Arial, sans-serif;">Google Developer Groups - Davao</strong>
+</p>

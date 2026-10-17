@@ -11,7 +11,8 @@ import {
   serverTimestamp,
   deleteDoc,
   Timestamp,
-  onSnapshot
+  onSnapshot,
+  limit
 } from 'firebase/firestore';
 import { 
   ref, 
@@ -23,7 +24,9 @@ import { httpsCallable } from 'firebase/functions';
 import { db, storage, functions } from '../config/firebase';
 import { logger } from '../utils/logger';
 import { generateSlug } from '../utils/slugUtils';
+import { toDateSafe } from '../utils/dateUtils';
 import { Event, TicketType, PromoCode, FormField } from '../types';
+import { AuditLogService } from './auditLogService';
 
 // Interface for event form data
 export interface EventFormData {
@@ -45,6 +48,12 @@ export interface EventFormData {
   venueName?: string;
   venueAddress?: string;
   city: string;
+  venueCoordinates?: {
+    lat: number;
+    lng: number;
+  };
+  venuePlaceId?: string;
+  venueMapsUrl?: string;
 
   // Speakers (as per PRD requirement)
   speakers: {
@@ -58,7 +67,7 @@ export interface EventFormData {
 
   // Pricing & Tickets
   ticketTypes: TicketType[];
-  promoCodes: PromoCode[];
+  promoCodes?: PromoCode[];
 
   // Legacy pricing (for backward compatibility)
   isPaid: boolean;
@@ -68,7 +77,7 @@ export interface EventFormData {
 
   // Forms
   registrationForm: FormField[];
-  feedbackForm: FormField[];
+  feedbackForm?: FormField[];
 
   // Payment (for paid events)
   paymentConfigs?: PaymentConfig[];
@@ -103,6 +112,42 @@ export class EventService {
   private static readonly SPEAKER_PHOTOS_PATH = 'speaker-photos';
   private static readonly PAYMENT_QR_PATH = 'payment-qr';
 
+  private static inFlightRequests = new Map<string, Promise<any>>();
+  private static memoryCache = new Map<string, { data: any; expiry: number }>();
+  private static readonly CACHE_TTL_MS = 30_000; // 30 seconds
+
+  /**
+   * Invalidate memory cache for a specific event or the entire event cache.
+   */
+  static invalidateCache(eventId?: string): void {
+    if (eventId) {
+      this.memoryCache.delete(`event:${eventId}`);
+      for (const [key, val] of this.memoryCache.entries()) {
+        if (key.startsWith('slug:') && val.data?.id === eventId) {
+          this.memoryCache.delete(key);
+        }
+      }
+    } else {
+      this.memoryCache.clear();
+    }
+  }
+
+  /**
+   * Prefetch an event into memory/IndexedDB cache on hover or intent.
+   * Respects Save-Data and slow 2G mobile connections.
+   */
+  static prefetchEvent(eventId: string, slug?: string): void {
+    if (!eventId && !slug) return;
+    if (typeof navigator !== 'undefined') {
+      const conn = (navigator as any).connection;
+      if (conn?.saveData || conn?.effectiveType === '2g' || conn?.effectiveType === 'slow-2g') {
+        return;
+      }
+    }
+    if (eventId) void this.getEvent(eventId);
+    if (slug) void this.getEventBySlug(slug);
+  }
+
   /**
    * Generate a unique slug for an event
    * Checks existing slugs in the database to ensure uniqueness
@@ -122,29 +167,83 @@ export class EventService {
   }
 
   /**
-   * Get event by slug
+   * Get event by slug.
+   * Resolves published events directly with security rules constraints, and falls back to
+   * unconstrained queries for admins or organizers.
    */
   static async getEventBySlug(slug: string): Promise<Event | null> {
+    if (!slug) return null;
+
+    const cacheKey = `slug:${slug}`;
+    const cached = this.memoryCache.get(cacheKey);
+    if (cached && cached.expiry > Date.now()) {
+      return cached.data;
+    }
+
+    if (this.inFlightRequests.has(cacheKey)) {
+      return this.inFlightRequests.get(cacheKey)!;
+    }
+
+    const fetchPromise = (async () => {
+      try {
+        const published = await this.getPublishedEventBySlug(slug);
+        if (published) {
+          this.memoryCache.set(cacheKey, { data: published, expiry: Date.now() + this.CACHE_TTL_MS });
+          this.memoryCache.set(`event:${published.id}`, { data: published, expiry: Date.now() + this.CACHE_TTL_MS });
+          return published;
+        }
+
+        const eventsRef = collection(db, this.EVENTS_COLLECTION);
+        const q = query(eventsRef, where('slug', '==', slug), limit(1));
+        const snapshot = await getDocs(q);
+
+        if (snapshot.empty) {
+          return null;
+        }
+
+        const docSnap = snapshot.docs[0];
+        const event = { id: docSnap.id, ...docSnap.data() } as Event;
+        this.memoryCache.set(cacheKey, { data: event, expiry: Date.now() + this.CACHE_TTL_MS });
+        this.memoryCache.set(`event:${event.id}`, { data: event, expiry: Date.now() + this.CACHE_TTL_MS });
+        return event;
+      } catch {
+        return null;
+      } finally {
+        this.inFlightRequests.delete(cacheKey);
+      }
+    })();
+
+    this.inFlightRequests.set(cacheKey, fetchPromise);
+    return fetchPromise;
+  }
+
+  /**
+   * Get published event by slug.
+   * Scoped with isPublished == true and status in ['published', 'ongoing'] to satisfy
+   * Firestore security rules for unauthenticated public reads.
+   */
+  static async getPublishedEventBySlug(slug: string): Promise<Event | null> {
     try {
       const eventsRef = collection(db, this.EVENTS_COLLECTION);
-      const q = query(eventsRef, where('slug', '==', slug));
+      const q = query(
+        eventsRef,
+        where('slug', '==', slug),
+        where('isPublished', '==', true),
+        where('status', 'in', ['published', 'ongoing']),
+        limit(1)
+      );
       const snapshot = await getDocs(q);
-      
+
       if (snapshot.empty) {
         return null;
       }
-      
-      const doc = snapshot.docs[0];
-      return { id: doc.id, ...doc.data() } as Event;
+
+      const docSnap = snapshot.docs[0];
+      return { id: docSnap.id, ...docSnap.data() } as Event;
     } catch (error) {
-      logger.error('Error getting event by slug:', error);
+      logger.error('Error getting published event by slug:', error);
       return null;
     }
-  }
-
-  static async getPublishedEventBySlug(slug: string): Promise<Event | null> {
-    const event = await this.getEventBySlug(slug);
-    return event?.isPublished && ['published', 'ongoing'].includes(event.status) ? event : null;
   }
 
   /**
@@ -199,10 +298,10 @@ export class EventService {
         safe.company = s.company.trim();
       }
 
-      // Only persist hosted URLs for photoUrl; ignore base64 data URLs
+      // Only persist hosted URLs for photoUrl; ignore base64 data URLs and local blob URLs
       if (s.photoUrl && typeof s.photoUrl === 'string') {
         const url = s.photoUrl.trim();
-        if (url && !url.startsWith('data:')) {
+        if (url && !url.startsWith('data:') && !url.startsWith('blob:')) {
           safe.photoUrl = url;
         }
       }
@@ -340,6 +439,21 @@ export class EventService {
       if (eventData.venueAddress && eventData.venueAddress.trim()) {
         venue.address = eventData.venueAddress.trim();
       }
+
+      const coords = eventData.venueCoordinates ?? (eventData as any).venue?.coordinates;
+      if (coords && typeof coords.lat === 'number' && typeof coords.lng === 'number') {
+        venue.coordinates = { lat: coords.lat, lng: coords.lng };
+      }
+
+      const placeId = eventData.venuePlaceId ?? (eventData as any).venue?.placeId;
+      if (placeId && placeId.trim()) {
+        venue.placeId = placeId.trim();
+      }
+
+      const mapsUrl = eventData.venueMapsUrl ?? (eventData as any).venue?.mapsUrl;
+      if (mapsUrl && mapsUrl.trim()) {
+        venue.mapsUrl = mapsUrl.trim();
+      }
       
       // Add online details for online events
       if (eventData.venueType === 'online') {
@@ -441,6 +555,21 @@ export class EventService {
         logger.warn('Event initialization function failed; continuing without it:', initErr);
       }
 
+      this.invalidateCache(eventId);
+      void AuditLogService.recordAuditLog({
+        category: 'event_operations',
+        action: 'event_created',
+        target: {
+          type: 'event',
+          id: eventId,
+          label: eventData.title,
+        },
+        details: {
+          title: eventData.title,
+          category: eventData.category,
+          status: 'draft',
+        },
+      });
       return eventId;
     } catch (error) {
       logger.error('Error creating event:', error);
@@ -472,28 +601,64 @@ export class EventService {
         }
       }
 
+      // Exclude fields handled separately (date parts, subcollection forms, registrationDeadline)
+      const separateFields = new Set([
+        'startDate',
+        'startTime',
+        'endDate',
+        'endTime',
+        'registrationForm',
+        'feedbackForm',
+        'registrationDeadline'
+      ]);
+
       // Only add fields that have actual values (avoid undefined)
       Object.keys(eventData).forEach(key => {
+        if (separateFields.has(key)) return;
         const value = (eventData as any)[key];
-        if (value !== undefined && key !== 'startDate' && key !== 'startTime' && key !== 'endDate' && key !== 'endTime') {
+        if (value !== undefined) {
           updateData[key] = value;
         }
       });
 
+      // Handle registration deadline as a Timestamp
+      if (eventData.registrationDeadline !== undefined) {
+        if (eventData.registrationDeadline && typeof eventData.registrationDeadline === 'string' && eventData.registrationDeadline.trim()) {
+          updateData.registrationDeadline = Timestamp.fromDate(new Date(eventData.registrationDeadline));
+        } else if (eventData.registrationDeadline) {
+          const ts = this.toFirestoreTimestamp(eventData.registrationDeadline);
+          if (ts) updateData.registrationDeadline = ts;
+        } else {
+          updateData.registrationDeadline = null;
+        }
+      }
+
       // Rebuild nested venue object so readers of event.venue.* see the updated values
-      const venueFields = ['venueType', 'venueName', 'venueAddress', 'city'];
+      const venueFields = ['venueType', 'venueName', 'venueAddress', 'city', 'venueCoordinates', 'venuePlaceId', 'venueMapsUrl', 'venue'];
       const isVenueUpdate = venueFields.some(f => (eventData as any)[f] !== undefined);
-      if (isVenueUpdate && existingEvent) {
+      if (isVenueUpdate) {
         const venue: any = {
-          type: eventData.venueType ?? existingEvent.venue?.type,
-          city: eventData.city ?? existingEvent.venue?.city,
+          type: eventData.venueType ?? (eventData as any).venue?.type ?? existingEvent?.venue?.type ?? 'offline',
+          city: eventData.city ?? (eventData as any).venue?.city ?? existingEvent?.venue?.city ?? 'Davao City',
         };
-        const name = eventData.venueName ?? existingEvent.venue?.name;
+        const name = eventData.venueName ?? (eventData as any).venue?.name ?? existingEvent?.venue?.name;
         if (name && name.trim()) venue.name = name.trim();
-        const address = eventData.venueAddress ?? existingEvent.venue?.address;
+        const address = eventData.venueAddress ?? (eventData as any).venue?.address ?? existingEvent?.venue?.address;
         if (address && address.trim()) venue.address = address.trim();
+
+        const coords = eventData.venueCoordinates ?? (eventData as any).venue?.coordinates ?? existingEvent?.venue?.coordinates;
+        if (coords && typeof coords.lat === 'number' && typeof coords.lng === 'number') {
+          venue.coordinates = { lat: coords.lat, lng: coords.lng };
+        }
+
+        const placeId = eventData.venuePlaceId ?? (eventData as any).venue?.placeId ?? existingEvent?.venue?.placeId;
+        if (placeId && placeId.trim()) venue.placeId = placeId.trim();
+
+        const mapsUrl = eventData.venueMapsUrl ?? (eventData as any).venue?.mapsUrl ?? existingEvent?.venue?.mapsUrl;
+        if (mapsUrl && mapsUrl.trim()) venue.mapsUrl = mapsUrl.trim();
+
         if (venue.type === 'online') {
-          venue.onlineDetails = existingEvent.venue?.onlineDetails ?? {
+          venue.onlineDetails = existingEvent?.venue?.onlineDetails ?? {
             platform: 'Google Meet',
             instructions: 'Meeting link will be sent via email',
           };
@@ -502,6 +667,9 @@ export class EventService {
         delete updateData.venueType;
         delete updateData.venueName;
         delete updateData.venueAddress;
+        delete updateData.venueCoordinates;
+        delete updateData.venuePlaceId;
+        delete updateData.venueMapsUrl;
         delete updateData.city;
       }
 
@@ -545,6 +713,20 @@ export class EventService {
       if (eventData.registrationForm || eventData.feedbackForm) {
         await this.updateEventForms(eventId, eventData);
       }
+
+      this.invalidateCache(eventId);
+      void AuditLogService.recordAuditLog({
+        category: 'event_operations',
+        action: 'event_updated',
+        target: {
+          type: 'event',
+          id: eventId,
+          label: (existingEvent?.title || eventData.title) ?? undefined,
+        },
+        details: {
+          updatedFields: Object.keys(cleanedUpdateData),
+        },
+      });
     } catch (error) {
       logger.error('Error updating event:', error);
       throw new Error('Failed to update event');
@@ -552,21 +734,80 @@ export class EventService {
   }
 
   /**
+   * Replace an event's promo codes.
+   *
+   * Narrower than updateEvent on purpose: updateEvent re-reads the event and
+   * will silently generate and write a slug as a side effect, which is not
+   * something a promo-code edit should ever do.
+   */
+  static async updatePromoCodes(eventId: string, promoCodes: PromoCode[]): Promise<void> {
+    try {
+      await updateDoc(doc(db, this.EVENTS_COLLECTION, eventId), {
+        promoCodes: this.sanitizePromoCodes(promoCodes),
+        updatedAt: serverTimestamp()
+      });
+      this.invalidateCache(eventId);
+      void AuditLogService.recordAuditLog({
+        category: 'event_operations',
+        action: 'promo_codes_updated',
+        target: {
+          type: 'event',
+          id: eventId,
+        },
+        details: {
+          promoCodesCount: promoCodes.length,
+        },
+      });
+    } catch (error) {
+      logger.error('Error updating promo codes:', error);
+      throw new Error('Failed to update promo codes');
+    }
+  }
+
+  /**
    * Get event by ID
    */
   static async getEvent(eventId: string): Promise<Event | null> {
-    try {
-      const eventRef = doc(db, this.EVENTS_COLLECTION, eventId);
-      const eventSnap = await getDoc(eventRef);
+    if (!eventId) return null;
 
-      if (eventSnap.exists()) {
-        return { id: eventSnap.id, ...eventSnap.data() } as Event;
-      }
-      return null;
-    } catch (error) {
-      logger.error('Error getting event:', error);
-      throw new Error('Failed to get event');
+    const cacheKey = `event:${eventId}`;
+    const cached = this.memoryCache.get(cacheKey);
+    if (cached && cached.expiry > Date.now()) {
+      return cached.data;
     }
+
+    if (this.inFlightRequests.has(cacheKey)) {
+      return this.inFlightRequests.get(cacheKey)!;
+    }
+
+    const fetchPromise = (async () => {
+      try {
+        const eventRef = doc(db, this.EVENTS_COLLECTION, eventId);
+        const eventSnap = await getDoc(eventRef);
+
+        if (eventSnap.exists()) {
+          const event = { id: eventSnap.id, ...eventSnap.data() } as Event;
+          this.memoryCache.set(cacheKey, {
+            data: event,
+            expiry: Date.now() + this.CACHE_TTL_MS,
+          });
+          return event;
+        }
+        return null;
+      } catch (error: any) {
+        // Non-existent documents or unpublished events return permission-denied to non-owners under security rules
+        if (error?.code === 'permission-denied') {
+          return null;
+        }
+        logger.error('Error getting event:', error);
+        throw new Error('Failed to get event');
+      } finally {
+        this.inFlightRequests.delete(cacheKey);
+      }
+    })();
+
+    this.inFlightRequests.set(cacheKey, fetchPromise);
+    return fetchPromise;
   }
 
   /**
@@ -588,11 +829,17 @@ export class EventService {
       eventRef,
       snapshot => {
         if (!snapshot.exists()) {
+          this.memoryCache.delete(`event:${eventId}`);
           onUpdate(null);
           return;
         }
 
-        onUpdate({ id: snapshot.id, ...snapshot.data() } as Event);
+        const event = { id: snapshot.id, ...snapshot.data() } as Event;
+        this.memoryCache.set(`event:${eventId}`, {
+          data: event,
+          expiry: Date.now() + this.CACHE_TTL_MS,
+        });
+        onUpdate(event);
       },
       error => {
         logger.error('Error subscribing to event:', error);
@@ -688,9 +935,9 @@ export class EventService {
 
       // Sort by startDate ascending
       results.sort((a, b) => {
-        const aDate = a.startDate instanceof Timestamp ? a.startDate.toDate() : new Date(String(a.startDate));
-        const bDate = b.startDate instanceof Timestamp ? b.startDate.toDate() : new Date(String(b.startDate));
-        return aDate.getTime() - bDate.getTime();
+        const aTime = toDateSafe(a.startDate)?.getTime() ?? 0;
+        const bTime = toDateSafe(b.startDate)?.getTime() ?? 0;
+        return aTime - bTime;
       });
 
       return results;
@@ -746,6 +993,18 @@ export class EventService {
 
       // Delete associated subcollections and files
       await this.deleteEventData(eventId, forceDelete);
+      this.invalidateCache(eventId);
+      void AuditLogService.recordAuditLog({
+        category: 'event_operations',
+        action: 'event_deleted',
+        target: {
+          type: 'event',
+          id: eventId,
+        },
+        details: {
+          forceDelete,
+        },
+      });
       logger.log('Event deletion completed successfully');
     } catch (error) {
       logger.error('Error deleting event:', error);
@@ -827,7 +1086,7 @@ export class EventService {
       const feedbackFormRef = doc(db, `${this.EVENTS_COLLECTION}/${eventId}/forms/feedback`);
       await setDoc(feedbackFormRef, {
         type: 'feedback',
-        fields: eventData.feedbackForm,
+        fields: eventData.feedbackForm ?? [],
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       });
@@ -844,18 +1103,20 @@ export class EventService {
     try {
       if (eventData.registrationForm) {
         const registrationFormRef = doc(db, `${this.EVENTS_COLLECTION}/${eventId}/forms/registration`);
-        await updateDoc(registrationFormRef, {
+        await setDoc(registrationFormRef, {
+          type: 'registration',
           fields: eventData.registrationForm,
           updatedAt: serverTimestamp()
-        });
+        }, { merge: true });
       }
 
       if (eventData.feedbackForm) {
         const feedbackFormRef = doc(db, `${this.EVENTS_COLLECTION}/${eventId}/forms/feedback`);
-        await updateDoc(feedbackFormRef, {
+        await setDoc(feedbackFormRef, {
+          type: 'feedback',
           fields: eventData.feedbackForm,
           updatedAt: serverTimestamp()
-        });
+        }, { merge: true });
       }
     } catch (error) {
       logger.error('Error updating event forms:', error);
@@ -1262,7 +1523,8 @@ export class EventService {
 
       if (filters.dateRange) {
         events = events.filter(event => {
-          const eventDate = event.startDate.toDate();
+          const eventDate = toDateSafe(event.startDate);
+          if (!eventDate) return false;
           return eventDate >= filters.dateRange!.start && eventDate <= filters.dateRange!.end;
         });
       }
@@ -1467,7 +1729,18 @@ export class EventService {
       logger.log('🔥 EventService: Update data:', updateData);
       
       await updateDoc(eventRef, updateData);
-      
+      this.invalidateCache(eventId);
+      void AuditLogService.recordAuditLog({
+        category: 'event_operations',
+        action: status === 'published' ? 'event_published' : 'event_updated',
+        target: {
+          type: 'event',
+          id: eventId,
+        },
+        details: {
+          status,
+        },
+      });
       logger.log('✅ EventService: Firebase update completed successfully');
       
       // Verify the update by reading the document back

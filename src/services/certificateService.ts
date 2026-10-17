@@ -1,3 +1,4 @@
+import { APP_URL } from '../config/app';
 import { 
   collection, 
   doc, 
@@ -24,7 +25,7 @@ import { httpsCallable } from 'firebase/functions';
 import { db, storage, functions } from '../config/firebase';
 import { logger } from '../utils/logger';
 import { CertificateTemplate, Certificate } from '../types';
-import { NotificationService } from './notificationService';
+import { AuditLogService } from './auditLogService';
 
 export interface IssuedCertificate {
   id: string;
@@ -42,6 +43,9 @@ export interface IssuedCertificate {
   downloadCount: number;
   certificateUrl: string;
 }
+
+/** Matches EmailService.getAllEmails' existing cap so history cannot grow unbounded. */
+const CERTIFICATE_PAGE_SIZE = 1000;
 
 export class CertificateService {
   private static readonly TEMPLATES_COLLECTION = 'certificateTemplates';
@@ -222,7 +226,8 @@ export class CertificateService {
     try {
       const templatesQuery = query(
         collection(db, this.TEMPLATES_COLLECTION),
-        orderBy('createdAt', 'desc')
+        orderBy('createdAt', 'desc'),
+        limit(CERTIFICATE_PAGE_SIZE)
       );
       const snapshot = await getDocs(templatesQuery);
       
@@ -326,25 +331,19 @@ export class CertificateService {
         updatedAt: serverTimestamp()
       });
 
-      // Send notification to user about certificate readiness
-      try {
-        if (data.userId) {
-          await NotificationService.createNotification(
-            data.userId,
-            'certificate_ready',
-            'Certificate Ready',
-            `Your certificate for "${data.eventTitle}" is now available for download!`,
-            {
-              certificateId: response.certificateId,
-              eventId: data.eventId,
-              eventTitle: data.eventTitle,
-              registrationId: data.registrationId
-            }
-          );
-        }
-      } catch (error) {
-        logger.warn('Failed to create certificate ready notification:', error);
-      }
+      void AuditLogService.recordAuditLog({
+        category: 'communications',
+        action: 'certificate_generated',
+        target: {
+          type: 'certificate',
+          id: response.certificateId!,
+          label: data.recipientName,
+        },
+        details: {
+          eventId: data.eventId,
+          recipientEmail: data.recipientEmail,
+        },
+      });
 
       return response.certificateId!;
     } catch (error) {
@@ -354,14 +353,23 @@ export class CertificateService {
   }
 
   /**
-   * Get all issued certificates
+   * Get issued certificates. Pass an eventId to scope the read — the organizer's
+   * roster is always filtered to one event in the UI, so the unscoped form reads
+   * the entire (publicly readable) certificate history for nothing.
    */
-  static async getAllIssuedCertificates(): Promise<IssuedCertificate[]> {
+  static async getAllIssuedCertificates(eventId?: string): Promise<IssuedCertificate[]> {
     try {
-      const certificatesQuery = query(
-        collection(db, this.CERTIFICATES_COLLECTION),
-        orderBy('issuedAt', 'desc')
-      );
+      const certificatesQuery = eventId
+        ? query(
+            collection(db, this.CERTIFICATES_COLLECTION),
+            where('eventId', '==', eventId),
+            limit(CERTIFICATE_PAGE_SIZE)
+          )
+        : query(
+            collection(db, this.CERTIFICATES_COLLECTION), // firestore:unscoped-ok - capped at CERTIFICATE_PAGE_SIZE
+            orderBy('issuedAt', 'desc'),
+            limit(CERTIFICATE_PAGE_SIZE)
+          );
       const snapshot = await getDocs(certificatesQuery);
       
       return snapshot.docs.map(doc => {
@@ -370,13 +378,18 @@ export class CertificateService {
           id: doc.id,
           templateId: data.templateId,
           templateName: data.templateName || 'Unknown Template',
-          recipientName: data.recipientName,
-          recipientEmail: data.recipientEmail || '',
+          // Cloud Functions write attendeeName/attendeeEmail/issueDate; the legacy
+          // client path wrote recipientName/recipientEmail/issuedAt.
+          recipientName: data.recipientName ?? data.attendeeName,
+          recipientEmail: data.recipientEmail ?? data.attendeeEmail ?? '',
           eventId: data.eventId || '',
           eventTitle: data.eventTitle,
           eventDate: data.eventDate || '',
           registrationId: data.registrationId,
-          issuedDate: data.issuedAt?.toDate?.()?.toISOString() || new Date().toISOString(),
+          issuedDate:
+            data.issuedAt?.toDate?.()?.toISOString() ??
+            data.issueDate?.toDate?.()?.toISOString() ??
+            new Date().toISOString(),
           verificationCode: data.credentialId,
           status: data.isVerified ? 'issued' : 'issued',
           downloadCount: data.downloadCount || 0,
@@ -525,53 +538,24 @@ export class CertificateService {
         revokedAt: serverTimestamp(),
         revokeReason: reason || 'Revoked by admin'
       });
+
+      void AuditLogService.recordAuditLog({
+        category: 'communications',
+        action: 'system_config_changed',
+        target: {
+          type: 'certificate',
+          id: certificateId,
+        },
+        details: {
+          revocationReason: reason || 'Revoked by admin',
+        },
+      });
     } catch (error) {
       logger.error('Error revoking certificate:', error);
       throw new Error('Failed to revoke certificate');
     }
   }
 
-  /**
-   * Get certificate statistics
-   */
-  static async getCertificateStats(): Promise<{
-    totalTemplates: number;
-    totalIssued: number;
-    totalVerified: number;
-    totalDownloads: number;
-  }> {
-    try {
-      // Get template count
-      const templatesSnapshot = await getDocs(collection(db, this.TEMPLATES_COLLECTION));
-      const totalTemplates = templatesSnapshot.size;
-
-      // Get certificate stats
-      const certificatesSnapshot = await getDocs(collection(db, this.CERTIFICATES_COLLECTION));
-      let totalIssued = certificatesSnapshot.size;
-      let totalVerified = 0;
-      let totalDownloads = 0;
-
-      certificatesSnapshot.docs.forEach(doc => {
-        const data = doc.data();
-        if (data.isVerified) totalVerified++;
-        totalDownloads += data.downloadCount || 0;
-      });
-
-      return {
-        totalTemplates,
-        totalIssued,
-        totalVerified,
-        totalDownloads
-      };
-    } catch (error) {
-      logger.error('Error fetching certificate stats:', error);
-      throw new Error('Failed to fetch certificate stats');
-    }
-  }
-
-  /**
-   * Re-upload template image from external URL to Firebase Storage for CORS compliance
-   */
   static async reuploadTemplateImage(templateId: string, externalUrl: string): Promise<string> {
     try {
       // Fetch the external image
@@ -673,7 +657,7 @@ export class CertificateService {
       const certificateRef = doc(collection(db, this.CERTIFICATES_COLLECTION));
       const certificateId = certificateRef.id;
       
-      const verificationUrl = `https://apohub.gdgdavao.org/verify/${data.verificationCode}`;
+      const verificationUrl = `${APP_URL}/verify/${data.verificationCode}`;
       
       await setDoc(certificateRef, {
         credentialId: data.verificationCode,

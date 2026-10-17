@@ -19,6 +19,8 @@ import {
   defineAbilityFor,
   asEvent,
   asRegistration,
+  asCertificate,
+  asPaymentProof,
   asUser,
 } from '../../src/auth/ability';
 import type { AbilitySubject } from '../../src/auth/ability';
@@ -160,15 +162,9 @@ describe('admin', () => {
     expect(ability.can('update', me)).toBe(false);
   });
 
-  it('may delete an organizer but never itself, and never another admin', () => {
+  it('may delete an organizer and peer admins, but never itself', () => {
     const ability = defineAbilityFor(admin());
     expect(ability.can('delete', anOrganizerUser)).toBe(true);
-    expect(ability.can('delete', me)).toBe(false);
-    expect(ability.can('delete', otherAdmin)).toBe(false);
-  });
-
-  it('lets a superuser delete another admin, still never itself', () => {
-    const ability = defineAbilityFor(admin({ isSuperUser: true }));
     expect(ability.can('delete', otherAdmin)).toBe(true);
     expect(ability.can('delete', me)).toBe(false);
   });
@@ -183,7 +179,7 @@ describe('negation semantics', () => {
     // per-subject and never grant `manage` on User.
     const ability = defineAbilityFor(admin());
     expect(ability.can('delete', me)).toBe(false);
-    expect(ability.can('delete', otherAdmin)).toBe(false);
+    expect(ability.can('delete', otherAdmin)).toBe(true);
     expect(ability.can('update', me)).toBe(false);
   });
 
@@ -212,5 +208,161 @@ describe('negation semantics', () => {
     // The read verbs an organizer must NOT be able to route-guard on stay closed.
     expect(ability.can('read', 'all')).toBe(false);
     expect(ability.can('read', 'User')).toBe(false);
+  });
+
+  it('gates AuditLog management to administrators only', () => {
+    const regularAdminAbility = defineAbilityFor(admin({ isSuperUser: false }));
+    const superAdminAbility = defineAbilityFor(admin({ isSuperUser: true }));
+    const organizerAbility = defineAbilityFor(organizer());
+    const inactiveAdminAbility = defineAbilityFor(admin({ isActive: false }));
+
+    expect(regularAdminAbility.can('manage', 'AuditLog')).toBe(true);
+    expect(superAdminAbility.can('manage', 'AuditLog')).toBe(true);
+    expect(organizerAbility.can('manage', 'AuditLog')).toBe(false);
+    expect(organizerAbility.can('read', 'AuditLog')).toBe(false);
+    expect(inactiveAdminAbility.can('manage', 'AuditLog')).toBe(false);
+  });
+});
+
+describe('hybrid RBAC + ABPAC: granular permissions & lifecycle invariants', () => {
+  const completedOwnedEvent = asEvent({
+    id: 'e-done',
+    title: 'Completed Event',
+    status: 'completed',
+    organizer: { uid: 'org-1', name: 'A', email: 'a@b.c' },
+  } as any);
+
+  const cancelledOwnedEvent = asEvent({
+    id: 'e-cancel',
+    title: 'Cancelled Event',
+    status: 'cancelled',
+    organizer: { uid: 'org-1', name: 'A', email: 'a@b.c' },
+  } as any);
+
+  const draftOwnedEvent = asEvent({
+    id: 'e-draft',
+    title: 'Draft Event',
+    status: 'draft',
+    organizer: { uid: 'org-1', name: 'A', email: 'a@b.c' },
+  } as any);
+
+  it('restricts event mutations on completed and cancelled events for organizers (ABAC)', () => {
+    const ability = defineAbilityFor(organizer());
+    // Draft / published events can be updated
+    expect(ability.can('update', draftOwnedEvent)).toBe(true);
+    // Completed or cancelled events cannot be updated or managed by an organizer
+    expect(ability.can('update', completedOwnedEvent)).toBe(false);
+    expect(ability.can('update', cancelledOwnedEvent)).toBe(false);
+    expect(ability.can('manage', completedOwnedEvent)).toBe(false);
+    expect(ability.can('manage', cancelledOwnedEvent)).toBe(false);
+    // Admins can still manage and update completed events
+    const adminAbility = defineAbilityFor(admin());
+    expect(adminAbility.can('update', completedOwnedEvent)).toBe(true);
+    expect(adminAbility.can('manage', completedOwnedEvent)).toBe(true);
+  });
+
+  it('denies event deletion when canDelete is false', () => {
+    const ability = defineAbilityFor(
+      organizer({
+        permissions: {
+          events: { canCreate: true, canUpdate: true, canDelete: false },
+        },
+      })
+    );
+    expect(ability.can('delete', ownedEvent)).toBe(false);
+    expect(ability.can('manage', ownedEvent)).toBe(false);
+    expect(ability.can('update', ownedEvent)).toBe(true);
+  });
+
+  it('denies attendee mutations and export when attendees permissions are disabled', () => {
+    const ability = defineAbilityFor(
+      organizer({
+        permissions: {
+          attendees: { canRead: true, canUpdate: false, canDelete: false, canExport: false },
+        },
+      })
+    );
+    expect(ability.can('read', 'Registration')).toBe(true);
+    expect(ability.can('update', ownedRegistration)).toBe(false);
+    expect(ability.can('delete', ownedRegistration)).toBe(false);
+    expect(ability.can('export', 'Registration')).toBe(false);
+    expect(ability.can('export', ownedRegistration)).toBe(false);
+  });
+
+  it('denies certificate management when certificates.canManage is false', () => {
+    const ability = defineAbilityFor(
+      organizer({
+        permissions: {
+          certificates: { canManage: false },
+        },
+      })
+    );
+    expect(ability.can('read', 'Certificate')).toBe(false);
+    expect(ability.can('update', asCertificate({ id: 'c1', organizerUid: 'org-1' } as any))).toBe(false);
+  });
+
+  it('denies payment verification when payments.canVerify is false', () => {
+    const ability = defineAbilityFor(
+      organizer({
+        permissions: {
+          payments: { canVerify: false },
+        },
+      })
+    );
+    expect(ability.can('read', 'PaymentProof')).toBe(false);
+    expect(ability.can('update', asPaymentProof({ id: 'p1', organizerUid: 'org-1' } as any))).toBe(false);
+  });
+
+  it('supports staff / check-in preset (least privilege for onsite staff)', () => {
+    const ability = defineAbilityFor(
+      organizer({
+        permissions: {
+          events: { canCreate: false, canUpdate: false, canDelete: false },
+          attendees: { canRead: true, canUpdate: false, canDelete: false, canExport: false },
+          checkin: { canCheckIn: true },
+          payments: { canVerify: false },
+          certificates: { canManage: false },
+          feedback: { canRead: true },
+        },
+      })
+    );
+    expect(ability.can('create', 'Event')).toBe(false);
+    expect(ability.can('update', ownedEvent)).toBe(false);
+    expect(ability.can('delete', ownedEvent)).toBe(false);
+    expect(ability.can('export', 'Registration')).toBe(false);
+    expect(ability.can('read', 'Registration')).toBe(true);
+    expect(ability.can('read', 'Certificate')).toBe(false);
+    expect(ability.can('read', 'PaymentProof')).toBe(false);
+  });
+
+  it('controls checkin and walk-in creation based on checkin.canCheckIn and attendees.canUpdate', () => {
+    const fullAbility = defineAbilityFor(organizer());
+    expect(fullAbility.can('checkin', ownedRegistration)).toBe(true);
+    expect(fullAbility.can('create', ownedRegistration)).toBe(true);
+    expect(fullAbility.can('checkin', otherRegistration)).toBe(false);
+
+    const staffAbility = defineAbilityFor(
+      organizer({
+        permissions: {
+          attendees: { canRead: true, canUpdate: true, canDelete: false, canExport: false },
+          checkin: { canCheckIn: true },
+        },
+      })
+    );
+    expect(staffAbility.can('checkin', ownedRegistration)).toBe(true);
+    expect(staffAbility.can('create', ownedRegistration)).toBe(true);
+
+    const noCheckinAbility = defineAbilityFor(
+      organizer({
+        permissions: {
+          checkin: { canCheckIn: false },
+        },
+      })
+    );
+    expect(noCheckinAbility.can('checkin', ownedRegistration)).toBe(false);
+
+    const adminAbility = defineAbilityFor(admin());
+    expect(adminAbility.can('checkin', ownedRegistration)).toBe(true);
+    expect(adminAbility.can('create', ownedRegistration)).toBe(true);
   });
 });

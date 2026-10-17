@@ -2,11 +2,214 @@
 @tailwind components;
 @tailwind utilities;
 
-@layer base {
-  * {
-    @apply border-gray-200;
+/* Motion keyframes live outside @layer: @layer is for cascade layers and
+   these are global definitions. Every curve here decelerates (ease-out).
+   Bounce and elastic curves are deliberately absent: they read as dated and
+   they draw the eye to the animation instead of the state change. */
+@keyframes route-view-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
   }
-  
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.75);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes shimmer-sweep {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes hero-enter {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes motion-essential-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@keyframes bar-rise {
+  from {
+    transform: scaleY(0);
+    opacity: 0.4;
+  }
+  to {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+
+@keyframes success-pop {
+  0% {
+    transform: scale(0.8);
+    opacity: 0;
+  }
+  70% {
+    transform: scale(1.05);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes micro-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20%,
+  60% {
+    transform: translateX(-4px);
+  }
+  40%,
+  80% {
+    transform: translateX(4px);
+  }
+}
+
+@keyframes scanline-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(-6px);
+  }
+  50% {
+    opacity: 0.9;
+    transform: translateY(6px);
+  }
+}
+
+@layer base {
+  /* ---------------------------------------------------------------
+     MOTION TOKENS
+     One clock for the whole product. Motion used to be ad-hoc
+     `duration-150/200/300` plus `ease-out` defaults spread over ~30
+     files, which is why screens felt ungoverned. Durations are named by
+     intent so a reviewer can tell a press from a surface entering.
+     --------------------------------------------------------------- */
+  :root {
+    /* Press feedback, checkbox and toggle travel. */
+    --motion-duration-instant: 120ms;
+    /* Hover and small state flips. 200ms is the value DESIGN.md §5 specifies
+       for buttons, so the product default and the spec agree. */
+    --motion-duration-fast: 200ms;
+    /* Dropdowns, popovers, dialogs entering. */
+    --motion-duration-base: 240ms;
+    /* Larger surfaces entering, staged reveals. */
+    --motion-duration-slow: 380ms;
+    /* Anything leaving: 0.75x the matching entrance. */
+    --motion-duration-exit: 180ms;
+
+    --motion-ease-quart: cubic-bezier(0.25, 1, 0.5, 1);
+    --motion-ease-quint: cubic-bezier(0.22, 1, 0.36, 1);
+    --motion-ease-expo: cubic-bezier(0.16, 1, 0.3, 1);
+    /* Accelerating curve for elements on their way out. */
+    --motion-ease-in-quart: cubic-bezier(0.5, 0, 0.75, 0);
+
+    /* -------------------------------------------------------------
+       MATERIAL 3 CURVES
+       The quart/quint/expo names above are already MD3-shaped - quart
+       (0.25, 1, 0.5, 1) is the same silhouette as emphasized-decelerate
+       (0.2, 0, 0, 1). These are the spec's own names, exposed so new
+       motion code speaks MD3 rather than the legacy alias. All three
+       are mirrored in tailwind.config.js transitionTimingFunction.
+       No bounce, no elastic: both read as dated (animate.md).
+       ------------------------------------------------------------- */
+    --motion-ease-emphasized-decelerate: cubic-bezier(0.2, 0, 0, 1);
+    --motion-ease-emphasized-accelerate: cubic-bezier(0.05, 0.7, 0.1, 1);
+    --motion-ease-emphasized-standard: cubic-bezier(0.3, 0, 0.8, 0.15);
+
+    /* MD3 duration scale. short for micro-feedback, medium for state
+       changes, long for surfaces entering. Mirrored in the config as
+       duration-short2/short4/medium2/medium4/long2. */
+    --motion-duration-short2: 100ms;
+    --motion-duration-short4: 200ms;
+    --motion-duration-medium2: 300ms;
+    --motion-duration-medium4: 400ms;
+    --motion-duration-long2: 500ms;
+
+    /* -------------------------------------------------------------
+       MD3 STATE LAYER
+       Material's interaction model is a single overlay element whose
+       opacity changes per state, rather than per-variant hover/press
+       class strings. Encoding it once here is why the design system
+       needs no class-variance-authority: the interaction logic is
+       written a single time and every component inherits it.
+
+       Each component sets --md-state-hover / --md-state-press to the
+       opacity appropriate for ITS surface. A filled button takes a
+       light overlay (white at 8%); a tonal button takes an
+       on-secondary-container overlay at 12%; a text button needs
+       almost none. That per-surface difference is the only thing a
+       variant map has to declare.
+       ------------------------------------------------------------- */
+    --md-state-hover-opacity: 0.08;
+    --md-state-press-opacity: 0.12;
+    --md-state-focus-opacity: 0.1;
+    --md-state-selected-opacity: 0.12;
+    --md-state-disabled-opacity: 0.38;
+    /* The overlay colour. Defaults to on-surface; filled surfaces override. */
+    --md-state-layer-color: 25 28 32;
+
+    /* -------------------------------------------------------------
+       CONTROL GEOMETRY
+       Single source of truth for the numbers the audit found duplicated
+       66 different ways across 203 buttons: 48px is the PRODUCT.md touch
+       floor, 56px is the Material text-field height. Component classes
+       below resolve from these so no button has to hand-roll padding.
+       ------------------------------------------------------------- */
+    --control-height: 48px;
+    --control-height-sm: 40px;
+    --control-height-lg: 56px;
+    --control-px: 24px;
+    --control-px-sm: 12px;
+    --field-px: 16px;
+    --field-py: 16px;
+  }
+
   html {
     font-size: 16px;
     scroll-behavior: smooth;
@@ -15,286 +218,565 @@
   }
 
   body {
-    @apply bg-white text-gray-900 font-google;
+    /* `surface` is a very lightly blue-tinted white, not #ffffff: the
+       product register bans pure neutrals in favour of tints toward the
+       brand hue. It reads as white on screen but stops the page from
+       looking like unstyled browser-default paper. */
+    @apply bg-surface text-on-surface font-google;
     font-weight: 400;
     line-height: 1.5;
-    font-feature-settings: "rlig" 1, "calt" 1;
+    font-feature-settings: 'rlig' 1, 'calt' 1;
+  }
+
+  /* Pointer affordances only. Keyboard users get the ring, not the pointer. */
+  @media (hover: hover) and (pointer: fine) {
+    button:not(:disabled),
+    [role='button']:not([aria-disabled='true']) {
+      cursor: pointer;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+
+    /* Loading is information, not decoration. The blanket kill above leaves
+       every spinner frozen mid-rotation, which reads as a broken interface
+       rather than a working one. Swap the rotation for a slow luminance
+       breath: no movement to provoke vestibular symptoms, still legible as
+       "in progress", and the accessible name still carries the state.
+
+       `.loading-spinner` and `.spinner` are listed here as well as the
+       `.motion-essential` marker, because a spinner class is inherently
+       load-bearing: it should be impossible to add one and forget. */
+    .motion-essential,
+    .loading-spinner,
+    .spinner {
+      animation: motion-essential-breathe 2s var(--motion-ease-quart) infinite !important;
+      animation-iteration-count: infinite !important;
+    }
   }
 }
 
 @layer components {
-  /* Google Material Design Button Styles */
+  /* ---------------------------------------------------------------
+     THE MD3 STATE LAYER
+     One overlay, four states, zero per-variant class strings.
+
+     Material 3 models interaction as a single pseudo-element sitting on
+     top of the component, tinted with the component's own "on" colour and
+     faded in and out per state. That is the whole reason this design
+     system does not need class-variance-authority: instead of every
+     variant repeating `hover:bg-black/5 active:bg-black/10`, the
+     interaction logic lives here exactly once.
+
+     Apply `.md-state-layer` to any interactive surface and set
+     `--md-state-hover-opacity` / `--md-state-press-opacity` to whatever
+     suits that surface's contrast. That is the only per-variant work.
+     --------------------------------------------------------------- */
+  .md-state-layer {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+  }
+
+  .md-state-layer::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background-color: rgb(var(--md-state-layer-color) / 0);
+    transition: background-color
+      var(--motion-duration-short2)
+      var(--motion-ease-emphasized-standard);
+  }
+
+  /* Hover is gated on a real pointer. A sticky :hover on touch leaves
+     the overlay latched on after a tap, which reads as a stuck button. */
+  @media (hover: hover) and (pointer: fine) {
+    .md-state-layer:hover:not(:disabled):not([aria-disabled='true'])::before {
+      background-color: rgb(var(--md-state-layer-color) / var(--md-state-hover-opacity));
+    }
+  }
+
+  .md-state-layer:active:not(:disabled):not([aria-disabled='true'])::before {
+    background-color: rgb(var(--md-state-layer-color) / var(--md-state-press-opacity));
+    transition-duration: var(--motion-duration-instant);
+  }
+
+  .md-state-layer[data-selected='true']::before {
+    background-color: rgb(var(--md-state-layer-color) / var(--md-state-selected-opacity));
+  }
+
+  .md-state-layer:disabled,
+  .md-state-layer[aria-disabled='true'] {
+    cursor: not-allowed;
+    opacity: 0.38;
+  }
+  .md-state-layer:disabled::before,
+  .md-state-layer[aria-disabled='true']::before {
+    display: none;
+  }
+
+  /* Filled surfaces carry light text, so their overlay must be light too.
+     Without this a filled button gets a near-invisible dark overlay. */
+  .md-state-layer[data-surface='filled'] {
+    --md-state-layer-color: 255 255 255;
+    --md-state-hover-opacity: 0.16;
+    --md-state-press-opacity: 0.24;
+    --md-state-disabled-opacity: 0.38;
+  }
+
+  /* ---------------------------------------------------------------
+     CANONICAL CONTROL GEOMETRY
+     The audit found 66 distinct padding signatures across 203 buttons and
+     49 variants of one field class string, all clustering at 40-42px
+     against a documented 48px floor. These three classes are the fix:
+     they resolve from the custom properties above, so the numbers exist
+     once.
+     --------------------------------------------------------------- */
+  .md-button {
+    @apply inline-flex items-center justify-center gap-2 whitespace-nowrap
+           font-medium rounded
+           min-h-control px-control-x
+           transition-[color,background-color,border-color,box-shadow,transform]
+           duration-short2 ease-emphasized-standard
+           focus-visible:outline-none focus-visible:ring-2
+           focus-visible:ring-primary focus-visible:ring-offset-2;
+  }
+
+  .md-field {
+    @apply w-full px-field-x py-field-y min-h-control-lg
+           rounded-md border border-outline-variant bg-surface text-base text-on-surface
+           transition-[border-color,box-shadow]
+           duration-short2 ease-emphasized-standard
+           placeholder:text-on-surface-variant
+           focus:outline-none focus:border-primary
+           focus:ring-2 focus:ring-primary/25
+           disabled:bg-surface-container disabled:text-on-surface-variant;
+  }
+
+/* Explicit 16px rather than inheriting. Tailwind's preflight sets
+     `font-size: 100%` on form elements, so a field nested inside a
+     `text-sm` container inherits 14px - and iOS Safari zooms the viewport
+     on focus for anything under 16px, which yanks the layout sideways
+     mid-form. Pinning it on the primitive closes it for good. */
+  .md-field,
+  .md-select,
+  .md-textarea {
+    font-size: 16px;
+  }
+
+  /* ---------------------------------------------------------------
+     SELECT GEOMETRY
+     The right padding of a select with a custom chevron is not one
+     value, it is four: the field's own 16px inset, the 20px icon, and an
+     8px breathing gap between the text and the glyph. 16+20+8 = 44px.
+
+     Writing that as `pr-md` (24px) looks reasonable and is wrong - the text
+     runs 12px underneath the arrow, which is exactly how you get a caption
+     that looks like it is touching the chevron. It has to be computed, and
+     it has to live next to the chevron's own position so the two cannot
+     drift apart again.
+     --------------------------------------------------------------- */
+  .md-select {
+    --md-select-inset: 16px; /* matches --field-x */
+    --md-select-icon: 20px; /* the chevron's rendered width */
+    --md-select-gap: 8px; /* breathing room between text and glyph */
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    padding-right: calc(
+      var(--md-select-inset) + var(--md-select-icon) + var(--md-select-gap)
+    );
+    padding-left: var(--md-select-inset);
+    /* Selects render their own baseline on Windows and Android; normalising
+       line-height stops the first option sitting 1px above the others. */
+    line-height: 1.5;
+  }
+
+  /* The chevron. Shares the field's 16px inset so its optical centre lines up
+     with the left text edge rather than sitting outboard of it. */
+  .md-select-chevron {
+    position: absolute;
+    right: var(--md-select-inset);
+    top: 50%;
+    transform: translateY(-50%);
+    width: var(--md-select-icon);
+    height: var(--md-select-icon);
+    pointer-events: none;
+    color: theme('colors.on-surface-variant');
+  }
+
+  /* Native controls: keep `appearance` so the platform draws its own arrow,
+     and reserve NO right padding for a glyph we are not drawing. */
+  .md-select-native {
+    appearance: auto;
+    -webkit-appearance: menulist;
+    padding-right: var(--md-select-inset);
+  }
+
+  /* ---------------------------------------------------------------
+     LEGACY CLASSES
+     Retained while the 103-file migration runs. Each one now resolves
+     from the token layer rather than hard-coding geometry, so the
+     auth pages and NotFound migrate to identical measurements for free.
+     --------------------------------------------------------------- */
   .btn-primary {
-    @apply bg-primary-500 hover:bg-primary-600 text-white font-medium py-3 px-6 rounded-lg transition-all duration-200 transform hover:scale-105 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2;
+    @apply bg-primary text-on-primary font-medium py-control-y px-control-x rounded
+           transition-[color,background-color,transform]
+           duration-fast ease-quart
+           focus:outline-none focus-visible:ring-2 focus-visible:ring-primary
+           focus-visible:ring-offset-2
+           hover:-translate-y-px active:translate-y-0 active:scale-[0.98];
   }
-  
-  .btn-secondary {
-    @apply bg-white border-2 border-primary-500 text-primary-500 hover:bg-primary-50 font-medium py-3 px-6 rounded-lg transition-all duration-200 transform hover:scale-105 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2;
+
+  /* Referenced by AdminAttendeesPage.tsx but never defined anywhere, so the
+     button it styled was rendering as unstyled 36px body text. */
+  .btn-outline {
+    @apply inline-flex items-center justify-center gap-2
+           bg-surface text-on-surface border border-outline
+           font-medium rounded px-control-x-sm min-h-control
+           transition-[color,background-color,border-color]
+           duration-short2 ease-emphasized-standard
+           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary
+           hover:bg-surface-container-low;
   }
-  
-  .btn-success {
-    @apply bg-success-500 hover:bg-success-600 text-white font-medium py-3 px-6 rounded-lg transition-all duration-200 transform hover:scale-105 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-success-500 focus:ring-offset-2;
-  }
-  
-  .btn-danger {
-    @apply bg-secondary-500 hover:bg-secondary-600 text-white font-medium py-3 px-6 rounded-lg transition-all duration-200 transform hover:scale-105 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-secondary-500 focus:ring-offset-2;
-  }
-  
-  /* Form Inputs */
+
   .form-input {
-    @apply w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors duration-200 bg-white;
+    @apply md-field;
   }
-  
+
   .form-label {
-    @apply block text-sm font-medium text-gray-700 mb-2;
+    @apply block text-sm font-medium text-on-surface mb-2xs;
   }
-  
-  /* Card Styles */
-  .card {
-    @apply bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden;
-  }
-  
-  .card-header {
-    @apply px-6 py-4 border-b border-gray-100 bg-gray-50;
-  }
-  
-  .card-content {
-    @apply px-6 py-4;
-  }
-  
-  .card-footer {
-    @apply px-6 py-4 border-t border-gray-100 bg-gray-50;
-  }
-  
-  /* Event Card Styles (Lu.ma inspired) */
-  .event-card {
-    @apply bg-white rounded-2xl shadow-md hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1 border border-gray-100 overflow-hidden cursor-pointer;
-  }
-  
-  .event-card:hover {
-    @apply ring-2 ring-primary-200;
-  }
-  
-  /* Navigation Styles */
-  .nav-link {
-    @apply text-gray-600 hover:text-primary-600 font-medium transition-colors duration-200 py-2 px-3 rounded-md hover:bg-primary-50;
-  }
-  
-  .nav-link-active {
-    @apply text-primary-600 bg-primary-50 font-semibold;
-  }
-  
-  /* Dashboard Styles (GDG inspired) */
+
   .dashboard-card {
-    @apply bg-white rounded-lg shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow duration-200;
+    @apply bg-surface rounded-lg border border-outline-variant p-md;
   }
-  
-  .stat-card {
-    @apply bg-gradient-to-r from-primary-500 to-primary-600 text-white rounded-lg p-6 shadow-lg;
-  }
-  
-  /* Loading Animation */
+
+  /* Spinner whose motion carries information. `motion-essential` is a marker
+     class used on icon spinners built with `animate-spin`; these two classes
+     are covered directly by the reduced-motion block in @layer base. */
   .loading-spinner {
-    @apply animate-spin rounded-full border-4 border-gray-200 border-t-primary-500;
+    @apply rounded-full border-4 border-outline-variant border-t-primary;
+    animation: spin 0.7s linear infinite;
   }
-  
-  /* Toast Styles */
+
+  /* Inline spinner, inherits the current text colour so it works on any
+     Button variant without a per-variant colour. */
+  .spinner {
+    @apply inline-block rounded-full border-2 border-current border-t-transparent;
+    animation: spin 0.7s linear infinite;
+  }
+
+  .motion-essential {
+    /* Marker only. Under reduced-motion this class swaps the rotation for a
+       luminance breath (see the media block in @layer base). */
+  }
+
+  /* Progress fill. Animating `width` re-runs layout on every frame; scaling
+     a full-width bar stays on the compositor. `--progress` is the 0-100
+     percentage set inline by the caller (see UI/ProgressBar). */
+  .progress-fill {
+    transform-origin: left center;
+    transform: scaleX(calc(var(--progress, 0) / 100));
+    transition: transform var(--motion-duration-slow) var(--motion-ease-expo);
+  }
+
+  /* react-hot-toast styling: TeamApo Hub Material 3 Design System.
+     The distinction is a container tint plus a matching icon colour, NOT a
+     thick coloured left border. A 3px side stripe is on the absolute-ban
+     list: it reads as a SaaS callout and, at 3px, collides visually with
+     the native iOS swipe-back gesture affordance. */
+  .toast-bar {
+    font-family: theme('fontFamily.google') !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    max-width: min(92vw, 440px) !important;
+  }
+
+  .toast-inner {
+    font-family: theme('fontFamily.google');
+    box-shadow: 0 4px 14px -2px rgba(25, 28, 32, 0.12), 0 2px 6px -1px rgba(25, 28, 32, 0.08);
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+    border-width: 1px;
+    border-style: solid;
+  }
+
   .toast-success {
-    @apply bg-success-500 text-white;
+    background-color: theme('colors.success-container') !important;
+    color: theme('colors.on-success-container') !important;
+    border-color: rgba(24, 106, 59, 0.25) !important;
   }
-  
+  .toast-success svg {
+    color: theme('colors.success.DEFAULT') !important;
+  }
+
   .toast-error {
-    @apply bg-secondary-500 text-white;
+    background-color: theme('colors.error-container') !important;
+    color: theme('colors.on-error-container') !important;
+    border-color: rgba(179, 38, 30, 0.25) !important;
   }
-  
+  .toast-error svg {
+    color: theme('colors.error') !important;
+  }
+
+  .toast-blank,
   .toast-info {
-    @apply bg-primary-500 text-white;
+    background-color: theme('colors.secondary-container') !important;
+    color: theme('colors.on-secondary-container') !important;
+    border-color: rgba(11, 87, 208, 0.2) !important;
   }
-  
-  /* Badge Styles */
-  .badge {
-    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  .toast-blank svg,
+  .toast-info svg {
+    color: theme('colors.brand') !important;
   }
-  
-  .badge-primary {
-    @apply bg-primary-100 text-primary-800;
+
+  .toast-loading {
+    background-color: theme('colors.surface-container-high') !important;
+    color: theme('colors.on-surface') !important;
+    border-color: theme('colors.outline-variant') !important;
   }
-  
-  .badge-success {
-    @apply bg-success-100 text-success-800;
-  }
-  
-  .badge-warning {
-    @apply bg-accent-100 text-accent-800;
-  }
-  
-  .badge-danger {
-    @apply bg-secondary-100 text-secondary-800;
-  }
-  
-  /* Status Indicators */
-  .status-indicator {
-    @apply w-3 h-3 rounded-full;
-  }
-  
-  .status-live {
-    @apply bg-secondary-500 animate-pulse;
-  }
-  
-  .status-upcoming {
-    @apply bg-accent-500;
-  }
-  
-  .status-completed {
-    @apply bg-success-500;
-  }
-  
-  .status-cancelled {
-    @apply bg-gray-400;
+  .toast-loading svg {
+    color: theme('colors.primary.DEFAULT') !important;
   }
 }
 
 @layer utilities {
-  .text-balance {
-    text-wrap: balance;
+  /* ---------------------------------------------------------------
+     iOS SAFE AREA
+     Every iPhone since the X has a notch or a home indicator. `fixed`
+     elements ignore it by default, so a bottom-anchored FAB renders
+     underneath the home indicator and becomes partly untappable, and a
+     full-height overlay tucks its own close button under the sensor
+     housing.
+
+     Before this existed the codebase had zero `safe-area-inset`
+     occurrences against 19 fixed surfaces. These four classes are the
+     fix; the audit reads these exact names to catch regressions.
+     --------------------------------------------------------------- */
+  .safe-t {
+    padding-top: env(safe-area-inset-top, 0px);
   }
-  
-  .bg-gradient-google {
-    background: linear-gradient(135deg, #4285f4 0%, #34a853 25%, #fbbc04 75%, #ea4335 100%);
+  .safe-b {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
   }
-  
-  .bg-gradient-gdg {
-    background: linear-gradient(135deg, #4285f4 0%, #0f9d58 100%);
+  .safe-x {
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
   }
-  
-  .glass-effect {
-    @apply bg-white/80 backdrop-blur-lg border border-white/20;
-  }
-  
-  .shadow-google {
-    box-shadow: 0 2px 10px 0 rgba(66, 133, 244, 0.15);
-  }
-  
-  .hover-lift {
-    @apply transition-all duration-300 hover:-translate-y-1 hover:shadow-xl;
+  /* Offset for a floating element that must clear the home indicator while
+     still honouring its own design offset. */
+  .safe-b-offset {
+    bottom: calc(var(--fab-offset, 16px) + env(safe-area-inset-bottom, 0px));
   }
 
-  /* Mobile Menu Animation */
-  .mobile-menu-enter {
-    transform: translateX(-100%);
+  /* ---------------------------------------------------------------
+     VIEWPORT HEIGHT
+     `100vh` on iOS Safari resolves to the TALLEST viewport, the one you get
+     with the browser toolbar collapsed. Any full-height surface built on it
+     overflows by roughly 60-100px whenever the toolbar is showing, which
+     cuts off the last table row and the bottom of every form.
+
+     This is written as a declaration pair rather than two Tailwind height
+     classes on one element on purpose. Tailwind resolves competing utilities
+     by stylesheet order, not class-attribute order, so `min-h-screen
+     min-h-dvh` silently picks whichever the compiler happened to emit last.
+     Here the cascade is explicit and the fallback is guaranteed.
+
+     dvh: Chrome 108+, Safari 15.4+, Firefox 101+.
+     --------------------------------------------------------------- */
+  .min-h-page {
+    min-height: 100vh;
+    min-height: 100dvh;
+  }
+  .h-page {
+    height: 100vh;
+    height: 100dvh;
+  }
+  .max-h-page {
+    max-height: 100vh;
+    max-height: 100dvh;
   }
 
-  .mobile-menu-enter-active {
-    transform: translateX(0);
-    transition: transform 300ms ease-in-out;
+  /* Hide a scrollbar without losing scrollability. Used by the event-workspace
+     tab strip and the attendee status-filter row, which are deliberate
+     horizontal scrollers on mobile.
+     Referenced in JSX as `scrollbar-none` at AdminAttendeesPage.tsx:1635 and
+     EventWorkspacePage.tsx:302 but never defined, so it silently no-opped.
+
+     `[scrollbar-width:none]` is the Firefox spelling. Safari and Chromium
+     need the ::-webkit-scrollbar pseudo-elements, and without them the
+     scrollbar still appears on two of the three engines we target - which is
+     why the bare utility looked like it worked in Chrome DevTools. */
+  .scrollbar-none {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
   }
 
-  .mobile-menu-exit {
-    transform: translateX(0);
+  /* Staged reveal for a short list (mobile nav). Delay is set inline per item. */
+  .animate-rise-in {
+    animation: rise-in var(--motion-duration-base) var(--motion-ease-expo) both;
   }
 
-  .mobile-menu-exit-active {
-    transform: translateX(-100%);
-    transition: transform 300ms ease-in-out;
+  /* Something just became selected or changed count. Scales in without an
+     overshoot, so it confirms the change instead of performing for it. */
+  .animate-pop-in {
+    animation: pop-in var(--motion-duration-fast) var(--motion-ease-expo) both;
   }
 
-  /* Keyframe Animations */
-  @keyframes slideInLeft {
-    from {
-      opacity: 0;
-      transform: translateX(-20px);
-    }
-    to {
-      opacity: 1;
-      transform: translateX(0);
-    }
+  /* Hero entrance. The one orchestrated sequence in the product, and it is
+     only on the public event page: an attendee arriving from a shared link is
+     reading a flyer, so the headline arriving with it is welcome. The delay is
+     set inline per element to stagger the stack. */
+  .animate-hero-in {
+    animation: hero-enter var(--motion-duration-slow) var(--motion-ease-expo) both;
   }
 
-  @keyframes fadeIn {
-    from {
-      opacity: 0;
-    }
-    to {
-      opacity: 1;
-    }
+  /* Fluid view transition between routes with subtle 4px rise.
+     GPU-composited via opacity and transform only (zero layout shifts).
+     Accelerated across WebKit, Blink, and Gecko engines. */
+  .route-view {
+    animation: route-view-in var(--motion-duration-fast) var(--motion-ease-quart) both;
+    will-change: opacity, transform;
   }
 
-  @keyframes bounceIn {
-    0% {
-      opacity: 0;
-      transform: scale(0.3);
-    }
-    50% {
-      opacity: 1;
-      transform: scale(1.05);
-    }
-    70% {
-      transform: scale(0.9);
-    }
-    100% {
-      opacity: 1;
-      transform: scale(1);
-    }
-  }
-  
-  /* Scrollbar Hide Utility */
-  .scrollbar-hide {
-    -ms-overflow-style: none;  /* Internet Explorer 10+ */
-    scrollbar-width: none;  /* Firefox */
+  /* Tab indicator smooth sliding and width adjustment.
+     Both transform and width use MD3 fast duration (200ms) and ease-quart.
+     will-change optimizes layer compositing in WebKit, Blink, and Gecko. */
+  .tab-sliding-indicator {
+    transition: transform var(--motion-duration-fast) var(--motion-ease-quart),
+                width var(--motion-duration-fast) var(--motion-ease-quart);
+    will-change: transform, width;
   }
 
-  .scrollbar-hide::-webkit-scrollbar {
-    display: none;  /* Safari and Chrome */
+  /* Faint dot grid for public page canvases. Gives a large white ground some
+     depth without a texture image, a blur or a gradient wash, and stays far
+     below the contrast threshold for body text. */
+  .canvas-dots {
+    background-image: radial-gradient(circle at 1px 1px, #dadce0 1px, transparent 0);
+    background-size: 22px 22px;
   }
 
-  /* Custom Animation Utilities */
-  .animate-slide-in-left {
-    animation: slideInLeft 0.4s ease-out forwards;
+  /* FeedbackPage referenced a `shimmer` animation that was never defined,
+     so its loading overlay sat motionless. */
+  .animate-shimmer-sweep {
+    background-size: 200% 100%;
+    animation: shimmer-sweep 1.5s linear infinite;
+  }
+
+  /* SVG bar chart bar rise. Uses transform-box and transform-origin bottom. */
+  .animate-bar-rise {
+    transform-box: fill-box;
+    transform-origin: bottom;
+    animation: bar-rise var(--motion-duration-base) var(--motion-ease-quart) both;
+  }
+
+  /* Celebratory success pop for check-in confirmation. */
+  .animate-success-pop {
+    animation: success-pop var(--motion-duration-base) var(--motion-ease-expo) both;
+  }
+
+  /* Rapid micro-shake feedback on invalid / duplicate tickets. */
+  .animate-micro-shake {
+    animation: micro-shake var(--motion-duration-fast) var(--motion-ease-quart) both;
+  }
+
+  /* Reticle scanline for QR viewfinder. */
+  .animate-scanline {
+    animation: scanline-pulse 2s var(--motion-ease-quart) infinite;
   }
 }
 
-/* Custom Scrollbar */
-::-webkit-scrollbar {
-  width: 8px;
+/* Native <dialog> used by Modal. The focus trap, Escape handling and inert
+   background come from the element; this adds the state transition that the
+   UA gives for free. Discrete properties are opted in so the exit transition
+   can play while the dialog leaves the top layer. */
+dialog.app-dialog {
+  display: none;
+  opacity: 0;
+  transform: translateY(8px) scale(0.985);
+  transition:
+    opacity var(--motion-duration-exit) var(--motion-ease-in-quart),
+    transform var(--motion-duration-exit) var(--motion-ease-in-quart),
+    display var(--motion-duration-exit) allow-discrete,
+    overlay var(--motion-duration-exit) allow-discrete;
 }
 
-::-webkit-scrollbar-track {
-  @apply bg-gray-100;
+dialog.app-dialog[open] {
+  display: block;
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity var(--motion-duration-base) var(--motion-ease-expo),
+    transform var(--motion-duration-base) var(--motion-ease-expo),
+    display var(--motion-duration-base) allow-discrete,
+    overlay var(--motion-duration-base) allow-discrete;
 }
 
-::-webkit-scrollbar-thumb {
-  @apply bg-gray-300 rounded-full;
+/*
+  Exit, driven from React rather than from `allow-discrete`.
+
+  Modal.tsx holds the dialog open for --motion-duration-exit and adds
+  `.is-exiting` before letting it close, so the leave animation plays in every
+  engine. `allow-discrete` and `@starting-style` below are then only an
+  enhancement: on engines that lack them the browser simply cannot animate an
+  element out of the top layer, so this class carries the whole exit.
+
+  Support for the CSS-only path is Chrome 117 / Firefox 129 / Safari 17.5. On
+  Safari 16 and iOS 17.0-17.4 every dialog in this product previously appeared
+  and vanished instantly with no fade and no backdrop transition.
+*/
+dialog.app-dialog.is-exiting,
+dialog.app-dialog.is-exiting::backdrop {
+  opacity: 0;
+  transform: translateY(4px) scale(0.99);
+  transition:
+    opacity var(--motion-duration-exit) var(--motion-ease-in-quart),
+    transform var(--motion-duration-exit) var(--motion-ease-in-quart);
 }
 
-::-webkit-scrollbar-thumb:hover {
-  @apply bg-gray-400;
-}
-
-/* Print Styles for Certificates */
-@media print {
-  .print-hidden {
-    display: none !important;
+@starting-style {
+  dialog.app-dialog[open] {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
   }
-  
-  .print-full-width {
-    width: 100% !important;
-    margin: 0 !important;
-    padding: 0 !important;
-  }
 }
 
-/* Skeleton Loading Shimmer Animation */
-@keyframes shimmer {
-  0% {
-    background-position: -200% 0;
-  }
-  100% {
-    background-position: 200% 0;
-  }
+dialog.app-dialog::backdrop {
+  background-color: rgb(0 0 0 / 0.5);
+  opacity: 0;
+  transition:
+    opacity var(--motion-duration-exit) var(--motion-ease-in-quart),
+    display var(--motion-duration-exit) allow-discrete,
+    overlay var(--motion-duration-exit) allow-discrete;
 }
 
-.animate-shimmer {
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.6), transparent);
-  background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
+dialog.app-dialog[open]::backdrop {
+  opacity: 1;
+  transition:
+    opacity var(--motion-duration-base) var(--motion-ease-quart),
+    display var(--motion-duration-base) allow-discrete,
+    overlay var(--motion-duration-base) allow-discrete;
+}
+
+@starting-style {
+  dialog.app-dialog[open]::backdrop {
+    opacity: 0;
+  }
 }

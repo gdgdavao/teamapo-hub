@@ -1,0 +1,25 @@
+{
+  "mcpServers": {
+    "chrome-devtools": {
+      "command": "bunx",
+      "args": ["chrome-devtools-mcp@latest"]
+    },
+    "apohub-dev": {
+      "command": "bun",
+      "args": ["run", "scripts/mcp/server.ts"],
+      "env": {
+        "FIRESTORE_EMULATOR_HOST": "127.0.0.1:8080",
+        "FIREBASE_AUTH_EMULATOR_HOST": "127.0.0.1:9099",
+        "GCLOUD_PROJECT": "demo-apohub"
+      }
+    },
+    "firebase": {
+      "command": "bunx",
+      "args": ["firebase-tools", "mcp"]
+    },
+    "memory-map": {
+      "command": "bun",
+      "args": ["run", "scripts/mcp/memory-server.ts"]
+    }
+  }
+}

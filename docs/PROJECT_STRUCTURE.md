@@ -21,18 +21,56 @@ teamapo-hub/
 
 ## `src/`
 
+`pages/` is organised by **route, not by role**. There is no `admin/` or
+`organizer/` folder — access is decided by the CASL ability at the route gate, so
+a folder named after a role would assert something the code does not. A component
+lives under `pages/` when exactly one route owns it, and under `components/` when
+it is shared.
+
 | Folder | Contents |
 |---|---|
-| `pages/` | Route-level screens, grouped by role: `admin/`, `organizer/`, `public/`, `auth/`, `payment/`, `feedback/`, `verification/`, `shared/`, `error/` |
-| `components/` | Reusable UI: `admin/`, `organizer/`, `public/` (registration, tickets, promo codes), `shared/` (navbar, form builder/renderer, UI kit), `SEO/` |
-| `services/` | One file per domain talking to Firebase (`eventService`, `registrationService`, `paymentService`, `certificateService`, `emailService`, `feedbackService`, `analyticsService`, `aiService`, `userService`, `formService`, `notificationService`). Pages call services; they do not call Firebase directly |
+| `pages/home/` | `/` (canonical Home). `HomePage` dispatches by permission to `platform/` (unscoped reads) or `scoped/` (owner-scoped reads), plus the shared `StatStrip`, `TrendPanel` |
+| `pages/events/` | `EventListPage` (`/events`), `EventEditorPage` (`/events/create`, `/events/edit/:id`), `components/` (PhotoUpload, FormBuilder, PromoCodeManager), and `workspace/` — `EventWorkspacePage`, `LegacyRedirect`, and `tabs/*Tab` |
+| `pages/users/` | `/users` user administration |
+| `pages/auth/` | Sign in and password reset (self-signup is intentionally absent) |
+| `pages/registration/` | Public event registration (`/e/:slug`, `/events/:id/register`) and its modal, form, ticket selector, `Reveal` |
+| `pages/payment/` | Proof upload portal and transaction status screens |
+| `pages/feedback/` | Attendee feedback portal and the `FormRenderer` it renders through |
+| `pages/verification/` | Public certificate authenticity validator |
+| `pages/errors/` | `/forbidden` and the 404 catch-all |
+| `layout/` | `AppShell`, `AppNavbar`, `SkipLink` — the chrome every workspace page wraps itself in |
+| `components/UI/` | The primitive layer: Button, Input, Select, Textarea, Field, Badge, Card, Modal, ConfirmationModal, Tabs, DataTable, EmptyState, ProgressBar, SimpleBarChart, Skeleton, LoadingSpinner, SegmentedControl. **Import from the barrel, never by file path** |
+| `components/` | `ErrorBoundary` (mounted once by `App.tsx`) and `FormattedLabelText` |
+| `services/` | One file per domain talking to Firebase (`eventService`, `registrationService`, `paymentService`, `certificateService`, `emailService`, `feedbackService`, `analyticsService`, `userService`). Pages call services; they do not call Firebase directly |
 | `auth/` | Authorization. `ability.ts` (pure CASL rule table + entity tagging), `AbilityProvider.tsx`, `RequireAbility.tsx` (route gate) |
 | `contexts/` | `AuthContext` (Firebase session and the live users-document profile) |
-| `hooks/` | Shared hooks (`usePageTitle`, `useSEO`) |
-| `config/` | `firebase.ts` (SDK init, emulator wiring) |
+| `hooks/` | Shared hooks (`usePageTitle`, `useSEO`, `useMediaQuery`, `useReducedMotion`) |
+| `config/` | `firebase.ts` (SDK init, emulator wiring), `app.ts` (canonical hosts) |
 | `types/` | Shared TypeScript types |
 | `utils/` | Pure helpers (pricing, slugs, analytics rollups, certificate generation, logger) |
 | `App.tsx`, `main.tsx` | Router and app entry point |
+
+### Naming
+
+Only files at a route are named `*Page`. The eight panels inside
+`pages/events/workspace/tabs/` are named `*Tab`, take a required `eventId` prop
+from `EventWorkspacePage`, and never ask whether they are "embedded". If a
+component starts needing an `embedded` flag, it is two screens and wants to be
+two files.
+
+Three rules the structure depends on, all three enforced by
+`tests/unit/importShape.test.ts`:
+
+1. **No one-file wrapper folders.** `components/Foo/Foo.tsx` plus
+   `components/Foo/index.ts` is two import paths for one component, which is how
+   geometry drifts. Make the folder only once it holds more than the component —
+   its test, its styles, a subcomponent. `components/UI/` is the one sanctioned
+   barrel.
+2. **`components/` and `pages/` never import from each other**, and a route
+   cluster reaches only inside itself. `pages/feedback` importing from
+   `pages/events` is what produced two copies of `FormField`.
+3. **Shapes are declared once in `types/`**, not next to whichever component
+   needed them first.
 
 ## `functions/`
 
@@ -83,8 +121,14 @@ teamapo-hub/
 
 ## Where does new code go?
 
-- New screen: `src/pages/<role>/`, then register the route in `src/App.tsx`
+- New screen: `src/pages/<route-cluster>/`, named `*Page`, then register the route in `src/App.tsx`
+- New panel inside an existing screen: next to its owner, in that screen's `components/` or `tabs/`
 - New Firebase read/write: a function in the matching `src/services/*Service.ts`
-- Reusable UI: `src/components/shared/` (or the role folder if only that role uses it)
+- Reusable UI used by more than one route: `src/components/UI/` (via the barrel)
+- Chrome every workspace page shares: `src/layout/`
 - Server-side logic or emails: `functions/`
 - Any new function: add a test in `tests/`
+
+If you find yourself adding a folder named after a role, stop: the ability in
+`src/auth/ability.ts` decides what a user may open, and the tree should describe
+structure, not access.

@@ -16,6 +16,106 @@ export function isRole(value: unknown): value is Role {
   return typeof value === 'string' && (ROLES as readonly string[]).includes(value);
 }
 
+// User Permissions (Hybrid RBAC + ABPAC)
+export interface OrganizerPermissions {
+  events?: {
+    canCreate?: boolean;
+    canUpdate?: boolean;
+    canDelete?: boolean;
+  };
+  attendees?: {
+    canRead?: boolean;
+    canUpdate?: boolean;
+    canDelete?: boolean;
+    canExport?: boolean;
+  };
+  checkin?: {
+    canCheckIn?: boolean;
+  };
+  payments?: {
+    canVerify?: boolean;
+  };
+  certificates?: {
+    canManage?: boolean;
+  };
+  feedback?: {
+    canRead?: boolean;
+  };
+}
+
+export const DEFAULT_ORGANIZER_PERMISSIONS: OrganizerPermissions = {
+  events: { canCreate: true, canUpdate: true, canDelete: true },
+  attendees: { canRead: true, canUpdate: true, canDelete: true, canExport: true },
+  checkin: { canCheckIn: true },
+  payments: { canVerify: true },
+  certificates: { canManage: true },
+  feedback: { canRead: true },
+};
+
+export type OrganizerPresetKey = 'full' | 'staff' | 'certificates' | 'readonly' | 'custom';
+
+export interface OrganizerPreset {
+  id: OrganizerPresetKey;
+  label: string;
+  description: string;
+  permissions: OrganizerPermissions;
+}
+
+export const ORGANIZER_PERMISSION_PRESETS: Record<Exclude<OrganizerPresetKey, 'custom'>, OrganizerPreset> = {
+  full: {
+    id: 'full',
+    label: 'Full Organizer',
+    description: 'Full management of own events, attendees, check-in, certificates, and payments.',
+    permissions: {
+      events: { canCreate: true, canUpdate: true, canDelete: false },
+      attendees: { canRead: true, canUpdate: true, canDelete: true, canExport: true },
+      checkin: { canCheckIn: true },
+      payments: { canVerify: true },
+      certificates: { canManage: true },
+      feedback: { canRead: true },
+    },
+  },
+  staff: {
+    id: 'staff',
+    label: 'Event Staff / Check-In',
+    description: 'Onsite event staff: check-in attendees, view attendee list, view feedback.',
+    permissions: {
+      events: { canCreate: false, canUpdate: false, canDelete: false },
+      attendees: { canRead: true, canUpdate: false, canDelete: false, canExport: false },
+      checkin: { canCheckIn: true },
+      payments: { canVerify: false },
+      certificates: { canManage: false },
+      feedback: { canRead: true },
+    },
+  },
+  certificates: {
+    id: 'certificates',
+    label: 'Certificate Specialist',
+    description: 'Design templates, issue certificates, and review attendee lists.',
+    permissions: {
+      events: { canCreate: false, canUpdate: false, canDelete: false },
+      attendees: { canRead: true, canUpdate: false, canDelete: false, canExport: false },
+      checkin: { canCheckIn: false },
+      payments: { canVerify: false },
+      certificates: { canManage: true },
+      feedback: { canRead: false },
+    },
+  },
+  readonly: {
+    id: 'readonly',
+    label: 'Read-Only Viewer',
+    description: 'View own events, attendees, and feedback without edit or deletion rights.',
+    permissions: {
+      events: { canCreate: false, canUpdate: false, canDelete: false },
+      attendees: { canRead: true, canUpdate: false, canDelete: false, canExport: false },
+      checkin: { canCheckIn: false },
+      payments: { canVerify: false },
+      certificates: { canManage: false },
+      feedback: { canRead: true },
+    },
+  },
+};
+
 // User Types
 export interface User {
   uid: string;
@@ -27,6 +127,8 @@ export interface User {
   /** Required by firestore.rules isOrganizer()/isAdmin() — a user doc without it
    *  fails every rules evaluation with "Property isActive is undefined". */
   isActive: boolean;
+  /** Fine-grained functional permissions for organizers (Hybrid RBAC + ABPAC) */
+  permissions?: OrganizerPermissions;
   phoneNumber?: string;
   organization?: string;
   bio?: string;
@@ -105,6 +207,8 @@ export interface Venue {
     lat: number;
     lng: number;
   };
+  placeId?: string;
+  mapsUrl?: string;
   onlineDetails?: {
     platform: string;
     meetingUrl?: string;
@@ -167,6 +271,7 @@ export interface TicketPricing {
 export interface Registration {
   id: string;
   eventId: string;
+  organizerUid?: string;
   userId: string;
   userDetails: {
     name: string;
@@ -575,6 +680,12 @@ export interface EventFormData {
   venueName?: string;
   venueAddress?: string;
   city: string;
+  venueCoordinates?: {
+    lat: number;
+    lng: number;
+  };
+  venuePlaceId?: string;
+  venueMapsUrl?: string;
   
   // Pricing
   isPaid: boolean;
@@ -643,4 +754,70 @@ export interface ResendEmailStatus {
   to: string[];
   from: string;
   subject: string;
+}
+
+// Audit Log Types
+export type AuditLogCategory =
+  | 'user_management'
+  | 'event_operations'
+  | 'financial'
+  | 'system_security'
+  | 'communications';
+
+export type AuditLogAction =
+  | 'user_created'
+  | 'user_updated'
+  | 'user_deleted'
+  | 'role_changed'
+  | 'event_created'
+  | 'event_updated'
+  | 'event_published'
+  | 'event_deleted'
+  | 'attendee_checked_in'
+  | 'registration_approved'
+  | 'registration_rejected'
+  | 'registration_deleted'
+  | 'payment_approved'
+  | 'payment_rejected'
+  | 'certificate_generated'
+  | 'promo_codes_updated'
+  | 'email_sent'
+  | 'system_config_changed';
+
+export interface AuditLogActor {
+  uid: string;
+  email: string;
+  name?: string;
+  role: Role;
+}
+
+export interface AuditLogTarget {
+  type: 'user' | 'event' | 'registration' | 'payment_proof' | 'certificate' | 'system';
+  id: string;
+  label?: string;
+}
+
+export interface AuditLog {
+  id: string;
+  timestamp: Timestamp;
+  category: AuditLogCategory;
+  action: AuditLogAction;
+  actor: AuditLogActor;
+  target: AuditLogTarget;
+  details?: Record<string, any>;
+  status: 'success' | 'failure';
+  ipAddress?: string;
+  userAgent?: string;
+}
+
+export interface AuditLogFilterParams {
+  category?: AuditLogCategory | 'all';
+  action?: AuditLogAction | 'all';
+  actorEmail?: string;
+  status?: 'all' | 'success' | 'failure';
+  startDate?: Date;
+  endDate?: Date;
+  limit?: number;
+  startAfterTimestamp?: number;
+  searchTerm?: string;
 }

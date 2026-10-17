@@ -9,14 +9,15 @@ import os
 import secrets
 import base64
 import requests
-from datetime import datetime, timedelta
-from typing import Dict, List, Any, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Dict, List, Any, Optional, cast
 from urllib.parse import quote
 from firebase_functions import https_fn, firestore_fn
 from firebase_functions.options import set_global_options
 from firebase_admin import initialize_app, firestore, storage, auth
 from firebase_admin.exceptions import FirebaseError
 from google.cloud.firestore_v1 import FieldFilter
+from google.auth.credentials import AnonymousCredentials
 from email_service import email_service
 
 # Global variables for Firebase Admin services (lazy initialization)
@@ -27,12 +28,32 @@ _db = None
 # Ensure region matches Firestore location in firebase.json (asia-southeast2)
 set_global_options(region="asia-southeast2", max_instances=10)
 
+
+def _init_admin_app():
+    """Initialize the Admin SDK, staying credential-free when emulating.
+
+    _FirestoreService.get_client() resolves a credential unconditionally, before
+    it ever looks at FIRESTORE_EMULATOR_HOST, so a bare initialize_app() sends
+    the emulator worker looking for Application Default Credentials and it dies
+    with DefaultCredentialsError. AnonymousCredentials satisfies that lookup and
+    the emulator ignores auth anyway. Production still goes through ADC.
+
+    Only the credential is passed. App options are deliberately left unset so
+    they still load from FIREBASE_CONFIG, which is where the emulator supplies
+    storageBucket and databaseURL - passing options would clobber them and break
+    storage.bucket(). Project id resolves from FIREBASE_CONFIG, then GCLOUD_PROJECT.
+    """
+    if os.getenv('FIRESTORE_EMULATOR_HOST'):
+        return initialize_app(credential=AnonymousCredentials())
+    return initialize_app()
+
+
 # Ensure Firebase Admin SDK is initialized at import time so callable auth verification works
 try:
     # If already initialized, this is a no-op
     from firebase_admin import _apps
     if not _apps:
-        initialize_app()
+        _init_admin_app()
 except Exception as e:
     # Log but do not crash import; lazy init in get_db() remains as fallback
     logging.getLogger(__name__).warning(f"Admin SDK init at import failed or already initialized: {str(e)}")
@@ -59,7 +80,7 @@ def get_db():
             # Check if app is already initialized
             from firebase_admin import _apps
             if not _apps:
-                _app = initialize_app()
+                _app = _init_admin_app()
             else:
                 _app = None  # App already exists
             _db = firestore.client()
@@ -120,10 +141,10 @@ def _caller_profile(req: https_fn.CallableRequest) -> Dict[str, Any]:
         )
 
     user_data = user_doc.to_dict() or {}
-    # Strict `is not True` rather than `not ...`. A document written before the
+    # Strict `is False` rather than `not ...`. A document written before the
     # field existed reads back as None, and treating that as suspended would
     # lock out every legacy account.
-    if user_data.get('isActive') is not True:
+    if user_data.get('isActive') is False:
         raise https_fn.HttpsError(
             code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
             message="This account has been deactivated"
@@ -172,6 +193,182 @@ def is_super_user(req: https_fn.CallableRequest) -> bool:
         return False
     return (req.auth.token.get('email') or '').strip().lower() == configured
 
+
+def log_audit_entry(
+    db,
+    category: str,
+    action: str,
+    actor_uid: str,
+    actor_email: str,
+    actor_name: Optional[str] = None,
+    actor_role: str = 'admin',
+    target_type: Optional[str] = None,
+    target_id: Optional[str] = None,
+    target_label: Optional[str] = None,
+    details: Optional[Dict[str, Any]] = None,
+    status: str = 'success',
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None
+) -> Optional[str]:
+    """Logs an immutable entry to the audit_logs collection via Firebase Admin SDK."""
+    try:
+        log_payload = {
+            'timestamp': firestore.SERVER_TIMESTAMP,
+            'category': category,
+            'action': action,
+            'actor': {
+                'uid': actor_uid or '',
+                'email': actor_email or '',
+                'name': actor_name or '',
+                'role': actor_role or 'admin'
+            },
+            'target': {
+                'type': target_type or 'system',
+                'id': target_id or '',
+                'label': target_label or ''
+            },
+            'details': details or {},
+            'status': status,
+            'ipAddress': ip_address or '',
+            'userAgent': user_agent or ''
+        }
+        _, doc_ref = db.collection('audit_logs').add(log_payload)
+        return doc_ref.id
+    except Exception as e:
+        logger.error(f"Failed to write audit log: {e}")
+        return None
+
+
+@https_fn.on_call()
+def get_audit_logs(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """Fetches audit logs. Restricted to active administrators."""
+    require_admin(req)
+
+    data = req.data or {}
+    category = data.get('category')
+    action = data.get('action')
+    actor_email = data.get('actorEmail')
+    status_filter = data.get('status')
+    limit_count = min(int(data.get('limit', 100)), 500)
+    start_after_ts = data.get('startAfterTimestamp')
+
+    query = get_db().collection('audit_logs')
+    query = query.order_by('timestamp', direction=firestore.Query.DESCENDING)
+
+    if start_after_ts:
+        ts_val = datetime.fromtimestamp(float(start_after_ts) / 1000.0, tz=timezone.utc)
+        query = query.start_after([ts_val])
+
+    # Fetch extra documents if in-memory filtering is active
+    is_filtered = bool(
+        (category and category != 'all') or
+        (action and action != 'all') or
+        actor_email or
+        (status_filter and status_filter != 'all')
+    )
+    fetch_limit = min(limit_count * 3, 1000) if is_filtered else (limit_count + 1)
+    query = query.limit(fetch_limit)
+    docs = query.stream()
+
+    logs = []
+    has_more = False
+    for doc in docs:
+        d = doc.to_dict() or {}
+        d['id'] = doc.id
+        ts = d.get('timestamp')
+        if hasattr(ts, 'isoformat'):
+            d['timestamp'] = ts.isoformat()
+        elif hasattr(ts, 'timestamp'):
+            d['timestamp'] = datetime.fromtimestamp(ts.timestamp(), tz=timezone.utc).isoformat()
+        elif hasattr(ts, 'seconds'):
+            d['timestamp'] = datetime.fromtimestamp(ts.seconds, tz=timezone.utc).isoformat()
+
+        if category and category != 'all' and d.get('category') != category:
+            continue
+        if action and action != 'all' and d.get('action') != action:
+            continue
+        if actor_email and d.get('actor', {}).get('email', '').lower() != actor_email.lower():
+            continue
+        if status_filter and status_filter != 'all' and d.get('status') != status_filter:
+            continue
+
+        if len(logs) >= limit_count:
+            has_more = True
+            break
+
+        logs.append(d)
+
+    return {
+        'success': True,
+        'logs': logs,
+        'hasMore': has_more
+    }
+
+
+@https_fn.on_call()
+def record_audit_log(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """Records an administrative audit log entry from authenticated admins or organizers."""
+    caller = _caller_profile(req)
+    if caller.get('role') not in ('admin', 'organizer'):
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
+            message="Only organizers and administrators can record audit logs"
+        )
+    data = req.data or {}
+
+    category = data.get('category', 'system_security')
+    action = data.get('action')
+    target = data.get('target') or {}
+    details = data.get('details') or {}
+    status = data.get('status', 'success')
+
+    if not action:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+            message="An action is required"
+        )
+
+    ip_address = None
+    user_agent = None
+    if hasattr(req, 'raw_request') and req.raw_request:
+        try:
+            ip_address = req.raw_request.headers.get('x-forwarded-for', getattr(req.raw_request, 'remote_addr', None))
+            user_agent = req.raw_request.headers.get('user-agent')
+        except Exception:
+            pass
+
+    log_id = log_audit_entry(
+        db=get_db(),
+        category=category,
+        action=action,
+        actor_uid=req.auth.uid,
+        actor_email=caller.get('email', req.auth.token.get('email', '')),
+        actor_name=caller.get('displayName') or caller.get('name'),
+        actor_role=caller.get('role', 'admin'),
+        target_type=target.get('type', 'system'),
+        target_id=target.get('id', ''),
+        target_label=target.get('label', ''),
+        details=details,
+        status=status,
+        ip_address=ip_address,
+        user_agent=user_agent
+    )
+
+    return {'success': True, 'logId': log_id}
+
+
+@https_fn.on_call()
+def getAuditLogs(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """CamelCase alias for get_audit_logs."""
+    return get_audit_logs(req)
+
+
+@https_fn.on_call()
+def recordAuditLog(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """CamelCase alias for record_audit_log."""
+    return record_audit_log(req)
+
+
 # Alias for backward compatibility - use get_db() function instead
 
 
@@ -209,9 +406,9 @@ class EventService:
             st = event_data.get('startTime')
             if isinstance(sd, datetime):
                 start_datetime = _normalize_dt(sd)
-            elif isinstance(sd, dict) and sd.get('seconds') is not None:
+            elif isinstance(sd, dict) and isinstance(sd_seconds := sd.get('seconds'), (int, float)):
                 # Firestore Timestamp serialized as dict
-                start_datetime = _normalize_dt(datetime.fromtimestamp(int(sd.get('seconds'))))
+                start_datetime = _normalize_dt(datetime.fromtimestamp(int(sd_seconds)))
             elif sd and st:
                 start_datetime = datetime.fromisoformat(f"{sd}T{st}")
             else:
@@ -222,8 +419,8 @@ class EventService:
             et = event_data.get('endTime')
             if isinstance(ed, datetime):
                 end_datetime = _normalize_dt(ed)
-            elif isinstance(ed, dict) and ed.get('seconds') is not None:
-                end_datetime = _normalize_dt(datetime.fromtimestamp(int(ed.get('seconds'))))
+            elif isinstance(ed, dict) and isinstance(ed_seconds := ed.get('seconds'), (int, float)):
+                end_datetime = _normalize_dt(datetime.fromtimestamp(int(ed_seconds)))
             elif ed and et:
                 end_datetime = datetime.fromisoformat(f"{ed}T{et}")
 
@@ -601,12 +798,12 @@ def publish_event(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 message="Event not found"
             )
         
-        event_data = event_doc.to_dict()
+        event_data = event_doc.to_dict() or {}
         organizer_uid = event_data.get('organizer', {}).get('uid')
         
         # Fails closed: unprovisioned and suspended callers are rejected here.
         require_elevated(req, organizer_uid)
-
+        
         # Final validation before publishing (skip future date check since event already exists)
         validation_result = EventService.validate_event_data(event_data, is_edit_mode=True)
         if not validation_result['isValid']:
@@ -630,6 +827,22 @@ def publish_event(req: https_fn.CallableRequest) -> Dict[str, Any]:
             'updatedAt': firestore.SERVER_TIMESTAMP
         })
         
+        caller_data = _caller_profile(req)
+        log_audit_entry(
+            db=db,
+            category='event_operations',
+            action='event_published',
+            actor_uid=req.auth.uid,
+            actor_email=caller_data.get('email', req.auth.token.get('email', '')),
+            actor_name=caller_data.get('displayName') or caller_data.get('name'),
+            actor_role=caller_data.get('role', 'organizer'),
+            target_type='event',
+            target_id=event_id,
+            target_label=event_data.get('title', 'Unknown'),
+            details={'eventTitle': event_data.get('title', 'Unknown')},
+            status='success'
+        )
+
         logger.info(f"Event {event_id} published successfully by user {req.auth.uid}")
         return {
             'success': True,
@@ -800,6 +1013,28 @@ def getEventStatistics(req: https_fn.CallableRequest) -> Dict[str, Any]:
     return get_event_statistics(req)
 
 
+def _update_event_analytics(event_id: str, field: str, delta: Any) -> None:
+    """Adjust one event_analytics counter, creating the document if it is missing.
+
+    Every counter used to be a bare read-modify-update() guarded by
+    `if doc.exists`. Two problems: only initialize_event creates this document,
+    so any event created by another route silently lost its counters; and the
+    unguarded trigger variant raised 404.
+
+    firestore.Increment applies the delta server-side, so there is no read to
+    race on and no transaction to retry. That matters: wrapping this in a
+    transaction instead made 20 concurrent registrations exhaust the 5-attempt
+    retry budget and throw, which is precisely the burst this counter exists to
+    survive. set(merge=True) creates the document when absent and leaves the
+    fields this call does not mention alone.
+    """
+    get_db().collection('event_analytics').document(event_id).set({
+        'eventId': event_id,
+        'lastUpdated': firestore.SERVER_TIMESTAMP,
+        field: firestore.Increment(delta),
+    }, merge=True)
+
+
 @https_fn.on_call()
 def getEventAnalytics(req: https_fn.CallableRequest) -> Dict[str, Any]:
     """
@@ -839,20 +1074,20 @@ def getEventAnalytics(req: https_fn.CallableRequest) -> Dict[str, Any]:
         analytics_ref = get_db().collection('event_analytics').document(event_id)
         analytics_doc = analytics_ref.get()
         
-        if analytics_doc.exists:
-            analytics_data = analytics_doc.to_dict()
-        else:
-            # Create default analytics if not exists
-            analytics_data = {
-                'eventId': event_id,
-                'registrationCount': 0,
-                'revenue': 0,
-                'checkedInCount': 0,
-                'feedbackCount': 0,
-                'createdAt': firestore.SERVER_TIMESTAMP,
-                'lastUpdated': firestore.SERVER_TIMESTAMP
-            }
-            analytics_ref.set(analytics_data)
+        # Seed any counter a counter-bump has not written yet. A doc can now be
+        # created by _update_event_analytics holding only the fields it bumped,
+        # so filling defaults for a missing document alone is no longer enough.
+        defaults = {
+            'eventId': event_id,
+            'registrationCount': 0,
+            'revenue': 0,
+            'checkedInCount': 0,
+            'feedbackCount': 0,
+            'createdAt': firestore.SERVER_TIMESTAMP,
+            'lastUpdated': firestore.SERVER_TIMESTAMP
+        }
+        analytics_ref.set(defaults, merge=True)
+        analytics_data = {**defaults, **(analytics_doc.to_dict() or {})}
         
         logger.info(f"Analytics retrieved for event {event_id}")
         return {
@@ -949,6 +1184,19 @@ def deleteEventData(req: https_fn.CallableRequest) -> Dict[str, Any]:
             'timestamp': firestore.SERVER_TIMESTAMP,
             'eventTitle': event_data.get('title', 'Unknown')
         })
+
+        log_audit_entry(
+            db=get_db(),
+            category='event_operations',
+            action='event_deleted',
+            actor_uid=req.auth.uid,
+            actor_email=req.auth.token.get('email', ''),
+            target_type='event',
+            target_id=event_id,
+            target_label=event_data.get('title', 'Unknown'),
+            details={'eventTitle': event_data.get('title', 'Unknown')},
+            status='success'
+        )
         
         logger.info(f"Event {event_id} deleted successfully by user {req.auth.uid}")
         return {
@@ -1077,7 +1325,7 @@ def validateRegistration(req: https_fn.CallableRequest) -> Dict[str, Any]:
 
 @https_fn.on_call()
 def createAnonymousRegistration(req: https_fn.CallableRequest) -> Dict[str, Any]:
-    """Atomically reserve a ticket and create a pending anonymous registration."""
+    """Atomically reserve a ticket and create a pending anonymous registration tied to 1 attendee."""
     data = req.data or {}
     event_id = data.get('eventId')
     form = data.get('registrationData') or {}
@@ -1086,12 +1334,34 @@ def createAnonymousRegistration(req: https_fn.CallableRequest) -> Dict[str, Any]
     quantity = form.get('quantity', 1)
     if (not isinstance(event_id, str) or not isinstance(form, dict) or
             not isinstance(details, dict) or not isinstance(ticket_id, str) or
-            not isinstance(quantity, int) or quantity < 1 or quantity > 10 or
+            not isinstance(quantity, int) or quantity != 1 or
             not isinstance(details.get('name'), str) or not details['name'].strip() or
             not isinstance(details.get('email'), str) or '@' not in details['email']):
-        raise https_fn.HttpsError(https_fn.FunctionsErrorCode.INVALID_ARGUMENT, 'Invalid registration data')
+        raise https_fn.HttpsError(https_fn.FunctionsErrorCode.INVALID_ARGUMENT, 'Invalid registration data. Only 1 ticket per person is allowed.')
+
+    raw_email = details.get('email', '').strip()
+    normalized_email = raw_email.lower()
+    details['email'] = normalized_email
 
     db = get_db()
+
+    # Prevent duplicate registrations: Check if this email is already registered for this event
+    query_emails = {raw_email, normalized_email}
+    for q_email in query_emails:
+        existing_regs = db.collection('registrations') \
+            .where('eventId', '==', event_id) \
+            .where('userDetails.email', '==', q_email) \
+            .limit(5) \
+            .get()
+        for doc in existing_regs:
+            reg_data = doc.to_dict() or {}
+            # Active/pending/confirmed registrations block new registrations; cancelled ones do not
+            if reg_data.get('attendanceStatus') != 'cancelled' and reg_data.get('paymentStatus') != 'cancelled':
+                raise https_fn.HttpsError(
+                    https_fn.FunctionsErrorCode.ALREADY_EXISTS,
+                    'You are already registered for this event with this email address.'
+                )
+
     event_ref = db.collection('events').document(event_id)
     registration_ref = db.collection('registrations').document()
     token = secrets.token_urlsafe(32)
@@ -1112,16 +1382,16 @@ def createAnonymousRegistration(req: https_fn.CallableRequest) -> Dict[str, Any]
         ticket = dict(tickets[index])
         sold = int(ticket.get('currentSold') or 0)
         maximum = ticket.get('maxQuantity')
-        if isinstance(maximum, int) and sold + quantity > maximum:
+        if isinstance(maximum, int) and sold + 1 > maximum:
             raise https_fn.HttpsError(https_fn.FunctionsErrorCode.RESOURCE_EXHAUSTED, 'Ticket is sold out')
         price = float(ticket.get('price') or 0)
-        ticket['currentSold'] = sold + quantity
+        ticket['currentSold'] = sold + 1
         tickets[index] = ticket
         registration = {
             'id': registration_ref.id, 'eventId': event_id, 'userId': '',
-            'userDetails': details, 'ticketTypeId': ticket_id, 'quantity': quantity,
-            'originalAmount': price * quantity, 'discountAmount': 0,
-            'totalAmount': price * quantity, 'currency': 'PHP',
+            'userDetails': details, 'ticketTypeId': ticket_id, 'quantity': 1,
+            'originalAmount': price, 'discountAmount': 0,
+            'totalAmount': price, 'currency': 'PHP',
             'pricing': {'originalPrice': price, 'currentPrice': price, 'discountAmount': 0},
             'paymentStatus': 'pending', 'attendanceStatus': 'pending',
             'feedbackSubmitted': False, 'certificateIssued': False,
@@ -1139,7 +1409,7 @@ def createAnonymousRegistration(req: https_fn.CallableRequest) -> Dict[str, Any]
         tx.set(registration_ref, registration)
         tx.update(event_ref, {
             'ticketTypes': tickets,
-            'currentAttendees': int(event.get('currentAttendees') or 0) + quantity,
+            'currentAttendees': int(event.get('currentAttendees') or 0) + 1,
             'updatedAt': firestore.SERVER_TIMESTAMP,
         })
         return registration
@@ -1152,6 +1422,18 @@ def createAnonymousRegistration(req: https_fn.CallableRequest) -> Dict[str, Any]
         'requiresPayment': registration['totalAmount'] > 0,
         'paymentLinkToken': token,
     }
+
+
+def get_registration(registration_id: str):
+    """Fetch a registration document and its ref, or raise NOT_FOUND."""
+    registration_ref = get_db().collection('registrations').document(registration_id)
+    registration_doc = registration_ref.get()
+    if not registration_doc.exists:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.NOT_FOUND,
+            message="Registration not found"
+        )
+    return registration_ref, registration_doc.to_dict() or {}
 
 
 @https_fn.on_call()
@@ -1179,7 +1461,8 @@ def submitAnonymousPaymentProof(req: https_fn.CallableRequest) -> Dict[str, Any]
     image = data.get('imageBase64')
     content_type = data.get('contentType', 'image/jpeg')
     allowed = {'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/heic', 'image/heif'}
-    if not all(isinstance(value, str) for value in [registration_id, token, image]) or content_type not in allowed:
+    if (not isinstance(registration_id, str) or not isinstance(token, str) or
+            not isinstance(image, str) or content_type not in allowed):
         raise https_fn.HttpsError(https_fn.FunctionsErrorCode.INVALID_ARGUMENT, 'Invalid payment proof')
     try:
         image_bytes = base64.b64decode(image, validate=True)
@@ -1300,15 +1583,7 @@ def registerForEvent(req: https_fn.CallableRequest) -> Dict[str, Any]:
         })
         
         # Update analytics
-        analytics_ref = get_db().collection('event_analytics').document(event_id)
-        analytics_doc = analytics_ref.get()
-        
-        if analytics_doc.exists:
-            analytics_data = analytics_doc.to_dict()
-            analytics_ref.update({
-                'registrationCount': analytics_data.get('registrationCount', 0) + 1,
-                'lastUpdated': firestore.SERVER_TIMESTAMP
-            })
+        _update_event_analytics(event_id, 'registrationCount', 1)
         
         logger.info(f"User {req.auth.uid} registered for event {event_id}")
         return {
@@ -1359,8 +1634,13 @@ def processPaymentVerification(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 message="Registration not found"
             )
         
-        registration_data = registration_doc.to_dict()
+        registration_data = registration_doc.to_dict() or {}
         event_id = registration_data.get('eventId')
+        if not isinstance(event_id, str):
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="Registration is not linked to an event"
+            )
         
         event_ref = get_db().collection('events').document(event_id)
         event_doc = event_ref.get()
@@ -1406,16 +1686,29 @@ def processPaymentVerification(req: https_fn.CallableRequest) -> Dict[str, Any]:
         
         # Update analytics
         if action == 'verify':
-            analytics_ref = get_db().collection('event_analytics').document(event_id)
-            analytics_doc = analytics_ref.get()
-            
-            if analytics_doc.exists:
-                analytics_data = analytics_doc.to_dict()
-                analytics_ref.update({
-                    'revenue': analytics_data.get('revenue', 0) + payment_data.get('amount', 0),
-                    'lastUpdated': firestore.SERVER_TIMESTAMP
-                })
+            _update_event_analytics(event_id, 'revenue', payment_data.get('amount', 0))
         
+        caller_data = _caller_profile(req)
+        log_audit_entry(
+            db=get_db(),
+            category='financial',
+            action='payment_approved' if action == 'verify' else 'payment_rejected',
+            actor_uid=req.auth.uid,
+            actor_email=caller_data.get('email', req.auth.token.get('email', '')),
+            actor_name=caller_data.get('displayName') or caller_data.get('name'),
+            actor_role=caller_data.get('role', 'admin'),
+            target_type='payment_proof',
+            target_id=registration_id,
+            target_label=registration_data.get('userDetails', {}).get('name', 'Attendee'),
+            details={
+                'action': action,
+                'eventId': event_id,
+                'amount': payment_data.get('amount', 0),
+                'reason': req.data.get('reason')
+            },
+            status='success'
+        )
+
         logger.info(f"Payment {action} processed for registration {registration_id}")
         return {
             'success': True,
@@ -1501,15 +1794,7 @@ def submitFeedback(req: https_fn.CallableRequest) -> Dict[str, Any]:
         })
         
         # Update analytics
-        analytics_ref = get_db().collection('event_analytics').document(event_id)
-        analytics_doc = analytics_ref.get()
-        
-        if analytics_doc.exists:
-            analytics_data = analytics_doc.to_dict()
-            analytics_ref.update({
-                'feedbackCount': analytics_data.get('feedbackCount', 0) + 1,
-                'lastUpdated': firestore.SERVER_TIMESTAMP
-            })
+        _update_event_analytics(event_id, 'feedbackCount', 1)
         
         # Get event title for email
         event_ref = get_db().collection('events').document(event_id)
@@ -1830,16 +2115,24 @@ def checkInAttendee(req: https_fn.CallableRequest) -> Dict[str, Any]:
         })
         
         # Update analytics
-        analytics_ref = get_db().collection('event_analytics').document(event_id)
-        analytics_doc = analytics_ref.get()
+        _update_event_analytics(event_id, 'checkedInCount', 1)
         
-        if analytics_doc.exists:
-            analytics_data = analytics_doc.to_dict()
-            analytics_ref.update({
-                'checkedInCount': analytics_data.get('checkedInCount', 0) + 1,
-                'lastUpdated': firestore.SERVER_TIMESTAMP
-            })
-        
+        caller_data = _caller_profile(req)
+        log_audit_entry(
+            db=get_db(),
+            category='event_operations',
+            action='attendee_checked_in',
+            actor_uid=req.auth.uid,
+            actor_email=caller_data.get('email', req.auth.token.get('email', '')),
+            actor_name=caller_data.get('displayName') or caller_data.get('name'),
+            actor_role=caller_data.get('role', 'organizer'),
+            target_type='registration',
+            target_id=registration.id,
+            target_label=registration_data.get('userDetails', {}).get('name', 'Attendee'),
+            details={'eventId': event_id, 'attendeeId': attendee_id},
+            status='success'
+        )
+
         logger.info(f"Attendee {attendee_id} checked in for event {event_id}")
         return {
             'success': True,
@@ -1897,7 +2190,9 @@ def bulkProcessPayments(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 })()
                 
                 # Process each registration
-                result = processPaymentVerification(mock_req)
+                # CallableRequest needs a live flask Request, which a batch loop has no
+                # access to; the callable only reads .auth and .data off it.
+                result = processPaymentVerification(cast(https_fn.CallableRequest, mock_req))
                 
                 if result.get('success'):
                     processed_count += 1
@@ -1983,17 +2278,22 @@ def deleteUser(req: https_fn.CallableRequest) -> Dict[str, Any]:
 
     target_ref = get_db().collection('users').document(target_uid)
     target_doc = target_ref.get()
-
     if target_doc.exists:
-        target_role = (target_doc.to_dict() or {}).get('role')
-        # Only the superuser tier may remove another administrator. The client's
-        # VITE_SUPERUSER_EMAIL only decides which button is enabled; without this
-        # check an admin could call deleteUser on a peer directly.
-        if target_role == 'admin' and not is_super_user(req):
-            raise https_fn.HttpsError(
-                code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
-                message="Only a superuser can delete another administrator"
-            )
+        target_data = target_doc.to_dict() or {}
+        target_role = target_data.get('role')
+        if target_role == 'admin':
+            # Last-Admin safeguard: ensure at least one other active administrator remains
+            admin_docs = get_db().collection('users').where('role', '==', 'admin').stream()
+            active_admin_count = 0
+            for doc in admin_docs:
+                u_data = doc.to_dict() or {}
+                if u_data.get('isActive') is not False:
+                    active_admin_count += 1
+            if active_admin_count <= 1 and target_data.get('isActive') is not False:
+                raise https_fn.HttpsError(
+                    code=https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
+                    message="Cannot delete the platform's last remaining active administrator."
+                )
 
     # Auth first. If this raises for any reason other than the account already
     # being gone, the Firestore document survives and the caller retries.
@@ -2011,8 +2311,28 @@ def deleteUser(req: https_fn.CallableRequest) -> Dict[str, Any]:
             message="Could not remove the authentication account. Nothing was deleted."
         )
 
+    target_data = (target_doc.to_dict() or {}) if target_doc.exists else {}
     if target_doc.exists:
         target_ref.delete()
+
+    log_audit_entry(
+        db=get_db(),
+        category='user_management',
+        action='user_deleted',
+        actor_uid=req.auth.uid,
+        actor_email=caller.get('email', req.auth.token.get('email', '')),
+        actor_name=caller.get('displayName'),
+        actor_role=caller.get('role', 'admin'),
+        target_type='user',
+        target_id=target_uid,
+        target_label=target_data.get('displayName') or target_data.get('email') or target_uid,
+        details={
+            'deletedEmail': target_data.get('email'),
+            'deletedRole': target_data.get('role'),
+            'authAccountRemoved': auth_deleted
+        },
+        status='success'
+    )
 
     logger.info(
         f"deleteUser: {caller.get('email', req.auth.uid)} deleted account {target_uid} "
@@ -2145,6 +2465,12 @@ def sendConfirmationEmail(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 logger.info(f"Built location: {event_location} from parts: {location_parts}")
             else:
                 logger.info(f"Unknown venue type: {venue_type}, using TBD")
+
+            # Extract or build location map URL
+            maps_url = venue.get('mapsUrl') or ''
+            if not maps_url and venue_type in ['offline', 'hybrid'] and event_location != 'TBD':
+                import urllib.parse
+                maps_url = f"https://www.openstreetmap.org/search?query={urllib.parse.quote(event_location)}"
             
             # Generate QR code only for approved registrations
             qr_code_data = None
@@ -2169,11 +2495,7 @@ def sendConfirmationEmail(req: https_fn.CallableRequest) -> Dict[str, Any]:
                     qr.make(fit=True)
                     
                     # Generate image with optimization
-                    img = qr.make_image(fill_color="black", back_color="white")
-                    
-                    # Convert to RGB if needed and optimize
-                    if img.mode != 'RGB':
-                        img = img.convert('RGB')
+                    img: Image.Image = qr.make_image(fill_color="black", back_color="white").convert('RGB')
                     
                     # Save with optimization for email clients
                     buffer = BytesIO()
@@ -2195,7 +2517,8 @@ def sendConfirmationEmail(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 registration_id=include_registration_id,
                 qr_code_data=qr_code_data,
                 requires_payment=requires_payment,
-                is_free_registration=is_free_registration
+                is_free_registration=is_free_registration,
+                maps_url=maps_url
             )
 
             # Log activity for traceability
@@ -2302,11 +2625,7 @@ def sendPaymentNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 qr.make(fit=True)
                 
                 # Generate image with optimization
-                img = qr.make_image(fill_color="black", back_color="white")
-                
-                # Convert to RGB if needed and optimize
-                if img.mode != 'RGB':
-                    img = img.convert('RGB')
+                img: Image.Image = qr.make_image(fill_color="black", back_color="white").convert('RGB')
                 
                 # Save with optimization for email clients
                 buffer = BytesIO()
@@ -2495,6 +2814,11 @@ def sendEventReminder(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 message="userEmail, eventTitle, and eventDate are required"
             )
 
+        maps_url = data.get('mapsUrl') or ''
+        if not maps_url and event_location and event_location != 'TBD':
+            import urllib.parse
+            maps_url = f"https://www.openstreetmap.org/search?query={urllib.parse.quote(event_location)}"
+
         # Send email using Resend
         email_result = email_service.send_event_reminder(
             user_email=user_email,
@@ -2503,7 +2827,8 @@ def sendEventReminder(req: https_fn.CallableRequest) -> Dict[str, Any]:
             event_date=event_date,
             event_location=event_location or 'TBD',
             registration_id=registration_id or 'unknown',
-            reminder_type=reminder_type
+            reminder_type=reminder_type,
+            maps_url=maps_url
         )
 
         # Log activity for traceability
@@ -2615,7 +2940,7 @@ def get_full_name_from_registration(reg_data: Dict[str, Any]) -> str:
     return first_name or 'Attendee'
 
 
-def generate_feedback_url(event_id: str, registration_id: str = None, user_email: str = None, user_name: str = None, reg_data: Dict[str, Any] = None) -> str:
+def generate_feedback_url(event_id: str, registration_id: Optional[str] = None, user_email: Optional[str] = None, user_name: Optional[str] = None, reg_data: Optional[Dict[str, Any]] = None) -> str:
     """
     Generate a secure feedback URL with a token that hides personal information.
     Creates a feedbackToken document in Firestore to store the mapping.
@@ -2911,7 +3236,7 @@ def sendFeedbackRequest(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 reg_ref = db.collection('registrations').document(registration_id)
                 reg_doc = reg_ref.get()
                 if reg_doc.exists:
-                    reg_data = reg_doc.to_dict()
+                    reg_data = reg_doc.to_dict() or {}
                     # Use full name from registration
                     user_name = get_full_name_from_registration(reg_data)
             except Exception as reg_err:
@@ -3287,6 +3612,11 @@ def sendCheckInNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
             event_title = event_data.get('title', 'Event')
             event_date = event_data.get('date', 'TBD')
             event_location = event_data.get('location', 'TBD')
+            venue = event_data.get('venue', {})
+            maps_url = venue.get('mapsUrl') or ''
+            if not maps_url and event_location and event_location != 'TBD':
+                import urllib.parse
+                maps_url = f"https://www.openstreetmap.org/search?query={urllib.parse.quote(event_location)}"
 
             # Send email using Resend (using event reminder template as base)
             email_result = email_service.send_event_reminder(
@@ -3296,7 +3626,8 @@ def sendCheckInNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 event_date=event_date,
                 event_location=event_location,
                 registration_id=registration_id,
-                reminder_type="checked_in"  # Custom type for check-in
+                reminder_type="checked_in",  # Custom type for check-in
+                maps_url=maps_url
             )
 
             # Log activity for traceability
@@ -3357,7 +3688,7 @@ def sendCheckInNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
 # Firestore Triggers
 
 @firestore_fn.on_document_created(document="events/{eventId}")
-def on_event_created(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]) -> None:
+def on_event_created(event: firestore_fn.Event[Optional[firestore_fn.DocumentSnapshot]]) -> None:
     """
     Triggered when a new event is created
     """
@@ -3394,6 +3725,20 @@ def on_event_created(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]) -
             'timestamp': firestore.SERVER_TIMESTAMP,
             'eventTitle': event_data.get('title', 'Unknown')
         })
+
+        log_audit_entry(
+            db=get_db(),
+            category='event_operations',
+            action='event_created',
+            actor_uid=organizer_uid or '',
+            actor_email=event_data.get('organizer', {}).get('email', ''),
+            actor_name=event_data.get('organizer', {}).get('name'),
+            target_type='event',
+            target_id=event_id,
+            target_label=event_data.get('title', 'Unknown'),
+            details={'eventTitle': event_data.get('title', 'Unknown')},
+            status='success'
+        )
         
     except ValueError as e:
         # Handle timestamp parsing errors specifically
@@ -3406,7 +3751,7 @@ def on_event_created(event: firestore_fn.Event[firestore_fn.DocumentSnapshot]) -
 
 
 @firestore_fn.on_document_updated(document="events/{eventId}")
-def on_event_updated(event: firestore_fn.Event[firestore_fn.Change[firestore_fn.DocumentSnapshot]]) -> None:
+def on_event_updated(event: firestore_fn.Event[firestore_fn.Change[Optional[firestore_fn.DocumentSnapshot]]]) -> None:
     """
     Triggered when an event is updated
     """
@@ -3435,6 +3780,20 @@ def on_event_updated(event: firestore_fn.Event[firestore_fn.Change[firestore_fn.
                 'timestamp': firestore.SERVER_TIMESTAMP,
                 'eventTitle': after_data.get('title', 'Unknown')
             })
+
+            log_audit_entry(
+                db=get_db(),
+                category='event_operations',
+                action='event_published',
+                actor_uid=after_data.get('organizer', {}).get('uid', ''),
+                actor_email=after_data.get('organizer', {}).get('email', ''),
+                actor_name=after_data.get('organizer', {}).get('name'),
+                target_type='event',
+                target_id=event_id,
+                target_label=after_data.get('title', 'Unknown'),
+                details={'eventTitle': after_data.get('title', 'Unknown')},
+                status='success'
+            )
         
         # Check if event status changed to 'completed'
         before_status = before_data.get('status')
@@ -3459,11 +3818,7 @@ def on_event_updated(event: firestore_fn.Event[firestore_fn.Change[firestore_fn.
         after_attendees = after_data.get('currentAttendees', 0)
         
         if before_attendees != after_attendees:
-            analytics_ref = get_db().collection('event_analytics').document(event_id)
-            analytics_ref.update({
-                'registrationCount': after_attendees,
-                'lastUpdated': firestore.SERVER_TIMESTAMP
-            })
+            _update_event_analytics(event_id, 'registrationCount', after_attendees - before_attendees)
         
     except ValueError as e:
         # Handle timestamp parsing errors specifically

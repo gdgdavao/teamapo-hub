@@ -18,7 +18,15 @@ git clone https://github.com/gdgdavao/teamapo-hub.git
 cd teamapo-hub
 bun install
 cp env.example .env
+
+# Cloud Functions run from this venv. Without it the emulator falls back to the
+# system python, which does not have firebase_functions installed.
+python3.13 -m venv functions/venv
+functions/venv/bin/pip install -r functions/requirements.txt
 ```
+
+`functions/venv` must live at exactly that path: the emulator activates it by
+relative path, so it is ignored by git and recreated per machine.
 
 ### Environment variables (`.env`)
 
@@ -29,7 +37,6 @@ cp env.example .env
 | `APOHUB_SEED_PASSWORD` | Password given to seeded sample users. **Required** by `dev:apohub` |
 | `VITE_SUPERUSER_EMAIL` | Email treated as the superuser/admin |
 | `VITE_APP_URL`, `VITE_APP_NAME`, `VITE_ORGANIZATION` | App branding and base URL |
-| `GEMINI_API` | Gemini key for AI captions and feedback sentiment |
 | `RESEND_API_KEY`, `FROM_EMAIL` | Transactional email (see [functions/EMAIL_SETUP.md](../functions/EMAIL_SETUP.md)) |
 
 Never commit `.env`. It holds secrets.

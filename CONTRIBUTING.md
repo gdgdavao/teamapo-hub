@@ -125,16 +125,33 @@ Follow our [coding guidelines](#coding-guidelines) and ensure:
 - Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) (see step 5)
 
 ### 4. Test Your Changes
-```bash
-# Run the development server
-bun run dev
 
-# Run linting
+These are the same five gates CI runs, so running them locally means you cannot be surprised
+by a red check.
+
+```bash
+# TypeScript type check
+bun run typecheck
+
+# ESLint
 bun run lint
 
-# Run tests (when available)
-bun test
+# Unit tests (node environment, no emulator needed)
+bun run test:unit
+
+# Component / DOM tests (jsdom)
+bun run test:dom
+
+# Production build
+bun run build
+
+# Firestore security rules tests. Boots the emulator, so it needs Java 21.
+# Only required if you touched firestore.rules or storage.rules.
+bun run test:rules
 ```
+
+Use `bun run <script>`, not bare `bun test`: bare `bun test` invokes Bun's own runner, which
+does not understand this repo's Vitest configuration or the `@` path alias.
 
 ### 5. Commit and Push
 Follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/): `<type>(<scope>): <description>`
@@ -212,27 +229,46 @@ export const EventCard: React.FC<EventCardProps> = ({
 ```
 
 ### CSS/Styling Guidelines
-```typescript
-// Use Tailwind utility classes
-const styles = {
-  container: 'max-w-4xl mx-auto px-4 sm:px-6 lg:px-8',
-  card: 'bg-white rounded-lg shadow-md p-6 hover:shadow-lg transition-shadow',
-  button: 'bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg'
-};
 
-// Group related classes
-const buttonVariants = {
-  primary: 'bg-blue-600 hover:bg-blue-700 text-white',
-  secondary: 'bg-gray-200 hover:bg-gray-300 text-gray-900',
-  danger: 'bg-red-600 hover:bg-red-700 text-white'
-};
+Use Material Design 3 role tokens and the shared primitives. Full rationale in
+[docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md) and [DESIGN.md](DESIGN.md).
+
+**Do not hand-write button classes.** Reach for the shared `Button`. The example below is
+the old pattern and every line of it is wrong:
+
+| Old | Why it is wrong | Do this |
+|---|---|---|
+| `py-2 px-4` on a button | Renders ~36px tall. The touch floor is 48px | `min-h-control px-control-x` via `<Button>` |
+| `bg-blue-600` | Not a token. `#1a73e8` with white text fails WCAG AA | `variant="filled"` (renders `bg-primary` `#0b57d0`, 6.39:1) |
+| `secondary: 'bg-gray-200'` | The secondary button is outlined, not a grey fill | `variant="outlined"` |
+| `danger: 'bg-red-600'` | `#ea4335` with white text is 3.92:1, fails AA | `variant="danger"` (renders `bg-error` `#b3261e`, 6.54:1) |
+| `hover:bg-blue-700` | Hand-rolled interaction state | The `md-state-layer` class already does this |
+
+```tsx
+// Correct: the primitive resolves geometry, colour role, and state layer.
+import { Button } from '@/components/UI';
+
+<Button variant="filled" loading={isSaving} icon={<PlusIcon />}>Create event</Button>
+<Button variant="outlined">Cancel</Button>
+<Button variant="danger">Delete event</Button>
+
+// Container gutters are fixed: 16 / 24 / 32px, shared by the top bar,
+// the page title, and <main>. Do not let one of them drift.
+<div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8">...</div>
 ```
 
 ### File and Folder Naming
-- **Components**: `PascalCase.tsx` (e.g., `EventCard.tsx`)
-- **Pages**: `PascalCase.tsx` with `Page` suffix (e.g., `EventDetailPage.tsx`)
-- **Utilities**: `camelCase.ts` (e.g., `formatDate.ts`)
+- **Pages**: `PascalCase.tsx` with a `Page` suffix, and only if it really is a route (`EventEditorPage.tsx`)
+- **Panels inside a screen**: `PascalCase.tsx` with a `Tab` suffix, living beside their owner (`pages/events/workspace/tabs/AttendeesTab.tsx`)
+- **Components**: `PascalCase.tsx` (e.g., `PhotoUpload.tsx`)
+- **Utilities**: `camelCase.ts` (e.g., `slugUtils.ts`)
 - **Constants**: `UPPER_SNAKE_CASE.ts` (e.g., `API_ENDPOINTS.ts`)
+
+Folders under `src/pages/` are named for a **route cluster**, never for a role:
+there is no `admin/` or `organizer/`, because `src/auth/ability.ts` decides what
+a user may open and the tree should describe structure, not access. A component
+belongs under `pages/` when one route owns it, and under `components/` when it is
+shared. See [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md).
 
 ### Import Organization
 ```typescript
@@ -245,9 +281,9 @@ import { toast } from 'react-hot-toast';
 import { db } from '@/config/firebase';
 import { formatDate } from '@/utils/formatDate';
 
-// Components
-import { Button } from '@/components/UI/Button';
-import { LoadingSpinner } from '@/components/UI/LoadingSpinner';
+// Components — from the primitive barrel, never by file path. Two import paths
+// for one component is how its geometry drifts.
+import { Button, LoadingSpinner } from '@/components/UI';
 
 // Types
 import type { Event, User } from '@/types';
@@ -276,7 +312,8 @@ const handleEventCreation = async (eventData: EventFormData) => {
 ### PR Requirements
 Before submitting a pull request, ensure:
 - [ ] Code follows project conventions
-- [ ] All tests pass (when applicable)
+- [ ] All five CI gates pass locally: `bun run typecheck`, `bun run lint`, `bun run test:unit`, `bun run build`, and `bun run test:rules` (the last only if you touched `firestore.rules` or `storage.rules`)
+- [ ] New behaviour has a test: logic in `tests/unit/`, components in `tests/dom/`
 - [ ] Documentation is updated
 - [ ] PR description is clear and complete
 - [ ] Related issues are linked
@@ -311,7 +348,12 @@ Add screenshots for UI changes
 ```
 
 ### Review Process
-1. **Automated Checks**: CI/CD pipeline runs automatically
+1. **Automated Checks**: GitHub Actions runs five gates on every push and pull request ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)):
+   - `bun run typecheck` (TypeScript across the whole codebase)
+   - `bun run lint` (ESLint). All `jsx-a11y` rules are currently `warn` while the accessibility migration lands, so **errors** is the line that gates
+   - `bun run test:unit` (Vitest, node environment, no emulator needed)
+   - `bun run build` (Vite production build)
+   - `bun run test:rules` (Firestore security rules, boots the emulator, needs Java 21)
 2. **Code Review**: Maintainers review your code
 3. **Feedback**: Address any requested changes
 4. **Approval**: Once approved, your PR will be merged

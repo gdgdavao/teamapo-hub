@@ -12,7 +12,6 @@ interface ImportMetaEnv {
   readonly VITE_APP_URL: string
   readonly VITE_APP_NAME: string
   readonly VITE_ORGANIZATION: string
-  readonly VITE_GEMINI_API: string
   /**
    * Email of the one administrator who may delete other admins' accounts.
    * Declared here because AdminUsersPage read it through `import.meta.env`

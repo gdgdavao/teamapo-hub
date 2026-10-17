@@ -25,10 +25,13 @@ const AbilityContextProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const superUserEmail = import.meta.env.VITE_SUPERUSER_EMAIL || null;
   const isSuperUser = Boolean(email && superUserEmail && email === superUserEmail);
 
+  const permissions = userProfile?.permissions;
+  const permissionsJson = JSON.stringify(permissions);
+
   const ability = useMemo<AppAbility>(() => {
     if (!uid || !role || isActive === undefined) return defineAbilityFor(null);
-    return defineAbilityFor({ uid, role, isActive, isSuperUser });
-  }, [uid, role, isActive, isSuperUser]);
+    return defineAbilityFor({ uid, role, isActive, isSuperUser, permissions });
+  }, [uid, role, isActive, isSuperUser, permissionsJson]);
 
   return <AbilityProvider value={ability}>{children}</AbilityProvider>;
 };

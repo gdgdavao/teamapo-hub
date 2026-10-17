@@ -22,6 +22,31 @@ service cloud.firestore {
         get(/databases/$(database)/documents/events/$(eventId)).data.organizer.uid == request.auth.uid;
     }
     function canManageEvent(eventId) { return isAdmin() || ownsEvent(eventId); }
+
+    function hasPerm(domain, action) {
+      let user = get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+      return !('permissions' in user) ||
+             !(domain in user.permissions) ||
+             !(action in user.permissions[domain]) ||
+             user.permissions[domain][action] == true;
+    }
+
+    // Attendee-owner check for flat collections whose docs embed their eventId
+    // (registrations, feedback, activity_logs). Data Privacy Act 2012: an organizer
+    // must only ever see their own event's attendees.
+    // Primary path is O(1) on the denormalized organizerUid. The second clause is a
+    // fallback for docs written before the backfill — they still resolve via event
+    // ownership. Run scripts/backfill-organizer-uid.cjs before relying on the first.
+    function ownsDocByEventId(data) {
+      // `in` is required: reading an absent key is a rules *error*, not false.
+      // The rules grammar has no `not in`, hence the ternary.
+      return ('organizerUid' in data)
+        ? data.organizerUid == request.auth.uid
+        : (data.eventId is string && ownsEvent(data.eventId));
+    }
+    function canManageDocByEventId(data) {
+      return isAdmin() || ownsDocByEventId(data);
+    }
     function validAnonymousRegistration() {
       return request.resource.data.keys().hasOnly([
         'eventId', 'userId', 'userDetails', 'ticketTypeId', 'quantity',
@@ -64,27 +89,35 @@ service cloud.firestore {
 
     match /events/{eventId} {
       allow read: if (resource.data.isPublished == true && resource.data.status in ['published', 'ongoing']) || canManageEvent(eventId);
-      allow create: if isAdmin() || (isOrganizer() && request.resource.data.organizer.uid == request.auth.uid);
-      allow update, delete: if canManageEvent(eventId);
+      allow create: if isAdmin() || (isOrganizer() && hasPerm('events', 'canCreate') && request.resource.data.organizer.uid == request.auth.uid);
+      allow update: if isAdmin() || (ownsEvent(eventId) && hasPerm('events', 'canUpdate') && !(resource.data.status in ['completed', 'cancelled']));
+      allow delete: if isAdmin() || (ownsEvent(eventId) && hasPerm('events', 'canDelete'));
       match /forms/{formId} {
         allow read: if get(/databases/$(database)/documents/events/$(eventId)).data.isPublished == true || canManageEvent(eventId);
-        allow write: if canManageEvent(eventId);
+        allow write: if isAdmin() || (ownsEvent(eventId) && hasPerm('events', 'canUpdate') && !(get(/databases/$(database)/documents/events/$(eventId)).data.status in ['completed', 'cancelled']));
       }
       match /config/{configId} {
-        allow read, write: if canManageEvent(eventId);
+        allow read: if canManageEvent(eventId);
+        allow write: if isAdmin() || (ownsEvent(eventId) && hasPerm('events', 'canUpdate') && !(get(/databases/$(database)/documents/events/$(eventId)).data.status in ['completed', 'cancelled']));
       }
     }
 
     match /registrations/{registrationId} {
-      allow read: if isOrganizer();
-      allow create: if !isAuthenticated() && validAnonymousRegistration() &&
-        get(/databases/$(database)/documents/events/$(request.resource.data.eventId)).data.isPublished == true;
-      allow update, delete: if isOrganizer();
+      allow read: if canManageDocByEventId(resource.data) && (isAdmin() || hasPerm('attendees', 'canRead'));
+      allow create: if (!isAuthenticated() && validAnonymousRegistration() &&
+        get(/databases/$(database)/documents/events/$(request.resource.data.eventId)).data.isPublished == true) ||
+        (canManageEvent(request.resource.data.eventId) && (isAdmin() || hasPerm('attendees', 'canUpdate')));
+      allow update: if isAdmin() || (ownsDocByEventId(resource.data) && hasPerm('attendees', 'canUpdate'));
+      allow delete: if isAdmin() || (ownsDocByEventId(resource.data) && hasPerm('attendees', 'canDelete'));
     }
 
     match /certificateTemplates/{templateId} {
       allow read: if true;
-      allow write: if isOrganizer();
+      // `resource` is unavailable on create, so create must read request.resource.data.
+      // Templates with no eventId are global and stay organizer-editable, as before.
+      allow create: if (isAdmin() || (isOrganizer() && hasPerm('certificates', 'canManage'))) &&
+        (!('eventId' in request.resource.data) || ownsEvent(request.resource.data.eventId));
+      allow update, delete: if isAdmin() || (ownsDocByEventId(resource.data) && hasPerm('certificates', 'canManage'));
     }
     match /certificates/{certificateId} {
       allow read: if true;
@@ -94,23 +127,16 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
     match /feedbackTokens/{tokenId} { allow read, write: if false; }
-    match /feedback/{feedbackId} { allow read: if isOrganizer(); allow create, update, delete: if false; }
-    match /activity_logs/{logId} { allow read: if isOrganizer(); allow create, update, delete: if false; }
+    match /feedback/{feedbackId} { allow read: if canManageDocByEventId(resource.data) && (isAdmin() || hasPerm('feedback', 'canRead')); allow create, update, delete: if false; }
+    match /activity_logs/{logId} { allow read: if canManageDocByEventId(resource.data); allow create, update, delete: if false; }
+    match /audit_logs/{logId} { allow read, write: if false; }
     match /event_analytics/{analyticsId} { allow read, write: if canManageEvent(analyticsId); }
     match /paymentProofs/{proofId} {
-      allow read: if resource.data.eventId is string && canManageEvent(resource.data.eventId);
+      allow read: if ('eventId' in resource.data) && resource.data.eventId is string && (isAdmin() || (ownsEvent(resource.data.eventId) && hasPerm('payments', 'canVerify')));
       allow create: if false;
-      allow update: if resource.data.eventId == request.resource.data.eventId && canManageEvent(resource.data.eventId);
-      allow delete: if resource.data.eventId is string && canManageEvent(resource.data.eventId);
-    }
-    match /notifications/{notificationId} {
-      allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
-      allow list: if isAuthenticated() && request.auth.uid == resource.data.userId;
-      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.userId;
-      allow update: if isAuthenticated() && request.auth.uid == resource.data.userId &&
-        request.resource.data.userId == resource.data.userId &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']);
-      allow delete: if isAuthenticated() && request.auth.uid == resource.data.userId;
+      allow update: if ('eventId' in resource.data) && ('eventId' in request.resource.data) &&
+        resource.data.eventId == request.resource.data.eventId && (isAdmin() || (ownsEvent(resource.data.eventId) && hasPerm('payments', 'canVerify')));
+      allow delete: if ('eventId' in resource.data) && resource.data.eventId is string && (isAdmin() || (ownsEvent(resource.data.eventId) && hasPerm('payments', 'canVerify')));
     }
     match /system/{docId} { allow read, write: if isAdmin(); }
     match /{document=**} { allow read, write: if false; }
