@@ -205,11 +205,11 @@ const useSEO = ({
 
     // Update Twitter tags
     updateMetaTag('twitter:card', 'summary_large_image');
-    updateMetaTag('twitter:title', finalTitle, true);
-    updateMetaTag('twitter:description', description, true);
-    updateMetaTag('twitter:image', ogImage, true);
-    updateMetaTag('twitter:image:alt', ogImageAlt, true);
-    updateMetaTag('twitter:url', currentUrl, true);
+    updateMetaTag('twitter:title', finalTitle);
+    updateMetaTag('twitter:description', description);
+    updateMetaTag('twitter:image', ogImage);
+    updateMetaTag('twitter:image:alt', ogImageAlt);
+    updateMetaTag('twitter:url', currentUrl);
 
     // Update canonical URL
     let canonicalLink = document.querySelector('link[rel="canonical"]') as HTMLLinkElement;

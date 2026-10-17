@@ -187,9 +187,12 @@ const fetchPublishedEvents = async (db) => {
       })
     })
 
-    return events
   } catch (error) {
-    console.error('[event-static-html] Error fetching events:', error)
+    if (error?.code === 16 || error?.message?.includes('UNAUTHENTICATED')) {
+      console.info('[event-static-html] Build-time static event generation skipped (service account credentials not configured). Dynamic social previews are served via /api/event-meta.')
+    } else {
+      console.warn('[event-static-html] Notice while fetching events:', error.message || error)
+    }
     return []
   }
 }
