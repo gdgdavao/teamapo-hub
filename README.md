@@ -37,21 +37,37 @@ Visit `http://localhost:5173` to see the application running.
 
 ## Documentation
 
-- **[Development Guide](docs/DEVELOPMENT.md)** - Complete setup and development instructions
-- **[Contributing Guidelines](CONTRIBUTING.md)** - How to contribute to the project
-- **[Project Structure](docs/PROJECT_STRUCTURE.md)** - Detailed architecture overview
+Start with [Product](PRODUCT.md), then [Contributing Guidelines](CONTRIBUTING.md).
+
+| Document | What it covers |
+|---|---|
+| [PRODUCT.md](PRODUCT.md) | What the product is, who it serves, brand personality, anti-references |
+| [DESIGN.md](DESIGN.md) | Material Design 3 tokens: colour roles, typography, elevation, components |
+| [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md) | Design system companion: spacing, control geometry, state layer, motion, responsive rules, browser floor, iOS hardening, accessibility, anti-patterns |
+| [docs/PRD.md](docs/PRD.md) | Product requirements, personas, feature modules, success metrics |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Complete setup and development instructions |
+| [docs/Architecture.md](docs/Architecture.md) | System design, data flows, infrastructure |
+| [docs/Schema.md](docs/Schema.md) | Firestore collections, fields, and indexes |
+| [docs/Rules.md](docs/Rules.md) | Security rules architecture and code standards |
+| [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md) | Repository map |
+| [AGENTS.md](AGENTS.md) | Operating rules for AI coding assistants and skills |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute, coding guidelines, PR process |
+| [SECURITY.md](SECURITY.md) | Reporting a vulnerability |
+| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Community expectations |
 
 ## Tech Stack
 
 - **Frontend**: React 19 + TypeScript 5.7
 - **Build Tool**: Vite 6
-- **Package Manager**: Bun
-- **Styling**: Tailwind CSS 3.4 with Google Design System
+- **Package Manager**: Bun (never npm, npx, yarn, or pnpm)
+- **Styling**: Tailwind CSS 3.4 with a **Material Design 3** token system. Components reference MD3 colour *roles* (`bg-primary`, `bg-surface-container-low`, `text-on-surface`, `border-outline`), never brand names (`bg-blue-600`). Full definitions in [DESIGN.md](DESIGN.md), rules in [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md)
 - **Backend**: Firebase 11 (Auth, Firestore, Functions, Storage)
 - **Payments**: Manual verification (bank transfer / GCash proof upload)
 - **Icons**: Heroicons + Lucide React
 - **Forms**: React Hook Form
 - **PDF Generation**: jsPDF + html2canvas
+- **Testing**: Vitest (unit in `node`, components in `jsdom`), Firebase Rules Unit Testing
+- **CI**: GitHub Actions, five gates ([workflow](.github/workflows/ci.yml))
 
 ## Getting Started as a Contributor
 

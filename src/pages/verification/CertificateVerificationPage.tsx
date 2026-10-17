@@ -1,3 +1,4 @@
+import { ALLOWED_VERIFY_HOSTS } from '../../config/app';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { BrowserQRCodeReader, type IScannerControls } from '@zxing/browser';
@@ -17,6 +18,7 @@ import {
   ArrowDownTrayIcon
 } from '@heroicons/react/24/outline';
 import { CertificateService } from '../../services/certificateService';
+import { Button, Card, Input } from '../../components/UI';
 import { logger } from '../../utils/logger';
 
 interface CertificateVerificationData {
@@ -32,12 +34,7 @@ interface CertificateVerificationData {
 }
 
 // Allowed domains for QR code verification
-const ALLOWED_DOMAINS = [
-  'apohub.gdgdavao.org',
-  'apohub-gdgdavao.vercel.app',
-  'localhost',
-  '127.0.0.1'
-];
+const ALLOWED_DOMAINS: readonly string[] = ALLOWED_VERIFY_HOSTS;
 
 // Parse QR code data and validate domain
 const parseQRCode = (qrData: string): { valid: boolean; code?: string; error?: string } => {
@@ -142,8 +139,9 @@ const CertificateVerificationPage: React.FC = () => {
   }, []);
 
   const verifyCertificate = useCallback(async (codeToVerify: string) => {
-    if (!codeToVerify.trim()) {
-      setErrorMessage('Please enter a verification code');
+    const sanitized = codeToVerify.trim().replace(/[^a-zA-Z0-9-]/g, '').toUpperCase();
+    if (!sanitized) {
+      setErrorMessage('Please enter a valid verification code.');
       return;
     }
 
@@ -154,7 +152,7 @@ const CertificateVerificationPage: React.FC = () => {
     setImageError(false);
 
     try {
-      const result = await CertificateService.verifyCertificate(codeToVerify.trim());
+      const result = await CertificateService.verifyCertificate(sanitized);
       
       setVerificationData({
         isValid: result.isValid,
@@ -163,7 +161,7 @@ const CertificateVerificationPage: React.FC = () => {
         eventTitle: result.eventTitle,
         eventDate: result.eventDate,
         issuedDate: result.issuedDate,
-        verificationCode: codeToVerify.trim().toUpperCase(),
+        verificationCode: sanitized,
         certificateUrl: result.certificateUrl,
         verificationCount: result.verificationCount
       });
@@ -384,57 +382,54 @@ const CertificateVerificationPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 py-12">
+    <div className="min-h-page bg-surface-container-low py-12">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Header */}
         <div className="text-center mb-12">
           <div className="flex justify-center mb-6">
-            <div className="p-4 bg-blue-100 rounded-full">
-              <AcademicCapIcon className="w-12 h-12 text-blue-600" />
+            <div className="rounded-full bg-primary-container p-4">
+              <AcademicCapIcon className="w-12 h-12 text-primary" aria-hidden="true" />
             </div>
           </div>
-          <h1 className="text-4xl font-bold text-gray-900 mb-4">Certificate Verification</h1>
-          <p className="text-xl text-gray-600 max-w-2xl mx-auto">
-            Verify the authenticity of certificates issued by GDG Davao events. 
+          <h1 className="text-4xl font-bold text-on-surface mb-4">Certificate Verification</h1>
+          <p className="text-xl text-on-surface-variant max-w-2xl mx-auto">
+            Verify the authenticity of certificates issued by GDG Davao events.
             Enter the verification code or scan the QR code to check if a certificate is valid.
           </p>
         </div>
 
         {/* QR Scanner Section */}
         {isCameraActive && (
-          <div className="bg-white rounded-xl shadow-lg p-6 mb-8">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-                <CameraIcon className="w-5 h-5" />
+          <Card padding="lg" className="mb-8">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <h3 className="flex items-center gap-2 text-lg font-semibold text-on-surface">
+                <CameraIcon className="w-5 h-5 shrink-0" aria-hidden="true" />
                 {isCameraLoading ? 'Starting camera...' : 'Scanning QR Code...'}
               </h3>
               <div className="flex items-center gap-2">
-                {/* Camera flip button - only show if multiple cameras */}
+                {/* Both were 36px icon buttons with no focus ring. The primitive
+                    gives them the 48px floor and a visible focus ring. */}
                 {availableCameras.length > 1 && !isCameraLoading && (
-                  <button
-                    type="button"
+                  <Button
+                    variant="text"
                     onClick={handleFlipCamera}
-                    className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
                     aria-label="Switch camera"
                     title={`Switch to ${facingMode === 'environment' ? 'front' : 'back'} camera`}
-                    tabIndex={0}
-                  >
-                    <ArrowPathIcon className="w-6 h-6" />
-                  </button>
+                    className="min-w-[48px] px-2xs text-on-surface-variant"
+                    icon={<ArrowPathIcon />}
+                  />
                 )}
-                <button
-                  type="button"
+                <Button
+                  variant="text"
                   onClick={stopCamera}
-                  className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
                   aria-label="Close camera"
-                  tabIndex={0}
-                >
-                  <XMarkIcon className="w-6 h-6" />
-                </button>
+                  className="min-w-[48px] px-2xs text-on-surface-variant"
+                  icon={<XMarkIcon />}
+                />
               </div>
             </div>
-            
-            <div className="relative aspect-video bg-black rounded-lg overflow-hidden">
+
+            <div className="relative aspect-video overflow-hidden rounded-lg bg-inverse-surface">
               <video
                 ref={videoRef}
                 className="w-full h-full object-cover"
@@ -442,133 +437,118 @@ const CertificateVerificationPage: React.FC = () => {
                 playsInline
                 muted
               />
-              
+
               {/* Loading overlay */}
               {isCameraLoading && (
-                <div className="absolute inset-0 bg-gray-900/80 flex items-center justify-center z-10">
+                <div className="absolute inset-0 z-10 flex items-center justify-center bg-inverse-surface/80">
                   <div className="text-center">
-                    <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-white mx-auto mb-3" />
-                    <p className="text-white text-sm">Starting camera...</p>
+                    <div className="mx-auto mb-3 h-10 w-10 rounded-full border-b-2 border-inverse-on-surface motion-essential animate-spin" />
+                    <p className="text-sm text-inverse-on-surface">Starting camera...</p>
                   </div>
                 </div>
               )}
-              
-              {/* Scanning overlay */}
+
+              {/* Scanning overlay. The corner frame and the scan line both
+                  centre with two -translate utilities instead of a `transform`
+                  class carrying its own translate, which was ordering-dependent. */}
               <div className="absolute inset-0 pointer-events-none">
-                <div className="absolute inset-0 border-2 border-blue-500 opacity-50" />
-                <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-48 h-48 sm:w-64 sm:h-64">
-                  <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-blue-500" />
-                  <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-blue-500" />
-                  <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-blue-500" />
-                  <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-blue-500" />
+                <div className="absolute inset-0 border-2 border-brand opacity-50" />
+                <div className="absolute left-1/2 top-1/2 w-48 h-48 -translate-x-1/2 -translate-y-1/2 sm:w-64 sm:h-64">
+                  <div className="absolute left-0 top-0 h-8 w-8 border-l-4 border-t-4 border-brand" />
+                  <div className="absolute right-0 top-0 h-8 w-8 border-r-4 border-t-4 border-brand" />
+                  <div className="absolute bottom-0 left-0 h-8 w-8 border-b-4 border-l-4 border-brand" />
+                  <div className="absolute bottom-0 right-0 h-8 w-8 border-b-4 border-r-4 border-brand" />
                 </div>
                 {isScanning && !isCameraLoading && (
-                  <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-48 h-0.5 sm:w-64 bg-blue-500 animate-pulse" />
+                  <div className="absolute left-1/2 top-1/2 h-0.5 w-48 -translate-x-1/2 -translate-y-1/2 bg-brand animate-pulse" />
                 )}
               </div>
             </div>
 
             {scanError && (
-              <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2">
-                <ExclamationTriangleIcon className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
-                <p className="text-sm text-red-700">{scanError}</p>
+              <div role="alert" className="mt-4 flex items-start gap-2 rounded-lg border border-error-container bg-error-container p-3">
+                <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0 text-on-error-container" aria-hidden="true" />
+                <p className="text-sm text-on-error-container">{scanError}</p>
               </div>
             )}
 
-            <p className="mt-4 text-sm text-gray-500 text-center">
+            <p className="mt-4 text-center text-sm text-on-surface-variant">
               Position the QR code from the certificate within the frame
             </p>
-          </div>
+          </Card>
         )}
 
         {/* Verification Form */}
-        <div className="bg-white rounded-xl shadow-lg p-8 mb-8">
-          <form onSubmit={handleSubmit} className="space-y-6">
-            <div>
-              <label htmlFor="verification-code" className="block text-sm font-medium text-gray-700 mb-2">
-                Verification Code
-              </label>
-              <div className="relative">
-                <input
-                  type="text"
-                  id="verification-code"
-                  value={verificationCode}
-                  onChange={(e) => setVerificationCode(e.target.value.toUpperCase())}
-                  placeholder="e.g., CERT-A1B2C3D4E5F6"
-                  className="w-full px-4 py-3 pl-12 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-lg font-mono"
-                  aria-label="Certificate verification code"
-                  tabIndex={0}
-                />
-                <QrCodeIcon className="absolute left-4 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
-              </div>
-              <p className="mt-2 text-sm text-gray-500">
-                The verification code can be found on the certificate or in the QR code
-              </p>
+        <Card padding="lg" className="mb-8">
+          <form onSubmit={handleSubmit} className="space-y-md">
+            <div className="relative">
+              <Input
+                mono
+                label="Verification Code"
+                value={verificationCode}
+                onChange={(e) => setVerificationCode(e.target.value.toUpperCase())}
+                placeholder="e.g., CERT-A1B2C3D4E5F6"
+                hint="The verification code can be found on the certificate or in the QR code"
+                className="pl-12"
+              />
+              <QrCodeIcon className="absolute left-4 top-[2.35rem] h-5 w-5 text-outline" aria-hidden="true" />
             </div>
 
             {errorMessage && (
-              <div className="p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2">
-                <ExclamationTriangleIcon className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
-                <p className="text-sm text-red-700">{errorMessage}</p>
+              <div role="alert" className="flex items-start gap-2 rounded-lg border border-error-container bg-error-container p-3">
+                <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0 text-on-error-container" aria-hidden="true" />
+                <p className="text-sm text-on-error-container">{errorMessage}</p>
               </div>
             )}
 
-            <div className="flex flex-col sm:flex-row gap-3">
-              <button
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <Button
                 type="submit"
-                disabled={loading || !verificationCode.trim()}
-                className="flex-1 flex items-center justify-center px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium text-lg"
-                tabIndex={0}
-                aria-label="Verify certificate"
+                size="lg"
+                fullWidth
+                loading={loading}
+                disabled={!verificationCode.trim()}
+                icon={<MagnifyingGlassIcon />}
+                className="sm:flex-1"
               >
-                {loading ? (
-                  <>
-                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-3" />
-                    Verifying...
-                  </>
-                ) : (
-                  <>
-                    <MagnifyingGlassIcon className="w-5 h-5 mr-3" />
-                    Verify Certificate
-                  </>
-                )}
-              </button>
+                Verify Certificate
+              </Button>
 
               {hasCamera && !isCameraActive && (
-                <button
-                  type="button"
+                <Button
+                  variant="tonal"
+                  size="lg"
+                  fullWidth
                   onClick={startCamera}
                   disabled={loading}
-                  className="flex items-center justify-center px-6 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
-                  tabIndex={0}
-                  aria-label="Scan QR code with camera"
+                  icon={<CameraIcon />}
+                  className="sm:flex-1"
                 >
-                  <CameraIcon className="w-5 h-5 mr-2" />
                   Scan QR Code
-                </button>
+                </Button>
               )}
             </div>
           </form>
-        </div>
+        </Card>
 
         {/* Verification Results */}
         {searchAttempted && verificationData && (
-          <div className="bg-white rounded-xl shadow-lg overflow-hidden">
+          <Card padding="none" className="mb-8 overflow-hidden">
             {verificationData.isValid ? (
               // Valid Certificate
               <div className="p-8">
-                <div className="flex items-center justify-center mb-6">
-                  <div className="p-3 bg-green-100 rounded-full">
-                    <CheckCircleIcon className="w-8 h-8 text-green-600" />
+                <div className="mb-6 flex items-center justify-center">
+                  <div className="rounded-full bg-success-container p-3">
+                    <CheckCircleIcon className="h-8 w-8 text-success" aria-hidden="true" />
                   </div>
                 </div>
-                
-                <div className="text-center mb-8">
-                  <h2 className="text-2xl font-bold text-green-600 mb-2">Certificate Verified ✓</h2>
-                  <p className="text-gray-600">This certificate is authentic and was issued by GDG Davao.</p>
+
+                <div className="mb-8 text-center">
+                  <h2 className="text-2xl font-bold text-success mb-2">Certificate Verified</h2>
+                  <p className="text-on-surface-variant">This certificate is authentic and was issued by GDG Davao.</p>
                   {verificationData.verificationCount && verificationData.verificationCount > 0 && (
-                    <p className="mt-2 text-sm text-gray-500 flex items-center justify-center gap-1">
-                      <ShieldCheckIcon className="w-4 h-4" />
+                    <p className="mt-2 flex items-center justify-center gap-1 text-sm text-on-surface-variant">
+                      <ShieldCheckIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
                       This certificate has been verified {verificationData.verificationCount} time{verificationData.verificationCount > 1 ? 's' : ''}
                     </p>
                   )}
@@ -577,9 +557,10 @@ const CertificateVerificationPage: React.FC = () => {
                 {/* Certificate Preview - Full Size */}
                 {verificationData.certificateUrl && (
                   <div className="mb-8">
-                    <div className="flex items-center justify-between mb-4 border-b pb-2">
-                      <h3 className="text-lg font-semibold text-gray-900">Certificate</h3>
-                      <button
+                    <div className="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-outline-variant pb-2">
+                      <h3 className="text-lg font-semibold text-on-surface">Certificate</h3>
+                      <Button
+                        size="sm"
                         onClick={async () => {
                           if (!verificationData.certificateUrl) return;
                           try {
@@ -597,35 +578,32 @@ const CertificateVerificationPage: React.FC = () => {
                             logger.error('Failed to download certificate:', err);
                           }
                         }}
-                        className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
-                        aria-label="Download certificate"
-                        tabIndex={0}
+                        icon={<ArrowDownTrayIcon />}
                       >
-                        <ArrowDownTrayIcon className="w-4 h-4" />
                         Download Certificate
-                      </button>
+                      </Button>
                     </div>
-                    <div className="border border-gray-200 rounded-lg overflow-hidden bg-gray-100">
+                    <div className="overflow-hidden rounded-lg border border-outline-variant bg-surface-container">
                       {/* Skeleton loader */}
                       {imageLoading && (
-                        <div className="w-full aspect-[1.414/1] animate-pulse bg-gray-200 flex items-center justify-center">
+                        <div className="w-full aspect-[1.414/1] animate-pulse bg-surface-dim flex items-center justify-center">
                           <div className="text-center">
-                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-400 mx-auto mb-2" />
-                            <p className="text-sm text-gray-500">Loading certificate...</p>
+                            <div className="mx-auto mb-2 h-8 w-8 rounded-full border-b-2 border-outline motion-essential animate-spin" />
+                            <p className="text-sm text-on-surface-variant">Loading certificate...</p>
                           </div>
                         </div>
                       )}
-                      
+
                       {/* Image error state */}
                       {imageError && !imageLoading && (
-                        <div className="w-full aspect-[1.414/1] bg-gray-100 flex items-center justify-center">
-                          <div className="text-center text-gray-500">
-                            <AcademicCapIcon className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                        <div className="w-full aspect-[1.414/1] bg-surface-container flex items-center justify-center">
+                          <div className="text-center text-on-surface-variant">
+                            <AcademicCapIcon className="mx-auto mb-2 h-12 w-12 opacity-50" aria-hidden="true" />
                             <p className="text-sm">Certificate preview unavailable</p>
                           </div>
                         </div>
                       )}
-                      
+
                       <img
                         src={verificationData.certificateUrl}
                         alt="Certificate"
@@ -638,31 +616,31 @@ const CertificateVerificationPage: React.FC = () => {
                 )}
 
                 {/* Certificate Details */}
-                <div className="space-y-6">
-                  <h3 className="text-lg font-semibold text-gray-900 border-b pb-2">Certificate Details</h3>
-                  
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="flex items-start space-x-3 p-3 bg-gray-50 rounded-lg">
-                      <UserIcon className="w-5 h-5 text-gray-400 mt-1 flex-shrink-0" />
-                      <div>
-                        <p className="text-sm text-gray-500">Recipient</p>
-                        <p className="font-medium text-gray-900">{verificationData.recipientName}</p>
+                <div className="space-y-md">
+                  <h3 className="border-b border-outline-variant pb-2 text-lg font-semibold text-on-surface">Certificate Details</h3>
+
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div className="flex items-start gap-3 rounded-lg bg-surface-container-low p-3">
+                      <UserIcon className="mt-1 h-5 w-5 shrink-0 text-outline" aria-hidden="true" />
+                      <div className="min-w-0">
+                        <p className="text-sm text-on-surface-variant">Recipient</p>
+                        <p className="min-w-0 break-words font-medium text-on-surface">{verificationData.recipientName}</p>
                       </div>
                     </div>
 
-                    <div className="flex items-start space-x-3 p-3 bg-gray-50 rounded-lg">
-                      <AcademicCapIcon className="w-5 h-5 text-gray-400 mt-1 flex-shrink-0" />
-                      <div>
-                        <p className="text-sm text-gray-500">Event</p>
-                        <p className="font-medium text-gray-900">{verificationData.eventTitle}</p>
+                    <div className="flex items-start gap-3 rounded-lg bg-surface-container-low p-3">
+                      <AcademicCapIcon className="mt-1 h-5 w-5 shrink-0 text-outline" aria-hidden="true" />
+                      <div className="min-w-0">
+                        <p className="text-sm text-on-surface-variant">Event</p>
+                        <p className="min-w-0 break-words font-medium text-on-surface">{verificationData.eventTitle}</p>
                       </div>
                     </div>
 
-                    <div className="flex items-start space-x-3 p-3 bg-gray-50 rounded-lg">
-                      <CalendarDaysIcon className="w-5 h-5 text-gray-400 mt-1 flex-shrink-0" />
-                      <div>
-                        <p className="text-sm text-gray-500">Event Date</p>
-                        <p className="font-medium text-gray-900">
+                    <div className="flex items-start gap-3 rounded-lg bg-surface-container-low p-3">
+                      <CalendarDaysIcon className="mt-1 h-5 w-5 shrink-0 text-outline" aria-hidden="true" />
+                      <div className="min-w-0">
+                        <p className="text-sm text-on-surface-variant">Event Date</p>
+                        <p className="min-w-0 break-words font-medium text-on-surface">
                           {verificationData.eventDate ? new Date(verificationData.eventDate).toLocaleDateString('en-US', {
                             year: 'numeric',
                             month: 'long',
@@ -672,11 +650,11 @@ const CertificateVerificationPage: React.FC = () => {
                       </div>
                     </div>
 
-                    <div className="flex items-start space-x-3 p-3 bg-gray-50 rounded-lg">
-                      <CheckCircleIcon className="w-5 h-5 text-gray-400 mt-1 flex-shrink-0" />
-                      <div>
-                        <p className="text-sm text-gray-500">Issued Date</p>
-                        <p className="font-medium text-gray-900">
+                    <div className="flex items-start gap-3 rounded-lg bg-surface-container-low p-3">
+                      <CheckCircleIcon className="mt-1 h-5 w-5 shrink-0 text-outline" aria-hidden="true" />
+                      <div className="min-w-0">
+                        <p className="text-sm text-on-surface-variant">Issued Date</p>
+                        <p className="min-w-0 break-words font-medium text-on-surface">
                           {verificationData.issuedDate ? new Date(verificationData.issuedDate).toLocaleDateString('en-US', {
                             year: 'numeric',
                             month: 'long',
@@ -686,19 +664,19 @@ const CertificateVerificationPage: React.FC = () => {
                       </div>
                     </div>
 
-                    <div className="flex items-start space-x-3 p-3 bg-gray-50 rounded-lg sm:col-span-2">
-                      <QrCodeIcon className="w-5 h-5 text-gray-400 mt-1 flex-shrink-0" />
-                      <div>
-                        <p className="text-sm text-gray-500">Verification Code</p>
-                        <p className="font-medium text-gray-900 font-mono">{verificationData.verificationCode}</p>
+                    <div className="flex items-start gap-3 rounded-lg bg-surface-container-low p-3 sm:col-span-2">
+                      <QrCodeIcon className="mt-1 h-5 w-5 shrink-0 text-outline" aria-hidden="true" />
+                      <div className="min-w-0">
+                        <p className="text-sm text-on-surface-variant">Verification Code</p>
+                        <p className="min-w-0 break-all font-mono font-medium text-on-surface">{verificationData.verificationCode}</p>
                       </div>
                     </div>
                   </div>
                 </div>
 
-                <div className="mt-8 p-4 bg-green-50 border border-green-200 rounded-lg">
-                  <p className="text-sm text-green-800">
-                    <strong>Verification Successful:</strong> This certificate has been verified as authentic. 
+                <div className="mt-8 rounded-lg border border-outline-variant bg-success-container p-4">
+                  <p className="text-sm text-on-success-container">
+                    <strong>Verification Successful:</strong> This certificate has been verified as authentic.
                     It was issued by GDG Davao and has not been tampered with.
                   </p>
                 </div>
@@ -706,39 +684,39 @@ const CertificateVerificationPage: React.FC = () => {
             ) : verificationData.isRevoked ? (
               // Revoked Certificate
               <div className="p-8 text-center">
-                <div className="flex items-center justify-center mb-6">
-                  <div className="p-3 bg-amber-100 rounded-full">
-                    <ExclamationTriangleIcon className="w-8 h-8 text-amber-600" />
+                <div className="mb-6 flex items-center justify-center">
+                  <div className="rounded-full bg-warning-container p-3">
+                    <ExclamationTriangleIcon className="h-8 w-8 text-warning" aria-hidden="true" />
                   </div>
                 </div>
-                
-                <h2 className="text-2xl font-bold text-amber-600 mb-4">Certificate Revoked</h2>
-                <p className="text-gray-600 mb-6">
+
+                <h2 className="text-2xl font-bold text-warning mb-4">Certificate Revoked</h2>
+                <p className="text-on-surface-variant mb-6">
                   This certificate has been revoked and is no longer valid.
                 </p>
-                
+
                 {(verificationData.recipientName || verificationData.eventTitle) && (
-                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6 max-w-md mx-auto">
-                    <p className="text-sm text-amber-800">
+                  <div className="mx-auto mb-6 max-w-md rounded-lg border border-outline-variant bg-warning-container p-4 text-left">
+                    <p className="text-sm text-on-warning-container">
                       <strong>Original Details:</strong>
                     </p>
                     {verificationData.recipientName && (
-                      <p className="text-sm text-amber-700 mt-1">
+                      <p className="mt-1 break-words text-sm text-on-warning-container">
                         Recipient: {verificationData.recipientName}
                       </p>
                     )}
                     {verificationData.eventTitle && (
-                      <p className="text-sm text-amber-700">
+                      <p className="break-words text-sm text-on-warning-container">
                         Event: {verificationData.eventTitle}
                       </p>
                     )}
                   </div>
                 )}
 
-                <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
-                  <p className="text-sm text-amber-800">
-                    <strong>What does this mean?</strong> This certificate was previously issued but has been 
-                    revoked by the administrator. This could be due to duplicate issuance, data correction, 
+                <div className="rounded-lg border border-outline-variant bg-warning-container p-4">
+                  <p className="text-sm text-on-warning-container">
+                    <strong>What does this mean?</strong> This certificate was previously issued but has been
+                    revoked by the administrator. This could be due to duplicate issuance, data correction,
                     or other administrative reasons. Please contact GDG Davao if you believe this is an error.
                   </p>
                 </div>
@@ -746,54 +724,54 @@ const CertificateVerificationPage: React.FC = () => {
             ) : (
               // Invalid Certificate - Not Found
               <div className="p-8 text-center">
-                <div className="flex items-center justify-center mb-6">
-                  <div className="p-3 bg-red-100 rounded-full">
-                    <XCircleIcon className="w-8 h-8 text-red-600" />
+                <div className="mb-6 flex items-center justify-center">
+                  <div className="rounded-full bg-error-container p-3">
+                    <XCircleIcon className="h-8 w-8 text-on-error-container" aria-hidden="true" />
                   </div>
                 </div>
-                
-                <h2 className="text-2xl font-bold text-red-600 mb-4">Certificate Not Found</h2>
-                <p className="text-gray-600 mb-6">
-                  The verification code you entered could not be found in our database. 
+
+                <h2 className="text-2xl font-bold text-error mb-4">Certificate Not Found</h2>
+                <p className="text-on-surface-variant mb-6">
+                  The verification code you entered could not be found in our database.
                   This could mean:
                 </p>
-                
-                <div className="text-left max-w-md mx-auto space-y-2 mb-6">
-                  <p className="text-sm text-gray-600">• The verification code was entered incorrectly</p>
-                  <p className="text-sm text-gray-600">• The certificate is not authentic</p>
-                  <p className="text-sm text-gray-600">• The certificate was not issued by GDG Davao</p>
-                </div>
 
-                <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
-                  <p className="text-sm text-red-800">
+                <ul className="mx-auto mb-6 max-w-md list-disc space-y-2 pl-5 text-left text-sm text-on-surface-variant">
+                  <li>The verification code was entered incorrectly</li>
+                  <li>The certificate is not authentic</li>
+                  <li>The certificate was not issued by GDG Davao</li>
+                </ul>
+
+                <div className="rounded-lg border border-outline-variant bg-error-container p-4">
+                  <p className="text-sm text-on-error-container">
                     <strong>Verification Failed:</strong> Please double-check the verification code and try again.
                     If you believe this is an error, please contact GDG Davao.
                   </p>
                 </div>
               </div>
             )}
-          </div>
+          </Card>
         )}
 
         {/* Help Section */}
-        <div className="mt-12 bg-blue-50 rounded-xl p-8">
-          <h2 className="text-lg font-semibold text-blue-900 mb-4">Need Help?</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm text-blue-800">
-            <div>
+        <div className="mt-12 rounded-xl bg-primary-container p-8">
+          <h2 className="text-lg font-semibold text-on-primary-container mb-4">Need Help?</h2>
+          <div className="grid grid-cols-1 gap-6 text-sm text-on-primary-container md:grid-cols-2">
+            <div className="min-w-0">
               <h3 className="font-medium mb-2">Where to find the verification code:</h3>
-              <ul className="space-y-1">
-                <li>• On the certificate itself (usually at the bottom)</li>
-                <li>• In the QR code on the certificate</li>
-                <li>• In the email with your certificate</li>
+              <ul className="list-disc space-y-1 pl-5">
+                <li>On the certificate itself (usually at the bottom)</li>
+                <li>In the QR code on the certificate</li>
+                <li>In the email with your certificate</li>
               </ul>
             </div>
-            <div>
+            <div className="min-w-0">
               <h3 className="font-medium mb-2">Having issues?</h3>
-              <ul className="space-y-1">
-                <li>• Make sure the code is entered correctly</li>
-                <li>• Check for extra spaces or characters</li>
-                {hasCamera && <li>• Try scanning the QR code instead</li>}
-                <li>• Contact us if the problem persists</li>
+              <ul className="list-disc space-y-1 pl-5">
+                <li>Make sure the code is entered correctly</li>
+                <li>Check for extra spaces or characters</li>
+                {hasCamera && <li>Try scanning the QR code instead</li>}
+                <li>Contact us if the problem persists</li>
               </ul>
             </div>
           </div>

@@ -1,16 +1,32 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
-import { CheckCircleIcon, ExclamationTriangleIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
+import {
+  CheckCircleIcon,
+  ExclamationTriangleIcon,
+  ArrowDownTrayIcon,
+  ArrowPathIcon,
+  ClipboardDocumentIcon,
+  AcademicCapIcon
+} from '@heroicons/react/24/outline';
+import { InformationCircleIcon } from '@heroicons/react/20/solid';
 import usePageTitle from '../../hooks/usePageTitle';
 import useSEO from '../../hooks/useSEO';
-import FormRenderer from '../../components/shared/FormRenderer/FormRenderer';
+import FormRenderer from './components/FormRenderer';
+import {
+  Button,
+  Card,
+  EmptyState,
+  LoadingSpinner
+} from '../../components/UI';
 import { EventService } from '../../services/eventService';
 import { FeedbackService } from '../../services/feedbackService';
 import { CertificateService } from '../../services/certificateService';
 import { CertificateGenerationService } from '../../utils/certificateGeneration';
 import { RegistrationService } from '../../services/registrationService';
 import { Event, FormField, CertificateTemplate, Registration } from '../../types';
+import { toDateSafe } from '../../utils/dateUtils';
+import { formatEventLocation } from '../../utils/venueUtils';
 import { logger } from '../../utils/logger';
 
 /**
@@ -28,7 +44,7 @@ const getFullNameFromRegistration = (registration: Registration | null): string 
   if (!registration) return null;
   
   const customResponses = registration.customResponses || {};
-  const userDetails = registration.userDetails || {};
+  const userDetails = registration.userDetails;
   
   // Try to find first name and last name from customResponses
   // Support multiple field naming conventions
@@ -62,7 +78,7 @@ const getFullNameFromRegistration = (registration: Registration | null): string 
   }
   
   // Fall back to userDetails.name
-  if (userDetails.name) return userDetails.name;
+  if (userDetails?.name) return userDetails.name;
   
   // Last resort: return first name only if available
   return firstName || null;
@@ -72,17 +88,14 @@ const FeedbackPage: React.FC = () => {
   const { eventId } = useParams<{ eventId: string }>();
   const [searchParams] = useSearchParams();
   
-  // Support both token-based (secure) and legacy query params
+  // Strict token-based feedback access from email links
   const token = searchParams.get('token');
-  const legacyRegistrationId = searchParams.get('registrationId');
-  const legacyEmail = searchParams.get('email');
-  const legacyName = searchParams.get('name');
 
-  // Resolved user data (from token or legacy params)
-  const [registrationId, setRegistrationId] = useState<string | null>(legacyRegistrationId);
-  const [userEmail, setUserEmail] = useState<string | null>(legacyEmail);
-  const [userName, setUserName] = useState<string | null>(legacyName);
-  const [tokenResolved, setTokenResolved] = useState(!token); // If no token, already resolved
+  // Resolved user data (populated exclusively via verified server-side token)
+  const [registrationId, setRegistrationId] = useState<string | null>(null);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [userName, setUserName] = useState<string | null>(null);
+  const [tokenResolved, setTokenResolved] = useState(!token); // If no token, already resolved as anonymous
 
   const [event, setEvent] = useState<Event | null>(null);
   const [feedbackForm, setFeedbackForm] = useState<FormField[]>([]);
@@ -100,32 +113,7 @@ const FeedbackPage: React.FC = () => {
 
   // Helper function to safely convert Firestore Timestamp or Date to Date object
   const toDate = (dateValue: any): Date => {
-    if (!dateValue) return new Date();
-    
-    // Handle Firestore Timestamp object
-    if (dateValue.toDate && typeof dateValue.toDate === 'function') {
-      return dateValue.toDate();
-    }
-    
-    // Handle Date object
-    if (dateValue instanceof Date) {
-      return dateValue;
-    }
-    
-    // Handle Firestore Timestamp serialized as object with seconds/nanoseconds
-    if (dateValue.seconds !== undefined) {
-      return new Date(dateValue.seconds * 1000);
-    }
-    
-    // Handle ISO string or timestamp
-    const parsed = new Date(dateValue);
-    if (!isNaN(parsed.getTime())) {
-      return parsed;
-    }
-    
-    // Fallback to current date if all else fails
-    logger.warn('Unable to parse date:', dateValue);
-    return new Date();
+    return toDateSafe(dateValue) ?? new Date();
   };
 
   // Generate or retrieve certificate for user (extracted for reuse)
@@ -385,31 +373,26 @@ const FeedbackPage: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600 font-medium">Just a moment...</p>
-          <p className="text-gray-400 text-sm mt-1">Preparing your feedback form</p>
-        </div>
+      <div className="min-h-page bg-surface-container-low flex flex-col items-center justify-center">
+        <LoadingSpinner size="lg" text="Preparing your feedback form" />
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
-        <div className="max-w-md w-full bg-white rounded-lg shadow-sm p-8 text-center">
-          <ExclamationTriangleIcon className="h-12 w-12 text-red-500 mx-auto mb-4" />
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">Oops! Something went wrong</h1>
-          <p className="text-gray-600 mb-6">{error}</p>
-          <button
-            onClick={() => window.location.reload()}
-            className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
-          >
-            Refresh Page
-          </button>
-          <p className="text-xs text-gray-400 mt-4">If this problem persists, please contact the event organizer.</p>
-        </div>
+      <div className="min-h-page bg-surface-container-low flex items-center justify-center px-4">
+        <Card className="w-full max-w-md" padding="lg">
+          <EmptyState
+            icon={<ExclamationTriangleIcon className="h-10 w-10" />}
+            title="Oops! Something went wrong"
+            description={error}
+            action={<Button onClick={() => window.location.reload()}>Refresh Page</Button>}
+          />
+          <p className="mt-4 text-center text-sm text-on-surface-variant">
+            If this problem persists, please contact the event organizer.
+          </p>
+        </Card>
       </div>
     );
   }
@@ -418,160 +401,162 @@ const FeedbackPage: React.FC = () => {
     // Check if this is a returning user (certificate already exists)
     const isReturningUser = certificateUrl && !generatingCertificate;
     
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center py-12 px-4">
-        <div className="max-w-lg w-full bg-white rounded-lg shadow-sm p-8 text-center">
-          <CheckCircleIcon className="h-16 w-16 text-green-500 mx-auto mb-6" />
-          <h1 className="text-2xl font-bold text-gray-900 mb-4">
-            {isReturningUser ? 'Welcome Back!' : 'Thank You!'}
-          </h1>
-          <p className="text-gray-600 mb-6">
-            {isReturningUser 
-              ? 'Your feedback was already submitted. Here\'s your certificate of participation!'
-              : 'Your feedback has been submitted successfully. We truly appreciate your time and input!'
+return (
+      <div className="min-h-page bg-surface-container-low flex items-center justify-center py-12 px-4">
+        <Card className="w-full max-w-lg" padding="lg">
+          <EmptyState
+            icon={<CheckCircleIcon className="h-12 w-12" />}
+            title={isReturningUser ? 'Welcome Back!' : 'Thank You!'}
+            description={
+              isReturningUser
+                ? 'Your feedback was already submitted. Here is your certificate of participation!'
+                : 'Your feedback has been submitted successfully. We truly appreciate your time and input!'
             }
-          </p>
+          />
           
           {/* Certificate Section */}
           {registrationId && (
-            <div className="mb-6 bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-200 rounded-lg p-6">
-              <div className="flex items-center justify-center mb-4">
-                <span className="text-3xl">🎓</span>
+            <div className="mb-6 rounded-lg border border-primary-container bg-primary-container p-8">
+              <div className="mb-4 flex items-center justify-center">
+                <AcademicCapIcon className="h-10 w-10 text-primary" aria-hidden="true" />
               </div>
-              <p className="text-lg font-semibold text-gray-900 mb-4">
+              <p className="mb-4 text-center text-lg font-semibold text-on-primary-container">
                 Certificate of Participation
               </p>
-              
+
               {/* Loading State with Skeleton */}
               {generatingCertificate && (
-                <div className="space-y-4">
+                <div className="space-y-4" role="status" aria-live="polite">
+                  <span className="sr-only">Creating your certificate</span>
                   {/* Certificate Skeleton */}
-                  <div className="relative border border-gray-200 rounded-lg overflow-hidden shadow-sm bg-gray-100 aspect-[11/8.5]">
-                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer" 
-                         style={{ backgroundSize: '200% 100%', animation: 'shimmer 1.5s infinite' }} />
+                  <div className="relative overflow-hidden rounded-lg border border-outline-variant bg-surface-container aspect-[11/8.5]">
+                    {/* `animate-shimmer-sweep` is the real keyframe. The previous
+                        `animate-shimmer` class resolved to nothing and the inline
+                        `animation: shimmer` pointed at an undefined @keyframes, so
+                        the sheen never moved. */}
+                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-surface/60 to-transparent animate-shimmer-sweep motion-reduce:animate-none" />
                     <div className="absolute inset-0 flex flex-col items-center justify-center p-6">
                       {/* Decorative border skeleton */}
-                      <div className="absolute inset-4 border-2 border-gray-200 rounded-lg opacity-50" />
-                      
+                      <div className="absolute inset-4 rounded-lg border-2 border-surface-dim opacity-50" />
+
                       {/* Logo placeholder */}
-                      <div className="w-16 h-16 bg-gray-200 rounded-full mb-4" />
-                      
+                      <div className="mb-4 h-16 w-16 rounded-full bg-surface-dim" />
+
                       {/* Title skeleton */}
-                      <div className="h-6 w-48 bg-gray-200 rounded mb-2" />
-                      
+                      <div className="mb-2 h-6 w-48 rounded bg-surface-dim" />
+
                       {/* Subtitle skeleton */}
-                      <div className="h-4 w-32 bg-gray-200 rounded mb-6" />
-                      
+                      <div className="mb-6 h-4 w-32 rounded bg-surface-dim" />
+
                       {/* Name skeleton */}
-                      <div className="h-8 w-56 bg-gray-200 rounded mb-4" />
-                      
+                      <div className="mb-4 h-8 w-56 rounded bg-surface-dim" />
+
                       {/* Description skeleton */}
-                      <div className="h-3 w-64 bg-gray-200 rounded mb-2" />
-                      <div className="h-3 w-48 bg-gray-200 rounded mb-6" />
-                      
+                      <div className="mb-2 h-3 w-64 rounded bg-surface-dim" />
+                      <div className="mb-6 h-3 w-48 rounded bg-surface-dim" />
+
                       {/* QR code placeholder */}
-                      <div className="w-16 h-16 bg-gray-200 rounded" />
+                      <div className="h-16 w-16 rounded bg-surface-dim" />
                     </div>
                   </div>
-                  
+
                   {/* Verification code skeleton */}
-                  <div className="bg-white/70 rounded-lg px-4 py-3">
-                    <div className="h-3 w-24 bg-gray-200 rounded mx-auto mb-2" />
-                    <div className="h-6 w-40 bg-gray-200 rounded mx-auto" />
+                  <div className="rounded-lg bg-surface/70 px-4 py-3">
+                    <div className="mx-auto mb-2 h-3 w-24 rounded bg-surface-dim" />
+                    <div className="mx-auto h-6 w-40 rounded bg-surface-dim" />
                   </div>
-                  
+
                   {/* Button skeleton */}
-                  <div className="h-12 w-full bg-gray-200 rounded-lg" />
-                  
+                  <div className="h-control w-full rounded-lg bg-surface-dim" />
+
                   <div className="text-center">
-                    <p className="text-sm font-medium text-gray-600">Creating your certificate...</p>
-                    <p className="text-xs text-gray-400 mt-1">This may take a few seconds</p>
+                    <p className="text-sm font-medium text-on-surface-variant">Creating your certificate...</p>
+                    <p className="mt-1 text-sm text-on-surface-variant">This may take a few seconds</p>
                   </div>
                 </div>
               )}
-              
+
               {/* Error State */}
               {certificateError && !generatingCertificate && (
-                <div className="py-4">
-                  <ExclamationTriangleIcon className="h-10 w-10 text-yellow-500 mx-auto mb-3" />
-                  <p className="text-sm font-medium text-gray-700 mb-2">Certificate Generation Failed</p>
-                  <p className="text-xs text-gray-500 mb-4">Don't worry, your feedback was saved. You can try generating again.</p>
+                <div className="py-4 text-center">
+                  <ExclamationTriangleIcon className="mx-auto mb-3 h-10 w-10 text-warning" aria-hidden="true" />
+                  <p className="mb-2 text-sm font-medium text-on-surface">Certificate Generation Failed</p>
+                  <p className="mb-4 text-sm text-on-surface-variant">Don't worry, your feedback was saved. You can try generating again.</p>
                   {template && (
-                    <button
+                    <Button
+                      size="sm"
+                      icon={<ArrowPathIcon />}
                       onClick={handleRetryCertificate}
-                      className="inline-flex items-center px-5 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
                     >
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                      </svg>
                       Try Again
-                    </button>
+                    </Button>
                   )}
                 </div>
               )}
-              
+
               {/* Certificate Preview & Download */}
               {certificateUrl && !generatingCertificate && (
                 <div className="space-y-4">
                   {/* Preview Image */}
-                  <div className="border border-gray-200 rounded-lg overflow-hidden shadow-sm">
-                    <img 
-                      src={certificateUrl} 
+                  <div className="overflow-hidden rounded-lg border border-outline-variant">
+                    <img
+                      src={certificateUrl}
                       alt="Your Certificate of Participation"
-                      className="w-full h-auto"
+                      className="h-auto w-full"
                     />
                   </div>
-                  
+
                   {/* Verification Code */}
                   {verificationCode && (
-                    <div className="bg-white/70 rounded-lg px-4 py-3">
-                      <p className="text-xs text-gray-500 mb-1">Certificate Verification Code</p>
+                    <div className="rounded-lg bg-surface/70 px-4 py-3">
+                      <p className="mb-1 text-sm text-on-surface-variant">Certificate Verification Code</p>
                       <div className="flex items-center justify-center gap-2">
-                        <code className="text-sm font-mono font-semibold text-blue-700 bg-blue-50 px-3 py-1.5 rounded">
+                        <code className="min-w-0 truncate rounded bg-surface-container px-3 py-1.5 font-mono text-sm font-semibold text-on-surface">
                           {verificationCode}
                         </code>
-                        <button
-                          onClick={() => {
-                            navigator.clipboard.writeText(verificationCode);
-                          }}
-                          className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                        {/* Was a 28px icon button wedged next to the code. A thumb
+                            reaching for it misses, so it now carries the same 48px
+                            floor as every other control. */}
+                        <Button
+                          variant="text"
+                          onClick={() => navigator.clipboard.writeText(verificationCode)}
                           title="Copy to clipboard"
                           aria-label="Copy verification code"
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                          </svg>
-                        </button>
+                          className="min-h-control min-w-[48px] shrink-0 px-2xs"
+                          icon={<ClipboardDocumentIcon />}
+                        />
                       </div>
-                      <p className="text-xs text-gray-400 mt-2">Use this code to verify your certificate authenticity</p>
+                      <p className="mt-2 text-sm text-on-surface-variant">
+                        Use this code to verify your certificate authenticity
+                      </p>
                     </div>
                   )}
-                  
+
                   {/* Download Button */}
-                  <button
+                  <Button
+                    fullWidth
+                    icon={<ArrowDownTrayIcon />}
                     onClick={() => {
                       const filename = `Certificate_${event?.title?.replace(/[^a-zA-Z0-9]/g, '_') || 'Event'}_${userName?.replace(/[^a-zA-Z0-9]/g, '_') || 'Participant'}.png`;
                       CertificateGenerationService.downloadCertificate(certificateUrl, filename);
                     }}
-                    className="w-full inline-flex items-center justify-center px-6 py-3 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 transition-colors shadow-sm"
                   >
-                    <ArrowDownTrayIcon className="h-5 w-5 mr-2" />
                     Download Certificate
-                  </button>
+                  </Button>
                 </div>
               )}
-              
+
               {/* Fallback: No certificate available - contact support */}
               {!generatingCertificate && !certificateUrl && !certificateError && (
                 <div className="py-4 text-center">
-                  <p className="text-sm text-gray-600 mb-2">
+                  <p className="mb-2 text-sm text-on-surface-variant">
                     Having trouble with your certificate?
                   </p>
-                  <p className="text-sm text-gray-500">
+                  <p className="text-sm text-on-surface-variant">
                     Please contact us at{' '}
-                    <a 
-                      href="mailto:support@gdgdavao.org" 
-                      className="text-blue-600 hover:text-blue-800 font-medium underline"
+                    <a
+                      href="mailto:support@gdgdavao.org"
+                      className="font-medium text-primary underline hover:text-primary-hover"
                     >
                       support@gdgdavao.org
                     </a>
@@ -580,13 +565,13 @@ const FeedbackPage: React.FC = () => {
               )}
             </div>
           )}
-          
+
           {event && (
-            <div className="bg-blue-50 p-4 rounded-lg">
-              <p className="text-sm font-medium text-blue-900">
+            <div className="rounded-lg bg-surface-container-low p-4 text-left">
+              <p className="min-w-0 truncate text-sm font-medium text-on-surface">
                 {event.title}
               </p>
-              <p className="text-sm text-blue-700">
+              <p className="text-sm text-on-surface-variant">
                 {toDate(event.startDate).toLocaleDateString('en-US', {
                   weekday: 'long',
                   year: 'numeric',
@@ -596,44 +581,57 @@ const FeedbackPage: React.FC = () => {
               </p>
             </div>
           )}
-          
-          <p className="text-xs text-gray-400 mt-6">
-            Thank you for being part of our community! 💙
+
+          <p className="mt-6 text-center text-sm text-on-surface-variant">
+            Thank you for being part of our community!
           </p>
-        </div>
+        </Card>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-page bg-surface-container-low">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         {/* Header */}
         <div className="text-center mb-12">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">Share Your Feedback</h1>
-          <p className="text-gray-500 mb-6">We'd love to hear about your experience!</p>
+          <h1 className="text-3xl font-bold text-on-surface mb-2">Share Your Feedback</h1>
+          <p className="text-on-surface-variant mb-6">We'd love to hear about your experience!</p>
           {event && (
-            <div className="bg-white rounded-lg shadow-sm p-6 mb-8">
-              <h2 className="text-xl font-semibold text-gray-800 mb-2">{event.title}</h2>
-              <p className="text-gray-600">
+            <Card padding="lg" className="mb-8 text-left">
+              <h2 className="mb-2 text-xl font-semibold text-on-surface break-words">{event.title}</h2>
+              <p className="text-on-surface-variant break-words">
                 {toDate(event.startDate).toLocaleDateString('en-US', {
                   weekday: 'long',
                   year: 'numeric',
                   month: 'long',
                   day: 'numeric'
-                })} • {event.venue.type === 'online' ? 'Online Event' : event.venue.name || 'TBA'}
+                })} • {formatEventLocation(event.venue)}
               </p>
               {userName && (
-                <p className="text-sm text-blue-600 mt-3 font-medium">
-                  👋 Hi {userName.split(' ')[0]}! Thanks for attending.
+                <p className="mt-3 text-sm font-medium text-primary break-words">
+                  Hi {userName.split(' ')[0]}! Thanks for attending.
                 </p>
               )}
-            </div>
+            </Card>
           )}
         </div>
 
+        {/* Anonymous Feedback Notice when accessing without email token */}
+        {!token && (
+          <div className="mb-6 flex items-start gap-3 rounded-lg border border-outline-variant bg-surface-container-low p-4 text-left">
+            <InformationCircleIcon className="h-5 w-5 shrink-0 text-primary mt-0.5" aria-hidden="true" />
+            <div className="text-sm">
+              <p className="font-medium text-on-surface">Submitting General Feedback</p>
+              <p className="text-on-surface-variant">
+                You are submitting feedback anonymously. If you are an attendee seeking your Certificate of Participation, please open this form from the personalized feedback link emailed to your registered address.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Feedback Form */}
-        <div className="bg-white rounded-lg shadow-sm p-8">
+        <Card padding="lg">
           <FormRenderer
             fields={feedbackForm}
             onSubmit={handleFeedbackSubmit}
@@ -641,11 +639,11 @@ const FeedbackPage: React.FC = () => {
             disabled={submitting}
             className="space-y-6"
           />
-        </div>
+        </Card>
 
         {/* Footer */}
         <div className="text-center mt-8">
-          <p className="text-sm text-gray-500">
+          <p className="text-sm text-on-surface-variant">
             Powered by TeamApo Hub • GDG Davao
           </p>
         </div>

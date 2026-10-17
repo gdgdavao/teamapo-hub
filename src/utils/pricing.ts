@@ -1,36 +1,9 @@
 import { TicketType, PromoCode, TicketPricing } from '../types';
-
-function toDateSafe(value: any): Date | null {
-  try {
-    if (!value) return null;
-    if (value instanceof Date) return value;
-    if (typeof value === 'object') {
-      if (typeof (value as any).toDate === 'function') {
-        const d = (value as any).toDate();
-        return d instanceof Date ? d : null;
-      }
-      if (typeof (value as any).seconds === 'number') {
-        const seconds = (value as any).seconds as number;
-        return new Date(seconds * 1000);
-      }
-    }
-    if (typeof value === 'number') {
-      // treat as milliseconds
-      return new Date(value);
-    }
-    if (typeof value === 'string') {
-      const d = new Date(value);
-      return isNaN(d.getTime()) ? null : d;
-    }
-  } catch (_e) {
-    // ignore and return null
-  }
-  return null;
-}
+import { toDateSafe } from './dateUtils';
 
 export interface PricingCalculationInput {
   ticketType: TicketType;
-  quantity: number;
+  quantity?: number;
   promoCode?: PromoCode;
   currentDate?: Date;
 }
@@ -48,13 +21,12 @@ export interface PricingCalculationResult {
  * Calculate the pricing for a ticket including promo code discounts
  */
 export function calculateTicketPricing(input: PricingCalculationInput): PricingCalculationResult {
-  const { ticketType, quantity, promoCode, currentDate = new Date() } = input;
+  const { ticketType, quantity = 1, promoCode, currentDate = new Date() } = input;
   const errors: string[] = [];
 
   // Start with base price
   const originalPrice = ticketType.price;
   let currentPrice = ticketType.price;
-  let discountAmount = 0;
   let promoApplied = false;
 
   // Apply promo code if provided
@@ -67,11 +39,9 @@ export function calculateTicketPricing(input: PricingCalculationInput): PricingC
         const promoDiscount = (currentPrice * promoCode.discountValue) / 100;
         const maxDiscount = promoCode.maxDiscountAmount || Infinity;
         const actualDiscount = Math.min(promoDiscount, maxDiscount);
-        discountAmount += actualDiscount;
         currentPrice -= actualDiscount;
       } else if (promoCode.discountType === 'fixed') {
         const fixedDiscount = Math.min(promoCode.discountValue, currentPrice);
-        discountAmount += fixedDiscount;
         currentPrice -= fixedDiscount;
       }
     } else {
@@ -179,4 +149,40 @@ export function formatTimeRemaining(milliseconds: number): string {
 export function calculateSavingsPercentage(originalPrice: number, currentPrice: number): number {
   if (originalPrice <= 0) return 0;
   return Math.round(((originalPrice - currentPrice) / originalPrice) * 100);
+}
+
+/**
+ * The slice of a registration these two helpers need. Structural rather than
+ * the `Registration` type so the organizers list and the attendee details modal
+ * can both call them without importing each other's shapes.
+ */
+export interface PricedRegistration {
+  totalAmount?: number;
+  quantity?: number;
+  pricing?: { currentPrice?: number };
+  event: { ticketPrice?: number };
+}
+
+export function getRegistrationQuantity(registration: PricedRegistration): number {
+  return typeof registration.quantity === 'number' && registration.quantity > 0
+    ? registration.quantity
+    : 1;
+}
+
+/**
+ * What this registration actually costs the attendee, net of promo codes.
+ *
+ * This is the value Verified Revenue sums, and the value that decides whether a
+ * registration is free. Both must agree, which is why it lives here rather than
+ * being reimplemented per surface — a free registration has no payment proof to
+ * verify, and treating it as paid is what previously made Accept unavailable.
+ */
+export function getRegistrationTotalAmount(registration: PricedRegistration): number {
+  if (typeof registration.totalAmount === 'number') {
+    return registration.totalAmount;
+  }
+  if (typeof registration.pricing?.currentPrice === 'number') {
+    return registration.pricing.currentPrice * getRegistrationQuantity(registration);
+  }
+  return (registration.event.ticketPrice || 0) * getRegistrationQuantity(registration);
 }

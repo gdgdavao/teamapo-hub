@@ -1,322 +1,129 @@
 import React from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
-import { AuthProvider, useAuth } from './contexts/AuthContext';
-import AdminLayout from './components/admin/AdminLayout';
-import LoadingSpinner from './components/shared/UI/LoadingSpinner';
-import ErrorBoundary from './components/shared/ErrorBoundary';
-import RouteErrorElement from './components/shared/RouteErrorElement';
-import { FirebaseConnectionStatus } from './components/shared/FirebaseConnectionStatus';
-import RoleBasedDashboard from './components/shared/RoleBasedDashboard';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { AuthProvider } from './contexts/AuthContext';
+import AbilityContextProvider from './auth/AbilityProvider';
+import RequireAbility, { RequireAnonymous } from './auth/RequireAbility';
+import ErrorBoundary from './components/ErrorBoundary';
+import HomePage from './pages/home/HomePage';
 import usePageTitle from './hooks/usePageTitle';
 
 // Auth Pages
 import LoginPage from './pages/auth/LoginPage';
-import SignUpPage from './pages/auth/SignUpPage';
 import ForgotPasswordPage from './pages/auth/ForgotPasswordPage';
+import AuthActionPage from './pages/auth/AuthActionPage';
 
-// Organizer Pages
-import OrganizerDashboardPage from './pages/organizer/OrganizerDashboardPage';
-import AttendeesPage from './pages/organizer/AttendeesPage';
-import OrganizerCheckInPage from './pages/organizer/OrganizerCheckInPage';
+// Events
+import EventListPage from './pages/events/EventListPage';
+import EventEditorPage from './pages/events/EventEditorPage';
+import EventWorkspacePage from './pages/events/workspace/EventWorkspacePage';
+import LegacyRedirect from './pages/events/workspace/LegacyRedirect';
+import LegacyRegisterRedirect from './pages/events/workspace/LegacyRegisterRedirect';
 
-// Admin Pages
-import AdminDashboardPage from './pages/admin/AdminDashboardPage';
-import AdminAttendeesPage from './pages/admin/AdminAttendeesPage';
-import AdminCheckInPage from './pages/admin/AdminCheckInPage';
-import AdminUsersPage from './pages/admin/AdminUsersPage';
-import AdminPaymentVerificationPage from './pages/admin/AdminPaymentVerificationPage';
-import CreateEventPage from './pages/admin/AdminCreateEventPage';
-import ManageEventsPage from './pages/admin/AdminManageEventsPage';
-import AdminEventFeedbackPage from './pages/admin/AdminEventFeedbackPage';
-import AdminEmailManagementPage from './pages/admin/AdminEmailManagementPage';
-import CertificateRegenerationPage from './pages/admin/CertificateRegenerationPage';
+// Users
+import UsersPage from './pages/users/UsersPage';
 
-// Shared Pages
-import CertificatesPage from './pages/shared/CertificatesPage';
+// Audit Logs (Admin only)
+import AuditLogsPage from './pages/audit/AuditLogsPage';
 
-// Analytics Page
-import AnalyticsPage from './pages/admin/AdminAnalyticsPage';
-
-// Utility Pages (keeping in their current locations for now)
+// Attendee-facing
+import RegistrationPage from './pages/registration/RegistrationPage';
 import PaymentPage from './pages/payment/PaymentPage';
 import PaymentSuccessPage from './pages/payment/PaymentSuccessPage';
 import FeedbackPage from './pages/feedback/FeedbackPage';
 import CertificateVerificationPage from './pages/verification/CertificateVerificationPage';
-import NotFoundPage from './pages/error/NotFoundPage';
+import LegalPage from './pages/legal/LegalPage';
+import NotFoundPage from './pages/errors/NotFoundPage';
+import ForbiddenPage from './pages/errors/ForbiddenPage';
 
-// Public Pages
-import EventRegistrationPage from './pages/public/EventRegistrationPage';
+import AppLayout from './layout/AppLayout';
 
 // Vercel Analytics
 import { Analytics } from "@vercel/analytics/react"
 
-// Protected Route Component
-const ProtectedRoute: React.FC<{ 
-  children: React.ReactNode; 
-  requiredRole?: 'organizer' | 'admin';
-}> = ({ children, requiredRole }) => {
-  const { currentUser, userProfile, loading } = useAuth();
-
-  if (loading) {
-    return <LoadingSpinner />;
-  }
-
-  if (!currentUser) {
-    return <Navigate to="/auth/login" replace />;
-  }
-
-  if (requiredRole && userProfile?.role !== requiredRole && userProfile?.role !== 'admin') {
-    return <Navigate to="/dashboard" replace />;
-  }
-
-  return <>{children}</>;
-};
-
-// Public Route Component (redirects to dashboard if authenticated)
-const PublicRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { currentUser, loading } = useAuth();
-
-  if (loading) {
-    return <LoadingSpinner />;
-  }
-
-  if (currentUser) {
-    return <Navigate to="/dashboard" replace />;
-  }
-
-  return <>{children}</>;
-};
-
-// Domain Check Component
-const DomainCheck: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  return <>{children}</>;
-};
-
 const AppContent: React.FC = () => {
-  const { loading } = useAuth();
-
   // Set context-aware page title for all routes
   usePageTitle();
 
-  if (loading) {
-    return <LoadingSpinner />;
-  }
-
   return (
-    <DomainCheck>
-      <ErrorBoundary>
-        <Routes>
-        {/* Authentication Routes */}
-        <Route path="/login" element={
-          <PublicRoute>
-            <LoginPage />
-          </PublicRoute>
-        } />
-      <Route path="/auth/login" element={
-        <PublicRoute>
-          <LoginPage />
-        </PublicRoute>
-      } />
-      <Route path="/auth/signup" element={
-        <PublicRoute>
-          <SignUpPage />
-        </PublicRoute>
-      } />
-      <Route path="/auth/forgot-password" element={
-        <PublicRoute>
-          <ForgotPasswordPage />
-        </PublicRoute>
-      } />
+    <ErrorBoundary>
+      <Routes>
+        {/* Auth — signed-out visitors only. */}
+        <Route path="/auth/login" element={<RequireAnonymous><LoginPage /></RequireAnonymous>} />
+        <Route path="/auth/forgot-password" element={<RequireAnonymous><ForgotPasswordPage /></RequireAnonymous>} />
+        <Route path="/auth/action" element={<AuthActionPage />} />
+        <Route path="/__/auth/action" element={<AuthActionPage />} />
+        <Route path="/login" element={<Navigate to="/auth/login" replace />} />
+        <Route path="/signup" element={<Navigate to="/auth/login" replace />} />
 
-      {/* Dashboard Routes - Role-based routing */}
-      <Route path="/" element={
-        <ProtectedRoute>
-          <RoleBasedDashboard />
-        </ProtectedRoute>
-      } />
-      
-      <Route path="/dashboard" element={
-        <ProtectedRoute>
-          <RoleBasedDashboard />
-        </ProtectedRoute>
-      } />
+        {/* Persistent Layout Chrome for Authenticated Workspace & Management */}
+        <Route element={<AppLayout />}>
+          {/* Home — scope-dispatched by HomePage. `/dashboard` was retired here;
+              vercel.json answers it with a 308 to `/` so old links survive. */}
+          <Route path="/" element={<RequireAbility ability="read" on="Event"><HomePage /></RequireAbility>} />
 
-      {/* Admin Dashboard */}
-      <Route path="/admin/dashboard" element={
-        <ProtectedRoute requiredRole="admin">
-          <AdminDashboardPage />
-        </ProtectedRoute>
-      } />
+          {/* Platform administration. `read 'all'` is what an organizer lacks: it
+              is granted only to admins, and /events lists every event through the
+              unscoped getAllEvents() rather than one organizer's own. */}
+          <Route path="/events" element={<RequireAbility ability="read" on="all"><EventListPage /></RequireAbility>} />
+          <Route path="/events/create" element={<RequireAbility ability="read" on="all"><EventEditorPage /></RequireAbility>} />
+          <Route path="/events/edit/:eventId" element={<RequireAbility ability="read" on="all"><EventEditorPage /></RequireAbility>} />
+          <Route path="/users" element={<RequireAbility ability="read" on="User"><UsersPage /></RequireAbility>} />
+          <Route path="/audit-logs" element={<RequireAbility ability="manage" on="AuditLog"><AuditLogsPage /></RequireAbility>} />
 
-      {/* Organizer Dashboard */}
-      <Route path="/organizer/dashboard" element={
-        <ProtectedRoute requiredRole="organizer">
-          <OrganizerDashboardPage />
-        </ProtectedRoute>
-      } />
-      
-      {/* Organizer Check-In */}
-      <Route path="/organizer/checkin" element={
-        <ProtectedRoute requiredRole="organizer">
-          <OrganizerCheckInPage />
-        </ProtectedRoute>
-      } />
+          {/* Per-event workspace. The route gate is deliberately only area access:
+              whether this caller may manage THIS event depends on ownership, which
+              needs the loaded event, so EventWorkspacePage checks
+              `<Can do="manage" on={asEvent(event)}>` once it has it. A conditional
+              verb cannot be used here — CASL ignores conditions on a subject type. */}
+          <Route path="/events/:eventId" element={<RequireAbility ability="read" on="Event"><EventWorkspacePage /></RequireAbility>} />
+          <Route path="/events/:eventId/:tab" element={<RequireAbility ability="read" on="Event"><EventWorkspacePage /></RequireAbility>} />
 
-      {/* Admin-only Routes */}
-      <Route path="/admin/checkin" element={
-        <ProtectedRoute requiredRole="admin">
-          <AdminCheckInPage />
-        </ProtectedRoute>
-      } />
-      
-      {/* Admin Event Management Routes */}
-      <Route path="/admin/events/create" element={
-        <ProtectedRoute requiredRole="admin">
-          <CreateEventPage />
-        </ProtectedRoute>
-      } />
+          {/* Legacy deep-link forwarders for backwards compatibility */}
+          <Route path="/attendees" element={<RequireAbility ability="read" on="Event"><LegacyRedirect targetTab="attendees" label="attendees" /></RequireAbility>} />
+          <Route path="/check-in" element={<RequireAbility ability="read" on="Event"><LegacyRedirect targetTab="check-in" label="check-in" /></RequireAbility>} />
+          <Route path="/payments" element={<RequireAbility ability="read" on="Event"><LegacyRedirect targetTab="attendees" label="payments" /></RequireAbility>} />
+          <Route path="/emails" element={<RequireAbility ability="read" on="Event"><LegacyRedirect targetTab="attendees" label="emails" /></RequireAbility>} />
+          <Route path="/certificates" element={<RequireAbility ability="read" on="Event"><LegacyRedirect targetTab="certificates" label="certificates" /></RequireAbility>} />
+          <Route path="/analytics" element={<RequireAbility ability="read" on="Event"><LegacyRedirect targetTab="overview" label="analytics" /></RequireAbility>} />
+        </Route>
 
-      <Route path="/admin/events/edit/:eventId" element={
-        <ProtectedRoute requiredRole="admin">
-          <CreateEventPage />
-        </ProtectedRoute>
-      } />
+        {/* Public & standalone views */}
+        <Route path="/events/:eventId/preview" element={<RegistrationPage isPreview={true} />} />
+        <Route path="/e" element={<NotFoundPage />} />
+        <Route path="/e/:slug" element={<RegistrationPage />} />
+        <Route path="/events/:eventId/register" element={<LegacyRegisterRedirect />} />
+        <Route path="/payment/:registrationId" element={<PaymentPage />} />
+        <Route path="/payment/success" element={<PaymentSuccessPage />} />
+        <Route path="/registration/success" element={<PaymentSuccessPage />} />
+        <Route path="/feedback/:eventId" element={<FeedbackPage />} />
+        <Route path="/verify" element={<CertificateVerificationPage />} />
+        <Route path="/verify/:code" element={<CertificateVerificationPage />} />
 
-      <Route path="/admin/events/:eventId/attendees" element={
-        <ProtectedRoute requiredRole="admin">
-          <AdminAttendeesPage />
-        </ProtectedRoute>
-      } />
+        {/* Public Legal Pages */}
+        <Route path="/privacy" element={<LegalPage documentType="privacy" />} />
+        <Route path="/terms-of-service" element={<LegalPage documentType="terms" />} />
+        <Route path="/terms" element={<Navigate to="/terms-of-service" replace />} />
 
-      <Route path="/admin/events/:eventId/feedback" element={
-        <ProtectedRoute requiredRole="admin">
-          <AdminEventFeedbackPage />
-        </ProtectedRoute>
-      } />
+        {/* Authenticated but not permitted. Outside the gated table on purpose:
+            a visitor being turned away must be able to read why. */}
+        <Route path="/forbidden" element={<ForbiddenPage />} />
 
-      <Route path="/admin/events/:eventId/analytics" element={
-        <ProtectedRoute requiredRole="admin">
-          <AnalyticsPage isEventSpecific={true} />
-        </ProtectedRoute>
-      } />
-
-      <Route path="/admin/analytics" element={
-        <ProtectedRoute requiredRole="admin">
-          <AnalyticsPage isEventSpecific={false} />
-        </ProtectedRoute>
-      } />
-
-      <Route path="/admin/emails" element={
-        <ProtectedRoute requiredRole="admin">
-          <AdminEmailManagementPage />
-        </ProtectedRoute>
-      } />
-
-      <Route path="/admin/events/:eventId/emails" element={
-        <ProtectedRoute requiredRole="admin">
-          <AdminEmailManagementPage />
-        </ProtectedRoute>
-      } />
-
-      <Route path="/admin/certificates/regenerate" element={
-        <ProtectedRoute requiredRole="admin">
-          <CertificateRegenerationPage />
-        </ProtectedRoute>
-      } />
-      
-      <Route path="/users" element={
-        <ProtectedRoute requiredRole="admin">
-          <AdminUsersPage />
-        </ProtectedRoute>
-      } />
-
-      {/* Shared Routes - Available to both admin and organizer */}
-      <Route path="/attendees" element={
-        <ProtectedRoute>
-          <AdminAttendeesPage />
-        </ProtectedRoute>
-      } />
-
-      <Route path="/analytics" element={
-        <ProtectedRoute>
-          <AnalyticsPage isEventSpecific={false} />
-        </ProtectedRoute>
-      } />
-
-      <Route path="/certificates" element={
-        <ProtectedRoute>
-          <CertificatesPage />
-        </ProtectedRoute>
-      } />
-
-      {/* Unified Event Management Routes - Available to both admin and organizer */}
-      <Route path="/events/create" element={
-        <ProtectedRoute>
-          <CreateEventPage />
-        </ProtectedRoute>
-      } />
-
-      <Route path="/events/edit/:eventId" element={
-        <ProtectedRoute>
-          <CreateEventPage />
-        </ProtectedRoute>
-      } />
-
-      <Route path="/events/:eventId/analytics" element={
-        <ProtectedRoute>
-          <AnalyticsPage isEventSpecific={true} />
-        </ProtectedRoute>
-      } />
-
-      <Route path="/events/:eventId/attendees" element={
-        <ProtectedRoute>
-          <AttendeesPage />
-        </ProtectedRoute>
-      } />
-
-
-
-      <Route path="/events" element={
-        <ProtectedRoute requiredRole="admin">
-          <ManageEventsPage />
-        </ProtectedRoute>
-      } />
-
-      {/* Payment Routes - Keep for admin/organizer access */}
-      <Route path="/payment/:registrationId" element={<PaymentPage />} />
-      <Route path="/payment/success" element={<PaymentSuccessPage />} />
-      <Route path="/registration/success" element={<PaymentSuccessPage />} />
-
-      {/* Feedback Route - Keep for admin/organizer access */}
-      <Route path="/feedback/:eventId" element={
-        <ErrorBoundary>
-          <FeedbackPage />
-        </ErrorBoundary>
-      } />
-
-      {/* Certificate Verification Route */}
-      <Route path="/verify/:code" element={<CertificateVerificationPage />} />
-      <Route path="/verify" element={<CertificateVerificationPage />} />
-
-      {/* Public Event Registration Route */}
-      <Route path="/events/:eventId/register" element={<EventRegistrationPage />} />
-      <Route path="/e/:slug" element={<EventRegistrationPage />} />
-
-      {/* 404 Route */}
-      <Route path="*" element={<NotFoundPage />} />
+        {/* 404 */}
+        <Route path="*" element={<NotFoundPage />} />
       </Routes>
-      </ErrorBoundary>
-    </DomainCheck>
+    </ErrorBoundary>
   );
 };
 
 const App: React.FC = () => {
   return (
     <AuthProvider>
-      <div className="min-h-screen bg-gray-50">
-        <AppContent />
-        <Analytics />
-      </div>
+      <AbilityContextProvider>
+        <div className="min-h-screen bg-surface-container-low">
+          <AppContent />
+          <Analytics />
+        </div>
+      </AbilityContextProvider>
     </AuthProvider>
   );
 };

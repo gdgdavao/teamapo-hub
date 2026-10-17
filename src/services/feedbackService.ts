@@ -105,24 +105,6 @@ export class FeedbackService {
   }
 
   /**
-   * Generate feedback URL for server-side use (legacy - kept for backward compatibility)
-   * Note: The main.py now generates token-based URLs instead
-   * @deprecated Server-side now uses token-based URLs via generate_feedback_url()
-   */
-  static generateServerFeedbackUrl(eventId: string, registrationId?: string, userEmail?: string, userName?: string): string {
-    const baseUrl = 'https://gdgdavao.org'; // Production URL
-    const feedbackUrl = `${baseUrl}/feedback/${eventId}`;
-    
-    // Legacy query params - actual production uses tokens
-    const params = new URLSearchParams();
-    if (registrationId) params.append('registrationId', registrationId);
-    if (userEmail) params.append('email', userEmail);
-    if (userName) params.append('name', userName);
-    
-    return params.toString() ? `${feedbackUrl}?${params.toString()}` : feedbackUrl;
-  }
-
-  /**
    * Send feedback request email
    */
   static async sendFeedbackRequest(data: {
@@ -134,22 +116,16 @@ export class FeedbackService {
   }): Promise<void> {
     try {
       const sendFeedbackRequest = httpsCallable(functions, 'sendFeedbackRequest');
-      
-      // Generate feedback URL
-      const feedbackUrl = this.generateServerFeedbackUrl(
-        data.eventId,
-        data.registrationId,
-        data.userEmail,
-        data.userName
-      );
 
+      // No feedbackUrl is sent: the backend generates a single-use token URL via
+      // generate_feedback_url(). Passing one from here put the attendee's email in
+      // the query string of the emailed link (Data Privacy Act 2012).
       await sendFeedbackRequest({
         eventId: data.eventId,
         userEmail: data.userEmail,
         userName: data.userName,
         eventTitle: data.eventTitle,
-        registrationId: data.registrationId,
-        feedbackUrl: feedbackUrl
+        registrationId: data.registrationId
       });
     } catch (error) {
       logger.error('Error sending feedback request:', error);
@@ -388,58 +364,6 @@ export class FeedbackService {
     }
   }
 
-  /**
-   * Get feedback statistics across all events
-   */
-  static async getOverallFeedbackStats(): Promise<{
-    totalFeedback: number;
-    averageRating: number;
-    responseRate: number;
-    recommendationRate: number;
-  }> {
-    try {
-      const feedbackSnapshot = await getDocs(collection(db, this.FEEDBACK_COLLECTION));
-      const registrationsSnapshot = await getDocs(collection(db, this.REGISTRATIONS_COLLECTION));
-
-      if (feedbackSnapshot.size === 0) {
-        return {
-          totalFeedback: 0,
-          averageRating: 0,
-          responseRate: 0,
-          recommendationRate: 0
-        };
-      }
-
-      let totalRating = 0;
-      let recommendCount = 0;
-
-      feedbackSnapshot.docs.forEach(doc => {
-        const data = doc.data();
-        totalRating += data.overallRating || 0;
-        if (data.wouldRecommend) recommendCount++;
-      });
-
-      const averageRating = totalRating / feedbackSnapshot.size;
-      const responseRate = registrationsSnapshot.size > 0 
-        ? (feedbackSnapshot.size / registrationsSnapshot.size) * 100 
-        : 0;
-      const recommendationRate = (recommendCount / feedbackSnapshot.size) * 100;
-
-      return {
-        totalFeedback: feedbackSnapshot.size,
-        averageRating: Math.round(averageRating * 10) / 10,
-        responseRate: Math.round(responseRate * 10) / 10,
-        recommendationRate: Math.round(recommendationRate * 10) / 10
-      };
-    } catch (error) {
-      logger.error('Error fetching overall feedback stats:', error);
-      throw new Error('Failed to fetch overall feedback stats');
-    }
-  }
-
-  /**
-   * Delete feedback (admin only)
-   */
   static async deleteFeedback(feedbackId: string): Promise<void> {
     try {
       const feedbackRef = doc(db, this.FEEDBACK_COLLECTION, feedbackId);

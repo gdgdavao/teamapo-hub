@@ -14,7 +14,6 @@ TeamApo Hub is a modern, serverless cloud platform built to automate and central
 * **On-Site Operations**: Camera-based QR code badge check-in with real-time analytics.
 * **Automated Communications**: Context-aware transactional emails (confirmations, QR tickets, 24h/1h reminders, post-event feedback invitations) sent via Resend.
 * **Post-Event Workflows**: Token-secured survey feedback, dynamic PDF certificate generation, and an open verification portal.
-* **AI Assistance**: Gemini-powered social media captioning and event feedback sentiment analysis.
 
 ```mermaid
 flowchart TB
@@ -41,7 +40,6 @@ flowchart TB
 
     subgraph ExternalServices["External Third-Party APIs"]
         Resend["Resend Email API (Transaction Deliveries)"]
-        Gemini["Google AI Studio (Gemini 2.x / 1.5)"]
     end
 
     SPA --> Services
@@ -55,7 +53,6 @@ flowchart TB
     EventTriggers --> Firestore
     
     CloudFunctions --> Resend
-    Services --> Gemini
 ```
 
 ---
@@ -71,7 +68,6 @@ flowchart TB
 * **Icons & UI Primitives**: `@heroicons/react 2.2`, `lucide-react 0.46`, `@headlessui/react 2.2`
 * **Client-Side QR Operations**: `@zxing/browser 0.1.5` (camera barcode scanning) + `qrcode 1.5.4` (SVG/Canvas generation)
 * **Certificate Rendering**: `jspdf 2.5.2` + `html2canvas 1.4.1` + HTML5 Canvas API
-* **AI Integration**: `@google/genai 1.15.0` (Google Gen AI SDK with custom local storage response caching)
 * **Analytics**: `@vercel/analytics 1.5.0`
 
 ### 2.2 Backend & Cloud Services
@@ -85,79 +81,166 @@ flowchart TB
 ### 2.3 External Integrations
 * **Payment Gateway**: None. Payment methods (bank transfer, GCash) are configured per event by the organizer and settled offline; release of a ticket is gated on manual proof review.
 * **Email Service**: [Resend](https://resend.com) API (DKIM/SPF-verified domain sending with delivery webhook tracking)
-* **AI Engine**: Google AI Studio (Gemini Flash / Pro models for automated social copy and survey sentiment distillation)
+
+Attendee feedback sentiment is summarised locally in `services/feedbackService.ts`
+(a keyword-counting heuristic), not by a third-party model: attendee free-text
+comments stay inside the platform rather than being shipped to an external
+inference API.
 
 ---
 
 ## 3. Frontend Architecture
 
 ### 3.1 Application File Structure
+
+`src/pages/` is organised by **route, not by role**. There is no `admin/` or
+`organizer/` folder: which areas a signed-in user may open is decided by the CASL
+ability at the route gate, so a folder named after a role would be a claim about
+access that the code does not actually make. A component sits in `pages/` when
+exactly one route owns it, and in `components/` when it is shared.
+
 ```
 src/
 ├── App.tsx                      # Root route configuration & layout definitions
 ├── main.tsx                     # React DOM entry point
 ├── config/
-│   └── firebase.ts              # Firebase Client SDK initialization & emulator detection
+│   ├── firebase.ts              # Firebase Client SDK initialization & emulator detection
+│   └── app.ts                   # Canonical APP_URL + QR verification hosts
+├── auth/                        # Authorization: permission model, provider, route gate
+│   ├── ability.ts               # Pure CASL rule table + entity tagging helpers
+│   ├── AbilityProvider.tsx      # Publishes the signed-in user's ability
+│   └── RequireAbility.tsx       # Route gate; RequireAnonymous for the sign-in area
 ├── contexts/
-│   └── AuthContext.tsx          # Authentication state, user profile snapshot, role provider
-├── hooks/
-│   ├── usePageTitle.ts          # Context-aware browser tab title updater
-│   └── useDebounce.ts           # Debounce utility hook
+│   └── AuthContext.tsx          # Firebase session + live users-document profile
+├── hooks/                       # usePageTitle, useSEO, useMediaQuery, useReducedMotion
 ├── types/
-│   └── index.ts                 # Central TypeScript interfaces, enums, and data models
-├── services/                    # Domain-driven service layer
-│   ├── aiService.ts             # Gemini SDK wrapper with LRU localStorage cache
+│   └── index.ts                 # Central TypeScript interfaces, ROLES, and data models
+├── services/                    # Domain-driven service layer (cross-cutting, never page-local)
 │   ├── analyticsService.ts      # Event analytics aggregation and metrics
 │   ├── certificateService.ts    # Template composition, verification, and retrieval
 │   ├── emailService.ts          # Email dispatch calls and activity log queries
 │   ├── eventService.ts          # Event CRUD, slug resolution, and capacity tracking
 │   ├── feedbackService.ts       # Survey validation, token exchange, and analytics
-│   ├── formService.ts           # Dynamic form builder schema helpers
-│   ├── notificationService.ts   # In-app organizer alerts
 │   ├── paymentService.ts        # Manual proof upload & verification workflow
 │   ├── registrationService.ts   # Atomic ticket checkout, reservation, and check-in
 │   └── userService.ts           # User and role administration
-├── pages/
-│   ├── admin/                   # Administrative dashboards, user management, global analytics
-│   ├── organizer/               # Event creator workspace, attendee roster, on-site scanner
-│   ├── public/                  # Public event discovery, registration landing pages
-│   ├── payment/                 # QR payment portals and transaction status screens
-│   ├── feedback/                # Attendee feedback submission portal
-│   ├── verification/            # Public certificate authenticity validator
-│   └── auth/                    # Login, signup, password reset
-└── components/                  # Reusable UI components
-    ├── admin/                   # Admin layout, navigation sidebar, stats widgets
-    ├── organizer/               # Event editor forms, attendee tables, check-in scanner
-    ├── shared/                  # Error boundaries, modals, toasts, cards, buttons
-    └── public/                  # Event hero, ticket selector, custom form fields
+├── layout/                      # The chrome every workspace page wraps itself in
+│   ├── AppShell.tsx             # Page frame: emits <h1>, hosts the navbar and skip link
+│   ├── AppNavbar.tsx            # Top navigation
+│   └── SkipLink.tsx             # Keyboard bypass for the nav
+├── components/                  # Genuinely shared UI
+│   ├── UI/                      # The primitive layer. Import from here, never by file path
+│   │                            # Button, Input, Select, Textarea, Field, Badge, Card,
+│   │                            # Modal, ConfirmationModal, Tabs, DataTable, EmptyState,
+│   │                            # ProgressBar, SimpleBarChart, Skeleton, LoadingSpinner,
+│   │                            # SegmentedControl
+│   ├── ErrorBoundary.tsx        # Mounted once by App.tsx
+│   └── FormattedLabelText.tsx   # Renders the **bold** / _italic_ subset used by form labels
+└── pages/                       # One folder per route cluster
+    ├── home/                    # / (canonical Home)
+    │   ├── HomePage.tsx         # Dispatches by permission, not by role
+    │   ├── StatStrip.tsx, TrendPanel.tsx
+    │   ├── platform/            # Reads every event, registration and certificate
+    │   └── scoped/              # Reads only what this user owns
+    ├── events/                  # /events, /events/create, /events/edit/:id, /events/:id/:tab
+    │   ├── EventListPage.tsx    # Platform-wide event list
+    │   ├── EventEditorPage.tsx  # Create and edit; isEditMode keys off the route
+    │   ├── components/          # PhotoUpload, FormBuilder, PromoCodeManager
+    │   └── workspace/
+    │       ├── EventWorkspacePage.tsx  # Loads the event, checks `manage`, renders tabs
+    │       ├── LegacyRedirect.tsx      # /attendees, /check-in, ... forwarders
+    │       └── tabs/            # One panel per tab; each takes a required `eventId`
+    │           ├── OverviewTab.tsx, AttendeesTab.tsx, CheckInTab.tsx,
+    │           │   PromoCodesTab.tsx, CertificatesTab.tsx, FeedbackTab.tsx,
+    │           │   SettingsTab.tsx
+    │           ├── RegistrationDetailsModal.tsx  # Attendee view: payment proof, email history
+    │           ├── WalkInRegistrationModal.tsx, ForceCheckInModal.tsx
+    │           └── FeedbackEmailStatus.tsx
+    ├── users/                   # /users
+    ├── auth/                    # /auth/login, /auth/forgot-password (no self-signup)
+    ├── registration/            # /e/:slug and /events/:id/register
+    │   └── components/          # RegistrationModal, RegistrationForm, TicketSelector, Reveal
+    ├── payment/                 # /payment/:registrationId, /payment/success
+    ├── feedback/                # /feedback/:eventId
+    │   └── components/          # FormRenderer (renders the survey a submitter sees)
+    ├── verification/            # /verify, /verify/:code
+    └── errors/                  # /forbidden, and the * catch-all
 ```
+
+Four consequences worth naming, because all four used to be violations:
+
+- **Nothing in `pages/` is named `*Page` unless it is a route.** The eight
+  workspace panels are `*Tab` and live under `workspace/tabs/`. Each takes a
+  required `eventId` prop supplied by `EventWorkspacePage`, so none of them reads
+  the route or carries an `embedded` flag.
+- **No one-file wrapper folders.** `components/Foo/Foo.tsx` plus a
+  `components/Foo/index.ts` is two import paths for one component, which is how
+  geometry drifts. A component folder is only worth having once it holds more
+  than the component (its test, its styles, a subcomponent).
+- **`components/` never imports from `pages/`, and vice versa.** The primitive
+  barrel re-exports primitives only; a page-owned component is imported by its
+  own path from the page that owns it.
+- **Types live in `types/`, not next to the first component that needed them.**
+  `FormField` was declared twice — in `pages/events/components/FormBuilder.tsx`
+  and in `types/index.ts` — which had the feedback page importing a type across
+  page boundaries. One declaration, imported from `types/`.
+- **Screens that differ by data scope are named for the scope, not the role.**
+  `platform/PlatformHome` and `scoped/ScopedHome` are chosen by
+  `<Can do="read" on="User">`; the distinction is which Firestore reads they are
+  allowed to run, which is what `firestore.rules` actually enforces.
 
 ### 3.2 Routing & Access Control Hierarchy
-The routing architecture (`src/App.tsx`) enforces strict boundary separation through route guards:
 
-* **`PublicRoute`**: Accessible only by unauthenticated visitors. Redirects logged-in users to `/dashboard`.
-* **`ProtectedRoute`**: Requires valid Firebase Authentication. Includes optional `requiredRole` checking (`'admin'` or `'organizer'`).
-* **Open Routes**: Accessible to all (e.g. `/e/:slug` event registration, `/payment/:registrationId`, `/feedback/:eventId`, `/verify/:code`).
+Routes use a **single role-neutral namespace**. Data scoping — not route paths —
+is what separates admins from organizers, so a new page only needs one route.
 
-```mermaid
-flowchart TD
-    RouteReq[Browser Navigates to Route] --> GuardCheck{Route Guard Type}
-    
-    GuardCheck -- Open Route --> RenderPublic[Render Public Page: Registration / Verify / Payment]
-    
-    GuardCheck -- PublicRoute --> AuthStatus1{Is Logged In?}
-    AuthStatus1 -- Yes --> RedirectDash[Redirect to /dashboard]
-    AuthStatus1 -- No --> RenderAuth[Render Login / Signup / Forgot Password]
-    
-    GuardCheck -- ProtectedRoute --> AuthStatus2{Is Logged In?}
-    AuthStatus2 -- No --> RedirectLogin[Redirect to /login]
-    AuthStatus2 -- Yes --> RoleCheck{Required Role Specified?}
-    
-    RoleCheck -- No --> RenderPage[Render Protected Page]
-    RoleCheck -- Yes --> MatchRole{User Role == Required OR Admin?}
-    MatchRole -- Yes --> RenderPage
-    MatchRole -- No --> RedirectRoot[Redirect to /dashboard]
-```
+Authorization is a **CASL ability** built in `src/auth/ability.ts` from the
+signed-in user's profile. It is a UX layer: `firestore.rules` remains the only
+security boundary. `RequireAbility` reads it and turns a denial into a
+destination.
+
+| Route | Gate | Page |
+| :--- | :--- | :--- |
+| `/auth/login`, `/auth/forgot-password` | `RequireAnonymous` | Sign in, password reset |
+| `/login`, `/signup` | — | Legacy aliases redirecting to `/auth/login` |
+| `/` | `RequireAbility read Event` | `HomePage` picks the platform or scoped home (`/dashboard` redirects to `/`) |
+| `/events`, `/events/create`, `/events/edit/:eventId` | `RequireAbility read all` | Platform-wide event list and editor (admin only) |
+| `/events/:eventId`, `/events/:eventId/:tab` | `RequireAbility read Event`, then `EventWorkspacePage` checks `manage` against the loaded event | Per-event workspace |
+| `/attendees`, `/check-in`, `/payments`, `/emails`, `/analytics`, `/certificates` | `RequireAbility read Event` | Legacy forwarders into the workspace tab of the same name |
+| `/users` | `RequireAbility read User` | User administration (admin only) |
+| `/forbidden` | open | Signed in but not permitted; says which role was needed |
+| `/e/:slug`, `/events/:eventId/register`, `/payment/*`, `/feedback/:eventId`, `/verify/:code` | open | Attendee-facing |
+| `*` | — | 404 |
+
+Two distinctions the gate depends on:
+
+- **Authentication and permission are different failures.** Signed out goes to
+  the login form carrying `?from=`, so a deep link survives the detour.
+  `LoginPage` re-validates `?from=` rather than trusting it. Signed in without
+  permission goes to `/forbidden`, which can explain why.
+- **Ownership is checked where the entity is, not in the gate.** CASL ignores a
+  rule's conditions when the argument is a subject *type*, so
+  `can('manage', 'Event')` answers true for an organizer whose `manage Event`
+  rule is conditioned on ownership. Route gates therefore only use the
+  unconditioned `read` verbs; `EventWorkspacePage` checks
+  `can('manage', asEvent(event))` once it has loaded the event, and a
+  non-owner falls through to the same "Event not found" shell — they should not
+  learn the event exists.
+
+`tests/unit/routeIntegrity.test.ts` parses the route table and fails the build if any
+`Link`/`navigate` target does not resolve, so a stale path cannot reach production.
+`tests/unit/ability.test.ts` pins the rule table,
+`tests/dom/requireAbility.test.tsx` pins the gate's four outcomes, and
+`tests/unit/importShape.test.ts` pins the three structural rules in §3.1 (no
+one-file wrapper folders, no `components/` ↔ `pages/` coupling, no primitives
+imported by path).
+
+**Data scoping (Data Privacy Act 2012).** `registrations`, `feedback` and `activity_logs`
+are flat collections whose documents carry both `eventId` and a denormalized `organizerUid`.
+`firestore.rules` scopes them with `ownsDocByEventId()`, so an organizer can only ever read or
+modify records for events they own — they cannot read another organizer's attendee PII.
+Existing documents are backfilled by `scripts/backfill-organizer-uid.cjs`; documents without
+the field fall back to an event-ownership check until backfilled.
 
 ### 3.3 Dynamic Certificate Engine
 Certificates are generated via client-side composition or Cloud Functions:
@@ -173,7 +256,7 @@ Certificates are generated via client-side composition or Cloud Functions:
 
 ## 4. Serverless Backend Architecture (Python Cloud Functions)
 
-The serverless backend in `functions/main.py` is implemented using **Python 3.11** and Google Cloud Functions 2nd Generation (built atop Google Cloud Run).
+The serverless backend in `functions/main.py` is implemented using **Python 3.13** and Google Cloud Functions 2nd Generation (built atop Google Cloud Run).
 
 ### 4.1 Function Endpoints Catalog
 
@@ -323,7 +406,7 @@ sequenceDiagram
     Note over PyFn: Event concludes. Organizer triggers feedback blast.
     PyFn->>FS: Create /feedbackTokens for checked-in attendees
     PyFn->>Email: Send feedback request with secure token link
-    Email->>Attendee: Opens link (apohub.gdgdavao.com/feedback/:id?token=XYZ)
+    Email->>Attendee: Opens link (apohub.gdgdavao.org/feedback/:id?token=XYZ)
     Attendee->>Web: Opens Feedback Page
     Web->>PyFn: resolveFeedbackToken(token)
     PyFn-->>Web: Returns Attendee Name & Email
@@ -343,55 +426,18 @@ sequenceDiagram
 
 ---
 
-## 6. AI Subsystem Architecture
+## 6. Deployment, Environments & Infrastructure
 
-TeamApo Hub integrates the **Google GenAI SDK** (`@google/genai`) to power intelligent organizer workflows.
-
-```mermaid
-flowchart LR
-    subgraph ClientWorkspace["Admin Social & Insights UI"]
-        UI[Composer / Dashboard]
-        Cache[(Local Storage Cache\nTTL: 1 Hour)]
-    end
-    
-    subgraph AIService["src/services/aiService.ts"]
-        KeyGen["Cache Key Generator\n(btoa hash)"]
-        ClientSDK["GoogleGenAI Client"]
-    end
-    
-    subgraph RemoteAI["Google AI Studio"]
-        GeminiFlash["Gemini 2.5 / 1.5 Flash"]
-    end
-
-    UI -->|Prompt + Event Context| KeyGen
-    KeyGen -->|Check Key| Cache
-    Cache -->|Cache Hit| UI
-    Cache -->|Cache Miss| ClientSDK
-    ClientSDK -->|API Request| GeminiFlash
-    GeminiFlash -->|Generated Text| ClientSDK
-    ClientSDK -->|Store Result| Cache
-    ClientSDK -->|Return Output| UI
-```
-
-### Key AI Features:
-1. **Social Media Caption Composer**: Generates platform-tailored promotional copy for LinkedIn, Facebook, and X based on event speakers, topics, and date.
-2. **Post-Event Sentiment Analysis**: Summarizes free-form attendee comments, aggregates top compliments, identifies logistics issues, and extracts requested future topics.
-3. **Client-Side Deduplication Cache**: Implements an LRU-like 1-hour expiration cache in `localStorage` to prevent duplicate API requests and conserve quotas.
-
----
-
-## 7. Deployment, Environments & Infrastructure
-
-### 7.1 Multi-Environment Setup
+### 6.1 Multi-Environment Setup
 | Parameter | Local Emulator Environment | Production Environment |
 | :--- | :--- | :--- |
-| **Frontend Host** | Vite Dev Server (`localhost:5173`) | Vercel Edge Network (`apohub.gdgdavao.com`) |
+| **Frontend Host** | Vite Dev Server (`localhost:5173`) | Vercel Edge Network (`apohub.gdgdavao.org`) |
 | **Auth** | Firebase Auth Emulator (`localhost:9099`) | Google Identity Toolkit |
 | **Firestore** | Firestore Emulator (`localhost:8080`) | Cloud Firestore (`asia-southeast2`) |
 | **Cloud Functions** | Functions Emulator (`localhost:5001`) | Cloud Functions v2 / Cloud Run (`asia-southeast2`) |
 | **Storage** | Storage Emulator (`localhost:9199`) | Cloud Storage Bucket (`apohub-gdgdavao.appspot.com`) |
 
-### 7.2 Build & Deployment Automation
+### 6.2 Build & Deployment Automation
 The repository includes deployment scripts for all subsystems:
 
 ```bash

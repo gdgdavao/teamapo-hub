@@ -1,0 +1,17 @@
+{
+  "firestore": {
+    "database": "(default)",
+    "location": "asia-southeast2",
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "emulators": {
+    "firestore": {
+      "port": 8188
+    },
+    "ui": {
+      "enabled": false
+    },
+    "singleProjectMode": true
+  }
+}

@@ -1,6 +1,5 @@
 import { useEffect } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
-import { useAuth } from '../contexts/AuthContext';
 
 interface UsePageTitleProps {
   title?: string;
@@ -14,7 +13,6 @@ interface UsePageTitleProps {
 const usePageTitle = ({ title, contextTitle }: UsePageTitleProps = {}) => {
   const location = useLocation();
   const params = useParams();
-  const { userProfile } = useAuth();
 
   useEffect(() => {
     // If explicit title is provided, use it
@@ -25,16 +23,12 @@ const usePageTitle = ({ title, contextTitle }: UsePageTitleProps = {}) => {
 
     const pathSegments = location.pathname.split('/').filter(Boolean);
     const baseTitle = 'TeamApo Hub';
-    
-    // Handle different route patterns
-    if (pathSegments.length === 0 || pathSegments[0] === 'dashboard') {
-      if (userProfile?.role === 'admin') {
-        document.title = `Admin Dashboard | ${baseTitle}`;
-      } else if (userProfile?.role === 'organizer') {
-        document.title = `Organizer Dashboard | ${baseTitle}`;
-      } else {
-        document.title = `Dashboard | ${baseTitle}`;
-      }
+
+    // Home is the root route. It carries no role in its title: the nav and the
+    // page frame already differentiate the two scopes, and "Admin Home" vs
+    // "Organizer Home" told a user nothing they could not already see.
+    if (pathSegments.length === 0) {
+      document.title = `Home | ${baseTitle}`;
       return;
     }
 
@@ -45,9 +39,6 @@ const usePageTitle = ({ title, contextTitle }: UsePageTitleProps = {}) => {
         case 'login':
           document.title = `Sign In | ${baseTitle}`;
           break;
-        case 'signup':
-          document.title = `Sign Up | ${baseTitle}`;
-          break;
         case 'forgot-password':
           document.title = `Reset Password | ${baseTitle}`;
           break;
@@ -57,59 +48,11 @@ const usePageTitle = ({ title, contextTitle }: UsePageTitleProps = {}) => {
       return;
     }
 
-    // Handle admin routes
-    if (pathSegments[0] === 'admin') {
-      const adminPage = pathSegments[1];
-      switch (adminPage) {
-        case 'dashboard':
-          document.title = `Admin Dashboard | ${baseTitle}`;
-          break;
-        case 'users':
-          document.title = `User Management | ${baseTitle}`;
-          break;
-        case 'events':
-          if (pathSegments[2] === 'create') {
-            document.title = `Create Event | ${baseTitle}`;
-          } else if (pathSegments[2] === 'edit' && params.eventId) {
-            document.title = `Edit Event | ${baseTitle}`;
-          } else if (pathSegments[3] === 'attendees' && params.eventId) {
-            document.title = `Event Attendees | ${baseTitle}`;
-          } else if (pathSegments[3] === 'analytics' && params.eventId) {
-            document.title = `Event Analytics | ${baseTitle}`;
-          } else {
-            document.title = `Manage Events | ${baseTitle}`;
-          }
-          break;
-        case 'checkin':
-          document.title = `Check-in Management | ${baseTitle}`;
-          break;
-        case 'analytics':
-          document.title = `Analytics Dashboard | ${baseTitle}`;
-          break;
-        default:
-          document.title = `Admin Panel | ${baseTitle}`;
-      }
-      return;
-    }
-
-    // Handle organizer routes
-    if (pathSegments[0] === 'organizer') {
-      const organizerPage = pathSegments[1];
-      switch (organizerPage) {
-        case 'dashboard':
-          document.title = `Organizer Dashboard | ${baseTitle}`;
-          break;
-        case 'checkin':
-          document.title = `Event Check-in | ${baseTitle}`;
-          break;
-        default:
-          document.title = `Organizer Panel | ${baseTitle}`;
-      }
-      return;
-    }
-
     // Handle shared routes
     switch (pathSegments[0]) {
+      case 'e':
+        document.title = `Event Registration | ${baseTitle}`;
+        break;
       case 'events':
         if (pathSegments[1] === 'create') {
           document.title = `Create Event | ${baseTitle}`;
@@ -119,6 +62,10 @@ const usePageTitle = ({ title, contextTitle }: UsePageTitleProps = {}) => {
           document.title = `Event Registration | ${baseTitle}`;
         } else if (pathSegments[2] === 'attendees' && params.eventId) {
           document.title = `Event Attendees | ${baseTitle}`;
+        } else if (pathSegments[2] === 'feedback' && params.eventId) {
+          document.title = `Event Feedback | ${baseTitle}`;
+        } else if (pathSegments[2] === 'promo-codes' && params.eventId) {
+          document.title = `Promo Codes | ${baseTitle}`;
         } else if (pathSegments[2] === 'analytics' && params.eventId) {
           document.title = `Event Analytics | ${baseTitle}`;
         } else {
@@ -126,6 +73,15 @@ const usePageTitle = ({ title, contextTitle }: UsePageTitleProps = {}) => {
         }
         break;
       case 'attendees':
+        document.title = `Attendees | ${baseTitle}`;
+        break;
+      case 'check-in':
+        document.title = `Check-in Management | ${baseTitle}`;
+        break;
+      // /payments and /emails now forward to the attendees list, so title them
+      // for where the organizer is actually going, not the retired screen.
+      case 'payments':
+      case 'emails':
         document.title = `Attendees | ${baseTitle}`;
         break;
       case 'analytics':
@@ -156,6 +112,13 @@ const usePageTitle = ({ title, contextTitle }: UsePageTitleProps = {}) => {
       case 'verify':
         document.title = `Certificate Verification | ${baseTitle}`;
         break;
+      case 'privacy':
+        document.title = `Privacy Policy | ${baseTitle}`;
+        break;
+      case 'terms-of-service':
+      case 'terms':
+        document.title = `Terms of Service | ${baseTitle}`;
+        break;
       default:
         // Handle login route
         if (pathSegments[0] === 'login') {
@@ -164,7 +127,7 @@ const usePageTitle = ({ title, contextTitle }: UsePageTitleProps = {}) => {
           document.title = baseTitle;
         }
     }
-  }, [title, contextTitle, location.pathname, params, userProfile?.role]);
+  }, [title, contextTitle, location.pathname, params]);
 };
 
 export default usePageTitle;

@@ -21,8 +21,10 @@ import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '../config/firebase';
 import { logger } from '../utils/logger';
 import { Registration, Event, TicketPricing } from '../types';
-import { NotificationService } from './notificationService';
 import { EmailService } from './emailService';
+import { resolveDisplayStatus, StatusBearingRegistration } from '../utils/registrationStatus';
+import { toDateSafe, toISOStringSafe } from '../utils/dateUtils';
+import { AuditLogService } from './auditLogService';
 
 export interface RegistrationData {
   eventId: string;
@@ -59,6 +61,36 @@ export interface RegistrationStats {
 export class RegistrationService {
   private static readonly REGISTRATIONS_COLLECTION = 'registrations';
   private static readonly EVENTS_COLLECTION = 'events';
+
+  private static inFlightRequests = new Map<string, Promise<any>>();
+  private static memoryCache = new Map<string, { data: any; expiry: number }>();
+  private static readonly CACHE_TTL_MS = 20_000; // 20 seconds
+
+  /**
+   * Invalidate memory cache for a specific event or the entire registrations cache.
+   */
+  static invalidateCache(eventId?: string): void {
+    if (eventId) {
+      this.memoryCache.delete(`regs:${eventId}`);
+    } else {
+      this.memoryCache.clear();
+    }
+  }
+
+  /**
+   * Prefetch event registrations into cache on hover or intent.
+   * Respects Save-Data and slow 2G mobile connections.
+   */
+  static prefetchEventRegistrations(eventId: string): void {
+    if (!eventId) return;
+    if (typeof navigator !== 'undefined') {
+      const conn = (navigator as any).connection;
+      if (conn?.saveData || conn?.effectiveType === '2g' || conn?.effectiveType === 'slow-2g') {
+        return;
+      }
+    }
+    void this.getEventRegistrations(eventId);
+  }
 
   private static async adjustTicketSales(params: {
     eventId: string;
@@ -249,6 +281,8 @@ export class RegistrationService {
         paymentLinkToken?: string;
       };
 
+      this.invalidateCache(registrationData.eventId);
+
       return {
         registrationId: created.registrationId,
         pricing: created.pricing,
@@ -256,9 +290,9 @@ export class RegistrationService {
         requiresPayment: created.requiresPayment,
         paymentLinkToken: created.paymentLinkToken
       };
-    } catch (error) {
+    } catch (error: any) {
       logger.error('Error creating pending registration:', error);
-      throw new Error('Failed to create registration');
+      throw error instanceof Error ? error : new Error(error?.message || 'Failed to create registration');
     }
   }
 
@@ -308,6 +342,7 @@ export class RegistrationService {
         paymentStatus: 'paid',
         updatedAt: serverTimestamp()
       });
+      this.invalidateCache(registrationData.eventId);
 
       // Note: We don't update ticket sales or attendee count here anymore
       // because they are already updated in createPendingRegistration
@@ -335,7 +370,7 @@ export class RegistrationService {
   }
 
   /**
-   * Register for an event (legacy method - now calls createPendingRegistration)
+   * Register for an event (legacy method - forwards to createPendingRegistration)
    */
   static async registerForEvent(registrationData: RegistrationData): Promise<{
     registrationId: string;
@@ -343,122 +378,7 @@ export class RegistrationService {
     qrCode: string;
     requiresPayment: boolean;
   }> {
-    try {
-      // Validate event and get pricing locally (bypassing functions for now)
-      const validation = await this.validateRegistrationLocally(registrationData);
-      
-      if (!validation.isValid) {
-        throw new Error(validation.message || validation.errors?.join(', ') || 'Registration validation failed');
-      }
-
-      // Generate registration ID
-      const registrationRef = doc(collection(db, this.REGISTRATIONS_COLLECTION));
-      const registrationId = registrationRef.id;
-
-      // Generate QR code
-      const qrCode = this.generateQRCode(registrationId);
-
-      // Determine payment status - force pending for manual approval flow
-      const requiresPayment = validation.pricing.currentPrice > 0;
-      const paymentStatus = 'pending';
-
-      // Create registration document
-      const registration: Omit<Registration, 'id'> = {
-        eventId: registrationData.eventId,
-        userId: '', // Anonymous registration
-        userDetails: registrationData.userDetails,
-        ticketTypeId: registrationData.ticketTypeId,
-        quantity: registrationData.quantity,
-        originalAmount: validation.pricing.originalPrice * registrationData.quantity,
-        discountAmount: validation.pricing.discountAmount * registrationData.quantity,
-        totalAmount: validation.pricing.currentPrice * registrationData.quantity,
-        currency: 'PHP', // Default currency
-        // Save promo code information from both sources
-        ...(validation.pricing.promoCode ? { promoCode: validation.pricing.promoCode } : {}),
-        ...(validation.pricing.promoCodeId ? { promoCodeId: validation.pricing.promoCodeId } : {}),
-        pricing: validation.pricing,
-        paymentStatus: paymentStatus as any,
-        attendanceStatus: 'registered',
-        feedbackSubmitted: false,
-        certificateIssued: false,
-        qrCode,
-        registrationDate: serverTimestamp() as any,
-        updatedAt: serverTimestamp() as any
-      };
-
-
-      // Add custom form responses if provided
-      if (registrationData.customResponses) {
-        (registration as any).customResponses = registrationData.customResponses;
-      }
-
-      // Save registration
-      await setDoc(registrationRef, registration);
-
-      // Update event attendee count
-      const eventRef = doc(db, this.EVENTS_COLLECTION, registrationData.eventId);
-      await updateDoc(eventRef, {
-        currentAttendees: increment(registrationData.quantity),
-        updatedAt: serverTimestamp()
-      });
-
-      await this.adjustTicketSales({
-        eventId: registrationData.eventId,
-        ticketTypeId: registrationData.ticketTypeId,
-        delta: registrationData.quantity
-      });
-
-      // Increment promo code usage if a promo code was applied
-      if (validation.pricing.promoCodeId) {
-        await this.incrementPromoCodeUsage(registrationData.eventId, validation.pricing.promoCodeId);
-      }
-
-      // Send confirmation email via Firebase Function
-      try {
-        const sendRegistrationEmail = httpsCallable(functions, 'sendConfirmationEmail');
-        await sendRegistrationEmail({
-          registrationId,
-          eventId: registrationData.eventId,
-          userEmail: registrationData.userDetails.email,
-          userName: registrationData.userDetails.name,
-          requiresPayment
-        });
-      } catch (error) {
-        logger.warn('Failed to send registration confirmation email:', error);
-      }
-
-      // Send notification for successful registration (for admin/organizer)
-      try {
-        // Get event details for notification
-        const eventRef = doc(db, this.EVENTS_COLLECTION, registrationData.eventId);
-        const eventSnap = await getDoc(eventRef);
-        if (eventSnap.exists()) {
-          const eventData = eventSnap.data() as Event;
-          // Notify admin/organizer about new registration
-          if (eventData.organizer?.uid) {
-            await NotificationService.createNotification(
-              eventData.organizer.uid,
-              'registration_confirmation',
-              'New Registration',
-              `${registrationData.userDetails.name} has registered for "${eventData.title}"`,
-              { registrationId, eventId: registrationData.eventId, userEmail: registrationData.userDetails.email }
-            );
-          }
-        }
-      } catch (error) {
-        logger.warn('Failed to create registration notification:', error);
-      }
-
-      return {
-        registrationId,
-        pricing: validation.pricing,
-        qrCode,
-        requiresPayment
-      };
-    } catch (error) {
-      logger.error('Error registering for event:', error);
-      throw new Error('Failed to register for event');
-    }
+    return this.createPendingRegistration(registrationData);
   }
 
   /**
@@ -505,22 +425,48 @@ export class RegistrationService {
    * Get all registrations for an event
    */
   static async getEventRegistrations(eventId: string): Promise<Registration[]> {
-    try {
-      const registrationsQuery = query(
-        collection(db, this.REGISTRATIONS_COLLECTION),
-        where('eventId', '==', eventId),
-        orderBy('registrationDate', 'desc')
-      );
-      const snapshot = await getDocs(registrationsQuery);
-      
-      return snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      } as Registration));
-    } catch (error) {
-      logger.error('Error fetching event registrations:', error);
-      throw new Error('Failed to fetch event registrations');
+    if (!eventId) return [];
+
+    const cacheKey = `regs:${eventId}`;
+    const cached = this.memoryCache.get(cacheKey);
+    if (cached && cached.expiry > Date.now()) {
+      return cached.data;
     }
+
+    if (this.inFlightRequests.has(cacheKey)) {
+      return this.inFlightRequests.get(cacheKey)!;
+    }
+
+    const fetchPromise = (async () => {
+      try {
+        const registrationsQuery = query(
+          collection(db, this.REGISTRATIONS_COLLECTION),
+          where('eventId', '==', eventId),
+          orderBy('registrationDate', 'desc')
+        );
+        const snapshot = await getDocs(registrationsQuery);
+        
+        const regs = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        } as Registration));
+
+        this.memoryCache.set(cacheKey, {
+          data: regs,
+          expiry: Date.now() + this.CACHE_TTL_MS,
+        });
+
+        return regs;
+      } catch (error) {
+        logger.error('Error fetching event registrations:', error);
+        throw new Error('Failed to fetch event registrations');
+      } finally {
+        this.inFlightRequests.delete(cacheKey);
+      }
+    })();
+
+    this.inFlightRequests.set(cacheKey, fetchPromise);
+    return fetchPromise;
   }
 
   /**
@@ -592,12 +538,12 @@ export class RegistrationService {
   }
 
   /**
-   * Get all registrations across all events (for admin dashboard)
+   * Get all registrations across all events (platform-wide read; admin only)
    */
   static async getAllRegistrations(): Promise<Registration[]> {
     try {
       const registrationsQuery = query(
-        collection(db, this.REGISTRATIONS_COLLECTION),
+        collection(db, this.REGISTRATIONS_COLLECTION), // firestore:unscoped-ok - admin platform-wide roster
         orderBy('registrationDate', 'desc')
       );
       const snapshot = await getDocs(registrationsQuery);
@@ -609,6 +555,29 @@ export class RegistrationService {
     } catch (error) {
       logger.error('Error fetching all registrations:', error);
       throw new Error('Failed to fetch all registrations');
+    }
+  }
+
+  /**
+   * Get registrations owned by one organizer.
+   *
+   * Organizers must never call getAllRegistrations(): firestore.rules now scopes
+   * /registrations by organizerUid, so the unscoped query would be denied — and
+   * pulling every attendee record across every event is a Data Privacy Act 2012
+   * problem regardless of what the rules permit.
+   */
+  static async getRegistrationsByOrganizer(organizerUid: string): Promise<Registration[]> {
+    try {
+      const q = query(
+        collection(db, this.REGISTRATIONS_COLLECTION),
+        where('organizerUid', '==', organizerUid),
+        orderBy('registrationDate', 'desc')
+      );
+      const snapshot = await getDocs(q);
+      return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Registration));
+    } catch (error) {
+      logger.error('Error fetching organizer registrations:', error);
+      throw new Error('Failed to fetch registrations');
     }
   }
 
@@ -676,6 +645,21 @@ export class RegistrationService {
         updatedAt: serverTimestamp()
       });
 
+      void AuditLogService.recordAuditLog({
+        category: 'event_operations',
+        action: 'attendee_checked_in',
+        target: {
+          type: 'registration',
+          id: registrationId,
+          label: data.userDetails?.name,
+        },
+        details: {
+          eventId: data.eventId,
+          checkInMethod,
+          bypassPaymentCheck,
+        },
+      });
+
       // Send check-in notification
       try {
         const sendCheckInNotification = httpsCallable(functions, 'sendCheckInNotification');
@@ -687,26 +671,6 @@ export class RegistrationService {
         });
       } catch (error) {
         logger.warn('Failed to send check-in notification:', error);
-      }
-
-      // Send notification to organizer about successful check-in
-      try {
-        const eventRef = doc(db, this.EVENTS_COLLECTION, data.eventId);
-        const eventSnap = await getDoc(eventRef);
-        if (eventSnap.exists()) {
-          const eventData = eventSnap.data() as Event;
-          if (eventData.organizer?.uid) {
-            await NotificationService.createNotification(
-              eventData.organizer.uid,
-              'event_update',
-              'Attendee Checked In',
-              `${data.userDetails.name} has been checked in to "${eventData.title}"`,
-              { registrationId, eventId: data.eventId, checkInMethod }
-            );
-          }
-        }
-      } catch (error) {
-        logger.warn('Failed to create check-in notification:', error);
       }
     } catch (error) {
       logger.error('Error checking in attendee:', error);
@@ -807,6 +771,7 @@ export class RegistrationService {
       }
 
       await updateDoc(registrationRef, updateData);
+      this.invalidateCache();
 
       if (
         freeApprovalDetails &&
@@ -830,6 +795,19 @@ export class RegistrationService {
           logger.warn('Failed to send payment notification for free registration:', notificationError);
         }
       }
+
+      void AuditLogService.recordAuditLog({
+        category: 'event_operations',
+        action: status === 'approved' ? 'registration_approved' : 'registration_rejected',
+        target: {
+          type: 'registration',
+          id: registrationId,
+        },
+        details: {
+          status,
+          notes: notes ?? null,
+        },
+      });
     } catch (error) {
       logger.error('Error updating registration status:', error);
       throw new Error('Failed to update registration status');
@@ -930,7 +908,7 @@ export class RegistrationService {
 
       // Check if event is today or ongoing
       const now = new Date();
-      const eventDate = event.startDate.toDate();
+      const eventDate = toDateSafe(event.startDate) ?? now;
       const daysDiff = Math.abs(now.getTime() - eventDate.getTime()) / (1000 * 60 * 60 * 24);
       
       if (daysDiff > 1) {
@@ -1063,7 +1041,7 @@ export class RegistrationService {
         reg.totalAmount.toString(),
         reg.paymentStatus,
         reg.attendanceStatus,
-        reg.registrationDate.toDate().toISOString(),
+        toISOStringSafe(reg.registrationDate, ''),
         reg.qrCode
       ]);
 
@@ -1154,6 +1132,14 @@ export class RegistrationService {
         };
       }
 
+      if (registrationData.quantity !== 1) {
+        return {
+          isValid: false,
+          pricing: {} as TicketPricing,
+          message: 'Only 1 ticket per person is allowed'
+        };
+      }
+
       const maxQuantity = Number.isFinite(ticketType.maxQuantity) ? ticketType.maxQuantity as number : undefined;
       const currentSold = Number.isFinite(ticketType.currentSold) ? ticketType.currentSold as number : 0;
 
@@ -1165,14 +1151,6 @@ export class RegistrationService {
             isValid: false,
             pricing: {} as TicketPricing,
             message: 'Ticket is sold out'
-          };
-        }
-
-        if (registrationData.quantity > available) {
-          return {
-            isValid: false,
-            pricing: {} as TicketPricing,
-            message: `Only ${available} tickets remaining`
           };
         }
       }
@@ -1248,6 +1226,18 @@ export class RegistrationService {
       }
 
       const registrationData = registrationSnap.data();
+
+      // Prevent deleting confirmed or attended registrations
+      const displayStatus = resolveDisplayStatus(registrationData as StatusBearingRegistration);
+      if (
+        displayStatus === 'confirmed' ||
+        displayStatus === 'attended' ||
+        registrationData.paymentStatus === 'paid' ||
+        registrationData.registrationStatus === 'approved' ||
+        registrationData.status === 'confirmed'
+      ) {
+        throw new Error('Cannot delete a confirmed registration');
+      }
       
       // Return tickets to available pool before deleting
       // Only adjust if the registration wasn't already cancelled
@@ -1304,11 +1294,25 @@ export class RegistrationService {
       
       // Finally, delete the registration document
       await deleteDoc(registrationRef);
+      this.invalidateCache(registrationData.eventId);
+
+      void AuditLogService.recordAuditLog({
+        category: 'event_operations',
+        action: 'registration_deleted',
+        target: {
+          type: 'registration',
+          id: registrationId,
+          label: (registrationData.userDetails?.name || registrationData.name) ?? undefined,
+        },
+        details: {
+          eventId: registrationData.eventId,
+        },
+      });
       
       logger.log(`Registration ${registrationId} and associated payment proofs deleted successfully`);
     } catch (error) {
       logger.error('Error deleting registration:', error);
-      throw new Error('Failed to delete registration');
+      throw error instanceof Error ? error : new Error('Failed to delete registration');
     }
   }
 
@@ -1361,16 +1365,34 @@ export class RegistrationService {
       // Check ticket availability
       if (ticketType.maxQuantity) {
         const available = ticketType.maxQuantity - ticketType.currentSold;
-        if (data.quantity > available) {
-          throw new Error(`Only ${available} tickets available for ${ticketType.name}`);
+        if (available <= 0) {
+          throw new Error(`Tickets for ${ticketType.name} are sold out`);
         }
       }
       
       // Check event capacity
       if (event.maxAttendees) {
         const available = event.maxAttendees - event.currentAttendees;
-        if (data.quantity > available) {
-          throw new Error(`Event is full. Only ${available} spots remaining`);
+        if (available <= 0) {
+          throw new Error('Event is full. No spots remaining');
+        }
+      }
+
+      // Prevent duplicate registration for walk-in if email already registered
+      if (data.userDetails.email) {
+        const normalizedEmail = data.userDetails.email.trim().toLowerCase();
+        const dupQuery = query(
+          collection(db, this.REGISTRATIONS_COLLECTION),
+          where('eventId', '==', data.eventId),
+          where('userDetails.email', '==', normalizedEmail)
+        );
+        const dupSnap = await getDocs(dupQuery);
+        const activeDup = dupSnap.docs.find(d => {
+          const reg = d.data() as Registration;
+          return reg.attendanceStatus !== 'cancelled' && reg.paymentStatus !== 'cancelled';
+        });
+        if (activeDup) {
+          throw new Error(`Attendee with email "${normalizedEmail}" is already registered for this event.`);
         }
       }
       
@@ -1379,22 +1401,23 @@ export class RegistrationService {
       const registrationId = registrationRef.id;
       const qrCode = this.generateQRCode(registrationId);
       
-      // Calculate pricing
-      const originalAmount = ticketType.price * data.quantity;
+      // Calculate pricing (strictly 1 ticket)
+      const originalAmount = ticketType.price;
       const totalAmount = originalAmount; // No discounts for walk-ins by default
       
       // Create registration document
       const registration: Omit<Registration, 'id'> = {
         eventId: data.eventId,
+        organizerUid: event.organizer.uid,
         userId: '', // Anonymous - walk-in attendee
         userDetails: {
           name: data.userDetails.name,
-          email: data.userDetails.email,
+          email: data.userDetails.email.trim().toLowerCase(),
           phoneNumber: data.userDetails.phoneNumber,
           organization: data.userDetails.organization
         },
         ticketTypeId: data.ticketTypeId,
-        quantity: data.quantity,
+        quantity: 1,
         originalAmount,
         discountAmount: 0,
         totalAmount,
@@ -1440,14 +1463,14 @@ export class RegistrationService {
       
       // Update event attendee count and ticket sold count
       await updateDoc(eventRef, {
-        currentAttendees: increment(data.quantity),
+        currentAttendees: increment(1),
         updatedAt: serverTimestamp()
       });
 
       await this.adjustTicketSales({
         eventId: data.eventId,
         ticketTypeId: data.ticketTypeId,
-        delta: data.quantity
+        delta: 1
       });
       
       // Send confirmation email (optional for walk-ins)
@@ -1472,6 +1495,42 @@ export class RegistrationService {
       };
     } catch (error) {
       logger.error('Error creating walk-in registration:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update attendee details and optional admin notes for an existing registration.
+   */
+  static async updateAttendeeDetails(
+    registrationId: string,
+    details: {
+      name: string;
+      email: string;
+      phone?: string | null;
+      organization?: string | null;
+      adminNotes?: string | null;
+    }
+  ): Promise<void> {
+    try {
+      const registrationRef = doc(db, this.REGISTRATIONS_COLLECTION, registrationId);
+      const updateData: Record<string, any> = {
+        'userDetails.name': details.name.trim(),
+        'userDetails.email': details.email.trim().toLowerCase(),
+        'userDetails.phoneNumber': details.phone ? details.phone.trim() : null,
+        'userDetails.organization': details.organization ? details.organization.trim() : null,
+        updatedAt: serverTimestamp(),
+      };
+
+      if (details.adminNotes !== undefined) {
+        updateData.adminNotes = details.adminNotes ? details.adminNotes.trim() : null;
+      }
+
+      await updateDoc(registrationRef, updateData);
+      this.invalidateCache();
+      logger.log(`Registration ${registrationId} attendee details updated successfully`);
+    } catch (error) {
+      logger.error('Error updating attendee details:', error);
       throw error;
     }
   }

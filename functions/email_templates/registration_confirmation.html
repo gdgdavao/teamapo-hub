@@ -1,20 +1,27 @@
-<p>
-  Thank you for registering for {{event_title}} will be held on {{event_date}} at {{event_location}}. We're excited
-  to have you join us!
+<p style="margin: 0 0 16px 0; font-size: 15px; line-height: 1.6; color: #1f1f1f;">
+  Thank you for registering for <strong>{{event_title}}</strong>, scheduled for <strong>{{event_date}}</strong> at <strong>{{event_location}}</strong>. We look forward to your participation.
 </p>
-<br />
-<p>
-  <strong>{{registration_status_title}}</strong><br />
-  {{registration_status_message}}
+{{maps_button}}
+<div style="background-color: #e8f0fe; border: 1px solid #d2e3fc; border-radius: 8px; padding: 16px 20px; margin: 20px 0;">
+  <h3 style="margin: 0 0 6px 0; font-family: 'Google Sans', Roboto, -apple-system, BlinkMacSystemFont, Arial, sans-serif; font-size: 16px; font-weight: 600; color: #1a73e8;">
+    {{registration_status_title}}
+  </h3>
+  <p style="margin: 0; font-size: 14px; line-height: 1.5; color: #174ea6;">
+    {{registration_status_message}}
+  </p>
+</div>
+<div style="background-color: #f8fafd; border: 1px solid #dadce0; border-radius: 8px; padding: 16px 20px; margin: 20px 0;">
+  <h3 style="margin: 0 0 10px 0; font-family: 'Google Sans', Roboto, -apple-system, BlinkMacSystemFont, Arial, sans-serif; font-size: 15px; font-weight: 600; color: #1f1f1f;">
+    What happens next
+  </h3>
+  <ul style="margin: 0; padding-left: 20px; font-size: 14px; line-height: 1.6; color: #5f6368;">
+    {{next_steps_items}}
+  </ul>
+</div>
+<p style="margin: 16px 0; font-size: 15px; line-height: 1.6; color: #1f1f1f;">
+  {{closing_message}}
 </p>
-<br />
-<p><strong>What happens next:</strong></p>
-<ul>
-  {{next_steps_items}}
-</ul>
-<br />
-<p>
-  Again, thank you for registering. {{closing_message}}
+<p style="margin: 24px 0 0 0; font-size: 15px; line-height: 1.5; color: #1f1f1f;">
+  Googleyness,<br />
+  <strong style="color: #0b57d0; font-family: 'Google Sans', Roboto, Arial, sans-serif;">Google Developer Groups - Davao</strong>
 </p>
-<br />
-<p>Googleyness,<br />Google Developer Groups - Davao</p>

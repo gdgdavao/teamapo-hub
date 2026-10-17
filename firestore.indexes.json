@@ -175,6 +175,24 @@
       ]
     },
     {
+      "collectionGroup": "activity_logs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "eventId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "userEmail",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "timestamp",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "feedback",
       "queryScope": "COLLECTION",
       "fields": [
@@ -188,7 +206,6 @@
         }
       ]
     },
-    
     {
       "collectionGroup": "paymentProofs",
       "queryScope": "COLLECTION",
@@ -232,33 +249,29 @@
       ]
     },
     {
-      "collectionGroup": "notifications",
+      "collectionGroup": "registrations",
       "queryScope": "COLLECTION",
       "fields": [
         {
-          "fieldPath": "userId",
+          "fieldPath": "organizerUid",
           "order": "ASCENDING"
         },
         {
-          "fieldPath": "createdAt",
+          "fieldPath": "registrationDate",
           "order": "DESCENDING"
         }
       ]
     },
     {
-      "collectionGroup": "notifications",
+      "collectionGroup": "certificates",
       "queryScope": "COLLECTION",
       "fields": [
         {
-          "fieldPath": "userId",
+          "fieldPath": "eventId",
           "order": "ASCENDING"
         },
         {
-          "fieldPath": "type",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "createdAt",
+          "fieldPath": "issuedAt",
           "order": "DESCENDING"
         }
       ]

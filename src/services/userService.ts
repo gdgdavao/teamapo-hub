@@ -1,39 +1,31 @@
-import { 
-  collection, 
-  doc, 
-  setDoc, 
-  updateDoc, 
-  getDoc, 
-  getDocs, 
-  query, 
-  where, 
-  orderBy, 
+import {
+  collection,
+  doc,
+  updateDoc,
+  getDoc,
+  getDocs,
+  query,
+  where,
+  orderBy,
   serverTimestamp,
-  deleteDoc,
   Timestamp,
   limit,
   startAfter
 } from 'firebase/firestore';
-import { 
-  ref, 
-  uploadBytes, 
-  getDownloadURL, 
-  deleteObject 
+import {
+  ref,
+  uploadBytes,
+  getDownloadURL
 } from 'firebase/storage';
 import { httpsCallable } from 'firebase/functions';
 import { logger } from '../utils/logger';
-import { 
-  createUserWithEmailAndPassword,
-  updateProfile,
-  sendPasswordResetEmail,
-  deleteUser as deleteAuthUser
-} from 'firebase/auth';
+import { sendPasswordResetEmail } from 'firebase/auth';
 import { auth, db, storage, functions } from '../config/firebase';
+import { AUTH_ACTION_CODE_SETTINGS } from '../config/app';
 import { User } from '../types';
 
 export interface UserWithMetadata extends User {
   lastLogin?: Date;
-  isActive?: boolean;
   registrationCount?: number;
   eventsOrganized?: number;
   totalRevenue?: number;
@@ -185,13 +177,33 @@ export class UserService {
   static async updateUserProfile(userId: string, updates: Partial<User>): Promise<void> {
     try {
       const userRef = doc(db, this.USERS_COLLECTION, userId);
-      await updateDoc(userRef, {
-        ...updates,
-        updatedAt: serverTimestamp()
-      });
+      // Clean undefined keys to maintain zero-undefined invariant
+      const sanitizedUpdates: Record<string, any> = { updatedAt: serverTimestamp() };
+      for (const [key, val] of Object.entries(updates)) {
+        if (val !== undefined) {
+          sanitizedUpdates[key] = val;
+        }
+      }
+      await updateDoc(userRef, sanitizedUpdates);
     } catch (error) {
       logger.error('Error updating user profile:', error);
       throw new Error('Failed to update user profile');
+    }
+  }
+
+  /**
+   * Update organizer granular permissions (admin only)
+   */
+  static async updateUserPermissions(userId: string, permissions: User['permissions']): Promise<void> {
+    try {
+      const userRef = doc(db, this.USERS_COLLECTION, userId);
+      await updateDoc(userRef, {
+        permissions: permissions ?? null,
+        updatedAt: serverTimestamp(),
+      });
+    } catch (error) {
+      logger.error('Error updating user permissions:', error);
+      throw new Error('Failed to update user permissions');
     }
   }
 
@@ -216,33 +228,6 @@ export class UserService {
     }
   }
 
-  /**
-   * Create a new user account (admin only)
-   */
-  static async createUser(data: {
-    email: string;
-    password: string;
-    displayName: string;
-    role: 'organizer' | 'admin';
-    organization?: string;
-    phoneNumber?: string;
-  }): Promise<User> {
-    try {
-      // Use Firebase Function for user creation to avoid auth state issues
-      const createUserFunction = httpsCallable(functions, 'createUser');
-      const result = await createUserFunction(data);
-      
-      const response = result.data as { success: boolean; user?: User; message?: string };
-      if (!response.success) {
-        throw new Error(response.message || 'Failed to create user');
-      }
-      
-      return response.user!;
-    } catch (error) {
-      logger.error('Error creating user:', error);
-      throw new Error('Failed to create user');
-    }
-  }
 
   /**
    * Delete user account (admin only)
@@ -263,31 +248,6 @@ export class UserService {
     }
   }
 
-  /**
-   * Suspend/reactivate user account
-   */
-  static async toggleUserStatus(userId: string, isActive: boolean): Promise<void> {
-    try {
-      const userRef = doc(db, this.USERS_COLLECTION, userId);
-      await updateDoc(userRef, {
-        isActive,
-        updatedAt: serverTimestamp()
-      });
-
-      // If suspending, you might want to revoke sessions via Firebase Function
-      if (!isActive) {
-        try {
-          const suspendUserFunction = httpsCallable(functions, 'suspendUser');
-          await suspendUserFunction({ userId });
-        } catch (error) {
-          logger.warn('Could not revoke user sessions:', error);
-        }
-      }
-    } catch (error) {
-      logger.error('Error toggling user status:', error);
-      throw new Error('Failed to toggle user status');
-    }
-  }
 
   /**
    * Get user statistics
@@ -344,7 +304,7 @@ export class UserService {
    */
   static async sendPasswordReset(email: string): Promise<void> {
     try {
-      await sendPasswordResetEmail(auth, email);
+      await sendPasswordResetEmail(auth, email, AUTH_ACTION_CODE_SETTINGS);
     } catch (error) {
       logger.error('Error sending password reset:', error);
       throw new Error('Failed to send password reset email');

@@ -6,7 +6,14 @@ Handles all email notifications for the ApoHub application.
 import os
 import logging
 import re
-from typing import Dict, Any, Optional, List
+import smtplib
+import base64
+import time
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
+from typing import Dict, Any, Optional, List, cast
 from datetime import datetime
 import resend
 from pathlib import Path
@@ -44,15 +51,17 @@ def sanitize_tag_value(value: str) -> str:
     return sanitized
 
 def load_env_file():
-    """Load environment variables from .env file in functions directory."""
-    env_file = Path(__file__).parent / '.env'
-    if env_file.exists():
-        with open(env_file, 'r') as f:
+    """Load environment variables from .env file in functions directory or project root."""
+    functions_env = Path(__file__).resolve().parent / '.env'
+    root_env = Path(__file__).resolve().parent.parent / '.env'
+    target_env = functions_env if functions_env.exists() else root_env
+    if target_env.exists():
+        with open(target_env, 'r', encoding='utf-8') as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith('#') and '=' in line:
                     key, value = line.split('=', 1)
-                    os.environ[key.strip()] = value.strip()
+                    os.environ.setdefault(key.strip(), value.strip())
 
 class EmailService:
     """Service for sending emails using Resend API."""
@@ -81,7 +90,7 @@ class EmailService:
             os.getenv('FROM_EMAIL') or 
             os.getenv('FROM_EMAIL'.lower()) or
             self._get_firebase_config('resend.from_email') or
-            'noreply@gdgdavao.com'
+            'teamapohub@gdgdavao.org'
         )
         
         # Set sender display name
@@ -94,6 +103,17 @@ class EmailService:
         
         # Format the complete "from" field with display name
         self.from_address = f"{self.sender_name} <{self.from_email}>"
+        
+        # Check if Mailpit mode is requested or configured
+        self.use_mailpit = (
+            os.getenv('USE_MAILPIT', '').lower() in ('true', '1') or
+            os.getenv('MAILPIT_ENABLED', '').lower() in ('true', '1')
+        )
+        self.mailpit_host = os.getenv('MAILPIT_SMTP_HOST', 'localhost')
+        self.mailpit_port = int(os.getenv('MAILPIT_SMTP_PORT', '1025'))
+        
+        if self.use_mailpit:
+            logger.info(f"Mailpit dev mode active. Routing emails to SMTP {self.mailpit_host}:{self.mailpit_port}")
         
         logger.info(f"Email service initialized with sender: {self.from_address}")
         if self.api_key.startswith('re_'):
@@ -117,6 +137,78 @@ class EmailService:
         except:
             return None
     
+    def _send_via_smtp(
+        self,
+        to: str | List[str],
+        subject: str,
+        html_content: str,
+        text_content: Optional[str] = None,
+        reply_to: Optional[str] = None,
+        tags: Optional[List[Dict[str, str]]] = None,
+        attachments: Optional[List[Dict[str, str]]] = None
+    ) -> Dict[str, Any]:
+        """Send email via SMTP (e.g. Mailpit for local development)."""
+        try:
+            recipients = [to] if isinstance(to, str) else to
+            
+            # Create root multipart message
+            msg = MIMEMultipart('related')
+            msg['Subject'] = subject
+            msg['From'] = self.from_address
+            msg['To'] = ", ".join(recipients)
+            if reply_to:
+                msg['Reply-To'] = reply_to
+            
+            # Alternative part for text and HTML
+            alt_part = MIMEMultipart('alternative')
+            if text_content:
+                alt_part.attach(MIMEText(text_content, 'plain', 'utf-8'))
+            alt_part.attach(MIMEText(html_content, 'html', 'utf-8'))
+            msg.attach(alt_part)
+            
+            # Handle attachments (including inline CID images)
+            if attachments:
+                for att in attachments:
+                    filename = att.get('filename', 'attachment')
+                    content = att.get('content', '')
+                    content_id = att.get('content_id')
+                    
+                    try:
+                        file_data = base64.b64decode(content)
+                    except Exception:
+                        file_data = content.encode('utf-8') if isinstance(content, str) else content
+                    
+                    mime_att = MIMEBase('application', 'octet-stream')
+                    mime_att.set_payload(file_data)
+                    encoders.encode_base64(mime_att)
+                    
+                    if content_id:
+                        mime_att.add_header('Content-ID', f"<{content_id}>")
+                        mime_att.add_header('Content-Disposition', f'inline; filename="{filename}"')
+                    else:
+                        mime_att.add_header('Content-Disposition', f'attachment; filename="{filename}"')
+                    
+                    msg.attach(mime_att)
+            
+            with smtplib.SMTP(self.mailpit_host, self.mailpit_port) as server:
+                server.send_message(msg)
+            
+            msg_id = f"mailpit_{int(time.time() * 1000)}"
+            logger.info(f"Email sent via Mailpit to {recipients}: {msg_id}")
+            return {
+                "success": True,
+                "message": "Email sent successfully via Mailpit",
+                "email_id": msg_id,
+                "recipient": to
+            }
+        except Exception as e:
+            logger.error(f"Failed to send email via Mailpit to {to}: {str(e)}")
+            return {
+                "success": False,
+                "message": f"Failed to send email via Mailpit: {str(e)}",
+                "recipient": to
+            }
+    
     def send_email(
         self,
         to: str,
@@ -128,7 +220,7 @@ class EmailService:
         attachments: Optional[List[Dict[str, str]]] = None
     ) -> Dict[str, Any]:
         """
-        Send an email using Resend.
+        Send an email using Mailpit (if USE_MAILPIT=true) or Resend API.
         
         Args:
             to: Recipient email address(es)
@@ -142,6 +234,17 @@ class EmailService:
         Returns:
             Dict containing success status and message/error
         """
+        if self.use_mailpit:
+            return self._send_via_smtp(
+                to=to,
+                subject=subject,
+                html_content=html_content,
+                text_content=text_content,
+                reply_to=reply_to,
+                tags=tags,
+                attachments=attachments
+            )
+        
         try:
             # Prepare email data
             email_data = {
@@ -164,7 +267,9 @@ class EmailService:
                 email_data["attachments"] = attachments
             
             # Send email
-            response = resend.Emails.send(email_data)
+            # email_data is built by mutation, so it stays dict[str, Unknown] and
+            # cannot be checked structurally against resend's SendParams TypedDict.
+            response = resend.Emails.send(cast('resend.Emails.SendParams', email_data))
             
             logger.info(f"Email sent successfully to {to}: {response.get('id', 'unknown_id')}")
             
@@ -193,7 +298,8 @@ class EmailService:
         registration_id: Optional[str] = None,
         qr_code_data: Optional[str] = None,
         requires_payment: bool = False,
-        is_free_registration: Optional[bool] = None
+        is_free_registration: Optional[bool] = None,
+        maps_url: Optional[str] = None
     ) -> Dict[str, Any]:
         """Send registration confirmation email."""
         if is_free_registration is None:
@@ -214,7 +320,8 @@ class EmailService:
             registration_id=registration_id,
             qr_code_data=qr_code_data,
             requires_payment=requires_payment,
-            is_free_registration=is_free_registration
+            is_free_registration=is_free_registration,
+            maps_url=maps_url
         )
         
         # Create text content
@@ -225,7 +332,8 @@ class EmailService:
             event_location=event_location,
             registration_id=registration_id,
             requires_payment=requires_payment,
-            is_free_registration=is_free_registration
+            is_free_registration=is_free_registration,
+            maps_url=maps_url
         )
         
         tags = [
@@ -255,8 +363,20 @@ class EmailService:
     ) -> Dict[str, Any]:
         """Send payment status notification email (or registration-focused copy for free events)."""
         
+        if status == 'pending':
+            logger.info(
+                f"Skipping payment notification for pending status (registration_id: {registration_id}) "
+                "- pending payment emails are discontinued."
+            )
+            return {
+                'success': True,
+                'message_id': None,
+                'skipped': True,
+                'message': 'Pending payment emails are discontinued.'
+            }
+        
         status_messages = {
-            'approved': 'Payment Approved',
+            'approved': 'Registration Approved',
             'rejected': 'Payment Rejected',
             'pending': 'Payment Pending'
         }
@@ -269,7 +389,7 @@ class EmailService:
         if is_free_registration:
             subject = f"{free_status_subjects.get(status, 'Registration Update')} - {event_title}"
         else:
-            subject = f"{status_messages.get(status, 'Payment Update')} - {event_title}"
+            subject = f"{status_messages.get(status, 'Registration Update')} - {event_title}"
         
         html_content = self._create_payment_notification_html(
             user_name=user_name,
@@ -363,7 +483,8 @@ class EmailService:
         event_date: str,
         event_location: str,
         registration_id: str,
-        reminder_type: str = "24h"  # "24h" or "1h"
+        reminder_type: str = "24h",  # "24h" or "1h"
+        maps_url: Optional[str] = None
     ) -> Dict[str, Any]:
         """Send event reminder email."""
         
@@ -379,7 +500,8 @@ class EmailService:
             event_title=event_title,
             event_date=event_date,
             event_location=event_location,
-            reminder_type=reminder_type
+            reminder_type=reminder_type,
+            maps_url=maps_url
         )
         
         text_content = self._create_event_reminder_text(
@@ -387,7 +509,8 @@ class EmailService:
             event_title=event_title,
             event_date=event_date,
             event_location=event_location,
-            reminder_type=reminder_type
+            reminder_type=reminder_type,
+            maps_url=maps_url
         )
         
         tags = [
@@ -453,9 +576,14 @@ class EmailService:
         registration_id: Optional[str] = None,
         qr_code_data: Optional[str] = None,
         requires_payment: bool = False,
-        is_free_registration: bool = False
+        is_free_registration: bool = False,
+        maps_url: Optional[str] = None
     ) -> str:
         """Create HTML content for registration confirmation email."""
+        maps_button = ""
+        if maps_url:
+            maps_button = f"""<div style="margin: 16px 0 20px 0;"><table role="presentation" border="0" cellpadding="0" cellspacing="0" style="border-collapse: separate;"><tr><td align="center" style="border-radius: 24px; background-color: #0b57d0;"><a href="{maps_url}" target="_blank" rel="noopener noreferrer" style="display: inline-block; padding: 12px 24px; font-family: 'Google Sans', Roboto, -apple-system, BlinkMacSystemFont, Arial, sans-serif; font-size: 14px; font-weight: 500; color: #ffffff; text-decoration: none; border-radius: 24px; min-height: 48px; box-sizing: border-box; line-height: 24px;">View Location on Map</a></td></tr></table></div>"""
+
         if is_free_registration:
             registration_status_title = "You're all set!"
             registration_status_message = (
@@ -491,7 +619,8 @@ class EmailService:
             'registration_status_title': registration_status_title,
             'registration_status_message': registration_status_message,
             'next_steps_items': next_steps_items,
-            'closing_message': closing_message
+            'closing_message': closing_message,
+            'maps_button': maps_button
         }
         
         return template_loader.render_email_template(
@@ -550,20 +679,25 @@ class EmailService:
                     "<li>Complete any remaining steps to secure your spot at the event.</li>"
                 )
         else:
-            intro_paragraph = (
-                f"We have an update regarding your payment for <strong>{event_title}</strong>."
-            )
+            if status == 'approved':
+                intro_paragraph = (
+                    f"Great news — your payment has been verified and your registration for <strong>{event_title}</strong> has been approved!"
+                )
+            else:
+                intro_paragraph = (
+                    f"We have an update regarding your payment for <strong>{event_title}</strong>."
+                )
             status_message = template_loader.get_payment_status_message(status)
-            contact_prompt = "If you have any questions about your payment, please contact us."
+            contact_prompt = "If you have any questions about your registration or payment, please contact us."
             next_steps = template_loader.get_payment_next_steps(status)
         
         # Handle payment instructions section
         payment_instructions_section = ""
         if payment_instructions and status == 'pending':
             payment_instructions_section = f"""
-            <div style="background-color: #f8f9fa; border-radius: 8px; padding: 20px; margin: 20px 0;">
-                <h3 style="margin-top: 0;">Payment Instructions</h3>
-                <p>{payment_instructions}</p>
+            <div style="background-color: #f8fafd; border: 1px solid #dadce0; border-radius: 8px; padding: 16px 20px; margin: 20px 0;">
+                <h3 style="margin: 0 0 8px 0; font-family: 'Google Sans', Roboto, -apple-system, BlinkMacSystemFont, Arial, sans-serif; font-size: 15px; font-weight: 600; color: #1f1f1f;">Payment Instructions</h3>
+                <p style="margin: 0; font-size: 14px; line-height: 1.6; color: #5f6368;">{payment_instructions}</p>
             </div>
             """
         
@@ -574,11 +708,13 @@ class EmailService:
             img_src = "cid:qr_code_cid" if use_cid else f"data:image/png;base64,{qr_code_data}"
             
             qr_code_section = f"""
-            <div style="background-color: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px; padding: 20px; margin: 20px 0; text-align: center;">
-                <h3 style="color: #0369a1; margin-top: 0;">Your Check-In QR Code</h3>
-                <p style="color: #0c4a6e; margin-bottom: 15px;">Present this QR code at the event for check-in</p>
-                <img src="{img_src}" alt="Check-in QR Code" style="display: block; margin: 0 auto; max-width: 250px; width: 250px; height: auto; border: 2px solid #0369a1; border-radius: 8px;" />
-                <p style="color: #0c4a6e; font-size: 12px; margin-top: 10px;">Registration ID: {registration_id}</p>
+            <div style="background-color: #f8fafd; border: 1px solid #dadce0; border-radius: 12px; padding: 24px; margin: 20px 0; text-align: center;">
+                <h3 style="color: #1f1f1f; font-family: 'Google Sans', Roboto, -apple-system, BlinkMacSystemFont, Arial, sans-serif; font-size: 16px; font-weight: 600; margin: 0 0 6px 0;">Your Check-In QR Code</h3>
+                <p style="color: #5f6368; font-size: 14px; margin: 0 0 16px 0;">Present this QR code at the venue door for instant check-in</p>
+                <img src="{img_src}" alt="Check-in QR Code" width="220" height="220" style="display: block; margin: 0 auto; max-width: 220px; width: 220px; height: auto; border: 1px solid #dadce0; border-radius: 8px; background-color: #ffffff; padding: 8px;" />
+                <p style="color: #1a73e8; font-size: 13px; font-weight: 500; margin: 14px 0 0 0;">
+                    Registration ID: <span style="font-family: monospace; font-size: 13px; font-weight: 600; background-color: #e8f0fe; color: #174ea6; padding: 3px 10px; border-radius: 12px;">{registration_id}</span>
+                </p>
             </div>
             """
         
@@ -628,18 +764,24 @@ class EmailService:
         event_title: str,
         event_date: str,
         event_location: str,
-        reminder_type: str
+        reminder_type: str,
+        maps_url: Optional[str] = None
     ) -> str:
         """Create HTML content for event reminder email."""
         
         time_text = template_loader.get_reminder_time_text(reminder_type)
         
+        maps_button = ""
+        if maps_url:
+            maps_button = f"""<div style="margin: 16px 0 20px 0;"><table role="presentation" border="0" cellpadding="0" cellspacing="0" style="border-collapse: separate;"><tr><td align="center" style="border-radius: 24px; background-color: #0b57d0;"><a href="{maps_url}" target="_blank" rel="noopener noreferrer" style="display: inline-block; padding: 12px 24px; font-family: 'Google Sans', Roboto, -apple-system, BlinkMacSystemFont, Arial, sans-serif; font-size: 14px; font-weight: 500; color: #ffffff; text-decoration: none; border-radius: 24px; min-height: 48px; box-sizing: border-box; line-height: 24px;">View Location on Map</a></td></tr></table></div>"""
+
         context = {
             'user_name': user_name,
             'event_title': event_title,
             'event_date': event_date,
             'event_location': event_location,
-            'time_text': time_text
+            'time_text': time_text,
+            'maps_button': maps_button
         }
         
         return template_loader.render_email_template(
@@ -675,7 +817,8 @@ class EmailService:
         event_location: str,
         registration_id: Optional[str] = None,
         requires_payment: bool = False,
-        is_free_registration: bool = False
+        is_free_registration: bool = False,
+        maps_url: Optional[str] = None
     ) -> str:
         """Create plain text content for registration confirmation email."""
         registration_status_text = (
@@ -700,6 +843,8 @@ class EmailService:
             else ""
         )
         
+        maps_text = f"- Location Map: {maps_url}\n" if maps_url else ""
+        
         return f"""
 Registration Confirmed - {event_title}
 
@@ -711,7 +856,7 @@ EVENT DETAILS:
 - Event: {event_title}
 - Date: {event_date}
 - Location: {event_location}
-{f'- Registration ID: {registration_id}' if registration_id else ''}
+{maps_text}{f'- Registration ID: {registration_id}' if registration_id else ''}
 {registration_status_text}
 {payment_text}
 WHAT'S NEXT:
@@ -719,8 +864,8 @@ WHAT'S NEXT:
 
 If you have any questions, feel free to contact us.
 
-Best regards,
-The GDG Davao Team
+Googleyness,
+Google Developer Groups - Davao
 
 ---
 This email was sent to {user_name} for their registration to {event_title}.
@@ -764,19 +909,23 @@ This email was sent to {user_name} for their registration to {event_title}.
             )
         else:
             status_messages = {
-                'approved': 'Payment Approved!',
+                'approved': 'Registration Approved!',
                 'rejected': 'Payment Rejected',
                 'pending': 'Payment Pending'
             }
-            message = status_messages.get(status, 'Payment Update')
-            intro_line = f"We have an update regarding your payment for {event_title}."
+            message = status_messages.get(status, 'Registration Update')
+            intro_line = (
+                f"Great news — your payment has been verified and your registration for {event_title} has been approved!"
+                if status == 'approved'
+                else f"We have an update regarding your payment for {event_title}."
+            )
             next_steps = {
                 'approved': "Your registration is confirmed and you're all set for the event!",
                 'rejected': "Please check your payment details and try again.",
                 'pending': "Complete your payment to secure your spot at the event."
             }
-            contact_line = "If you have any questions about your payment, please contact us."
-            subject_label = "Payment update"
+            contact_line = "If you have any questions about your registration or payment, please contact us."
+            subject_label = "Registration approved" if status == 'approved' else "Payment update"
         
         instructions_text = f"\nPAYMENT INSTRUCTIONS:\n{payment_instructions}\n" if payment_instructions and status == 'pending' else ""
         
@@ -796,8 +945,8 @@ NEXT STEPS:
 
 {contact_line}
 
-Best regards,
-The GDG Davao Team
+Googleyness,
+Google Developer Groups - Davao
 
 ---
 This email was sent to {user_name} regarding their registration for {event_title}.
@@ -830,8 +979,8 @@ CERTIFICATE DETAILS:
 
 Thank you for participating in our event. We hope you had a great experience!
 
-Best regards,
-The GDG Davao Team
+Googleyness,
+Google Developer Groups - Davao
 
 ---
 This certificate was generated for {user_name} for their participation in {event_title}.
@@ -844,7 +993,8 @@ This certificate was generated for {user_name} for their participation in {event
         event_title: str,
         event_date: str,
         event_location: str,
-        reminder_type: str
+        reminder_type: str,
+        maps_url: Optional[str] = None
     ) -> str:
         """Create plain text content for event reminder email."""
         
@@ -855,6 +1005,7 @@ This certificate was generated for {user_name} for their participation in {event
         }
         
         time_text = reminder_times.get(reminder_type, "soon")
+        maps_text = f"- Location Map: {maps_url}\n" if maps_url else ""
         
         return f"""
 Event Reminder - {event_title}
@@ -867,6 +1018,7 @@ EVENT DETAILS:
 - Event: {event_title}
 - Date & Time: {event_date}
 - Location: {event_location}
+{maps_text}
 
 REMINDER CHECKLIST:
 - Plan your route to the venue
@@ -877,8 +1029,8 @@ REMINDER CHECKLIST:
 
 We're excited to see you there!
 
-Best regards,
-The GDG Davao Team
+Googleyness,
+Google Developer Groups - Davao
 
 ---
 This reminder was sent to {user_name} for {event_title}.
@@ -914,8 +1066,8 @@ WHAT WE'D LOVE TO KNOW:
 
 Your feedback will help us make our next events even better!
 
-Best regards,
-The GDG Davao Team
+Googleyness,
+Google Developer Groups - Davao
 
 ---
 This feedback request was sent to {user_name} for {event_title}.

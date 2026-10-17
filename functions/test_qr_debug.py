@@ -29,11 +29,7 @@ def test_qr_generation():
         qr.make(fit=True)
         
         # Generate image
-        img = qr.make_image(fill_color="black", back_color="white")
-        
-        # Convert to RGB if needed
-        if img.mode != 'RGB':
-            img = img.convert('RGB')
+        img: Image.Image = qr.make_image(fill_color="black", back_color="white").convert('RGB')
         
         # Save with optimization
         buffer = BytesIO()

@@ -21,7 +21,6 @@ TeamApo Hub utilizes a NoSQL data architecture powered by **Google Cloud Firesto
 ```mermaid
 erDiagram
     USERS ||--o{ EVENTS : "organizes"
-    USERS ||--o{ NOTIFICATIONS : "receives"
     USERS ||--o{ ACTIVITY_LOGS : "triggers"
     
     EVENTS ||--o{ REGISTRATIONS : "has"
@@ -54,13 +53,15 @@ Stores administrative and organizer accounts. Attendee accounts are deliberately
 | `uid` | `string` | Yes | - | Firebase Authentication user identifier. |
 | `email` | `string` | Yes | - | Valid corporate/personal email (`.*@.*[.].*`). |
 | `displayName` | `string` | Yes | - | Full name of the organizer or admin. |
-| `role` | `string` | Yes | `'organizer'` | Role enum: `'admin'` \| `'organizer'`. |
+| `role` | `string` | Yes | `'organizer'` | Role enum: `'admin'` \| `'organizer'`. Enforced by `firestore.rules` on create, and pinned against change by the self-service update branch. |
+| `isActive` | `boolean` | Yes | - | Whether the account may act. **Not optional in practice.** `isAdmin()` and `isOrganizer()` in both `firestore.rules` and `storage.rules` read `.data.isActive == true`, so a document without it fails *every* rules evaluation with "Property isActive is undefined" rather than merely denying. Owners cannot change it: the self-service update branch pins `isActive` to its existing value, so only an admin may suspend or reactivate. `firestore.rules` grants `delete: if isAdmin()` to any admin, so suspension - not deletion - is how access is withdrawn. |
 | `photoURL` | `string` | No | - | Storage URL or Google profile avatar URL. |
 | `phoneNumber` | `string` | No | - | Contact phone number. |
 | `organization` | `string` | No | - | Organization/company affiliation. |
 | `bio` | `string` | No | - | Professional biography or summary. |
 | `skills` | `array<string>` | No | `[]` | List of technical skill tags. |
 | `socialLinks` | `map` | No | `{}` | Social links (`github`, `linkedin`, `twitter`, `website`). |
+| `permissions` | `map` | No | `DEFAULT_ORGANIZER_PERMISSIONS` | Fine-grained functional permissions for organizers (Hybrid RBAC + ABPAC). Defines `events` (`canCreate`, `canUpdate`, `canDelete`), `attendees` (`canRead`, `canUpdate`, `canDelete`, `canExport`), `checkin` (`canCheckIn`), `payments` (`canVerify`), `certificates` (`canManage`), and `feedback` (`canRead`). Admin accounts ignore this field and retain full unrestricted capabilities across the platform. |
 | `createdAt` | `timestamp` | Yes | `serverTimestamp()` | Timestamp of account registration. |
 | `updatedAt` | `timestamp` | Yes | `serverTimestamp()` | Timestamp of last profile modification. |
 
@@ -138,7 +139,8 @@ Captures attendee registrations for specific events.
 | `paymentLinkToken` | `string` | No | - | Cryptographic token for one-time payment portal. |
 | `paymentLinkExpiresAt` | `timestamp`| No | - | Expiration timestamp for payment session. |
 | `paymentLinkStatus` | `string` | No | `'active'` | Enum: `'active'`, `'consumed'`, `'expired'`. |
-| `attendanceStatus` | `string` | Yes | `'registered'` | Enum: `'registered'`, `'confirmed'`, `'checked-in'`, `'no-show'`, `'cancelled'`. |
+| `attendanceStatus` | `string` | Yes | `'registered'` | Enum: `'registered'`, `'confirmed'`, `'checked-in'`, `'no-show'`, `'pending'`, `'not_attended'`, `'cancelled'`. |
+| `organizerUid` | `string` | Yes | — | Owning organizer's uid, denormalized from the event. Drives per-event access scoping in `firestore.rules` (Data Privacy Act 2012). Backfill with `bun run firebase:backfill-organizer-uid`. |
 | `checkInTime` | `timestamp` | No | - | Timestamp when attendee was scanned on-site. |
 | `feedbackSubmitted` | `boolean` | Yes | `false` | Flag indicating post-event feedback survey completion. |
 | `feedbackRequestSent` | `boolean` | Yes | `false` | Flag indicating feedback invitation email sent. |
@@ -174,7 +176,7 @@ Publicly verifiable digital credentials issued to attendees who attended and sub
 | `eventDate` | `string` | Yes | - | Human-readable event date string. |
 | `completionDate` | `timestamp` | Yes | `serverTimestamp()` | Date requirement satisfied. |
 | `certificateUrl` | `string` | Yes | - | Cloud Storage download URL for rendered PDF/PNG. |
-| `verificationUrl` | `string` | Yes | - | Public verification URL (`events.gdgdavao.com/verify/{code}`). |
+| `verificationUrl` | `string` | Yes | - | Public verification URL (`apohub.gdgdavao.org/verify/{code}`). |
 | `isVerified` | `boolean` | Yes | `true` | Credential validity status. |
 | `templateId` | `string` | Yes | - | Reference to `certificateTemplates/{templateId}`. |
 | `metadata` | `map` | No | `{}` | Key-value metadata: `{ eventDuration, skills, topics }`. |
@@ -320,27 +322,7 @@ Pre-aggregated rollups and metrics calculated per event to power real-time dashb
 
 ---
 
-### 3.11 `notifications`
-In-app alerts and notifications displayed in organizer and administrator notification panels.
-
-* **Document ID**: Auto-generated ID (`notificationId`)
-* **Security**: Only the user whose UID matches `userId` can read, update, or delete. System / anonymous triggers can create notifications.
-
-| Field | Type | Required | Description |
-| :--- | :--- | :---: | :--- |
-| `id` | `string` | Yes | Notification ID. |
-| `userId` | `string` | Yes | Target admin/organizer UID. |
-| `type` | `string` | Yes | Notification type (e.g. `'admin_pending_attendee'`, `'admin_payment_verified'`). |
-| `title` | `string` | Yes | Short headline. |
-| `message` | `string` | Yes | Detailed body message. |
-| `data` | `map` | No | Contextual metadata payload (e.g. `{ eventId, registrationId }`). |
-| `isRead` | `boolean` | Yes | Read flag (`false` upon creation). |
-| `isEmailSent` | `boolean` | Yes | Whether mirrored notification email was dispatched. |
-| `createdAt` | `timestamp` | Yes | Timestamp. |
-
----
-
-### 3.12 `system`
+### 3.11 `system`
 Global system configuration documents, feature flags, and platform-wide constants.
 
 * **Document ID**: Config category name (e.g. `general`, `integrations`, `maintenance`)
@@ -453,8 +435,9 @@ The following composite indexes are deployed via [firestore.indexes.json](../fir
 
 ### Collection Group: `registrations`
 1. `(eventId ASC, registrationDate DESC)` — Organizer attendee roster sorted chronologically.
-2. `(eventId ASC, paymentStatus ASC, registrationDate DESC)` — Filter registrations by payment state.
-3. `(eventId ASC, attendanceStatus ASC)` — Attendance dashboard & check-in filtering.
+2. `(organizerUid ASC, registrationDate DESC)` — Organizer-scoped attendee list (see §Registrations).
+3. `(eventId ASC, paymentStatus ASC, registrationDate DESC)` — Filter registrations by payment state.
+4. `(eventId ASC, attendanceStatus ASC)` — Attendance dashboard & check-in filtering.
 
 ### Collection Group: `paymentProofs`
 1. `(verificationStatus ASC, submittedAt DESC)` — Organizer pending payment verification queue.
@@ -467,10 +450,6 @@ The following composite indexes are deployed via [firestore.indexes.json](../fir
 ### Collection Group: `activity_logs`
 1. `(type ASC, timestamp DESC)` — Filter logs by event/action type.
 2. `(userId ASC, timestamp DESC)` — Filter logs by triggering user.
-
-### Collection Group: `notifications`
-1. `(userId ASC, createdAt DESC)` — User notification feed.
-2. `(userId ASC, type ASC, createdAt DESC)` — Categorized user notifications.
 
 ---
 

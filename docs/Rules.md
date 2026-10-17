@@ -32,10 +32,57 @@ flowchart TD
     AuthCheck -- Yes --> UserDoc[Lookup /users/request.auth.uid]
     
     UserDoc --> RoleCheck{User Role in Firestore}
-    RoleCheck -- role == 'admin' --> AdminPerms[Full Administrative Access]
-    RoleCheck -- role == 'organizer' --> OrgPerms[Organizer Access (Scoped to Own Events)]
+    RoleCheck -- role == 'admin' --> AdminPerms[Full Administrative Access: RBAC]
+    RoleCheck -- role == 'organizer' --> OrgPerms[Organizer Access: ABPAC via users/uid.permissions & Ownership]
     RoleCheck -- Not found / Other --> Deny[Default Deny]
 ```
+
+### 2.0 Hybrid RBAC + ABPAC Architecture & Client-Side CASL Alignment
+
+TeamApo Hub implements a **Hybrid RBAC (Role-Based Access Control) + ABPAC (Attribute-Based Policy Access Control)** authorization architecture:
+1. **Unrestricted Admin (RBAC)**: The `admin` role maintains full platform-wide access across all collections, subcollections, routes, and cloud functions.
+2. **Granular Organizer Capabilities (ABPAC)**: Organizers operate under fine-grained domain permissions stored in `users/{userId}.permissions` (`events`, `attendees`, `checkin`, `payments`, `certificates`, `feedback`) that are evaluated in tandem with document ownership attributes (`organizer.uid == auth.uid` or `organizerUid == auth.uid`).
+3. **Resource Lifecycle Constraints (ABAC)**: Completed or cancelled events (`status in ['completed', 'cancelled']`) are frozen from updates and subcollection modifications for non-administrators. Force-deletion of events containing active registrations is reserved for administrators.
+4. **Dual-Layer Synchronization**: `src/auth/ability.ts` builds a CASL ability from the signed-in user's profile and permissions, and `RequireAbility` uses it to decide what to render. **`firestore.rules` is the authoritative security boundary; CASL is the client-side UX alignment layer.** Whenever a rule clause changes, the matching ability rule must change with it.
+
+The table below defines the strict 1:1 contract between CASL and `firestore.rules`:
+
+| CASL rule | Mirrors |
+| :--- | :--- |
+| absent — no profile, `isActive !== true`, or an unrecognised role | `isAdmin()` / `isOrganizer()` requiring `isActive == true`. Fail-closed at every branch. |
+| `read` on `Event`, `Registration`, `Certificate`, `PaymentProof`, `Feedback` (unconditioned) | Reaching the workspace at all. Area access gated by granular functional permissions (`attendees.canRead`, `certificates.canManage`, `payments.canVerify`, `feedback.canRead`). |
+| `read 'all'` | `allow list: if isAdmin()` and the unscoped `getAllEvents()` / `getUsers()` reads. Admin only. |
+| `manage Event` where `organizer.uid == uid` and active lifecycle | Granted only if both `events.canUpdate !== false` and `events.canDelete === true` on active events (`status not in ['completed', 'cancelled']`). |
+| `update Event` where `organizer.uid == uid` and active lifecycle | `ownsEvent(eventId) && hasPerm('events', 'canUpdate') && !(resource.data.status in ['completed', 'cancelled'])`. Completed/cancelled events are frozen from organizer edits. |
+| `delete Event` where `organizer.uid == uid` | `ownsEvent(eventId) && hasPerm('events', 'canDelete')`. Client UI also prevents non-admins from force-deleting events with existing attendee registrations. |
+| `update` on `Registration` where `organizerUid == uid` | `ownsDocByEventId(data) && hasPerm('attendees', 'canUpdate')` |
+| `delete` on `Registration` where `organizerUid == uid` | `ownsDocByEventId(data) && hasPerm('attendees', 'canDelete')` |
+| `export` on `Registration` | UI gating on `attendees.canExport !== false` for attendee CSV and email log downloads. |
+| `checkin` on `Registration` where `organizerUid == uid` | `attendees.canUpdate !== false && checkin.canCheckIn !== false` for QR scanning and manual check-ins. |
+| `update` on `Certificate` where `organizerUid == uid` | `ownsDocByEventId(data) && hasPerm('certificates', 'canManage')` |
+| `update`/`delete` on `PaymentProof` where `organizerUid == uid` | `ownsEvent(data.eventId) && hasPerm('payments', 'canVerify')` |
+| `create Event` | `allow create: if isAdmin() \|\| (isOrganizer() && hasPerm('events', 'canCreate') && request.resource.data.organizer.uid == request.auth.uid)`. |
+| `read`/`create User`, `update User` where `uid != me` | `match /users/{userId}` |
+| `delete User` where `uid != me` and `role != 'admin'` | **Stricter than the rules.** `firestore.rules` says `allow delete: if isAdmin()` with neither restriction. See §4.4. |
+| `functions/main.py` `require_elevated` / `require_admin` | `isAdmin() \|\| ownsEvent(eventId)`, plus the `isActive == true` check the callable layer used to omit |
+
+Three CASL behaviours the ability depends on, all pinned by
+`tests/unit/ability.test.ts`:
+
+1. **There is no negation.** A rule whose conditions fail does not *deny*, it
+   simply does not match, and evaluation continues to the next rule. A
+   conditional rule can narrow a subject, never a broader grant of that same
+   subject. Admins are therefore granted `read 'all'` plus an explicit
+   per-subject `manage` list, never a blanket `manage 'all'` — a blanket grant
+   would silently void "never delete yourself, never delete another admin".
+2. **Conditions are ignored, not failed, on a subject type.** `can('manage',
+   'Event')` answers true for an organizer despite the ownership condition, so a
+   conditional verb can never be a route gate.
+3. **Plain objects carry no subject.** CASL reads the constructor name, which
+   for an object literal is `"Object"`, so every entity check goes through the
+   `asEvent` / `asUser` / … helpers. They are explicit functions rather than an
+   automatic resolver because sniffing a subject out of field names would make a
+   mis-typed entity silently match the wrong rule.
 
 ### 2.1 Firestore Helper Functions
 
@@ -110,7 +157,7 @@ function isValidDocumentType() {
 | `/events/{eventId}` | Public | Public | Organizer / Admin | Organizer / Admin / Restricted Anonymous | Organizer / Admin | Anonymous updates restricted strictly to `['ticketTypes', 'currentAttendees', 'promoCodes', 'updatedAt']`. |
 | `/events/{id}/forms/{formId}` | Public | Public | Event Organizer / Admin | Event Organizer / Admin | Event Organizer / Admin | Scoped to parent event owner (`event.organizer.uid == request.auth.uid`). |
 | `/events/{id}/config/{configId}` | Organizer / Admin | Organizer / Admin | Event Organizer / Admin | Event Organizer / Admin | Event Organizer / Admin | Protected configuration settings. |
-| `/registrations/{regId}` | Organizer / Admin | Organizer / Admin / Trusted Function | Public (Anonymous, validated pending only) | Organizer / Admin / Trusted Function | Admin / Organizer | Payment-link reads and anonymous state transitions must use callable functions; direct client reads are denied. |
+| `/registrations/{regId}` | Organizer / Admin | Organizer / Admin / Trusted Function | Organizer / Admin (Trusted Function for Anonymous) | Organizer / Admin / Trusted Function | Admin / Organizer | Payment-link reads and anonymous state transitions must use callable functions; direct unauthenticated client creates/reads/writes are denied. |
 | `/certificateTemplates/{id}` | Public | Public | Organizer / Admin | Organizer / Admin | Organizer / Admin | Public read enables client-side certificate dynamic preview and rendering. |
 | `/certificates/{certId}` | Public | Public | Public / Function | Restricted Anonymous / Auth | Authenticated | Anonymous create requires `eventId`, `registrationId`, `verificationCode`, and `recipientName`. Anonymous update strictly restricted to incrementing `verificationCount`. |
 | `/feedbackTokens/{tokenId}` | **Denied** | **Denied** | **Denied** | **Denied** | **Denied** | **100% Locked**. Only Cloud Functions with Firebase Admin SDK can read/write tokens. Prevents attendee enumeration. |
@@ -118,7 +165,6 @@ function isValidDocumentType() {
 | `/activity_logs/{logId}` | Authenticated | Authenticated | Authenticated | **Denied** | Authenticated | Immutable audit trail. |
 | `/event_analytics/{id}` | Authenticated | Authenticated | Authenticated | Authenticated | Authenticated | Admin/organizer analytics rollups. |
 | `/paymentProofs/{proofId}` | Event Admin / Organizer | Event Admin / Organizer | Admin / Organizer / Trusted Function | Event Admin / Organizer | Event Admin / Organizer | Direct anonymous reads and creates are denied; proof submission must use a trusted function. |
-| `/notifications/{notifId}` | Recipient | Recipient | Public / System | Recipient | Recipient | User can only read/mutate their own notifications (`request.auth.uid == resource.data.userId`). |
 | `/system/{docId}` | Authenticated | Authenticated | Authenticated | Authenticated | Authenticated | Platform-wide operational configs. |
 | `/{document=**}` | **Denied** | **Denied** | **Denied** | **Denied** | **Denied** | Catch-all default deny. |
 
@@ -129,15 +175,9 @@ function isValidDocumentType() {
 ### 4.1 Mass Assignment & Field Tampering
 * **Threat**: A malicious attendee intercepts the registration request and attempts to set `totalAmount = 0`, `paymentStatus = 'paid'`, or `attendanceStatus = 'checked-in'`.
 * **Mitigation**: 
-   1. Registrations are initialized with `paymentStatus: 'pending'` and validated against a strict anonymous-create schema.
-  2. For anonymous updates on `/registrations/{registrationId}`, the rules enforce:
-     ```javascript
-     allow update: if isAuthenticated() || 
-       (resource.data.paymentStatus == 'pending' && 
-        request.resource.data.paymentStatus in ['pending', 'processing']) ||
-       (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['feedbackSubmitted', 'feedbackId', 'updatedAt']));
-     ```
-   3. Attendees cannot mark themselves as `paid` or `checked-in`. Check-ins, payment transitions, and inventory changes can only be executed by trusted Functions or authenticated organizers.
+   1. Unauthenticated client `create` operations on `/registrations` are completely denied in `firestore.rules`.
+   2. All anonymous registrations must pass through the `createAnonymousRegistration` callable Cloud Function, which runs an atomic Firestore transaction to verify published status, check ticket inventory, calculate official ticket pricing, prevent duplicate email registrations, and initialize tickets with `paymentStatus: 'pending'` and `attendanceStatus: 'pending'`.
+   3. Direct client updates cannot mark registrations as `paid` or `checked-in`. Check-ins, payment verification, and attendee management are restricted strictly to authenticated event organizers and administrators.
 
 ### 4.2 Ticket Inventory Overwrite
 * **Threat**: An anonymous registrant tampers with other event properties (e.g. changing event title, dates, or prices) when decrementing ticket stock.
@@ -172,6 +212,26 @@ function isValidDocumentType() {
   }
   ```
   Non-admin users cannot create accounts or promote accounts to admin. Organizers cannot change their assigned roles.
+
+* **Known gap — the superuser tier is enforced twice, and only once server-side.**
+  `AdminUsersPage` lets one administrator (identified by `VITE_SUPERUSER_EMAIL`,
+  baked into the browser bundle at build time) delete other administrators'
+  accounts, and hides the button for everyone else. That was the entire
+  enforcement: `firestore.rules` says `allow delete: if isAdmin()`, with no
+  "not another admin" clause and no superuser concept, so the disabled button was
+  the only thing standing between an admin and a peer's account.
+  The rule now lives in two places that must agree:
+  - **Client** — the ability's `delete User` condition, which only decides what
+    the UI offers. Readable by anyone with devtools.
+  - **Server** — the `deleteUser` callable, which reads `SUPERUSER_EMAIL` from
+    its own environment and refuses otherwise. This is the half that holds.
+
+  Deletion goes through that callable rather than a direct `deleteDoc`, because
+  removing the `users` document alone leaves the Firebase Auth account alive, and
+  an orphaned account can still sign in. `SUPERUSER_EMAIL` is currently absent
+  from `functions/.env.example` (the `.env.*` glob in `.gitignore` excludes it),
+  so a deployment without it has no superuser tier at all and `deleteUser` will
+  refuse to remove any administrator.
 
 ---
 
@@ -258,7 +318,6 @@ def checkInAttendee(req: https_fn.CallableRequest) -> Dict[str, Any]:
 ### 6.3 Environment Variables & Secrets Handling
 Sensitive third-party credentials are kept outside client bundles and git history:
 * `RESEND_API_KEY`: Kept on server runtime for transactional email dispatch.
-* `GEMINI_API`: Kept on server or loaded through secured environment variables for AI generation.
 
 ---
 
@@ -351,41 +410,36 @@ event.ticketTypes[0].currentSold += 1;
 ### 9.1 Functional Components & Props
 All components must be functional components with typed props. Use destructuring with sensible defaults.
 
-```typescript
-interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'primary' | 'secondary' | 'danger' | 'ghost';
-  size?: 'sm' | 'md' | 'lg';
-  isLoading?: boolean;
-  leftIcon?: React.ReactNode;
-}
+**Do not re-declare a shared primitive's API in docs.** Props interfaces in this file were
+historically illustrative and drifted from the real components, which cost readers a
+misleading example. Refer to the component file for its actual props and use the shared
+`Button` rather than reimplementing it.
 
-export const Button: React.FC<ButtonProps> = ({
-  children,
-  variant = 'primary',
-  size = 'md',
-  isLoading = false,
-  leftIcon,
-  className = '',
-  disabled,
-  ...rest
-}) => {
-  return (
-    <button
-      disabled={disabled || isLoading}
-      className={clsx(
-        'inline-flex items-center justify-center font-medium rounded-lg transition-colors focus:outline-none focus:ring-2',
-        sizeClasses[size],
-        variantClasses[variant],
-        className
-      )}
-      {...rest}
-    >
-      {isLoading ? <LoadingSpinner size="sm" /> : leftIcon}
-      <span>{children}</span>
-    </button>
-  );
-};
+The current `Button` contract (`src/components/UI/Button.tsx`) is:
+
+| Prop | Type | Notes |
+|---|---|---|
+| `variant` | `'filled' \| 'tonal' \| 'outlined' \| 'text' \| 'elevated' \| 'danger'` | Defaults to `'filled'`. `'danger'` is not a Material variant; it exists because irreversible actions must not look like `filled` |
+| `size` | `'sm' \| 'md' \| 'lg'` | Defaults to `'md'`. **Every size is 48px tall**; only horizontal padding and type size change |
+| `loading` | `boolean` | Disables the button, sets `aria-busy`, swaps the label for a spinner in the same grid cell |
+| `icon` | `ReactNode` | Decorative leading icon. `aria-hidden` |
+| `iconTrailing` | `ReactNode` | Decorative trailing icon. `aria-hidden` |
+| `fullWidth` | `boolean` | Adds `w-full` |
+
+Note the names: `loading`, not `isLoading`; `icon` / `iconTrailing`, not `leftIcon`. The
+component also defaults `type` to `'button'` and forwards a ref.
+
+```typescript
+// Correct usage of the shared primitive.
+<Button variant="filled" loading={isSaving} icon={<PlusIcon />}>
+  Create event
+</Button>
+
+// Wrong: these props do not exist on the shared Button. Use it instead.
+<Button variant="primary" isLoading leftIcon={<PlusIcon />} />
 ```
+
+See [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) for the geometry and state-layer rules the primitive enforces.
 
 ### 9.2 Hook Ordering & Conventions
 Group component logic cleanly in standard order:
@@ -447,21 +501,61 @@ export const AttendeeCheckInCard: React.FC<{ registrationId: string }> = ({ regi
 
 ## 10. Styling & Design System Rules (Tailwind CSS)
 
-### 10.1 Brand Color Guidelines
-Adhere to the official Google Developer Groups palette:
-* **Primary Blue**: `bg-blue-600` (`#1a73e8` / `#4285f4`) — Primary actions, active navigation, links.
-* **Success Green**: `bg-green-600` (`#34a853`) — Confirmed tickets, valid certificates, success states.
-* **Warning Yellow**: `bg-amber-500` (`#fbbc04`) — Pending payments, review alerts, warnings.
-* **Danger Red**: `bg-red-600` (`#ea4335`) — Rejections, cancellation states, destructive buttons.
-* **Neutrals**: `bg-gray-50` (page backgrounds), `bg-white` (cards), `text-gray-900` (headings), `text-gray-600` (body).
+### 10.1 Colour Role Guidelines
+
+**Do not reference brand names in component code.** Reference the role a colour plays. The
+authoritative definitions, derivations, and contrast ratios live in
+[DESIGN.md section 2](../DESIGN.md#2-colors); spacing, control geometry, state layer,
+motion, and browser floor live in [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md).
+
+The Google brand hexes are **not** the fills. Each one fails WCAG AA against white text at
+16px, and every button label in this product is 16px:
+
+| Brand hex | With white text | Verdict |
+| --- | --- | --- |
+| `#4285f4` | 3.56:1 | Fails AA |
+| `#ea4335` | 3.92:1 | Fails AA |
+| `#34a853` | 3.06:1 | Fails AA |
+| `#fbbc04` | 1.71:1 | Fails badly |
+
+Fills use tone 40 of each ramp instead. `bg-blue-600` (`#1a73e8`) is not a token in this
+system and does not clear AA either.
+
+Use these role tokens:
+
+| Role | Fill | On-fill | Use for |
+|---|---|---|---|
+| Primary | `bg-primary` (`#0b57d0`, 6.39:1) | `text-on-primary` | Primary actions, active navigation, links, focus rings |
+| Error | `bg-error` (`#b3261e`, 6.54:1) | `text-on-error` | Rejections, destructive actions |
+| Success | `bg-success` (`#186a3b`, 6.64:1) | `text-on-success` | Confirmed tickets, valid certificates |
+| Warning | container pair `bg-warning-container` (`#fce8b2`) | `text-on-warning-container` (`#3d2700`, 11.64:1) | Pending payments, review alerts |
+| Surface | `bg-surface` (`#fbfcfd`) | `text-on-surface` (`#191c20`) | Page ground, cards |
+| Nested surface | `bg-surface-container-low` to `bg-surface-container-highest` | `text-on-surface` | Nested groupings, one tone at a time |
+| Metadata | | `text-on-surface-variant` (`#4a5157`, 7.85:1) | Helper copy, timestamps |
+| State border | | `border-outline` (`#747b82`, 4.17:1) | Borders carrying state, focus rings |
+| Decorative hairline | | `border-outline-variant` (`#c4c9cf`) | Dividers only. Never a boundary whose absence changes meaning |
+
+`tests/unit/designTokens.test.ts` asserts every ratio in that table against
+`tailwind.config.js`, so a token edit that breaks contrast fails the build.
+
+The legacy tonal ramps (`gray-*`, `blue-*`, `red-*`, `green-*`) still exist for the
+in-progress codemod. **New code must not reach for them.**
 
 ### 10.2 Class Grouping Order
-Follow a consistent ordering pattern for Tailwind utility classes:
+Follow a consistent ordering pattern for Tailwind utility classes, using role tokens:
 1. **Layout & Positioning**: `relative`, `absolute`, `flex`, `grid`, `items-center`, `justify-between`
-2. **Box Model**: `w-full`, `max-w-lg`, `p-4`, `m-2`, `space-y-4`
-3. **Typography**: `text-sm`, `font-semibold`, `text-gray-800`, `leading-tight`
-4. **Visuals & Backgrounds**: `bg-white`, `border`, `border-gray-200`, `rounded-xl`, `shadow-sm`
-5. **Interactive & Pseudo-classes**: `hover:bg-blue-700`, `focus:ring-2`, `disabled:opacity-50`, `transition-colors`
+2. **Box Model**: `w-full`, `max-w-lg`, `p-4`, `gap-md`, `min-h-control`, `px-control-x`
+3. **Typography**: `text-sm`, `font-medium`, `text-on-surface`, `leading-tight`
+4. **Visuals & Backgrounds**: `bg-surface`, `border`, `border-outline-variant`, `rounded-xl`, `shadow-elevation-1`
+5. **Interactive & Pseudo-classes**: `md-state-layer`, `focus-visible:ring-2`, `disabled:opacity-38`, `transition-colors`
+
+Prefer `gap-*` on a flex or grid parent over margins on the children: see
+[DESIGN_SYSTEM.md section 2.4](DESIGN_SYSTEM.md#24-gap-over-margins).
+
+**Never hand-roll hover or active states.** Add the `md-state-layer` class and let the
+state layer in `src/index.css` do it. Variant-specific `hover:bg-*` strings are only
+allowed inside `src/components/UI/`, which `tests/unit/designSystem.test.ts`
+enforces.
 
 ### 10.3 Mobile-First Responsiveness
 Always design for mobile viewports first, then enhance for desktop using responsive prefixes:
@@ -591,11 +685,17 @@ logger.warn('Token nearing expiration:', expiresAt);
 logger.error('Payment verification failed:', error);
 ```
 
-### 13.2 Toast Notifications UX
-Use `react-hot-toast` for user-facing feedback:
-* `toast.success('Action succeeded')`: Confirmations (e.g. "Ticket confirmed", "Check-in successful").
-* `toast.error('Helpful error message')`: Recoverable failures (e.g. "Invalid voucher code").
-* `toast.loading('Processing...')`: Asynchronous operations (e.g. "Uploading payment proof...").
+### 13.2 Toast Notifications UX & Design System
+Centralized notifications use `react-hot-toast` rendered through `<AppToaster />` from `@/components/UI`. Never create ad-hoc notification elements.
+
+- **Placement & Responsiveness**: Top-center with safe-area padding on mobile viewports (< 640px) with clearance for device notches; top-right on desktop (≥ 640px).
+- **Surface Styling**: Semantic Material 3 role tokens (`success-container`, `error-container`, `secondary-container`, `surface-container-high`). NO colored side-stripe borders (strictly banned).
+- **Dismiss & Interaction**: Interactive tap-to-dismiss plus dedicated close button (`min-h-control min-w-control`, 48px target). 4s timeout for success/info, 6s for errors to ensure readability.
+- **Copy Guidance**:
+  - `toast.success('Action completed.')`: Past-tense completions. One sentence. No emojis, no exclamation marks.
+  - `toast.error('Failed action. Recovery advice.')`: Actionable failures ending with next step.
+  - `toast.loading('Processing...')`: Active gerund operations.
+  - `toast('Informational notice.')`: Informational neutral notices (automatically styled with M3 secondary container and SVG info icon).
 
 ---
 
@@ -628,9 +728,8 @@ import { db } from '@/config/firebase';
 import { EventService } from '@/services/eventService';
 import { logger } from '@/utils/logger';
 
-// 4. UI Components
-import { Button } from '@/components/shared/UI/Button';
-import LoadingSpinner from '@/components/shared/UI/LoadingSpinner';
+// 4. UI Components — from the barrel, never by file path
+import { Button, LoadingSpinner } from '@/components/UI';
 
 // 5. Types and Interfaces
 import type { Event, TicketType } from '@/types';

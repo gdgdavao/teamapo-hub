@@ -109,6 +109,8 @@ const useSEO = ({
 
     // Handle shared routes
     switch (pathSegments[0]) {
+      case 'e':
+        return `Event Registration | ${baseTitle}`;
       case 'events':
         if (pathSegments[1] === 'create') {
           return `Create Event | ${baseTitle}`;

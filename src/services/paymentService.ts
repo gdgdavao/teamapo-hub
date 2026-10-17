@@ -1,7 +1,6 @@
 import { 
   collection, 
   doc, 
-  setDoc, 
   updateDoc, 
   getDoc, 
   getDocs, 
@@ -11,7 +10,8 @@ import {
   serverTimestamp,
   deleteDoc,
   Timestamp,
-  limit
+  limit,
+  QueryConstraint
 } from 'firebase/firestore';
 import { 
   ref, 
@@ -23,7 +23,7 @@ import { httpsCallable } from 'firebase/functions';
 import { db, storage, functions } from '../config/firebase';
 import { logger } from '../utils/logger';
 import { PaymentProof, PaymentDetails } from '../types';
-import { NotificationService } from './notificationService';
+import { AuditLogService } from './auditLogService';
 
 export interface PaymentVerificationData {
   id: string;
@@ -158,42 +158,6 @@ export class PaymentService {
   }
 
   /**
-   * Get all payment proofs for admin verification
-   */
-  static async getAllPaymentProofs(): Promise<PaymentVerificationData[]> {
-    try {
-      const proofsQuery = query(
-        collection(db, this.PAYMENT_PROOFS_COLLECTION),
-        orderBy('submittedAt', 'desc')
-      );
-      const snapshot = await getDocs(proofsQuery);
-      
-      return snapshot.docs.map(doc => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          registrationId: data.registrationId,
-          attendeeName: data.attendeeName,
-          attendeeEmail: data.attendeeEmail,
-          eventTitle: data.eventTitle,
-          eventDate: data.eventDate || new Date().toISOString(),
-          ticketPrice: data.ticketPrice,
-          proofImageUrl: data.proofImageUrl,
-          transactionId: data.transactionId,
-          submittedAt: data.submittedAt?.toDate?.()?.toISOString() || new Date().toISOString(),
-          verificationStatus: data.verificationStatus,
-          verifiedAt: data.verifiedAt?.toDate?.()?.toISOString(),
-          verifiedBy: data.verifiedBy,
-          notes: data.notes
-        } as PaymentVerificationData;
-      });
-    } catch (error) {
-      logger.error('Error fetching payment proofs:', error);
-      throw new Error('Failed to fetch payment proofs');
-    }
-  }
-
-  /**
    * Get payment proofs by status
    */
   static async getPaymentProofsByStatus(status: 'pending' | 'approved' | 'rejected'): Promise<PaymentVerificationData[]> {
@@ -231,14 +195,19 @@ export class PaymentService {
   }
 
   /**
-   * Verify payment proof (approve or reject)
+   * Verify payment proof (approve or reject).
+   *
+   * `notes` is deliberately absent from the write. That field belongs to the
+   * attendee — it is their "Additional Notes" from PaymentPage, stored when the
+   * proof is created (functions/main.py submitAnonymousPaymentProof). This
+   * method used to overwrite it with `notes || ''` on every verification, which
+   * silently destroyed whatever the attendee wrote.
    */
   static async verifyPaymentProof(
-    proofId: string, 
-    status: 'approved' | 'rejected', 
+    proofId: string,
+    status: 'approved' | 'rejected',
     verifierUid: string,
-    verifierName: string,
-    notes?: string
+    verifierName: string
   ): Promise<void> {
     try {
       // Update payment proof status
@@ -247,8 +216,7 @@ export class PaymentService {
         verificationStatus: status,
         verifiedAt: serverTimestamp(),
         verifiedBy: verifierName,
-        verifierUid: verifierUid,
-        notes: notes || ''
+        verifierUid: verifierUid
       });
 
       // Get the payment proof data to update registration
@@ -293,39 +261,22 @@ export class PaymentService {
           // Don't throw error for notification failure
         }
 
-        // Send notification to attendee about payment verification
-        try {
-          // Get the registration to find the user ID (if available)
-          const registrationRef = doc(db, this.REGISTRATIONS_COLLECTION, proofData.registrationId);
-          const registrationSnap = await getDoc(registrationRef);
-
-          if (registrationSnap.exists()) {
-            const registrationData = registrationSnap.data();
-            // If userId exists in registration, send them a notification
-            if (registrationData.userId) {
-              const notificationType = status === 'approved' ? 'payment_success' : 'event_update';
-              const title = status === 'approved' ? 'Payment Approved' : 'Payment Rejected';
-              const message = status === 'approved'
-                ? `Your payment for "${proofData.eventTitle}" has been approved!`
-                : `Your payment for "${proofData.eventTitle}" has been rejected. Please check your payment details.`;
-
-              await NotificationService.createNotification(
-                registrationData.userId,
-                notificationType,
-                title,
-                message,
-                {
-                  registrationId: proofData.registrationId,
-                  eventTitle: proofData.eventTitle,
-                  amount: proofData.ticketPrice,
-                  status: status
-                }
-              );
-            }
-          }
-        } catch (error) {
-          logger.warn('Failed to create payment verification notification:', error);
-        }
+        void AuditLogService.recordAuditLog({
+          category: 'financial',
+          action: status === 'approved' ? 'payment_approved' : 'payment_rejected',
+          target: {
+            type: 'payment_proof',
+            id: proofId,
+            label: proofData.attendeeName,
+          },
+          details: {
+            status,
+            verifierName,
+            verifierUid,
+            registrationId: proofData.registrationId,
+            eventTitle: proofData.eventTitle,
+          },
+        });
       }
     } catch (error) {
       logger.error('Error verifying payment proof:', error);
@@ -371,13 +322,22 @@ export class PaymentService {
   /**
    * Get the most recent payment proof for a registration
    */
-  static async getLatestPaymentProofByRegistrationId(registrationId: string): Promise<PaymentVerificationData | null> {
+  static async getLatestPaymentProofByRegistrationId(
+    registrationId: string,
+    eventId?: string
+  ): Promise<PaymentVerificationData | null> {
     try {
+      const constraints: QueryConstraint[] = [
+        where('registrationId', '==', registrationId),
+      ];
+      if (eventId) {
+        constraints.push(where('eventId', '==', eventId));
+      }
+      constraints.push(orderBy('submittedAt', 'desc'), limit(1));
+
       const proofsQuery = query(
         collection(db, this.PAYMENT_PROOFS_COLLECTION),
-        where('registrationId', '==', registrationId),
-        orderBy('submittedAt', 'desc'),
-        limit(1)
+        ...constraints
       );
       const snapshot = await getDocs(proofsQuery);
 
@@ -408,9 +368,15 @@ export class PaymentService {
         
         // Fallback: Get all proofs for this registration and sort client-side
         try {
+          const fallbackConstraints: QueryConstraint[] = [
+            where('registrationId', '==', registrationId),
+          ];
+          if (eventId) {
+            fallbackConstraints.push(where('eventId', '==', eventId));
+          }
           const fallbackQuery = query(
             collection(db, this.PAYMENT_PROOFS_COLLECTION),
-            where('registrationId', '==', registrationId)
+            ...fallbackConstraints
           );
           const fallbackSnapshot = await getDocs(fallbackQuery);
           
@@ -454,7 +420,7 @@ export class PaymentService {
   }
 
   /**
-   * Get payment statistics for admin dashboard
+   * Get payment statistics for the platform dashboard
    */
   static async getPaymentStats(): Promise<{
     totalProofs: number;
@@ -467,7 +433,7 @@ export class PaymentService {
       // Get all payment proofs
       const proofsSnapshot = await getDocs(collection(db, this.PAYMENT_PROOFS_COLLECTION));
       
-      let totalProofs = proofsSnapshot.size;
+      const totalProofs = proofsSnapshot.size;
       let pendingProofs = 0;
       let approvedProofs = 0;
       let rejectedProofs = 0;
@@ -547,15 +513,14 @@ export class PaymentService {
    * Bulk verify payment proofs
    */
   static async bulkVerifyPaymentProofs(
-    proofIds: string[], 
+    proofIds: string[],
     status: 'approved' | 'rejected',
     verifierUid: string,
-    verifierName: string,
-    notes?: string
+    verifierName: string
   ): Promise<void> {
     try {
-      const verificationPromises = proofIds.map(proofId => 
-        this.verifyPaymentProof(proofId, status, verifierUid, verifierName, notes)
+      const verificationPromises = proofIds.map(proofId =>
+        this.verifyPaymentProof(proofId, status, verifierUid, verifierName)
       );
       
       await Promise.all(verificationPromises);
@@ -565,40 +530,5 @@ export class PaymentService {
     }
   }
 
-  /**
-   * Get payment proofs for a specific event
-   */
-  static async getPaymentProofsByEvent(eventId: string): Promise<PaymentVerificationData[]> {
-    try {
-      const proofsQuery = query(
-        collection(db, this.PAYMENT_PROOFS_COLLECTION),
-        where('eventId', '==', eventId),
-        orderBy('submittedAt', 'desc')
-      );
-      const snapshot = await getDocs(proofsQuery);
-      
-      return snapshot.docs.map(doc => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          registrationId: data.registrationId,
-          attendeeName: data.attendeeName,
-          attendeeEmail: data.attendeeEmail,
-          eventTitle: data.eventTitle,
-          eventDate: data.eventDate || new Date().toISOString(),
-          ticketPrice: data.ticketPrice,
-          proofImageUrl: data.proofImageUrl,
-          transactionId: data.transactionId,
-          submittedAt: data.submittedAt?.toDate?.()?.toISOString() || new Date().toISOString(),
-          verificationStatus: data.verificationStatus,
-          verifiedAt: data.verifiedAt?.toDate?.()?.toISOString(),
-          verifiedBy: data.verifiedBy,
-          notes: data.notes
-        } as PaymentVerificationData;
-      });
-    } catch (error) {
-      logger.error('Error fetching payment proofs by event:', error);
-      throw new Error('Failed to fetch payment proofs by event');
-    }
-  }
+
 }

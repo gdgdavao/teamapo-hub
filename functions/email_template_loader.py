@@ -136,19 +136,19 @@ class EmailTemplateLoader:
         """
         status_colors = {
             'approved': {
-                'bg_color': '#d4edda',
-                'border_color': '#c3e6cb',
-                'text_color': '#155724'
+                'bg_color': '#e6f4ea',
+                'border_color': '#ceead6',
+                'text_color': '#137333'
             },
             'rejected': {
-                'bg_color': '#f8d7da',
-                'border_color': '#f5c6cb',
-                'text_color': '#721c24'
+                'bg_color': '#fce8e6',
+                'border_color': '#fad2cf',
+                'text_color': '#c5221f'
             },
             'pending': {
-                'bg_color': '#fff3cd',
-                'border_color': '#ffeaa7',
-                'text_color': '#856404'
+                'bg_color': '#fef7e0',
+                'border_color': '#feefc3',
+                'text_color': '#b06000'
             }
         }
         
@@ -165,7 +165,7 @@ class EmailTemplateLoader:
             Status message
         """
         status_messages = {
-            'approved': 'Payment Approved!',
+            'approved': 'Registration Approved!',
             'rejected': 'Payment Rejected',
             'pending': 'Payment Pending'
         }

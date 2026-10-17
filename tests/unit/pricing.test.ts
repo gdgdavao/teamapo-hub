@@ -29,6 +29,15 @@ const activePromo: PromoCode = {
 // ─── calculateTicketPricing ───────────────────────────────────────────────────
 
 describe('calculateTicketPricing', () => {
+  it('defaults to quantity 1 when quantity is omitted', () => {
+    const result = calculateTicketPricing({ ticketType: baseTicket });
+    expect(result.originalPrice).toBe(500);
+    expect(result.currentPrice).toBe(500);
+    expect(result.totalAmount).toBe(500);
+    expect(result.discountAmount).toBe(0);
+    expect(result.promoApplied).toBe(false);
+  });
+
   it('computes correct total for quantity 2 at base price with no promo', () => {
     const result = calculateTicketPricing({ ticketType: baseTicket, quantity: 2 });
     expect(result.originalPrice).toBe(500);

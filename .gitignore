@@ -31,7 +31,8 @@ scripts/emulator-data/auth_export/config.json
 scripts/emulator-data/firestore_export/firestore_export.overall_export_metadata
 scripts/emulator-data/storage_export/buckets.json
 .env
-.cursor
+.cursor/*
+!.cursor/mcp.json
 .firebase
 *.cache
 .vercel
@@ -51,6 +52,15 @@ functions/qr_test_output.html
 *.p12
 *.pfx
 *service-account*.json
-.claude/
+.claude/*
+!.claude/mcp.json
 .impeccable/
 task.md
+session-*.md
+
+# PII exports — never commit
+certificate-emails-backup.json
+
+# AI Agent Interconnected Memory Map (can be bulky)
+.memory/
+memory/
