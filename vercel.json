@@ -9,7 +9,28 @@
       "status": 308,
       "dest": "/"
     },
+    {
+      "src": "^/e/([^/]+)/?$",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": "(?i).*(facebookexternalhit|facebookcatalog|facebookplatform|facebot|twitterbot|linkedinbot|discordbot|telegrambot|whatsapp|slackbot|applebot|googlebot|pinterest|bitlybot|skypeuripreview).*"
+        }
+      ],
+      "dest": "/api/event-meta?slug=$1"
+    },
+    {
+      "src": "^/events/([^/]+)/register/?$",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": "(?i).*(facebookexternalhit|facebookcatalog|facebookplatform|facebot|twitterbot|linkedinbot|discordbot|telegrambot|whatsapp|slackbot|applebot|googlebot|pinterest|bitlybot|skypeuripreview).*"
+        }
+      ],
+      "dest": "/api/event-meta?id=$1"
+    },
     { "src": "/(.*)", "dest": "/index.html" }
   ]
 }
-
