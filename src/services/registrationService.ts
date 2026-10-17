@@ -370,7 +370,7 @@ export class RegistrationService {
   }
 
   /**
-   * Register for an event (legacy method - now calls createPendingRegistration)
+   * Register for an event (legacy method - forwards to createPendingRegistration)
    */
   static async registerForEvent(registrationData: RegistrationData): Promise<{
     registrationId: string;
@@ -378,100 +378,7 @@ export class RegistrationService {
     qrCode: string;
     requiresPayment: boolean;
   }> {
-    try {
-      // Validate event and get pricing locally (bypassing functions for now)
-      const validation = await this.validateRegistrationLocally(registrationData);
-      
-      if (!validation.isValid) {
-        throw new Error(validation.message || validation.errors?.join(', ') || 'Registration validation failed');
-      }
-
-      // Generate registration ID
-      const registrationRef = doc(collection(db, this.REGISTRATIONS_COLLECTION));
-      const registrationId = registrationRef.id;
-
-      // Generate QR code
-      const qrCode = this.generateQRCode(registrationId);
-
-      // Determine payment status - force pending for manual approval flow
-      const requiresPayment = validation.pricing.currentPrice > 0;
-      const paymentStatus = 'pending';
-
-      // Create registration document
-      const registration: Omit<Registration, 'id'> = {
-        eventId: registrationData.eventId,
-        userId: '', // Anonymous registration
-        userDetails: registrationData.userDetails,
-        ticketTypeId: registrationData.ticketTypeId,
-        quantity: registrationData.quantity,
-        originalAmount: validation.pricing.originalPrice * registrationData.quantity,
-        discountAmount: validation.pricing.discountAmount * registrationData.quantity,
-        totalAmount: validation.pricing.currentPrice * registrationData.quantity,
-        currency: 'PHP', // Default currency
-        // Save promo code information from both sources
-        ...(validation.pricing.promoCode ? { promoCode: validation.pricing.promoCode } : {}),
-        ...(validation.pricing.promoCodeId ? { promoCodeId: validation.pricing.promoCodeId } : {}),
-        pricing: validation.pricing,
-        paymentStatus: paymentStatus as any,
-        attendanceStatus: 'registered',
-        feedbackSubmitted: false,
-        certificateIssued: false,
-        qrCode,
-        registrationDate: serverTimestamp() as any,
-        updatedAt: serverTimestamp() as any
-      };
-
-
-      // Add custom form responses if provided
-      if (registrationData.customResponses) {
-        (registration as any).customResponses = registrationData.customResponses;
-      }
-
-      // Save registration
-      await setDoc(registrationRef, registration);
-
-      // Update event attendee count
-      const eventRef = doc(db, this.EVENTS_COLLECTION, registrationData.eventId);
-      await updateDoc(eventRef, {
-        currentAttendees: increment(registrationData.quantity),
-        updatedAt: serverTimestamp()
-      });
-
-      await this.adjustTicketSales({
-        eventId: registrationData.eventId,
-        ticketTypeId: registrationData.ticketTypeId,
-        delta: registrationData.quantity
-      });
-
-      // Increment promo code usage if a promo code was applied
-      if (validation.pricing.promoCodeId) {
-        await this.incrementPromoCodeUsage(registrationData.eventId, validation.pricing.promoCodeId);
-      }
-
-      // Send confirmation email via Firebase Function
-      try {
-        const sendRegistrationEmail = httpsCallable(functions, 'sendConfirmationEmail');
-        await sendRegistrationEmail({
-          registrationId,
-          eventId: registrationData.eventId,
-          userEmail: registrationData.userDetails.email,
-          userName: registrationData.userDetails.name,
-          requiresPayment
-        });
-      } catch (error) {
-        logger.warn('Failed to send registration confirmation email:', error);
-      }
-
-      return {
-        registrationId,
-        pricing: validation.pricing,
-        qrCode,
-        requiresPayment
-      };
-    } catch (error) {
-      logger.error('Error registering for event:', error);
-      throw new Error('Failed to register for event');
-    }
+    return this.createPendingRegistration(registrationData);
   }
 
   /**

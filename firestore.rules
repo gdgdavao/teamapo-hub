@@ -47,31 +47,6 @@ service cloud.firestore {
     function canManageDocByEventId(data) {
       return isAdmin() || ownsDocByEventId(data);
     }
-    function validAnonymousRegistration() {
-      return request.resource.data.keys().hasOnly([
-        'eventId', 'userId', 'userDetails', 'ticketTypeId', 'quantity',
-        'originalAmount', 'discountAmount', 'totalAmount', 'currency', 'pricing',
-        'paymentStatus', 'attendanceStatus', 'feedbackSubmitted', 'certificateIssued',
-        'qrCode', 'registrationDate', 'updatedAt', 'paymentLinkToken',
-        'paymentLinkExpiresAt', 'paymentLinkStatus', 'promoCode', 'promoCodeId',
-        'customResponses'
-      ]) && request.resource.data.eventId is string &&
-      request.resource.data.userId == '' && request.resource.data.userDetails is map &&
-      request.resource.data.userDetails.name is string &&
-      request.resource.data.userDetails.email is string &&
-      isValidEmail(request.resource.data.userDetails.email) &&
-      request.resource.data.ticketTypeId is string && request.resource.data.quantity is int &&
-      request.resource.data.quantity > 0 && request.resource.data.quantity <= 10 &&
-      request.resource.data.paymentStatus == 'pending' &&
-      request.resource.data.attendanceStatus == 'pending' &&
-      request.resource.data.feedbackSubmitted == false &&
-      request.resource.data.certificateIssued == false &&
-      request.resource.data.qrCode is string && request.resource.data.registrationDate is timestamp &&
-      request.resource.data.updatedAt is timestamp && request.resource.data.paymentLinkToken is string &&
-      request.resource.data.paymentLinkToken.size() >= 32 &&
-      request.resource.data.paymentLinkExpiresAt is timestamp &&
-      request.resource.data.paymentLinkStatus == 'active';
-    }
 
     match /users/{userId} {
       allow read: if isAuthenticated() && (isAdmin() || isOwner(userId));
@@ -90,7 +65,12 @@ service cloud.firestore {
     match /events/{eventId} {
       allow read: if (resource.data.isPublished == true && resource.data.status in ['published', 'ongoing']) || canManageEvent(eventId);
       allow create: if isAdmin() || (isOrganizer() && hasPerm('events', 'canCreate') && request.resource.data.organizer.uid == request.auth.uid);
-      allow update: if isAdmin() || (ownsEvent(eventId) && hasPerm('events', 'canUpdate') && !(resource.data.status in ['completed', 'cancelled']));
+      allow update: if isAdmin() || (
+        ownsEvent(eventId) &&
+        hasPerm('events', 'canUpdate') &&
+        !(resource.data.status in ['completed', 'cancelled']) &&
+        request.resource.data.organizer.uid == resource.data.organizer.uid
+      );
       allow delete: if isAdmin() || (ownsEvent(eventId) && hasPerm('events', 'canDelete'));
       match /forms/{formId} {
         allow read: if get(/databases/$(database)/documents/events/$(eventId)).data.isPublished == true || canManageEvent(eventId);
@@ -104,10 +84,17 @@ service cloud.firestore {
 
     match /registrations/{registrationId} {
       allow read: if canManageDocByEventId(resource.data) && (isAdmin() || hasPerm('attendees', 'canRead'));
-      allow create: if (!isAuthenticated() && validAnonymousRegistration() &&
-        get(/databases/$(database)/documents/events/$(request.resource.data.eventId)).data.isPublished == true) ||
-        (canManageEvent(request.resource.data.eventId) && (isAdmin() || hasPerm('attendees', 'canUpdate')));
-      allow update: if isAdmin() || (ownsDocByEventId(resource.data) && hasPerm('attendees', 'canUpdate'));
+      allow create: if canManageEvent(request.resource.data.eventId) &&
+        (isAdmin() || hasPerm('attendees', 'canUpdate')) &&
+        request.resource.data.eventId is string &&
+        ('userDetails' in request.resource.data) &&
+        isValidEmail(request.resource.data.userDetails.email);
+      allow update: if isAdmin() || (
+        ownsDocByEventId(resource.data) &&
+        hasPerm('attendees', 'canUpdate') &&
+        request.resource.data.eventId == resource.data.eventId &&
+        (!('organizerUid' in resource.data) || request.resource.data.organizerUid == resource.data.organizerUid)
+      );
       allow delete: if isAdmin() || (ownsDocByEventId(resource.data) && hasPerm('attendees', 'canDelete'));
     }
 
@@ -130,7 +117,10 @@ service cloud.firestore {
     match /feedback/{feedbackId} { allow read: if canManageDocByEventId(resource.data) && (isAdmin() || hasPerm('feedback', 'canRead')); allow create, update, delete: if false; }
     match /activity_logs/{logId} { allow read: if canManageDocByEventId(resource.data); allow create, update, delete: if false; }
     match /audit_logs/{logId} { allow read, write: if false; }
-    match /event_analytics/{analyticsId} { allow read, write: if canManageEvent(analyticsId); }
+    match /event_analytics/{analyticsId} {
+      allow read: if canManageEvent(analyticsId);
+      allow write: if false;
+    }
     match /paymentProofs/{proofId} {
       allow read: if ('eventId' in resource.data) && resource.data.eventId is string && (isAdmin() || (ownsEvent(resource.data.eventId) && hasPerm('payments', 'canVerify')));
       allow create: if false;

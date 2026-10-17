@@ -157,7 +157,7 @@ function isValidDocumentType() {
 | `/events/{eventId}` | Public | Public | Organizer / Admin | Organizer / Admin / Restricted Anonymous | Organizer / Admin | Anonymous updates restricted strictly to `['ticketTypes', 'currentAttendees', 'promoCodes', 'updatedAt']`. |
 | `/events/{id}/forms/{formId}` | Public | Public | Event Organizer / Admin | Event Organizer / Admin | Event Organizer / Admin | Scoped to parent event owner (`event.organizer.uid == request.auth.uid`). |
 | `/events/{id}/config/{configId}` | Organizer / Admin | Organizer / Admin | Event Organizer / Admin | Event Organizer / Admin | Event Organizer / Admin | Protected configuration settings. |
-| `/registrations/{regId}` | Organizer / Admin | Organizer / Admin / Trusted Function | Public (Anonymous, validated pending only) | Organizer / Admin / Trusted Function | Admin / Organizer | Payment-link reads and anonymous state transitions must use callable functions; direct client reads are denied. |
+| `/registrations/{regId}` | Organizer / Admin | Organizer / Admin / Trusted Function | Organizer / Admin (Trusted Function for Anonymous) | Organizer / Admin / Trusted Function | Admin / Organizer | Payment-link reads and anonymous state transitions must use callable functions; direct unauthenticated client creates/reads/writes are denied. |
 | `/certificateTemplates/{id}` | Public | Public | Organizer / Admin | Organizer / Admin | Organizer / Admin | Public read enables client-side certificate dynamic preview and rendering. |
 | `/certificates/{certId}` | Public | Public | Public / Function | Restricted Anonymous / Auth | Authenticated | Anonymous create requires `eventId`, `registrationId`, `verificationCode`, and `recipientName`. Anonymous update strictly restricted to incrementing `verificationCount`. |
 | `/feedbackTokens/{tokenId}` | **Denied** | **Denied** | **Denied** | **Denied** | **Denied** | **100% Locked**. Only Cloud Functions with Firebase Admin SDK can read/write tokens. Prevents attendee enumeration. |
@@ -175,15 +175,9 @@ function isValidDocumentType() {
 ### 4.1 Mass Assignment & Field Tampering
 * **Threat**: A malicious attendee intercepts the registration request and attempts to set `totalAmount = 0`, `paymentStatus = 'paid'`, or `attendanceStatus = 'checked-in'`.
 * **Mitigation**: 
-   1. Registrations are initialized with `paymentStatus: 'pending'` and validated against a strict anonymous-create schema.
-  2. For anonymous updates on `/registrations/{registrationId}`, the rules enforce:
-     ```javascript
-     allow update: if isAuthenticated() || 
-       (resource.data.paymentStatus == 'pending' && 
-        request.resource.data.paymentStatus in ['pending', 'processing']) ||
-       (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['feedbackSubmitted', 'feedbackId', 'updatedAt']));
-     ```
-   3. Attendees cannot mark themselves as `paid` or `checked-in`. Check-ins, payment transitions, and inventory changes can only be executed by trusted Functions or authenticated organizers.
+   1. Unauthenticated client `create` operations on `/registrations` are completely denied in `firestore.rules`.
+   2. All anonymous registrations must pass through the `createAnonymousRegistration` callable Cloud Function, which runs an atomic Firestore transaction to verify published status, check ticket inventory, calculate official ticket pricing, prevent duplicate email registrations, and initialize tickets with `paymentStatus: 'pending'` and `attendanceStatus: 'pending'`.
+   3. Direct client updates cannot mark registrations as `paid` or `checked-in`. Check-ins, payment verification, and attendee management are restricted strictly to authenticated event organizers and administrators.
 
 ### 4.2 Ticket Inventory Overwrite
 * **Threat**: An anonymous registrant tampers with other event properties (e.g. changing event title, dates, or prices) when decrementing ticket stock.

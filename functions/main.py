@@ -184,9 +184,8 @@ def is_super_user(req: https_fn.CallableRequest) -> bool:
     """Whether the caller holds the superuser tier.
 
     Configured server-side through the SUPERUSER_EMAIL env var, mirroring the
-    client's VITE_SUPERUSER_EMAIL. It has to exist on both sides: the browser
-    copy only decides which button is enabled, so without this an admin could
-    simply call deleteUser on another admin directly.
+    client's VITE_SUPERUSER_EMAIL. Used to gate access and protect the primary
+    superuser account from administrative deletion.
     """
     configured = os.environ.get('SUPERUSER_EMAIL', '').strip().lower()
     if not configured or not req.auth:
@@ -1147,11 +1146,14 @@ def deleteEventData(req: https_fn.CallableRequest) -> Dict[str, Any]:
         
         has_registrations = len(list(registrations)) > 0
         
-        if has_registrations and not req.data.get('forceDelete', False):
-            raise https_fn.HttpsError(
-                code=https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
-                message="Cannot delete event with registrations. Use forceDelete=true to override."
-            )
+        if has_registrations:
+            if not req.data.get('forceDelete', False):
+                raise https_fn.HttpsError(
+                    code=https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
+                    message="Cannot delete event with registrations. Use forceDelete=true to override."
+                )
+            # Force-deletion of events with registrations is strictly reserved for platform administrators
+            require_admin(req)
         
         # Delete event subcollections
         # Delete forms
@@ -2282,6 +2284,12 @@ def deleteUser(req: https_fn.CallableRequest) -> Dict[str, Any]:
         target_data = target_doc.to_dict() or {}
         target_role = target_data.get('role')
         if target_role == 'admin':
+            configured_su = os.environ.get('SUPERUSER_EMAIL', '').strip().lower()
+            if configured_su and (target_data.get('email') or '').strip().lower() == configured_su:
+                raise https_fn.HttpsError(
+                    code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
+                    message="Cannot delete the platform superuser."
+                )
             # Last-Admin safeguard: ensure at least one other active administrator remains
             admin_docs = get_db().collection('users').where('role', '==', 'admin').stream()
             active_admin_count = 0
@@ -2386,6 +2394,36 @@ def sendConfirmationEmail(req: https_fn.CallableRequest) -> Dict[str, Any]:
             
             event_data = event_doc.to_dict()
             event_title = event_data.get('title', 'Event')
+            organizer_uid = (event_data.get('organizer') or {}).get('uid')
+
+            # Authorization & Authenticity Verification:
+            # 1. 'approved' confirmation emails include check-in QR codes and must be triggered by an active organizer or admin.
+            # 2. 'submitted' confirmation emails from unauthenticated callers must strictly correspond to an existing pending registration document matching eventId and email.
+            if email_type == 'approved':
+                require_elevated(req, organizer_uid)
+            elif not req.auth:
+                if not registration_id:
+                    raise https_fn.HttpsError(
+                        code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                        message="registrationId is required"
+                    )
+                reg_doc = get_db().collection('registrations').document(registration_id).get()
+                if not reg_doc.exists:
+                    raise https_fn.HttpsError(
+                        code=https_fn.FunctionsErrorCode.NOT_FOUND,
+                        message="Registration not found"
+                    )
+                reg_data = reg_doc.to_dict() or {}
+                reg_user = reg_data.get('userDetails') or {}
+                if reg_data.get('eventId') != event_id or (reg_user.get('email') or '').strip().lower() != user_email.strip().lower():
+                    raise https_fn.HttpsError(
+                        code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
+                        message="Registration details do not match"
+                    )
+                user_name = reg_user.get('name') or user_name
+                user_email = reg_user.get('email') or user_email
+            else:
+                require_elevated(req, organizer_uid)
             
             # Debug: Log event data structure
             logger.info(f"Event data keys: {list(event_data.keys())}")
@@ -2599,6 +2637,21 @@ def sendPaymentNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 message="registrationId and status are required"
             )
 
+        # Gate to elevated organizer or admin
+        reg_doc = get_db().collection('registrations').document(registration_id).get()
+        if not reg_doc.exists:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.NOT_FOUND,
+                message="Registration not found"
+            )
+        reg_data = reg_doc.to_dict() or {}
+        organizer_uid = reg_data.get('organizerUid')
+        if not organizer_uid and reg_data.get('eventId'):
+            ev_doc = get_db().collection('events').document(reg_data['eventId']).get()
+            if ev_doc.exists:
+                organizer_uid = (ev_doc.to_dict() or {}).get('organizer', {}).get('uid')
+        require_elevated(req, organizer_uid)
+
         if not attendee_email:
             raise https_fn.HttpsError(
                 code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
@@ -2728,6 +2781,19 @@ def sendCertificateNotification(req: https_fn.CallableRequest) -> Dict[str, Any]
                 message="userEmail, eventTitle, and certificateUrl are required"
             )
 
+        # Gate to elevated organizer or admin
+        organizer_uid = None
+        if registration_id and registration_id != 'unknown':
+            reg_doc = get_db().collection('registrations').document(registration_id).get()
+            if reg_doc.exists:
+                reg_data = reg_doc.to_dict() or {}
+                organizer_uid = reg_data.get('organizerUid')
+                if not organizer_uid and reg_data.get('eventId'):
+                    ev_doc = get_db().collection('events').document(reg_data['eventId']).get()
+                    if ev_doc.exists:
+                        organizer_uid = (ev_doc.to_dict() or {}).get('organizer', {}).get('uid')
+        require_elevated(req, organizer_uid)
+
         # Send email using Resend
         email_result = email_service.send_certificate_notification(
             user_email=user_email,
@@ -2813,6 +2879,19 @@ def sendEventReminder(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
                 message="userEmail, eventTitle, and eventDate are required"
             )
+
+        # Gate to elevated organizer or admin
+        organizer_uid = None
+        if registration_id and registration_id != 'unknown':
+            reg_doc = get_db().collection('registrations').document(registration_id).get()
+            if reg_doc.exists:
+                reg_data = reg_doc.to_dict() or {}
+                organizer_uid = reg_data.get('organizerUid')
+                if not organizer_uid and reg_data.get('eventId'):
+                    ev_doc = get_db().collection('events').document(reg_data['eventId']).get()
+                    if ev_doc.exists:
+                        organizer_uid = (ev_doc.to_dict() or {}).get('organizer', {}).get('uid')
+        require_elevated(req, organizer_uid)
 
         maps_url = data.get('mapsUrl') or ''
         if not maps_url and event_location and event_location != 'TBD':
@@ -3171,6 +3250,9 @@ def resendEventFeedbackRequests(req: https_fn.CallableRequest) -> Dict[str, Any]
             )
         
         event_data = event_doc.to_dict()
+        organizer_uid = (event_data.get('organizer') or {}).get('uid')
+        require_elevated(req, organizer_uid)
+
         event_title = event_data.get('title', 'Event')
         
         # Check if already sent (unless force=True)
@@ -3227,6 +3309,18 @@ def sendFeedbackRequest(req: https_fn.CallableRequest) -> Dict[str, Any]:
         event_id = data.get('eventId')
         registration_id = data.get('registrationId')
         is_resend = data.get('isResend', False)  # Track if this is a resend operation
+
+        # Gate to elevated organizer or admin
+        organizer_uid = None
+        if event_id:
+            ev_doc = get_db().collection('events').document(event_id).get()
+            if ev_doc.exists:
+                organizer_uid = (ev_doc.to_dict() or {}).get('organizer', {}).get('uid')
+        elif registration_id:
+            rg_doc = get_db().collection('registrations').document(registration_id).get()
+            if rg_doc.exists:
+                organizer_uid = (rg_doc.to_dict() or {}).get('organizerUid')
+        require_elevated(req, organizer_uid)
         
         # Try to get full name from registration if available
         reg_data = None
@@ -3404,6 +3498,7 @@ def getResendEmailStatus(req: https_fn.CallableRequest) -> Dict[str, Any]:
     Get email status from Resend API
     """
     try:
+        require_admin(req)
         data: Dict[str, Any] = req.data or {}
         email_id = data.get('emailId')
 
@@ -3484,6 +3579,7 @@ def getAllResendEmails(req: https_fn.CallableRequest) -> Dict[str, Any]:
     Useful for getting bounced emails directly from Resend
     """
     try:
+        require_admin(req)
         # Get Resend API key from environment
         resend_api_key = os.getenv('RESEND_API_KEY')
         if not resend_api_key:
@@ -3609,6 +3705,9 @@ def sendCheckInNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 )
             
             event_data = event_doc.to_dict()
+            organizer_uid = (event_data.get('organizer') or {}).get('uid')
+            require_elevated(req, organizer_uid)
+
             event_title = event_data.get('title', 'Event')
             event_date = event_data.get('date', 'TBD')
             event_location = event_data.get('location', 'TBD')

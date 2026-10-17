@@ -184,7 +184,7 @@ describe('Firestore authorization rules', () => {
     await assertSucceeds(getDoc(doc(anonymous, 'certificates/certificate-1')));
   });
 
-  it('rejects forged anonymous registrations and inventory updates', async () => {
+  it('rejects all direct anonymous registrations and inventory updates', async () => {
     const anonymous = testEnv.unauthenticatedContext().firestore();
 
     await assertFails(setDoc(doc(anonymous, 'registrations/forged'), {
@@ -193,6 +193,28 @@ describe('Firestore authorization rules', () => {
       paymentStatus: 'paid',
       attendanceStatus: 'checked-in',
       totalAmount: 0,
+    }));
+    await assertFails(setDoc(doc(anonymous, 'registrations/direct-create'), {
+      eventId: 'published-event',
+      userId: '',
+      userDetails: { name: 'Direct Attacker', email: 'attacker@example.com' },
+      ticketTypeId: 'ticket-free',
+      quantity: 1,
+      originalAmount: 0,
+      discountAmount: 0,
+      totalAmount: 0,
+      currency: 'PHP',
+      pricing: { originalPrice: 0, currentPrice: 0, discountAmount: 0 },
+      paymentStatus: 'pending',
+      attendanceStatus: 'pending',
+      feedbackSubmitted: false,
+      certificateIssued: false,
+      qrCode: 'registration:direct-create',
+      registrationDate: new Date(),
+      updatedAt: new Date(),
+      paymentLinkToken: '12345678901234567890123456789012',
+      paymentLinkExpiresAt: new Date(),
+      paymentLinkStatus: 'active',
     }));
     await assertFails(updateDoc(doc(anonymous, 'events/published-event'), {
       currentAttendees: 999,
@@ -375,5 +397,53 @@ describe('Firestore authorization rules', () => {
 
     // Admin can delete event and registration
     await assertSucceeds(deleteDoc(doc(admin, 'registrations/staff-reg')));
+  });
+
+  it('hardened invariants: event_analytics is read-only to clients and ownership is immutable', async () => {
+    const owner = testEnv.authenticatedContext('organizer-1').firestore();
+    const admin = testEnv.authenticatedContext('admin-1').firestore();
+
+    await testEnv.withSecurityRulesDisabled(async ctx => {
+      await setDoc(doc(ctx.firestore(), 'event_analytics/published-event'), {
+        eventId: 'published-event',
+        registrationCount: 10,
+        revenue: 5000,
+      });
+    });
+
+    // Clients may read event_analytics
+    await assertSucceeds(getDoc(doc(owner, 'event_analytics/published-event')));
+    await assertSucceeds(getDoc(doc(admin, 'event_analytics/published-event')));
+
+    // Clients cannot write to event_analytics (reserved strictly for Cloud Functions)
+    await assertFails(updateDoc(doc(owner, 'event_analytics/published-event'), { revenue: 999999 }));
+    await assertFails(updateDoc(doc(admin, 'event_analytics/published-event'), { revenue: 999999 }));
+    await assertFails(deleteDoc(doc(owner, 'event_analytics/published-event')));
+
+    // Organizers cannot reassign event ownership during updates
+    await assertFails(updateDoc(doc(owner, 'events/published-event'), {
+      'organizer.uid': 'attacker-uid',
+    }));
+
+    // Organizers cannot tamper with registration eventId during updates
+    await assertFails(updateDoc(doc(owner, 'registrations/reg-1'), {
+      eventId: 'different-event',
+    }));
+
+    // Organizers cannot create malformed walk-in registrations with invalid emails
+    await assertFails(setDoc(doc(owner, 'registrations/bad-walk-in'), {
+      eventId: 'published-event',
+      userDetails: { name: 'Bad', email: 'not-an-email' },
+    }));
+
+    // Organizers can create valid walk-in registrations
+    await assertSucceeds(setDoc(doc(owner, 'registrations/valid-walk-in'), {
+      eventId: 'published-event',
+      organizerUid: 'organizer-1',
+      userDetails: { name: 'Valid Walk-in', email: 'walkin@example.com' },
+      quantity: 1,
+      paymentStatus: 'paid',
+      attendanceStatus: 'confirmed',
+    }));
   });
 });
