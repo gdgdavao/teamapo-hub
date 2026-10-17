@@ -9,6 +9,7 @@ import {
 import { getFunctions, connectFunctionsEmulator } from 'firebase/functions';
 import { getStorage, connectStorageEmulator } from 'firebase/storage';
 import { logger } from '../utils/logger';
+import { isSafeEmulatorEnvironment } from '../utils/firebaseEnvironment';
 
 // Firebase configuration
 const firebaseConfig = {
@@ -54,9 +55,13 @@ export const db = initializeFirestore(app, {
 export const functions = getFunctions(app, 'asia-southeast2');
 export const storage = getStorage(app);
 
-// Connect to emulators if in development mode
-const shouldUseEmulator = import.meta.env.VITE_USE_EMULATOR === 'true' || 
-                         import.meta.env.VITE_USE_FIREBASE_EMULATORS === 'true';
+// Connect to emulators only in non-production development environments with safe demo projects
+const wantsEmulator = import.meta.env.VITE_USE_EMULATOR === 'true' || 
+                      import.meta.env.VITE_USE_FIREBASE_EMULATORS === 'true';
+
+const shouldUseEmulator = !import.meta.env.PROD &&
+                         wantsEmulator &&
+                         isSafeEmulatorEnvironment(firebaseConfig.projectId, Boolean(import.meta.env.PROD));
 
 // Track which emulators are connected to avoid duplicate connections
 let emulatorsConnected = false;
