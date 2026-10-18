@@ -270,7 +270,7 @@ export function buildEventHtmlWithMeta(
  */
 export async function fetchEventFromFirestore(
   identifier: { slug?: string; id?: string },
-  projectId: string = process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || 'teamapo-hub'
+  projectId: string = process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || 'project-iris-gdgdavao'
 ): Promise<EventMetadata | null> {
   const host = process.env.FIRESTORE_EMULATOR_HOST
     ? `http://${process.env.FIRESTORE_EMULATOR_HOST}`
@@ -288,6 +288,7 @@ export async function fetchEventFromFirestore(
 
     if (identifier.slug) {
       const url = `${host}/v1/projects/${projectId}/databases/(default)/documents:runQuery`;
+      // Note: Query must filter by isPublished == true and status in ['published', 'ongoing'] to satisfy Firestore Security Rules!
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -295,10 +296,38 @@ export async function fetchEventFromFirestore(
           structuredQuery: {
             from: [{ collectionId: 'events' }],
             where: {
-              fieldFilter: {
-                field: { fieldPath: 'slug' },
-                op: 'EQUAL',
-                value: { stringValue: identifier.slug },
+              compositeFilter: {
+                op: 'AND',
+                filters: [
+                  {
+                    fieldFilter: {
+                      field: { fieldPath: 'slug' },
+                      op: 'EQUAL',
+                      value: { stringValue: identifier.slug },
+                    },
+                  },
+                  {
+                    fieldFilter: {
+                      field: { fieldPath: 'isPublished' },
+                      op: 'EQUAL',
+                      value: { booleanValue: true },
+                    },
+                  },
+                  {
+                    fieldFilter: {
+                      field: { fieldPath: 'status' },
+                      op: 'IN',
+                      value: {
+                        arrayValue: {
+                          values: [
+                            { stringValue: 'published' },
+                            { stringValue: 'ongoing' },
+                          ],
+                        },
+                      },
+                    },
+                  },
+                ],
               },
             },
             limit: 1,
