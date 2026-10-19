@@ -802,14 +802,14 @@ const AdminUsersPage: React.FC = () => {
 
                       {/* Row Actions */}
                       <td className="px-4 py-3 whitespace-nowrap text-right">
-                        <div className="flex items-center justify-end gap-1">
+                        <div className="flex items-center justify-end gap-1.5">
                           <button
                             type="button"
                             onClick={() => {
                               setEditingUser(user);
                               setShowEditModal(true);
                             }}
-                            className="p-1.5 text-primary hover:text-primary-hover hover:bg-surface-container rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                            className="flex items-center justify-center h-9 w-9 text-on-surface-variant hover:text-primary hover:bg-surface-container rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                             title="Edit user details & permissions"
                             aria-label={`Edit ${user.displayName}`}
                           >
