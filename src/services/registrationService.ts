@@ -25,6 +25,7 @@ import { EmailService } from './emailService';
 import { resolveDisplayStatus, StatusBearingRegistration } from '../utils/registrationStatus';
 import { toDateSafe, toISOStringSafe } from '../utils/dateUtils';
 import { AuditLogService } from './auditLogService';
+import { swrCache } from '../utils/swrCache';
 
 export interface RegistrationData {
   eventId: string;
@@ -62,18 +63,22 @@ export class RegistrationService {
   private static readonly REGISTRATIONS_COLLECTION = 'registrations';
   private static readonly EVENTS_COLLECTION = 'events';
 
-  private static inFlightRequests = new Map<string, Promise<any>>();
-  private static memoryCache = new Map<string, { data: any; expiry: number }>();
-  private static readonly CACHE_TTL_MS = 20_000; // 20 seconds
+  private static readonly CACHE_TTL_MS = 30_000; // 30 seconds
 
   /**
-   * Invalidate memory cache for a specific event or the entire registrations cache.
+   * Invalidate cache for a specific event or the entire registrations cache.
    */
   static invalidateCache(eventId?: string): void {
     if (eventId) {
-      this.memoryCache.delete(`regs:${eventId}`);
+      swrCache.delete(`regs:${eventId}`);
+      swrCache.delete('regs:all');
+      swrCache.deletePrefix('regs:organizer:');
+      swrCache.delete('stats:dashboard');
+      swrCache.delete(`stats:event:${eventId}`);
     } else {
-      this.memoryCache.clear();
+      swrCache.deletePrefix('regs:');
+      swrCache.delete('stats:dashboard');
+      swrCache.deletePrefix('stats:event:');
     }
   }
 
@@ -427,46 +432,28 @@ export class RegistrationService {
   static async getEventRegistrations(eventId: string): Promise<Registration[]> {
     if (!eventId) return [];
 
-    const cacheKey = `regs:${eventId}`;
-    const cached = this.memoryCache.get(cacheKey);
-    if (cached && cached.expiry > Date.now()) {
-      return cached.data;
-    }
-
-    if (this.inFlightRequests.has(cacheKey)) {
-      return this.inFlightRequests.get(cacheKey)!;
-    }
-
-    const fetchPromise = (async () => {
-      try {
-        const registrationsQuery = query(
-          collection(db, this.REGISTRATIONS_COLLECTION),
-          where('eventId', '==', eventId),
-          orderBy('registrationDate', 'desc')
-        );
-        const snapshot = await getDocs(registrationsQuery);
-        
-        const regs = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        } as Registration));
-
-        this.memoryCache.set(cacheKey, {
-          data: regs,
-          expiry: Date.now() + this.CACHE_TTL_MS,
-        });
-
-        return regs;
-      } catch (error) {
-        logger.error('Error fetching event registrations:', error);
-        throw new Error('Failed to fetch event registrations');
-      } finally {
-        this.inFlightRequests.delete(cacheKey);
-      }
-    })();
-
-    this.inFlightRequests.set(cacheKey, fetchPromise);
-    return fetchPromise;
+    return swrCache.getOrFetch(
+      `regs:${eventId}`,
+      async () => {
+        try {
+          const registrationsQuery = query(
+            collection(db, this.REGISTRATIONS_COLLECTION),
+            where('eventId', '==', eventId),
+            orderBy('registrationDate', 'desc')
+          );
+          const snapshot = await getDocs(registrationsQuery);
+          
+          return snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          } as Registration));
+        } catch (error) {
+          logger.error('Error fetching event registrations:', error);
+          throw new Error('Failed to fetch event registrations');
+        }
+      },
+      this.CACHE_TTL_MS
+    );
   }
 
   /**
@@ -541,21 +528,27 @@ export class RegistrationService {
    * Get all registrations across all events (platform-wide read; admin only)
    */
   static async getAllRegistrations(): Promise<Registration[]> {
-    try {
-      const registrationsQuery = query(
-        collection(db, this.REGISTRATIONS_COLLECTION), // firestore:unscoped-ok - admin platform-wide roster
-        orderBy('registrationDate', 'desc')
-      );
-      const snapshot = await getDocs(registrationsQuery);
-      
-      return snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      } as Registration));
-    } catch (error) {
-      logger.error('Error fetching all registrations:', error);
-      throw new Error('Failed to fetch all registrations');
-    }
+    return swrCache.getOrFetch(
+      'regs:all',
+      async () => {
+        try {
+          const registrationsQuery = query(
+            collection(db, this.REGISTRATIONS_COLLECTION), // firestore:unscoped-ok - admin platform-wide roster
+            orderBy('registrationDate', 'desc')
+          );
+          const snapshot = await getDocs(registrationsQuery);
+          
+          return snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          } as Registration));
+        } catch (error) {
+          logger.error('Error fetching all registrations:', error);
+          throw new Error('Failed to fetch all registrations');
+        }
+      },
+      this.CACHE_TTL_MS
+    );
   }
 
   /**
@@ -567,18 +560,26 @@ export class RegistrationService {
    * problem regardless of what the rules permit.
    */
   static async getRegistrationsByOrganizer(organizerUid: string): Promise<Registration[]> {
-    try {
-      const q = query(
-        collection(db, this.REGISTRATIONS_COLLECTION),
-        where('organizerUid', '==', organizerUid),
-        orderBy('registrationDate', 'desc')
-      );
-      const snapshot = await getDocs(q);
-      return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Registration));
-    } catch (error) {
-      logger.error('Error fetching organizer registrations:', error);
-      throw new Error('Failed to fetch registrations');
-    }
+    if (!organizerUid) return [];
+
+    return swrCache.getOrFetch(
+      `regs:organizer:${organizerUid}`,
+      async () => {
+        try {
+          const q = query(
+            collection(db, this.REGISTRATIONS_COLLECTION),
+            where('organizerUid', '==', organizerUid),
+            orderBy('registrationDate', 'desc')
+          );
+          const snapshot = await getDocs(q);
+          return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Registration));
+        } catch (error) {
+          logger.error('Error fetching organizer registrations:', error);
+          throw new Error('Failed to fetch registrations');
+        }
+      },
+      this.CACHE_TTL_MS
+    );
   }
 
   /**

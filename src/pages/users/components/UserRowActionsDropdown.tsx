@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import {
   EllipsisVerticalIcon,
   PencilIcon,
@@ -19,6 +20,12 @@ export interface UserRowActionsDropdownProps {
   onDelete: (user: UserWithMetadata) => void;
 }
 
+interface MenuPosition {
+  top: number;
+  right: number;
+  flipUp: boolean;
+}
+
 export const UserRowActionsDropdown: React.FC<UserRowActionsDropdownProps> = ({
   user,
   canDelete,
@@ -29,21 +36,70 @@ export const UserRowActionsDropdown: React.FC<UserRowActionsDropdownProps> = ({
   onDelete,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
+  const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  const updatePosition = useCallback(() => {
+    if (!triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const menuHeight = 220;
+    const spaceBelow = typeof window !== 'undefined' ? window.innerHeight - rect.bottom : 300;
+    const flipUp = spaceBelow < menuHeight && rect.top > menuHeight;
+
+    const top = rect.bottom > 0
+      ? (flipUp ? Math.max(8, rect.top - menuHeight - 6) : rect.bottom + 6)
+      : 100;
+    const right = rect.right > 0 && typeof window !== 'undefined'
+      ? Math.max(16, window.innerWidth - rect.right)
+      : 16;
+
+    setMenuPosition({ top, right, flipUp });
+  }, []);
 
   const closeDropdown = useCallback(() => {
     setIsOpen(false);
     triggerRef.current?.focus();
   }, []);
 
+  const handleToggleOpen = () => {
+    if (!isOpen) {
+      updatePosition();
+      setIsOpen(true);
+    } else {
+      setIsOpen(false);
+    }
+  };
+
+  // Keep position accurate on scroll or resize
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleScrollOrResize = () => {
+      updatePosition();
+    };
+
+    window.addEventListener('scroll', handleScrollOrResize, true);
+    window.addEventListener('resize', handleScrollOrResize);
+    return () => {
+      window.removeEventListener('scroll', handleScrollOrResize, true);
+      window.removeEventListener('resize', handleScrollOrResize);
+    };
+  }, [isOpen, updatePosition]);
+
   // Dismiss on outside click
   useEffect(() => {
     if (!isOpen) return;
 
     const handlePointerDown = (event: PointerEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+      const target = event.target as Node;
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(target) &&
+        menuRef.current &&
+        !menuRef.current.contains(target)
+      ) {
         setIsOpen(false);
       }
     };
@@ -62,6 +118,11 @@ export const UserRowActionsDropdown: React.FC<UserRowActionsDropdownProps> = ({
       if (event.key === 'Escape') {
         event.preventDefault();
         closeDropdown();
+        return;
+      }
+
+      if (event.key === 'Tab') {
+        setIsOpen(false);
         return;
       }
 
@@ -109,86 +170,102 @@ export const UserRowActionsDropdown: React.FC<UserRowActionsDropdownProps> = ({
       <button
         ref={triggerRef}
         type="button"
-        onClick={() => setIsOpen((prev) => !prev)}
+        onClick={handleToggleOpen}
         aria-haspopup="menu"
         aria-expanded={isOpen}
         aria-label={`Actions for ${user.displayName}`}
-        className="flex items-center justify-center h-10 w-10 min-h-[44px] min-w-[44px] rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-container transition-colors duration-fast focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        className={`flex items-center justify-center h-9 w-9 rounded-lg transition-colors duration-fast focus:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+          isOpen
+            ? 'bg-surface-container-high text-on-surface ring-1 ring-outline-variant shadow-sm'
+            : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container'
+        }`}
       >
         <EllipsisVerticalIcon className="h-5 w-5" aria-hidden="true" />
       </button>
 
-      {isOpen && (
-        <div
-          ref={menuRef}
-          role="menu"
-          aria-orientation="vertical"
-          aria-labelledby="user-actions-menu"
-          className="absolute right-0 top-full mt-1.5 w-56 rounded-xl border border-outline-variant bg-surface shadow-md py-1 z-30 origin-top-right focus:outline-none animate-scale-in motion-reduce:animate-none"
-        >
-          {/* Edit user details & permissions */}
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => handleAction(onEdit)}
-            className="w-full text-left px-3.5 py-2.5 text-sm text-on-surface hover:bg-surface-container-low flex items-center gap-2.5 transition-colors duration-fast focus:outline-none focus:bg-surface-container-low"
-          >
-            <PencilIcon className="h-4 w-4 text-primary shrink-0" aria-hidden="true" />
-            <span>Edit details & permissions</span>
-          </button>
-
-          {/* Toggle Active / Deactivate status */}
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => handleAction(onToggleStatus)}
-            className="w-full text-left px-3.5 py-2.5 text-sm text-on-surface hover:bg-surface-container-low flex items-center gap-2.5 transition-colors duration-fast focus:outline-none focus:bg-surface-container-low"
-          >
-            {isActive ? (
-              <>
-                <NoSymbolIcon className="h-4 w-4 text-warning shrink-0" aria-hidden="true" />
-                <span>Deactivate account</span>
-              </>
-            ) : (
-              <>
-                <CheckCircleIcon className="h-4 w-4 text-success shrink-0" aria-hidden="true" />
-                <span>Reactivate account</span>
-              </>
-            )}
-          </button>
-
-          {/* Send password reset email */}
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => handleAction(onSendPasswordReset)}
-            className="w-full text-left px-3.5 py-2.5 text-sm text-on-surface hover:bg-surface-container-low flex items-center gap-2.5 transition-colors duration-fast focus:outline-none focus:bg-surface-container-low"
-          >
-            <EnvelopeIcon className="h-4 w-4 text-on-surface-variant shrink-0" aria-hidden="true" />
-            <span>Send password reset</span>
-          </button>
-
-          {/* Destructive divider */}
-          <div className="my-1 border-t border-outline-variant/60" role="separator" />
-
-          {/* Delete user account (gated) */}
-          <button
-            type="button"
-            role="menuitem"
-            disabled={!canDelete}
-            onClick={() => handleAction(onDelete)}
-            className={`w-full text-left px-3.5 py-2.5 text-sm flex items-center gap-2.5 transition-colors duration-fast focus:outline-none ${
-              canDelete
-                ? 'text-error hover:bg-error-container/20 focus:bg-error-container/20'
-                : 'text-outline/50 cursor-not-allowed hover:bg-transparent'
+      {isOpen &&
+        menuPosition &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            ref={menuRef}
+            role="menu"
+            aria-orientation="vertical"
+            aria-labelledby="user-actions-menu"
+            style={{
+              position: 'fixed',
+              top: `${menuPosition.top}px`,
+              right: `${menuPosition.right}px`,
+              zIndex: 9999,
+            }}
+            className={`w-56 rounded-xl border border-outline-variant bg-surface shadow-md py-1 focus:outline-none animate-scale-in motion-reduce:animate-none ${
+              menuPosition.flipUp ? 'origin-bottom-right' : 'origin-top-right'
             }`}
-            title={!canDelete ? deleteTooltip || 'Protected account cannot be deleted' : undefined}
           >
-            <TrashIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
-            <span>Delete account</span>
-          </button>
-        </div>
-      )}
+            {/* Edit user details & permissions */}
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => handleAction(onEdit)}
+              className="w-full text-left px-3.5 py-2.5 text-sm text-on-surface hover:bg-surface-container-low flex items-center gap-2.5 transition-colors duration-fast focus:outline-none focus:bg-surface-container-low"
+            >
+              <PencilIcon className="h-4 w-4 text-primary shrink-0" aria-hidden="true" />
+              <span>Edit details & permissions</span>
+            </button>
+
+            {/* Toggle Active / Deactivate status */}
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => handleAction(onToggleStatus)}
+              className="w-full text-left px-3.5 py-2.5 text-sm text-on-surface hover:bg-surface-container-low flex items-center gap-2.5 transition-colors duration-fast focus:outline-none focus:bg-surface-container-low"
+            >
+              {isActive ? (
+                <>
+                  <NoSymbolIcon className="h-4 w-4 text-warning shrink-0" aria-hidden="true" />
+                  <span>Deactivate account</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircleIcon className="h-4 w-4 text-success shrink-0" aria-hidden="true" />
+                  <span>Reactivate account</span>
+                </>
+              )}
+            </button>
+
+            {/* Send password reset email */}
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => handleAction(onSendPasswordReset)}
+              className="w-full text-left px-3.5 py-2.5 text-sm text-on-surface hover:bg-surface-container-low flex items-center gap-2.5 transition-colors duration-fast focus:outline-none focus:bg-surface-container-low"
+            >
+              <EnvelopeIcon className="h-4 w-4 text-on-surface-variant shrink-0" aria-hidden="true" />
+              <span>Send password reset</span>
+            </button>
+
+            {/* Destructive divider */}
+            <div className="my-1 border-t border-outline-variant/60" role="separator" />
+
+            {/* Delete user account (gated) */}
+            <button
+              type="button"
+              role="menuitem"
+              disabled={!canDelete}
+              onClick={() => handleAction(onDelete)}
+              className={`w-full text-left px-3.5 py-2.5 text-sm flex items-center gap-2.5 transition-colors duration-fast focus:outline-none ${
+                canDelete
+                  ? 'text-error hover:bg-error-container/20 focus:bg-error-container/20'
+                  : 'text-outline/50 cursor-not-allowed hover:bg-transparent'
+              }`}
+              title={!canDelete ? deleteTooltip || 'Protected account cannot be deleted' : undefined}
+            >
+              <TrashIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span>Delete account</span>
+            </button>
+          </div>,
+          document.body
+        )}
     </div>
   );
 };

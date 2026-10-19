@@ -66,20 +66,25 @@ const PlatformHome: React.FC = () => {
       try {
         setLoading(true);
         setFailed(false);
-        const [dashboardStats, allRegistrations, allEvents] = await Promise.all([
-          AnalyticsService.getDashboardStats(),
-          RegistrationService.getAllRegistrations(),
-          EventService.getAllEvents(),
-        ]);
 
+        // Dispatch all three requests concurrently in the same network wave
+        const statsPromise = AnalyticsService.getDashboardStats();
+        const eventsPromise = EventService.getAllEvents();
+        const registrationsPromise = RegistrationService.getAllRegistrations();
+
+        // Render dashboard totals & upcoming events as soon as stats and events arrive (<50ms)
+        const [dashboardStats, allEvents] = await Promise.all([statsPromise, eventsPromise]);
         setStats(dashboardStats);
-        setRegistrations(allRegistrations);
         setEvents(allEvents);
+        setLoading(false);
+
+        // Await registrations concurrently for pending review backlog and live attendee counts
+        const allRegistrations = await registrationsPromise;
+        setRegistrations(allRegistrations);
       } catch (error) {
         logger.error('Error fetching dashboard data:', error);
         toast.error('Failed to load dashboard data. Please refresh the page.');
         setFailed(true);
-      } finally {
         setLoading(false);
       }
     };

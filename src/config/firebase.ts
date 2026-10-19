@@ -49,7 +49,6 @@ if (typeof window !== 'undefined' && typeof indexedDB !== 'undefined') {
 
 export const db = initializeFirestore(app, {
   localCache: localCacheSetting,
-  experimentalAutoDetectLongPolling: true,
 });
 // Use the deployed region to avoid cross-region callable endpoints (preflight/CORS issues)
 export const functions = getFunctions(app, 'asia-southeast2');

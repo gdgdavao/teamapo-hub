@@ -22,9 +22,9 @@ export const ALLOWED_VERIFY_HOSTS = [
 
 /**
  * ActionCodeSettings used by Firebase Auth for password resets, email verifications,
- * and invitations so recipients are automatically routed back to apohub.gdgdavao.org/auth/action.
+ * and invitations so recipients are automatically routed back to apohub.gdgdavao.org/auth/login.
  */
 export const AUTH_ACTION_CODE_SETTINGS = {
-  url: `${APP_URL}/auth/action`,
+  url: `${APP_URL}/auth/login?reset=success`,
   handleCodeInApp: true,
 };

@@ -18,6 +18,7 @@ import { EventAnalytics } from '../types';
 import { computeGrowthPct } from '../utils/growth';
 import { countWithinWindow } from '../utils/analyticsBuckets';
 import { toDateSafe } from '../utils/dateUtils';
+import { swrCache } from '../utils/swrCache';
 
 export interface DashboardStats {
   totalEvents: number;
@@ -94,115 +95,116 @@ export class AnalyticsService {
    * billed per visit and an index dependency, for a value that could not differ.
    */
   static async getDashboardStats(): Promise<DashboardStats> {
-    try {
-      const now = new Date();
-      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
-      const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0);
-      const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+    return swrCache.getOrFetch(
+      'stats:dashboard',
+      async () => {
+        try {
+          const now = new Date();
+          const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+          const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0);
+          const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
 
-      const [eventsSnapshot, registrationsSnapshot, certificatesSnapshot, upcomingEventsSnapshot] =
-        await Promise.all([
-          getDocs(collection(db, this.EVENTS_COLLECTION)),
-          getDocs(collection(db, this.REGISTRATIONS_COLLECTION)), // firestore:unscoped-ok - admin platform totals
-          getDocs(collection(db, this.CERTIFICATES_COLLECTION)), // firestore:unscoped-ok - admin platform totals
-          getDocs(query(
-            collection(db, this.EVENTS_COLLECTION),
-            where('isPublished', '==', true),
-            where('startDate', '>', Timestamp.fromDate(now))
-          )),
-        ]);
+          const [eventsSnapshot, registrationsSnapshot, certificatesSnapshot] =
+            await Promise.all([
+              getDocs(collection(db, this.EVENTS_COLLECTION)),
+              getDocs(collection(db, this.REGISTRATIONS_COLLECTION)), // firestore:unscoped-ok - admin platform totals
+              getDocs(collection(db, this.CERTIFICATES_COLLECTION)), // firestore:unscoped-ok - admin platform totals
+            ]);
 
-      // Helper function to filter out placeholder documents
-      const filterPlaceholderDocs = (docs: any[]) => {
-        return docs.filter(doc => {
-          const data = doc.data();
-          const docId = doc.id;
-          // Exclude documents with _placeholder: true or IDs starting with underscore
-          return !data._placeholder && !docId.startsWith('_');
-        });
-      };
+          // Helper function to filter out placeholder documents
+          const filterPlaceholderDocs = (docs: any[]) => {
+            return docs.filter(doc => {
+              const data = doc.data();
+              const docId = doc.id;
+              // Exclude documents with _placeholder: true or IDs starting with underscore
+              return !data._placeholder && !docId.startsWith('_');
+            });
+          };
 
-      // Filter out placeholder documents from all snapshots
-      const realEventsData = filterPlaceholderDocs(eventsSnapshot.docs);
-      const realRegistrationsData = filterPlaceholderDocs(registrationsSnapshot.docs);
-      const realCertificatesData = filterPlaceholderDocs(certificatesSnapshot.docs);
-      const realUpcomingEventsData = filterPlaceholderDocs(upcomingEventsSnapshot.docs);
+          // Filter out placeholder documents from all snapshots
+          const realEventsData = filterPlaceholderDocs(eventsSnapshot.docs);
+          const realRegistrationsData = filterPlaceholderDocs(registrationsSnapshot.docs);
+          const realCertificatesData = filterPlaceholderDocs(certificatesSnapshot.docs);
 
-      // Calculate revenue from registrations and pending counts
-      let totalRevenue = 0;
-      let pendingPayments = 0;
-      realRegistrationsData.forEach(doc => {
-        const data = doc.data();
-        if (data.paymentStatus === 'paid') {
-          totalRevenue += data.totalAmount || 0;
-        } else if (data.paymentStatus === 'pending') {
-          // count registrations with pending payment
-          pendingPayments += 1;
+          // Derive upcoming events directly from realEventsData without a 4th Firestore round-trip
+          const nowTime = now.getTime();
+          const upcomingEventsCount = realEventsData.filter((doc) => {
+            const data = doc.data();
+            const start = toDateSafe(data.startDate);
+            return data.isPublished && start !== null && start.getTime() > nowTime;
+          }).length;
+
+          // Calculate revenue from registrations and pending counts
+          let totalRevenue = 0;
+          let pendingPayments = 0;
+          realRegistrationsData.forEach(doc => {
+            const data = doc.data();
+            if (data.paymentStatus === 'paid') {
+              totalRevenue += data.totalAmount || 0;
+            } else if (data.paymentStatus === 'pending') {
+              // count registrations with pending payment
+              pendingPayments += 1;
+            }
+          });
+
+          // For approvals, align with pending payments as a proxy in current flow
+          const pendingApprovals = pendingPayments;
+
+          const certTimestamp = (doc: any) => doc.issuedAt ?? doc.createdAt;
+          const eventTimes = realEventsData.map((doc) => doc.data().createdAt);
+          const regTimes = realRegistrationsData.map((doc) => doc.data().registrationDate);
+          const certTimes = realCertificatesData.map((doc) => certTimestamp(doc.data()));
+
+          const eventsThisMonth = countWithinWindow(eventTimes, startOfMonth);
+          const eventsLastMonth = countWithinWindow(eventTimes, startOfLastMonth, endOfLastMonth);
+          const registrationsThisMonth = countWithinWindow(regTimes, startOfMonth);
+          const registrationsLastMonth = countWithinWindow(regTimes, startOfLastMonth, endOfLastMonth);
+          const certificatesThisMonth = countWithinWindow(certTimes, startOfMonth);
+          const certificatesLastMonth = countWithinWindow(certTimes, startOfLastMonth, endOfLastMonth);
+
+          const growthPct = computeGrowthPct;
+
+          const eventsGrowth = growthPct(eventsThisMonth, eventsLastMonth);
+          const registrationsGrowth = growthPct(registrationsThisMonth, registrationsLastMonth);
+          const certificatesGrowth = growthPct(certificatesThisMonth, certificatesLastMonth);
+
+          return {
+            totalEvents: realEventsData.length,
+            totalRegistrations: realRegistrationsData.length,
+            pendingApprovals,
+            certificatesIssued: realCertificatesData.length,
+            upcomingEvents: upcomingEventsCount,
+            monthlyGrowth: {
+              events: eventsGrowth,
+              registrations: registrationsGrowth,
+              certificates: certificatesGrowth
+            },
+            totalRevenue,
+            pendingPayments
+          };
+        } catch (error) {
+          logger.error('Error fetching dashboard stats:', error);
+          throw new Error('Failed to fetch dashboard stats');
         }
-      });
-
-      // For approvals, align with pending payments as a proxy in current flow
-      const pendingApprovals = pendingPayments;
-
-      // Month-over-month counts, taken off the snapshots above.
-      //
-      // `issuedAt` with a `createdAt` fallback used to be resolved by catching a
-      // failed query and re-issuing it, which meant the fallback could apply to
-      // one month and not the other. Reading both fields per document makes the
-      // two months answer the same question.
-      const certTimestamp = (doc: any) => doc.issuedAt ?? doc.createdAt;
-      const eventTimes = realEventsData.map((doc) => doc.data().createdAt);
-      const regTimes = realRegistrationsData.map((doc) => doc.data().registrationDate);
-      const certTimes = realCertificatesData.map((doc) => certTimestamp(doc.data()));
-
-      const eventsThisMonth = countWithinWindow(eventTimes, startOfMonth);
-      const eventsLastMonth = countWithinWindow(eventTimes, startOfLastMonth, endOfLastMonth);
-      const registrationsThisMonth = countWithinWindow(regTimes, startOfMonth);
-      const registrationsLastMonth = countWithinWindow(regTimes, startOfLastMonth, endOfLastMonth);
-      const certificatesThisMonth = countWithinWindow(certTimes, startOfMonth);
-      const certificatesLastMonth = countWithinWindow(certTimes, startOfLastMonth, endOfLastMonth);
-
-      // Delegates to the pure helper, which returns null when there is no
-      // prior-month baseline. See utils/growth.ts for why that matters.
-      const growthPct = computeGrowthPct;
-
-      const eventsGrowth = growthPct(eventsThisMonth, eventsLastMonth);
-      const registrationsGrowth = growthPct(registrationsThisMonth, registrationsLastMonth);
-      const certificatesGrowth = growthPct(certificatesThisMonth, certificatesLastMonth);
-
-      return {
-        totalEvents: realEventsData.length,
-        totalRegistrations: realRegistrationsData.length,
-        pendingApprovals,
-        certificatesIssued: realCertificatesData.length,
-        upcomingEvents: realUpcomingEventsData.length,
-        monthlyGrowth: {
-          // Already rounded by growthPct; passed through as-is so "no baseline"
-          // stays null instead of being coerced to 0.
-          events: eventsGrowth,
-          registrations: registrationsGrowth,
-          certificates: certificatesGrowth
-        },
-        totalRevenue,
-        pendingPayments
-      };
-    } catch (error) {
-      logger.error('Error fetching dashboard stats:', error);
-      throw new Error('Failed to fetch dashboard stats');
-    }
+      },
+      30_000
+    );
   }
 
   /**
    * Get detailed event statistics
    */
   static async getEventStats(eventId: string): Promise<EventStats> {
-    try {
-      const [
-        eventSnapshot,
-        registrationsSnapshot,
-        feedbackSnapshot,
-        certificatesSnapshot
-      ] = await Promise.all([
+    return swrCache.getOrFetch(
+      `stats:event:${eventId}`,
+      async () => {
+        try {
+          const [
+            eventSnapshot,
+            registrationsSnapshot,
+            feedbackSnapshot,
+            certificatesSnapshot
+          ] = await Promise.all([
         getDoc(doc(db, this.EVENTS_COLLECTION, eventId)),
         getDocs(query(
           collection(db, this.REGISTRATIONS_COLLECTION),
@@ -415,12 +417,15 @@ export class AnalyticsService {
           revenueWithPromo,
           revenueWithoutPromo
         }
-      };
-    } catch (error) {
-      logger.error('Error fetching event stats:', error);
-      throw new Error('Failed to fetch event stats');
-    }
-  }
+        };
+      } catch (error) {
+        logger.error('Error fetching event stats:', error);
+        throw new Error('Failed to fetch event stats');
+      }
+    },
+    30_000
+  );
+}
 
   /**
    * Get comprehensive event analytics (using Firebase Function for complex calculations)

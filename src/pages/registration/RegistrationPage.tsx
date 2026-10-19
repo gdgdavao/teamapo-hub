@@ -46,6 +46,7 @@ const EventRegistrationPage: React.FC<EventRegistrationPageProps> = ({ isPreview
   const [metaImageUrl, setMetaImageUrl] = useState<string>('https://raw.githubusercontent.com/gdgdavao/assets-cdn/main/banner.png');
   const [imageResolved, setImageResolved] = useState(false);
   const hasLoadedFormRef = useRef(false);
+  const hasInitialDataRef = useRef(false);
 
   // Set page title
   usePageTitle();
@@ -163,6 +164,17 @@ const EventRegistrationPage: React.FC<EventRegistrationPageProps> = ({ isPreview
     const resolveEventIdentifier = async () => {
       if (eventId) {
         setResolvedEventId(eventId);
+        EventService.getEvent(eventId).then((cachedEvent) => {
+          if (cachedEvent && !effectiveIsPreview && cachedEvent.status === 'published' && cachedEvent.isPublished) {
+            hasInitialDataRef.current = true;
+            setEvent(cachedEvent);
+            if (cachedEvent.registrationForm?.length) {
+              setRegistrationForm(cachedEvent.registrationForm);
+              hasLoadedFormRef.current = true;
+            }
+            setLoading(false);
+          }
+        });
         return;
       }
       
@@ -171,6 +183,15 @@ const EventRegistrationPage: React.FC<EventRegistrationPageProps> = ({ isPreview
           const eventBySlug = await EventService.getEventBySlug(slug);
           if (eventBySlug) {
             setResolvedEventId(eventBySlug.id);
+            if (!effectiveIsPreview && eventBySlug.status === 'published' && eventBySlug.isPublished) {
+              hasInitialDataRef.current = true;
+              setEvent(eventBySlug);
+              if (eventBySlug.registrationForm?.length) {
+                setRegistrationForm(eventBySlug.registrationForm);
+                hasLoadedFormRef.current = true;
+              }
+              setLoading(false);
+            }
             return;
           }
 
@@ -178,6 +199,15 @@ const EventRegistrationPage: React.FC<EventRegistrationPageProps> = ({ isPreview
           const eventById = await EventService.getEvent(slug);
           if (eventById) {
             setResolvedEventId(eventById.id);
+            if (!effectiveIsPreview && eventById.status === 'published' && eventById.isPublished) {
+              hasInitialDataRef.current = true;
+              setEvent(eventById);
+              if (eventById.registrationForm?.length) {
+                setRegistrationForm(eventById.registrationForm);
+                hasLoadedFormRef.current = true;
+              }
+              setLoading(false);
+            }
             return;
           }
 
@@ -196,7 +226,7 @@ const EventRegistrationPage: React.FC<EventRegistrationPageProps> = ({ isPreview
     };
     
     resolveEventIdentifier();
-  }, [eventId, slug]);
+  }, [eventId, slug, effectiveIsPreview]);
 
   // Load event data with real-time updates
   useEffect(() => {
@@ -210,7 +240,10 @@ const EventRegistrationPage: React.FC<EventRegistrationPageProps> = ({ isPreview
       return;
     }
 
-    setLoading(true);
+    // Only trigger full loading spinner if no event data is available in state or cache
+    if (!hasInitialDataRef.current) {
+      setLoading(true);
+    }
 
     const unsubscribe = EventService.subscribeToEvent(
       resolvedEventId,
@@ -235,6 +268,10 @@ const EventRegistrationPage: React.FC<EventRegistrationPageProps> = ({ isPreview
 
         setError(null);
         setEvent(eventData);
+        if (eventData.registrationForm?.length) {
+          setRegistrationForm(eventData.registrationForm);
+          hasLoadedFormRef.current = true;
+        }
         setLoading(false);
       },
       err => {
@@ -255,11 +292,19 @@ const EventRegistrationPage: React.FC<EventRegistrationPageProps> = ({ isPreview
 
   useEffect(() => {
     hasLoadedFormRef.current = false;
+    hasInitialDataRef.current = false;
   }, [resolvedEventId]);
 
   // Load registration form configuration once event is available
   useEffect(() => {
     if (!resolvedEventId || !event || hasLoadedFormRef.current) {
+      return;
+    }
+
+    // If event already carries the registrationForm in its document, use it immediately
+    if (event.registrationForm && event.registrationForm.length > 0) {
+      setRegistrationForm(event.registrationForm);
+      hasLoadedFormRef.current = true;
       return;
     }
 

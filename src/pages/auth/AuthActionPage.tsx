@@ -1,9 +1,12 @@
 import React, { useEffect, useId, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   applyActionCode,
+  browserLocalPersistence,
   checkActionCode,
   confirmPasswordReset,
+  setPersistence,
+  signInWithEmailAndPassword,
   verifyPasswordResetCode,
 } from 'firebase/auth';
 import {
@@ -12,6 +15,7 @@ import {
   EyeIcon,
   EyeSlashIcon,
 } from '@heroicons/react/24/outline';
+import toast from 'react-hot-toast';
 import { auth } from '../../config/firebase';
 import { Button, Input } from '../../components/UI';
 import AuthShell from './AuthShell';
@@ -22,6 +26,7 @@ type ActionStatus = 'loading' | 'ready' | 'submitting' | 'success' | 'error';
 
 const AuthActionPage: React.FC = () => {
   usePageTitle();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
   const mode = searchParams.get('mode');
@@ -42,6 +47,17 @@ const AuthActionPage: React.FC = () => {
   const confirmPasswordId = useId();
 
   useEffect(() => {
+    // When arriving at /auth/action with no action parameters (e.g. redirected from Firebase's default handler),
+    // route seamlessly to login or home rather than throwing an invalid link error.
+    if (!oobCode && !mode) {
+      if (auth.currentUser) {
+        navigate('/', { replace: true });
+        return;
+      }
+      navigate('/auth/login?reset=success', { replace: true });
+      return;
+    }
+
     if (!oobCode || !mode) {
       setErrorMessage('This link is invalid or incomplete. Please check the URL or request a new link.');
       setStatus('error');
@@ -125,7 +141,21 @@ const AuthActionPage: React.FC = () => {
     setStatus('submitting');
     try {
       await confirmPasswordReset(auth, oobCode, newPassword);
-      setStatus('success');
+
+      // Attempt instant auto-login so the user isn't forced to re-type their credentials
+      try {
+        await setPersistence(auth, browserLocalPersistence);
+        await signInWithEmailAndPassword(auth, accountEmail, newPassword);
+        setStatus('success');
+        toast.success('Welcome to TeamApo Hub!');
+        setTimeout(() => {
+          navigate('/', { replace: true });
+        }, 1200);
+        return;
+      } catch (loginErr) {
+        logger.warn('Auto-login after password reset failed; falling back to manual sign-in:', loginErr);
+        setStatus('success');
+      }
     } catch (err: any) {
       logger.error('Error confirming password reset:', err);
       setStatus('ready');
@@ -187,8 +217,10 @@ const AuthActionPage: React.FC = () => {
     let successSubtitle = 'Your account action was processed successfully.';
 
     if (mode === 'resetPassword') {
-      successTitle = 'Password updated';
-      successSubtitle = 'Your password has been reset successfully. You can now sign in with your new password.';
+      successTitle = auth.currentUser ? 'Welcome to TeamApo Hub!' : 'Password updated';
+      successSubtitle = auth.currentUser
+        ? 'Your password has been set and you are now signed in. Redirecting to your workspace...'
+        : 'Your password has been reset successfully. You can now sign in with your new password.';
     } else if (mode === 'verifyEmail') {
       successTitle = 'Email verified';
       successSubtitle = 'Your email address has been verified. You can now sign in to your account.';
@@ -214,9 +246,23 @@ const AuthActionPage: React.FC = () => {
                 Reset your password
               </Button>
             )}
-            <Button variant="filled" fullWidth href="/auth/login">
-              Sign in to your account
-            </Button>
+            {mode === 'resetPassword' && auth.currentUser ? (
+              <Button variant="filled" fullWidth href="/" loading={true}>
+                Entering workspace...
+              </Button>
+            ) : mode === 'resetPassword' ? (
+              <Button
+                variant="filled"
+                fullWidth
+                href={accountEmail ? `/auth/login?email=${encodeURIComponent(accountEmail)}&reset=success` : '/auth/login?reset=success'}
+              >
+                Sign in to your account
+              </Button>
+            ) : (
+              <Button variant="filled" fullWidth href="/auth/login">
+                Sign in to your account
+              </Button>
+            )}
           </div>
         </div>
       </AuthShell>
