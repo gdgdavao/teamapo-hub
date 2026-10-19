@@ -143,21 +143,21 @@ describe('OpenGraph & Social Media Sharing Contract', () => {
       const html = buildEventHtmlWithMeta(SAMPLE_TEMPLATE, event, DEFAULT_SITE_URL);
 
       // Title
-      expect(html).toContain('<title>DevFest Davao 2026 | TeamApo Hub</title>');
+      expect(html).toContain('<title>DevFest Davao 2026 | Google Developer Groups - Davao</title>');
 
       // OpenGraph tags
       expect(html).toContain('<meta property="og:type" content="event" />');
-      expect(html).toContain('<meta property="og:title" content="DevFest Davao 2026 | TeamApo Hub" />');
+      expect(html).toContain('<meta property="og:title" content="DevFest Davao 2026 | Google Developer Groups - Davao" />');
       expect(html).toContain('<meta property="og:image" content="https://storage.googleapis.com/apohub-bucket/events/devfest-cover.jpg" />');
       expect(html).toContain('<meta property="og:image:secure_url" content="https://storage.googleapis.com/apohub-bucket/events/devfest-cover.jpg" />');
       expect(html).toContain('<meta property="og:image:width" content="1200" />');
       expect(html).toContain('<meta property="og:image:height" content="630" />');
       expect(html).toContain('<meta property="og:url" content="https://apohub.gdgdavao.org/e/devfest-2026" />');
-      expect(html).toContain('<meta property="og:site_name" content="TeamApo Hub" />');
+      expect(html).toContain('<meta property="og:site_name" content="Google Developer Groups - Davao" />');
 
       // Twitter Card tags
       expect(html).toContain('<meta name="twitter:card" content="summary_large_image" />');
-      expect(html).toContain('<meta name="twitter:title" content="DevFest Davao 2026 | TeamApo Hub" />');
+      expect(html).toContain('<meta name="twitter:title" content="DevFest Davao 2026 | Google Developer Groups - Davao" />');
       expect(html).toContain('<meta name="twitter:image" content="https://storage.googleapis.com/apohub-bucket/events/devfest-cover.jpg" />');
 
       // Canonical link

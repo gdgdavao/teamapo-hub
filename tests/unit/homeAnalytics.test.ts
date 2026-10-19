@@ -149,7 +149,7 @@ describe('organizer Home', () => {
       'utf-8'
     );
     expect(upcomingEventsSource).toContain('/events/${nextEvent.id}/attendees');
-    expect(upcomingEventsSource).toContain('/events/${nextEvent.id}/check-in');
+    expect(upcomingEventsSource).toContain('/events/${nextEvent.id}/kiosk');
   });
 
   it('renders UpcomingEventsList and puts the action queue first when backlogged', () => {

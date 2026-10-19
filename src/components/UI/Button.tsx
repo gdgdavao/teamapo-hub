@@ -57,7 +57,7 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
  * because a one-handed tap on a phone at a venue door is the primary use.
  */
 const base =
-  'md-state-layer select-none inline-flex items-center justify-center gap-2 whitespace-nowrap ' +
+  'md-state-layer select-none relative inline-grid grid-cols-1 grid-rows-1 place-items-center ' +
   'font-medium rounded border border-transparent ' +
   'min-h-control px-control-x ' +
   'transition-[color,background-color,border-color,box-shadow,transform] ' +
@@ -83,6 +83,12 @@ const sizes: Record<ButtonSize, string> = {
   sm: 'px-control-x-sm text-sm',
   md: 'text-base',
   lg: 'px-control-x-lg text-lg',
+};
+
+const spinnerSizes: Record<ButtonSize, string> = {
+  sm: '!w-4 !h-4 border-2',
+  md: '!w-5 !h-5 border-2',
+  lg: '!w-6 !h-6 border-[2.5px]',
 };
 
 const iconSize = 'h-5 w-5 shrink-0';
@@ -130,7 +136,9 @@ const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonProps>(fu
         ref={ref as React.Ref<HTMLAnchorElement>}
         className={classes}
       >
-        {label}
+        <span className="col-start-1 row-start-1 inline-flex items-center justify-center gap-2">
+          {label}
+        </span>
       </Link>
     );
   }
@@ -149,13 +157,18 @@ const Button = forwardRef<HTMLButtonElement | HTMLAnchorElement, ButtonProps>(fu
           moving the layout at the exact moment the user was committing to the
           action - which is the moment a mis-tap is most likely. */}
       <span
-        className={`inline-flex items-center justify-center gap-2 transition-opacity duration-short2 ease-emphasized-standard ${
-          loading ? 'opacity-0' : 'opacity-100'
+        className={`col-start-1 row-start-1 inline-flex items-center justify-center gap-2 transition-opacity duration-short2 ease-emphasized-standard ${
+          loading ? 'opacity-0 pointer-events-none' : 'opacity-100'
         }`}
       >
         {label}
       </span>
-      {loading && <span className="spinner col-start-1 row-start-1" aria-hidden="true" />}
+      {loading && (
+        <span
+          className={`spinner motion-essential col-start-1 row-start-1 ${spinnerSizes[size]}`}
+          aria-hidden="true"
+        />
+      )}
     </button>
   );
 });

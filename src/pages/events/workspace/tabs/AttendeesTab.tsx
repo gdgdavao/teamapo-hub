@@ -149,21 +149,29 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
       try {
         setLoading(true);
         
-        const [eventData, firestoreRegistrations] = await Promise.all([
+        const [eventData, formFields, firestoreRegistrations] = await Promise.all([
           EventService.getEvent(eventId),
+          EventService.getEventRegistrationForm(eventId).catch(() => []),
           RegistrationService.getEventRegistrations(eventId)
         ]);
         
-        if (eventData) {
-          setCurrentEvent(eventData);
-          setEvents([eventData]);
+        const enrichedEvent = eventData
+          ? {
+              ...eventData,
+              registrationForm: eventData.registrationForm?.length ? eventData.registrationForm : formFields
+            }
+          : null;
+
+        if (enrichedEvent) {
+          setCurrentEvent(enrichedEvent);
+          setEvents([enrichedEvent]);
         }
         
         // Transform data to match expected interface
         const transformedRegistrations: Registration[] = [];
         
         for (const reg of firestoreRegistrations) {
-          const event = eventData;
+          const event = enrichedEvent;
           if (!event) continue;
           
           const seatQuantity = (() => {
@@ -187,14 +195,72 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
             return 'pending'; // Default for any other status including 'cancelled'
           };
 
+          const phoneFromCustom = (!reg.userDetails.phoneNumber && (reg as any).customResponses)
+            ? Object.entries((reg as any).customResponses).find(([k, v]) => {
+                if (!v || typeof v !== 'string') return false;
+                const formField = event.registrationForm?.find(f => f.id === k);
+                const label = formField ? formField.label.toLowerCase() : k.toLowerCase();
+                const fieldType = formField?.type;
+                return (
+                  fieldType === 'phone' ||
+                  k === '3' ||
+                  k.toLowerCase().includes('phone') ||
+                  k.toLowerCase().includes('mobile') ||
+                  k.toLowerCase().includes('contact') ||
+                  label.includes('phone') ||
+                  label.includes('mobile') ||
+                  label.includes('contact')
+                );
+              })?.[1]
+            : undefined;
+
+          const orgFromCustom = (!reg.userDetails.organization && (reg as any).customResponses)
+            ? Object.entries((reg as any).customResponses).find(([k, v]) => {
+                if (!v || typeof v !== 'string') return false;
+                const formField = event.registrationForm?.find(f => f.id === k);
+                const label = formField ? formField.label.toLowerCase() : k.toLowerCase();
+                return (
+                  k.toLowerCase().includes('organization') ||
+                  k.toLowerCase().includes('company') ||
+                  k.toLowerCase().includes('school') ||
+                  k.toLowerCase().includes('university') ||
+                  k.toLowerCase().includes('affiliation') ||
+                  label.includes('organization') ||
+                  label.includes('company') ||
+                  label.includes('school') ||
+                  label.includes('university') ||
+                  label.includes('affiliation')
+                );
+              })?.[1]
+            : undefined;
+
+          const nameFromCustom = (!reg.userDetails.name || reg.userDetails.name === 'Anonymous Attendee') && (reg as any).customResponses
+            ? (() => {
+                const responses = (reg as any).customResponses as Record<string, any>;
+                const fullNameField = event.registrationForm?.find(f => {
+                  const l = f.label.toLowerCase();
+                  return l.includes('full name') || l === 'name';
+                });
+                if (fullNameField && responses[fullNameField.id]) {
+                  return String(responses[fullNameField.id]).trim();
+                }
+                const first = responses['1'] || responses['first_name'] || responses['firstName'];
+                const last = responses['1762143123275'] || responses['last_name'] || responses['lastName'];
+                if (first || last) {
+                  return `${first || ''} ${last || ''}`.trim();
+                }
+                return undefined;
+              })()
+            : undefined;
+
           const transformedReg: Registration = {
             id: reg.id,
             attendee: {
               id: reg.userId || reg.id,
-              name: reg.userDetails.name,
+              name: reg.userDetails.name || nameFromCustom || 'Anonymous Attendee',
               email: reg.userDetails.email,
-              phone: reg.userDetails.phoneNumber,
-              organization: reg.userDetails.organization,
+              phone: reg.userDetails.phoneNumber || (typeof phoneFromCustom === 'string' ? phoneFromCustom : undefined),
+              organization: reg.userDetails.organization || (typeof orgFromCustom === 'string' ? orgFromCustom : undefined),
               profilePicture: undefined, // Not available in current structure
               experience: undefined,
               interests: [],
@@ -298,64 +364,62 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
   }, [viewingRegistration?.id, viewingRegistration?.event?.id, eventId]);
 
 
-  const handleStatusChange = (registrationId: string, newStatus: Registration['status'], notes?: string) => {
+  const handleStatusChange = async (registrationId: string, newStatus: Registration['status'], notes?: string): Promise<void> => {
     // Only handle admin status changes (approved/rejected)
     if (newStatus === 'approved' || newStatus === 'rejected') {
-      const updateStatus = async () => {
-        try {
-          await RegistrationService.updateRegistrationStatus(
-            registrationId, 
-            newStatus as 'approved' | 'rejected',
-            notes
-          );
-          
-          // Update local state after successful update
-          setRegistrations(prev => 
-            prev.map(reg => 
-              reg.id === registrationId 
-                ? { ...reg, status: newStatus, notes: notes || reg.notes }
-                : reg
-            )
-          );
+      try {
+        await RegistrationService.updateRegistrationStatus(
+          registrationId, 
+          newStatus as 'approved' | 'rejected',
+          notes
+        );
+        
+        // Update local state after successful update
+        setRegistrations(prev => 
+          prev.map(reg => {
+            if (reg.id !== registrationId) return reg;
+            const isFree = (reg.totalAmount === 0 || !reg.totalAmount);
+            return {
+              ...reg,
+              status: newStatus,
+              registrationStatus: newStatus,
+              notes: notes || reg.notes,
+              ...(newStatus === 'approved' && isFree ? { paymentStatus: 'paid' as const } : {})
+            };
+          })
+        );
 
-          if (viewingRegistration?.id === registrationId) {
-            setViewingRegistration(prev =>
-              prev ? { ...prev, status: newStatus, notes: notes || prev.notes } : null
-            );
-          }
-
-          // Simulate email notification
-          const registration = registrations.find(r => r.id === registrationId);
-          if (registration) {
-            logger.log(`Email notification sent to ${registration.attendee.email} - Status: ${newStatus}`);
-          }
-        } catch (error) {
-          logger.error('Failed to update registration status:', error);
-          toast.error('Failed to update registration status. Please try again.');
+        if (viewingRegistration?.id === registrationId) {
+          const isFree = (viewingRegistration.totalAmount === 0 || !viewingRegistration.totalAmount);
+          setViewingRegistration(prev =>
+            prev ? {
+              ...prev,
+              status: newStatus,
+              registrationStatus: newStatus,
+              notes: notes || prev.notes,
+              ...(newStatus === 'approved' && isFree ? { paymentStatus: 'paid' as const } : {})
+            } : null
+          );
         }
-      };
-      
-      updateStatus();
+      } catch (error) {
+        logger.error('Failed to update registration status:', error);
+        toast.error('Failed to update registration status. Please try again.');
+        throw error;
+      }
     } else {
       // For other status changes, just update locally for now
       setRegistrations(prev => 
         prev.map(reg => 
           reg.id === registrationId 
-            ? { ...reg, status: newStatus, notes: notes || reg.notes }
+            ? { ...reg, status: newStatus, registrationStatus: newStatus, notes: notes || reg.notes }
             : reg
         )
       );
 
       if (viewingRegistration?.id === registrationId) {
         setViewingRegistration(prev =>
-          prev ? { ...prev, status: newStatus, notes: notes || prev.notes } : null
+          prev ? { ...prev, status: newStatus, registrationStatus: newStatus, notes: notes || prev.notes } : null
         );
-      }
-
-      // Simulate email notification
-      const registration = registrations.find(r => r.id === registrationId);
-      if (registration) {
-        logger.log(`Email notification sent to ${registration.attendee.email} - Status: ${newStatus}`);
       }
     }
   };
@@ -754,6 +818,10 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
         // Update registration status if it was pending
         if (pendingReg) {
           updated.status = 'approved' as const;
+          updated.registrationStatus = 'approved';
+          if (reg.totalAmount === 0 || !reg.totalAmount) {
+            updated.paymentStatus = 'paid';
+          }
         }
 
         // Update payment status if payment was approved
@@ -980,6 +1048,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
         return {
           ...reg,
           status: 'approved' as const,
+          registrationStatus: 'approved',
           paymentStatus: 'paid' as const
         };
       })

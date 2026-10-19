@@ -21,6 +21,7 @@ import AppShell from '../../layout/AppShell';
 import { useAuth } from '../../contexts/AuthContext';
 import { UserService, UserWithMetadata } from '../../services/userService';
 import { AuditLogService } from '../../services/auditLogService';
+import { EventService } from '../../services/eventService';
 import { asUser } from '../../auth/ability';
 import { logger } from '../../utils/logger';
 import toast from 'react-hot-toast';
@@ -78,6 +79,48 @@ const AdminUsersPage: React.FC = () => {
   const activeAdminCount = useMemo(
     () => users.filter((u) => u.role === 'admin' && u.isActive !== false).length,
     [users]
+  );
+
+  // Owned-events pre-flight for the delete confirmations. The deleteUser
+  // callable refuses accounts that still own an active event
+  // (draft/published/ongoing) because rules pin organizer.uid immutably and
+  // those events would be left ownerless and unmanageable. Surfacing the same
+  // fact here makes that refusal a visible pre-condition instead of a surprise
+  // server toast.
+  const [ownedEventsByUid, setOwnedEventsByUid] = useState<
+    Record<string, { total: number; active: number; titles: string[] }>
+  >({});
+
+  const refreshOwnedEventCounts = React.useCallback(async () => {
+    try {
+      const events = await EventService.getAllEvents();
+      const counts: Record<string, { total: number; active: number; titles: string[] }> = {};
+      for (const ev of events) {
+        const uid = ev.organizer?.uid;
+        if (!uid) continue;
+        const entry = counts[uid] ?? { total: 0, active: 0, titles: [] };
+        entry.total += 1;
+        if (ev.status && ['draft', 'published', 'ongoing'].includes(ev.status)) {
+          entry.active += 1;
+          if (entry.titles.length < 3) entry.titles.push(ev.title);
+        }
+        counts[uid] = entry;
+      }
+      setOwnedEventsByUid(counts);
+    } catch (error) {
+      // Advisory only: the callable's own guard is the enforcement, so a
+      // pre-check failure degrades to a server refusal on confirm.
+      logger.warn('Owned-events pre-check unavailable:', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshOwnedEventCounts();
+  }, [refreshOwnedEventCounts]);
+
+  const getOwnedEvents = React.useCallback(
+    (uid: string) => ownedEventsByUid[uid] ?? { total: 0, active: 0, titles: [] as string[] },
+    [ownedEventsByUid]
   );
 
   const canDeleteUser = React.useCallback(
@@ -248,19 +291,10 @@ const AdminUsersPage: React.FC = () => {
       setDeletingUser(null);
       setAdminDeleteConfirmEmail('');
 
-      void AuditLogService.recordAuditLog({
-        category: 'user_management',
-        action: 'user_deleted',
-        target: {
-          type: 'user',
-          id: userId,
-          label: deletingUser?.displayName,
-        },
-        details: {
-          email: deletingUser?.email ?? null,
-          role: deletingUser?.role ?? null,
-        },
-      });
+      // No client-side audit record here: the deleteUser callable already
+      // writes the authoritative user_deleted entry (actor, authAccountRemoved,
+      // profilePictureFilesRemoved). Recording it from the browser too only
+      // produced a duplicate that outran the server's richer entry.
     } catch (error: any) {
       logger.error('Error deleting user:', error);
       toast.error(error.message || 'Failed to delete user. Please try again.');
@@ -281,27 +315,38 @@ const AdminUsersPage: React.FC = () => {
 
     try {
       setIsBulkDeleting(true);
-      await Promise.all(usersToDelete.map((user) => UserService.deleteUser(user.uid)));
-      setUsers((prev) => prev.filter((user) => !usersToDelete.some((u) => u.uid === user.uid)));
+      // The callable refuses accounts with unresolved constraints (owned
+      // active events, superuser, last admin), so a mixed selection is the
+      // expected outcome: settle every call and report both halves rather
+      // than letting a single refusal discard the whole batch state.
+      const results = await Promise.allSettled(
+        usersToDelete.map((user) => UserService.deleteUser(user.uid))
+      );
+
+      const deleted = usersToDelete.filter((_, index) => results[index].status === 'fulfilled');
+      const refused = usersToDelete.filter((_, index) => results[index].status === 'rejected');
+
+      if (deleted.length > 0) {
+        setUsers((prev) => prev.filter((user) => !deleted.some((u) => u.uid === user.uid)));
+        await fetchUsers();
+      }
       setSelectedUsers([]);
       setShowBulkDeleteModal(false);
-      toast.success(`${usersToDelete.length} user account(s) deleted successfully`);
 
-      for (const user of usersToDelete) {
-        void AuditLogService.recordAuditLog({
-          category: 'user_management',
-          action: 'user_deleted',
-          target: {
-            type: 'user',
-            id: user.uid,
-            label: user.displayName,
-          },
-          details: {
-            bulk: true,
-            email: user.email,
-          },
-        });
+      if (refused.length === 0) {
+        toast.success(`${deleted.length} user account(s) deleted successfully`);
+      } else if (deleted.length === 0) {
+        toast.error(
+          `No accounts were deleted: the platform refused all ${refused.length} (active events or protected accounts).`
+        );
+      } else {
+        toast(
+          `${deleted.length} user account(s) deleted; ${refused.length} refused because they still own active events.`,
+          { icon: '⚠️' }
+        );
       }
+      // No client-side audit records: the callable writes the authoritative
+      // user_deleted entry for each account it actually removes.
     } catch (error) {
       logger.error('Error deleting users:', error);
       toast.error('Failed to delete some users. Please try again.');
@@ -886,7 +931,8 @@ const AdminUsersPage: React.FC = () => {
               disabled={
                 !deletingUser ||
                 adminDeleteConfirmEmail.trim().toLowerCase() !== deletingUser.email.trim().toLowerCase() ||
-                isDeleting
+                isDeleting ||
+                (deletingUser && getOwnedEvents(deletingUser.uid).active > 0)
               }
               loading={isDeleting}
             >
@@ -906,6 +952,27 @@ const AdminUsersPage: React.FC = () => {
                 </p>
               </div>
             </div>
+
+            {(() => {
+              const owned = getOwnedEvents(deletingUser.uid);
+              if (owned.active === 0) return null;
+              return (
+                <div className="flex items-start gap-3 p-3.5 bg-warning-container/30 border border-warning/40 rounded-xl text-sm">
+                  <ExclamationTriangleIcon className="h-5 w-5 text-warning shrink-0 mt-0.5" aria-hidden="true" />
+                  <div>
+                    <p className="font-semibold text-on-surface">
+                      Owns {owned.active} active event{owned.active === 1 ? '' : 's'}
+                    </p>
+                    <p className="text-on-surface-variant text-xs mt-0.5">
+                      {owned.titles.join(', ')}
+                      {owned.active > owned.titles.length ? ` and ${owned.active - owned.titles.length} more` : ''}.
+                      Their rules-pinned organizer.uid makes these unmanageable after deletion, so the platform refuses
+                      the account delete until the events are completed, cancelled, reassigned, or removed.
+                    </p>
+                  </div>
+                </div>
+              );
+            })()}
 
             <p className="text-sm text-on-surface">
               Target Administrator: <span className="font-semibold text-on-surface">{deletingUser.displayName}</span> (<span className="font-mono text-xs text-primary">{deletingUser.email}</span>)
@@ -943,7 +1010,12 @@ const AdminUsersPage: React.FC = () => {
             ? `Are you sure you want to delete ${deletingUser.displayName} (${deletingUser.email})? This permanently deletes the account from Firebase Authentication and Firestore, and immediately revokes their sessions.`
             : ''
         }
-        confirmText="Delete Account"
+        confirmText={
+          deletingUser && getOwnedEvents(deletingUser.uid).active > 0
+            ? 'Resolve Active Events First'
+            : 'Delete Account'
+        }
+        confirmDisabled={!!deletingUser && getOwnedEvents(deletingUser.uid).active > 0}
         type="danger"
         isLoading={isDeleting}
       />
@@ -958,7 +1030,7 @@ const AdminUsersPage: React.FC = () => {
         }}
         onConfirm={handleBulkDelete}
         title="Delete Selected Users"
-        message={`Are you sure you want to permanently delete ${deletableSelectedCount} user account(s)? Protected admin accounts will not be affected. This action cannot be undone.`}
+        message={`Are you sure you want to permanently delete ${deletableSelectedCount} user account(s)? Protected admin accounts will not be affected, and accounts that still own active events are refused by the platform. This action cannot be undone.`}
         confirmText={`Delete ${deletableSelectedCount} Users`}
         type="danger"
         isLoading={isBulkDeleting}

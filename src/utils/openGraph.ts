@@ -35,7 +35,7 @@ export interface EventMetadata {
 
 export const DEFAULT_OG_IMAGE = 'https://raw.githubusercontent.com/gdgdavao/assets-cdn/main/banner.png';
 export const DEFAULT_SITE_URL = 'https://apohub.gdgdavao.org';
-export const DEFAULT_SITE_NAME = 'TeamApo Hub';
+export const DEFAULT_SITE_NAME = 'Google Developer Groups - Davao';
 
 export const CRAWLER_USER_AGENTS_REGEX =
   /(facebookexternalhit|facebookcatalog|facebookplatform|facebot|twitterbot|linkedinbot|discordbot|telegrambot|whatsapp|slackbot|applebot|googlebot|pinterest|bitlybot|skypeuripreview|meta-externalagent|vkshare|quora link preview|w3c_validator)/i;

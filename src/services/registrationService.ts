@@ -743,28 +743,34 @@ export class RegistrationService {
         registrationStatus: status,
         updatedAt: serverTimestamp()
       };
-      let freeApprovalDetails: {
+      let approvalNotificationDetails: {
         eventId: string;
-        attendeeEmail?: string;
-        attendeeName?: string;
+        attendeeEmail: string;
+        attendeeName: string;
+        isFreeRegistration: boolean;
       } | null = null;
 
       if (notes) {
         updateData.adminNotes = notes;
       }
 
-      // If approving, also update payment status if needed
+      // If approving, also update payment status if needed and prepare approval email details
       if (status === 'approved') {
         const registration = await getDoc(registrationRef);
         if (registration.exists()) {
           const data = registration.data();
-          // If it's a free event, mark as paid
-          if (data.totalAmount === 0) {
+          const isFree = data.totalAmount === 0 || !data.totalAmount;
+          if (isFree) {
             updateData.paymentStatus = 'paid';
-            freeApprovalDetails = {
+          }
+          const email = (data.userDetails?.email || data.attendeeEmail || data.email || '').trim();
+          const name = (data.userDetails?.name || data.attendeeName || data.name || 'Attendee').trim();
+          if (email && data.eventId) {
+            approvalNotificationDetails = {
               eventId: data.eventId,
-              attendeeEmail: data.userDetails?.email,
-              attendeeName: data.userDetails?.name
+              attendeeEmail: email,
+              attendeeName: name,
+              isFreeRegistration: isFree
             };
           }
         }
@@ -773,26 +779,21 @@ export class RegistrationService {
       await updateDoc(registrationRef, updateData);
       this.invalidateCache();
 
-      if (
-        freeApprovalDetails &&
-        freeApprovalDetails.attendeeEmail &&
-        freeApprovalDetails.attendeeName &&
-        status === 'approved'
-      ) {
+      if (approvalNotificationDetails && status === 'approved') {
         try {
-          const eventRef = doc(db, this.EVENTS_COLLECTION, freeApprovalDetails.eventId);
+          const eventRef = doc(db, this.EVENTS_COLLECTION, approvalNotificationDetails.eventId);
           const eventSnap = await getDoc(eventRef);
           const eventTitle = eventSnap.exists() ? (eventSnap.data() as Event).title : 'Event';
           await EmailService.sendPaymentNotification({
             registrationId,
             status: 'approved',
             eventTitle,
-            attendeeEmail: freeApprovalDetails.attendeeEmail,
-            attendeeName: freeApprovalDetails.attendeeName,
-            isFreeRegistration: true
+            attendeeEmail: approvalNotificationDetails.attendeeEmail,
+            attendeeName: approvalNotificationDetails.attendeeName,
+            isFreeRegistration: approvalNotificationDetails.isFreeRegistration
           });
         } catch (notificationError) {
-          logger.warn('Failed to send payment notification for free registration:', notificationError);
+          logger.warn('Failed to send registration approval email notification:', notificationError);
         }
       }
 

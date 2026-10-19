@@ -303,6 +303,30 @@ describe('Firestore authorization rules', () => {
     await assertSucceeds(setDoc(doc(admin, 'users/newly-provisioned'), payload));
   });
 
+  it('deletion is callable-only: no client, not even an admin, deletes a user document', async () => {
+    const admin = testEnv.authenticatedContext('admin-1').firestore();
+    const organizer = testEnv.authenticatedContext('organizer-1').firestore();
+    const anonymous = testEnv.unauthenticatedContext().firestore();
+
+    // The old `allow delete: if isAdmin()` left the two-halves orphan open:
+    // an admin client could drop ONLY the Firestore document, leaving the
+    // Firebase Auth account alive (it could still sign in), skipping every
+    // callable guard and the audit entry. Deletion now belongs exclusively to
+    // the deleteUser Admin SDK callable, which admin SDKs bypass rules for.
+    await assertFails(deleteDoc(doc(admin, 'users/organizer-1')));
+    await assertFails(deleteDoc(doc(organizer, 'users/organizer-1')));
+    await assertFails(deleteDoc(doc(anonymous, 'users/organizer-2')));
+
+    // The Admin SDK path (rules bypassed) still works, mirroring what the
+    // deleteUser callable executes after auth.delete_user() succeeds.
+    await testEnv.withSecurityRulesDisabled(async ctx => {
+      await deleteDoc(doc(ctx.firestore(), 'users/organizer-1'));
+
+      const gone = await getDoc(doc(ctx.firestore(), 'users/organizer-1'));
+      expect(gone.exists()).toBe(false);
+    });
+  });
+
   it('isActive is required before a user passes isOrganizer', async () => {
     const noFlag = testEnv.authenticatedContext('no-flag').firestore();
     const withFlag = testEnv.authenticatedContext('with-flag').firestore();

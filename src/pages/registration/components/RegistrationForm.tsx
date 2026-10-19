@@ -118,10 +118,42 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({
     );
   };
 
+  const isPhoneField = (field: FormField): boolean => {
+    const rawLabel = stripFormattedLabelSyntax(field.label).toLowerCase();
+    const rawId = field.id.toLowerCase();
+    return (
+      field.type === 'phone' ||
+      rawLabel.includes('phone') ||
+      rawLabel.includes('mobile') ||
+      rawLabel.includes('contact') ||
+      rawId.includes('phone') ||
+      rawId.includes('contact') ||
+      rawId === '3'
+    );
+  };
+
+  const isOrganizationField = (field: FormField): boolean => {
+    const rawLabel = stripFormattedLabelSyntax(field.label).toLowerCase();
+    const rawId = field.id.toLowerCase();
+    return (
+      rawLabel.includes('organization') ||
+      rawLabel.includes('company') ||
+      rawLabel.includes('school') ||
+      rawLabel.includes('university') ||
+      rawLabel.includes('affiliation') ||
+      rawLabel.includes('institution') ||
+      rawId.includes('organization') ||
+      rawId.includes('company') ||
+      rawId.includes('school')
+    );
+  };
+
   const customEmailField = registrationForm.find(isEmailField);
   const customFullNameField = registrationForm.find(isFullNameField);
   const customFirstNameField = registrationForm.find(isFirstNameField);
   const customLastNameField = registrationForm.find(isLastNameField);
+  const customPhoneField = registrationForm.find(isPhoneField);
+  const customOrganizationField = registrationForm.find(isOrganizationField);
 
   const hasCustomEmail = Boolean(customEmailField);
   const hasCustomName = Boolean(customFullNameField || customFirstNameField || customLastNameField);
@@ -301,13 +333,21 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({
         }
         const nameRes = validateFullName(rawName);
 
-        const phoneVal = registrationData.phone ? validatePhoneNumber(registrationData.phone).normalized : null;
+        const rawPhone = customPhoneField
+          ? registrationData.customResponses[customPhoneField.id]
+          : registrationData.phone;
+        const phoneVal = rawPhone ? validatePhoneNumber(String(rawPhone), false).normalized : null;
+
+        const rawOrg = customOrganizationField
+          ? registrationData.customResponses[customOrganizationField.id]
+          : registrationData.organization;
+        const orgVal = typeof rawOrg === 'string' && rawOrg.trim() ? rawOrg.trim() : null;
 
         userDetails = {
           name: nameRes.normalized || (typeof rawName === 'string' ? rawName.trim() : ''),
           email: emailRes.normalized || '',
           phoneNumber: phoneVal,
-          organization: registrationData.organization.trim() || null
+          organization: orgVal
         };
       } else {
         const emailRes = validateEmail(registrationData.email);

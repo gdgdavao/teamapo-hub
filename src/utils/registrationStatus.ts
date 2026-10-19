@@ -27,6 +27,8 @@ export interface StatusBearingRegistration {
   paymentStatus?: string;
   /** Optional explicit admin decision. Written by some flows, absent on others. */
   registrationStatus?: string;
+  /** UI display status or mapped status from local optimistic updates. */
+  status?: string;
 }
 
 /**
@@ -49,8 +51,10 @@ export const resolveDisplayStatus = (
   if (reg.attendanceStatus === 'checked-in') return 'attended';
   if (reg.attendanceStatus === 'cancelled') return 'cancelled';
 
-  switch (reg.registrationStatus) {
+  const decision = reg.registrationStatus || reg.status;
+  switch (decision) {
     case 'approved':
+    case 'confirmed':
       return 'confirmed';
     case 'rejected':
       return 'rejected';

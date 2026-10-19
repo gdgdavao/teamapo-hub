@@ -190,7 +190,7 @@ const useSEO = ({
     updateMetaTag('og:description', description, true);
     updateMetaTag('og:type', ogType, true);
     updateMetaTag('og:url', currentUrl, true);
-    updateMetaTag('og:site_name', 'TeamApo Hub', true);
+    updateMetaTag('og:site_name', 'Google Developer Groups - Davao', true);
     updateMetaTag('og:locale', 'en_US', true);
     
     // Update Open Graph image tags
