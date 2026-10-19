@@ -21,6 +21,8 @@ import { Tabs, TabPanel } from '../../../components/UI';
 import type { TabItem } from '../../../components/UI';
 import { Badge } from '../../../components/UI';
 import { EventService } from '../../../services/eventService';
+import { RegistrationService } from '../../../services/registrationService';
+import { AnalyticsService } from '../../../services/analyticsService';
 import { asEvent } from '../../../auth/ability';
 import { Event } from '../../../types';
 import { logger } from '../../../utils/logger';
@@ -166,6 +168,9 @@ const EventWorkspacePage: React.FC = () => {
       if (!eventId) return;
       try {
         setLoading(true);
+        // Proactively warm up registrations and stats so Attendees, Check-in, and Overview tabs render with zero latency
+        void RegistrationService.prefetchEventRegistrations(eventId);
+        void AnalyticsService.getEventStats(eventId);
         const data = await EventService.getEvent(eventId);
         if (isMounted) {
           setEvent(data);

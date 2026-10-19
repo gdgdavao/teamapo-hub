@@ -7,7 +7,7 @@ import {
   browserSessionPersistence,
   setPersistence,
 } from 'firebase/auth';
-import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline';
+import { CheckCircleIcon, EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline';
 import { Input, Button } from '../../components/UI';
 import AuthShell from './AuthShell';
 import usePageTitle from '../../hooks/usePageTitle';
@@ -28,8 +28,9 @@ const LoginPage: React.FC = () => {
   const { signIn, signInWithGoogle } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(() => searchParams.get('email') || '');
   const [password, setPassword] = useState('');
+  const isResetSuccess = searchParams.get('reset') === 'success';
   const passwordId = useId();
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
@@ -108,6 +109,21 @@ const LoginPage: React.FC = () => {
         </div>
       }
     >
+      {isResetSuccess && (
+        <div
+          role="status"
+          className="mb-md rounded-lg border border-success-container bg-success-container/30 px-md py-sm text-sm text-on-surface flex items-start gap-2.5"
+        >
+          <CheckCircleIcon className="h-5 w-5 text-success shrink-0 mt-0.5" aria-hidden="true" />
+          <div>
+            <p className="font-semibold text-on-surface">Password updated successfully</p>
+            <p className="text-xs text-on-surface-variant mt-0.5">
+              Your account is ready. Please sign in with your new password to access TeamApo Hub.
+            </p>
+          </div>
+        </div>
+      )}
+
       {error && (
         <div
           role="alert"

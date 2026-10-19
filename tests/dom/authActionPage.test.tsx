@@ -9,11 +9,15 @@ const {
   mockConfirmPasswordReset,
   mockApplyActionCode,
   mockCheckActionCode,
+  mockSignInWithEmailAndPassword,
+  mockSetPersistence,
 } = vi.hoisted(() => ({
   mockVerifyPasswordResetCode: vi.fn(),
   mockConfirmPasswordReset: vi.fn(),
   mockApplyActionCode: vi.fn(),
   mockCheckActionCode: vi.fn(),
+  mockSignInWithEmailAndPassword: vi.fn(),
+  mockSetPersistence: vi.fn(),
 }));
 
 vi.mock('firebase/auth', () => ({
@@ -21,10 +25,13 @@ vi.mock('firebase/auth', () => ({
   confirmPasswordReset: mockConfirmPasswordReset,
   applyActionCode: mockApplyActionCode,
   checkActionCode: mockCheckActionCode,
+  signInWithEmailAndPassword: mockSignInWithEmailAndPassword,
+  setPersistence: mockSetPersistence,
+  browserLocalPersistence: 'LOCAL',
 }));
 
 vi.mock('@/config/firebase', () => ({
-  auth: {},
+  auth: { currentUser: null },
   db: {},
 }));
 
@@ -37,11 +44,28 @@ import AuthActionPage from '@/pages/auth/AuthActionPage';
 describe('AuthActionPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockSetPersistence.mockResolvedValue(undefined);
+    mockSignInWithEmailAndPassword.mockResolvedValue({ user: { uid: 'test-uid' } });
   });
 
-  it('renders error state when mode or oobCode is missing', async () => {
+  it('redirects to /auth/login?reset=success when query parameters are empty', async () => {
     render(
       <MemoryRouter initialEntries={['/auth/action']}>
+        <Routes>
+          <Route path="/auth/action" element={<AuthActionPage />} />
+          <Route path="/auth/login" element={<div>Redirected to login</div>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Redirected to login')).toBeInTheDocument();
+    });
+  });
+
+  it('renders error state when mode or oobCode is incomplete', async () => {
+    render(
+      <MemoryRouter initialEntries={['/auth/action?mode=resetPassword']}>
         <Routes>
           <Route path="/auth/action" element={<AuthActionPage />} />
         </Routes>
@@ -60,20 +84,22 @@ describe('AuthActionPage', () => {
     );
   });
 
-  it('handles resetPassword: verifies code, validates passwords, and submits reset', async () => {
+  it('handles resetPassword: verifies code, validates passwords, and performs auto-login', async () => {
     const user = userEvent.setup();
     mockVerifyPasswordResetCode.mockResolvedValueOnce('organizer@gdgdavao.org');
     mockConfirmPasswordReset.mockResolvedValueOnce(undefined);
+    mockSignInWithEmailAndPassword.mockResolvedValueOnce({ user: { uid: 'test-user-id' } });
 
     render(
       <MemoryRouter initialEntries={['/auth/action?mode=resetPassword&oobCode=valid-test-code']}>
         <Routes>
           <Route path="/auth/action" element={<AuthActionPage />} />
+          <Route path="/" element={<div>Dashboard Home</div>} />
         </Routes>
       </MemoryRouter>
     );
 
-    // Initial loading or wait for ready
+    // Wait for form to be ready
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: /reset your password/i })).toBeInTheDocument();
     });
@@ -113,10 +139,10 @@ describe('AuthActionPage', () => {
         'valid-test-code',
         'SecurePassword123!'
       );
-      expect(screen.getByRole('heading', { name: /password updated/i })).toBeInTheDocument();
-      expect(screen.getByRole('link', { name: /sign in to your account/i })).toHaveAttribute(
-        'href',
-        '/auth/login'
+      expect(mockSignInWithEmailAndPassword).toHaveBeenCalledWith(
+        expect.anything(),
+        'organizer@gdgdavao.org',
+        'SecurePassword123!'
       );
     });
   });

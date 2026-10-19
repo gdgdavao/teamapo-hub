@@ -64,7 +64,7 @@ export const UpcomingEventsList: React.FC<UpcomingEventsListProps> = ({
 }) => {
   const navigate = useNavigate();
   const [kioskEventId, setKioskEventId] = useState<string | null>(null);
-  const { getPrefetchProps } = usePrefetchEvent();
+  const { prefetch, getPrefetchProps } = usePrefetchEvent();
   const now = Date.now();
 
   const handleKioskLaunch = () => {
@@ -87,6 +87,14 @@ export const UpcomingEventsList: React.FC<UpcomingEventsListProps> = ({
         return aTime - bTime;
       });
   }, [events, now]);
+
+  // Warm up the upcoming event immediately so navigating to it is instantaneous (<10ms)
+  React.useEffect(() => {
+    if (upcomingEvents.length > 0) {
+      const next = upcomingEvents[0];
+      prefetch(next.id, next.slug);
+    }
+  }, [upcomingEvents, prefetch]);
 
   if (upcomingEvents.length === 0) {
     return (

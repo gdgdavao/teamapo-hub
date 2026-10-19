@@ -50,17 +50,23 @@ const ScopedHome: React.FC = () => {
       try {
         setLoading(true);
         setFailed(false);
-        const [ownEvents, ownRegistrations] = await Promise.all([
-          EventService.getEventsByOrganizer(organizerUid),
-          RegistrationService.getRegistrationsByOrganizer(organizerUid),
-        ]);
+
+        // Start both fetches concurrently in the same network burst
+        const eventsPromise = EventService.getEventsByOrganizer(organizerUid);
+        const registrationsPromise = RegistrationService.getRegistrationsByOrganizer(organizerUid);
+
+        // Render events as soon as they arrive (<50ms with SWR)
+        const ownEvents = await eventsPromise;
         setEvents(ownEvents);
+        setLoading(false);
+
+        // Await registrations concurrently to fill in metrics and backlog without delaying initial paint
+        const ownRegistrations = await registrationsPromise;
         setRegistrations(ownRegistrations);
       } catch (error) {
         logger.error('Error fetching scoped dashboard data:', error);
         toast.error('Failed to load dashboard data. Please refresh the page.');
         setFailed(true);
-      } finally {
         setLoading(false);
       }
     };

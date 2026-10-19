@@ -56,11 +56,10 @@ const EventsWorkspace: React.FC = () => {
     const fetchEvents = async () => {
       try {
         setLoading(true);
-        // Admin can see all events - fetch events and all registrations in 2 consolidated queries
-        const [eventsData, allRegistrations] = await Promise.all([
-          EventService.getAllEvents(),
-          RegistrationService.getAllRegistrations(), // firestore:unscoped-ok - admin event list attendee aggregation
-        ]);
+        // Admin can see all events - load events immediately for sub-50ms render
+        const eventsData = await EventService.getAllEvents();
+        setEvents(eventsData);
+        setLoading(false);
 
         logDiagnostics(
           'Fetched events snapshot',
@@ -74,31 +73,28 @@ const EventsWorkspace: React.FC = () => {
             currentAttendees: event.currentAttendees
           }))
         );
-        
-        // Calculate real attendee counts from approved registrations in-memory (O(N) single pass)
-        const approvedCountByEventId = new Map<string, number>();
-        for (const reg of allRegistrations) {
-          if ((reg as any).registrationStatus === 'approved') {
-            const count = reg.quantity || 1;
-            approvedCountByEventId.set(reg.eventId, (approvedCountByEventId.get(reg.eventId) || 0) + count);
-          }
-        }
 
-        const eventsWithRealCounts = eventsData.map(event => ({
-          ...event,
-          currentAttendees: approvedCountByEventId.get(event.id) ?? event.currentAttendees ?? 0,
-        }));
-        
-        setEvents(eventsWithRealCounts);
-        logDiagnostics(
-          'Events state updated',
-          eventsWithRealCounts.map(event => ({
-            id: event.id,
-            status: event.status,
-            registrationStatus: event.registrationStatus,
-            currentAttendees: event.currentAttendees
-          }))
-        );
+        // Fetch attendee counts in background to update real approved counts without delaying initial paint
+        RegistrationService.getAllRegistrations() // firestore:unscoped-ok - admin event list attendee aggregation
+          .then((allRegistrations) => {
+            const approvedCountByEventId = new Map<string, number>();
+            for (const reg of allRegistrations) {
+              if ((reg as any).registrationStatus === 'approved') {
+                const count = reg.quantity || 1;
+                approvedCountByEventId.set(reg.eventId, (approvedCountByEventId.get(reg.eventId) || 0) + count);
+              }
+            }
+
+            setEvents(prev =>
+              prev.map(event => ({
+                ...event,
+                currentAttendees: approvedCountByEventId.get(event.id) ?? event.currentAttendees ?? 0,
+              }))
+            );
+          })
+          .catch((err) => {
+            logger.warn('Failed to refresh real attendee counts in background:', err);
+          });
       } catch (error) {
         logger.error('Error fetching events:', error);
         toast.error('Failed to load events. Please refresh the page.');

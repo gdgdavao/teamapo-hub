@@ -5,7 +5,7 @@ import { RegistrationService } from '../services/registrationService';
 export interface PrefetchEventOptions {
   /** Also prefetch registrations for the event (defaults to true) */
   prefetchRegistrations?: boolean;
-  /** Hover debounce delay in ms before triggering prefetch (defaults to 65ms) */
+  /** Hover debounce delay in ms before triggering prefetch (defaults to 20ms) */
   debounceMs?: number;
 }
 
@@ -45,7 +45,7 @@ export function isSaveDataOrSlowConnection(): boolean {
  * on user intent (hover with 65ms debounce, focus, or touchstart).
  */
 export function usePrefetchEvent(options: PrefetchEventOptions = {}) {
-  const { prefetchRegistrations = true, debounceMs = 65 } = options;
+  const { prefetchRegistrations = true, debounceMs = 20 } = options;
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearTimer = useCallback(() => {

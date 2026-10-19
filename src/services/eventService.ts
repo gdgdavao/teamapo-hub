@@ -27,6 +27,7 @@ import { generateSlug } from '../utils/slugUtils';
 import { toDateSafe } from '../utils/dateUtils';
 import { Event, TicketType, PromoCode, FormField } from '../types';
 import { AuditLogService } from './auditLogService';
+import { swrCache } from '../utils/swrCache';
 
 // Interface for event form data
 export interface EventFormData {
@@ -112,23 +113,22 @@ export class EventService {
   private static readonly SPEAKER_PHOTOS_PATH = 'speaker-photos';
   private static readonly PAYMENT_QR_PATH = 'payment-qr';
 
-  private static inFlightRequests = new Map<string, Promise<any>>();
-  private static memoryCache = new Map<string, { data: any; expiry: number }>();
   private static readonly CACHE_TTL_MS = 30_000; // 30 seconds
-
+ 
   /**
-   * Invalidate memory cache for a specific event or the entire event cache.
+   * Invalidate cache for a specific event or the entire event cache.
    */
   static invalidateCache(eventId?: string): void {
     if (eventId) {
-      this.memoryCache.delete(`event:${eventId}`);
-      for (const [key, val] of this.memoryCache.entries()) {
-        if (key.startsWith('slug:') && val.data?.id === eventId) {
-          this.memoryCache.delete(key);
-        }
-      }
+      swrCache.delete(`event:${eventId}`);
+      swrCache.deletePrefix('slug:');
+      swrCache.delete('events:all');
+      swrCache.deletePrefix('events:organizer:');
     } else {
-      this.memoryCache.clear();
+      swrCache.deletePrefix('event:');
+      swrCache.deletePrefix('slug:');
+      swrCache.delete('events:all');
+      swrCache.deletePrefix('events:organizer:');
     }
   }
 
@@ -174,47 +174,34 @@ export class EventService {
   static async getEventBySlug(slug: string): Promise<Event | null> {
     if (!slug) return null;
 
-    const cacheKey = `slug:${slug}`;
-    const cached = this.memoryCache.get(cacheKey);
-    if (cached && cached.expiry > Date.now()) {
-      return cached.data;
-    }
+    return swrCache.getOrFetch(
+      `slug:${slug}`,
+      async () => {
+        try {
+          const published = await this.getPublishedEventBySlug(slug);
+          if (published) {
+            swrCache.set(`event:${published.id}`, published);
+            return published;
+          }
 
-    if (this.inFlightRequests.has(cacheKey)) {
-      return this.inFlightRequests.get(cacheKey)!;
-    }
+          const eventsRef = collection(db, this.EVENTS_COLLECTION);
+          const q = query(eventsRef, where('slug', '==', slug), limit(1));
+          const snapshot = await getDocs(q);
 
-    const fetchPromise = (async () => {
-      try {
-        const published = await this.getPublishedEventBySlug(slug);
-        if (published) {
-          this.memoryCache.set(cacheKey, { data: published, expiry: Date.now() + this.CACHE_TTL_MS });
-          this.memoryCache.set(`event:${published.id}`, { data: published, expiry: Date.now() + this.CACHE_TTL_MS });
-          return published;
-        }
+          if (snapshot.empty) {
+            return null;
+          }
 
-        const eventsRef = collection(db, this.EVENTS_COLLECTION);
-        const q = query(eventsRef, where('slug', '==', slug), limit(1));
-        const snapshot = await getDocs(q);
-
-        if (snapshot.empty) {
+          const docSnap = snapshot.docs[0];
+          const event = { id: docSnap.id, ...docSnap.data() } as Event;
+          swrCache.set(`event:${event.id}`, event);
+          return event;
+        } catch {
           return null;
         }
-
-        const docSnap = snapshot.docs[0];
-        const event = { id: docSnap.id, ...docSnap.data() } as Event;
-        this.memoryCache.set(cacheKey, { data: event, expiry: Date.now() + this.CACHE_TTL_MS });
-        this.memoryCache.set(`event:${event.id}`, { data: event, expiry: Date.now() + this.CACHE_TTL_MS });
-        return event;
-      } catch {
-        return null;
-      } finally {
-        this.inFlightRequests.delete(cacheKey);
-      }
-    })();
-
-    this.inFlightRequests.set(cacheKey, fetchPromise);
-    return fetchPromise;
+      },
+      this.CACHE_TTL_MS
+    );
   }
 
   /**
@@ -570,6 +557,7 @@ export class EventService {
           status: 'draft',
         },
       });
+      this.invalidateCache(eventId);
       return eventId;
     } catch (error) {
       logger.error('Error creating event:', error);
@@ -770,44 +758,32 @@ export class EventService {
   static async getEvent(eventId: string): Promise<Event | null> {
     if (!eventId) return null;
 
-    const cacheKey = `event:${eventId}`;
-    const cached = this.memoryCache.get(cacheKey);
-    if (cached && cached.expiry > Date.now()) {
-      return cached.data;
-    }
+    return swrCache.getOrFetch(
+      `event:${eventId}`,
+      async () => {
+        try {
+          const eventRef = doc(db, this.EVENTS_COLLECTION, eventId);
+          const eventSnap = await getDoc(eventRef);
 
-    if (this.inFlightRequests.has(cacheKey)) {
-      return this.inFlightRequests.get(cacheKey)!;
-    }
-
-    const fetchPromise = (async () => {
-      try {
-        const eventRef = doc(db, this.EVENTS_COLLECTION, eventId);
-        const eventSnap = await getDoc(eventRef);
-
-        if (eventSnap.exists()) {
-          const event = { id: eventSnap.id, ...eventSnap.data() } as Event;
-          this.memoryCache.set(cacheKey, {
-            data: event,
-            expiry: Date.now() + this.CACHE_TTL_MS,
-          });
-          return event;
-        }
-        return null;
-      } catch (error: any) {
-        // Non-existent documents or unpublished events return permission-denied to non-owners under security rules
-        if (error?.code === 'permission-denied') {
+          if (eventSnap.exists()) {
+            const event = { id: eventSnap.id, ...eventSnap.data() } as Event;
+            if (event.slug) {
+              swrCache.set(`slug:${event.slug}`, event);
+            }
+            return event;
+          }
           return null;
+        } catch (error: any) {
+          // Non-existent documents or unpublished events return permission-denied to non-owners under security rules
+          if (error?.code === 'permission-denied') {
+            return null;
+          }
+          logger.error('Error getting event:', error);
+          throw new Error('Failed to get event');
         }
-        logger.error('Error getting event:', error);
-        throw new Error('Failed to get event');
-      } finally {
-        this.inFlightRequests.delete(cacheKey);
-      }
-    })();
-
-    this.inFlightRequests.set(cacheKey, fetchPromise);
-    return fetchPromise;
+      },
+      this.CACHE_TTL_MS
+    );
   }
 
   /**
@@ -829,16 +805,16 @@ export class EventService {
       eventRef,
       snapshot => {
         if (!snapshot.exists()) {
-          this.memoryCache.delete(`event:${eventId}`);
+          swrCache.delete(`event:${eventId}`);
           onUpdate(null);
           return;
         }
 
         const event = { id: snapshot.id, ...snapshot.data() } as Event;
-        this.memoryCache.set(`event:${eventId}`, {
-          data: event,
-          expiry: Date.now() + this.CACHE_TTL_MS,
-        });
+        swrCache.set(`event:${eventId}`, event);
+        if (event.slug) {
+          swrCache.set(`slug:${event.slug}`, event);
+        }
         onUpdate(event);
       },
       error => {
@@ -854,41 +830,65 @@ export class EventService {
    * Get events by organizer
    */
   static async getEventsByOrganizer(organizerUid: string): Promise<Event[]> {
-    try {
-      const eventsRef = collection(db, this.EVENTS_COLLECTION);
-      const q = query(
-        eventsRef,
-        where('organizer.uid', '==', organizerUid),
-        orderBy('createdAt', 'desc')
-      );
+    if (!organizerUid) return [];
 
-      const querySnapshot = await getDocs(q);
-      return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Event));
-    } catch (error) {
-      logger.error('Error getting events by organizer:', error);
-      throw new Error('Failed to get events');
-    }
+    return swrCache.getOrFetch(
+      `events:organizer:${organizerUid}`,
+      async () => {
+        try {
+          const eventsRef = collection(db, this.EVENTS_COLLECTION);
+          const q = query(
+            eventsRef,
+            where('organizer.uid', '==', organizerUid),
+            orderBy('createdAt', 'desc')
+          );
+
+          const querySnapshot = await getDocs(q);
+          const events = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Event));
+          for (const ev of events) {
+            swrCache.set(`event:${ev.id}`, ev);
+            if (ev.slug) swrCache.set(`slug:${ev.slug}`, ev);
+          }
+          return events;
+        } catch (error) {
+          logger.error('Error getting events by organizer:', error);
+          throw new Error('Failed to get events');
+        }
+      },
+      this.CACHE_TTL_MS
+    );
   }
 
   /**
    * Get all published events
    */
   static async getPublishedEvents(): Promise<Event[]> {
-    try {
-      const eventsRef = collection(db, this.EVENTS_COLLECTION);
-      const q = query(
-        eventsRef,
-        where('isPublished', '==', true),
-        where('status', '==', 'published'),
-        orderBy('startDate', 'asc')
-      );
+    return swrCache.getOrFetch(
+      'events:published',
+      async () => {
+        try {
+          const eventsRef = collection(db, this.EVENTS_COLLECTION);
+          const q = query(
+            eventsRef,
+            where('isPublished', '==', true),
+            where('status', '==', 'published'),
+            orderBy('startDate', 'asc')
+          );
 
-      const querySnapshot = await getDocs(q);
-      return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Event));
-    } catch (error) {
-      logger.error('Error getting published events:', error);
-      throw new Error('Failed to get published events');
-    }
+          const querySnapshot = await getDocs(q);
+          const events = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Event));
+          for (const ev of events) {
+            swrCache.set(`event:${ev.id}`, ev);
+            if (ev.slug) swrCache.set(`slug:${ev.slug}`, ev);
+          }
+          return events;
+        } catch (error) {
+          logger.error('Error getting published events:', error);
+          throw new Error('Failed to get published events');
+        }
+      },
+      this.CACHE_TTL_MS
+    );
   }
 
   /**
@@ -1697,19 +1697,30 @@ export class EventService {
    * Get all events (admin only)
    */
   static async getAllEvents(): Promise<Event[]> {
-    try {
-      const eventsRef = collection(db, this.EVENTS_COLLECTION);
-      const q = query(
-        eventsRef,
-        orderBy('createdAt', 'desc')
-      );
+    return swrCache.getOrFetch(
+      'events:all',
+      async () => {
+        try {
+          const eventsRef = collection(db, this.EVENTS_COLLECTION);
+          const q = query(
+            eventsRef,
+            orderBy('createdAt', 'desc')
+          );
 
-      const querySnapshot = await getDocs(q);
-      return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Event));
-    } catch (error) {
-      logger.error('Error getting all events:', error);
-      throw new Error('Failed to get events');
-    }
+          const querySnapshot = await getDocs(q);
+          const events = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Event));
+          for (const ev of events) {
+            swrCache.set(`event:${ev.id}`, ev);
+            if (ev.slug) swrCache.set(`slug:${ev.slug}`, ev);
+          }
+          return events;
+        } catch (error) {
+          logger.error('Error getting all events:', error);
+          throw new Error('Failed to get events');
+        }
+      },
+      this.CACHE_TTL_MS
+    );
   }
 
   /**
