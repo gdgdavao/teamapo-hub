@@ -45,6 +45,7 @@ export interface PaymentVerificationData {
 export class PaymentService {
   private static readonly PAYMENT_PROOFS_COLLECTION = 'paymentProofs';
   private static readonly REGISTRATIONS_COLLECTION = 'registrations';
+  private static readonly EVENTS_COLLECTION = 'events';
   private static readonly PAYMENT_PROOFS_PATH = 'payment-proofs';
 
   /**
@@ -248,13 +249,25 @@ export class PaymentService {
 
         // Send notification to attendee via Firebase Function
         try {
+          let resolvedEventTitle = proofData.eventTitle;
+          if (!resolvedEventTitle && proofData.eventId) {
+            try {
+              const evSnap = await getDoc(doc(db, this.EVENTS_COLLECTION, proofData.eventId));
+              if (evSnap.exists()) {
+                resolvedEventTitle = evSnap.data().title;
+              }
+            } catch {
+              // ignore lookup failure
+            }
+          }
+
           const sendPaymentNotification = httpsCallable(functions, 'sendPaymentNotification');
           await sendPaymentNotification({
             registrationId: proofData.registrationId,
             status: status,
-            eventTitle: proofData.eventTitle,
+            eventTitle: resolvedEventTitle || 'Event',
             attendeeEmail: proofData.attendeeEmail,
-            attendeeName: proofData.attendeeName
+            attendeeName: proofData.attendeeName || 'Attendee'
           });
         } catch (notificationError) {
           logger.warn('Failed to send payment notification:', notificationError);

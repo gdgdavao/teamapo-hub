@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   CalendarDaysIcon,
   QrCodeIcon,
@@ -11,6 +12,7 @@ import { Button, Badge, EmptyState } from '../../components/UI';
 import { Event } from '../../types';
 import { toDate, REPORTING_TIMEZONE } from '../../utils/analyticsBuckets';
 import { usePrefetchEvent } from '../../hooks/usePrefetchEvent';
+import { KioskSetupModal } from '../../components/KioskSetupModal';
 
 export interface UpcomingEventsListProps {
   events: readonly Event[];
@@ -60,8 +62,17 @@ export const UpcomingEventsList: React.FC<UpcomingEventsListProps> = ({
   registrationCounts = {},
   canViewAllEvents = false,
 }) => {
+  const navigate = useNavigate();
+  const [kioskEventId, setKioskEventId] = useState<string | null>(null);
   const { getPrefetchProps } = usePrefetchEvent();
   const now = Date.now();
+
+  const handleKioskLaunch = () => {
+    if (!kioskEventId) return;
+    const targetId = kioskEventId;
+    setKioskEventId(null);
+    navigate(`/events/${targetId}/kiosk`);
+  };
 
   // Upcoming published events sorted chronologically (soonest first)
   const upcomingEvents = React.useMemo(() => {
@@ -154,9 +165,10 @@ export const UpcomingEventsList: React.FC<UpcomingEventsListProps> = ({
           {/* Direct high-velocity actions */}
           <div className="flex flex-wrap items-center gap-2.5 flex-shrink-0">
             <Button
-              href={`/events/${nextEvent.id}/check-in`}
+              onClick={() => setKioskEventId(nextEvent.id)}
               variant="filled"
               icon={<QrCodeIcon className="h-5 w-5" />}
+              data-href={`/events/${nextEvent.id}/kiosk`}
               {...getPrefetchProps(nextEvent.id, nextEvent.slug)}
             >
               Check in
@@ -249,6 +261,16 @@ export const UpcomingEventsList: React.FC<UpcomingEventsListProps> = ({
             })}
           </div>
         </section>
+      )}
+
+      {/* Kiosk Mode Setup Modal */}
+      {kioskEventId && (
+        <KioskSetupModal
+          open={Boolean(kioskEventId)}
+          eventId={kioskEventId}
+          onLaunch={handleKioskLaunch}
+          onCancel={() => setKioskEventId(null)}
+        />
       )}
     </div>
   );

@@ -29,7 +29,7 @@ export interface EventMetadata {
 
 const DEFAULT_OG_IMAGE = 'https://raw.githubusercontent.com/gdgdavao/assets-cdn/main/banner.png';
 const DEFAULT_SITE_URL = 'https://apohub.gdgdavao.org';
-const DEFAULT_SITE_NAME = 'TeamApo Hub';
+const DEFAULT_SITE_NAME = 'Google Developer Groups - Davao';
 const DEFAULT_PROJECT_ID = 'project-iris-gdgdavao';
 
 const BASE_HTML_TEMPLATE = `<!doctype html>
@@ -102,7 +102,7 @@ function buildEventHtmlWithMeta(template: string, event: EventMetadata, siteUrl:
   const eventPath = event.slug ? `/e/${event.slug}` : `/events/${event.id}/register`;
   const canonicalUrl = `${cleanSiteUrl}${eventPath}`;
 
-  const title = `${event.title} | TeamApo Hub`;
+  const title = `${event.title} | ${DEFAULT_SITE_NAME}`;
   const description = buildEventMetaDescription(event);
   const ogImage = event.imageUrl || event.bannerUrl || DEFAULT_OG_IMAGE;
 

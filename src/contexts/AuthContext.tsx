@@ -449,7 +449,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // A live listener rather than a one-shot getDoc. A demotion or a
       // suspension applied by another admin previously went unnoticed until the
       // tab was reloaded; now the ability rebuilds the moment the document
-      // changes. firestore.rules:68 already permits reading your own document.
+      // changes. firestore.rules:52 permits reading your own document.
       const uid = user.uid;
 
       const watch = (attempt: number) => {

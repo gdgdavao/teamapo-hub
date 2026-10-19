@@ -117,7 +117,7 @@ const EventRegistrationPage: React.FC<EventRegistrationPageProps> = ({ isPreview
   }, [imageResolved, event, metaImageUrl]);
 
   useSEO({
-    title: event ? `${event.title} | TeamApo Hub` : 'Event Registration | TeamApo Hub',
+    title: event ? `${event.title} | Google Developer Groups - Davao` : 'Event Registration | Google Developer Groups - Davao',
     description: event ? (event.shortDescription || event.description) : 'Join our upcoming event',
     ogImage: metaImageUrl,
     ogImageAlt: event ? `${event.title} Event Banner` : 'GDG Davao Community Banner',

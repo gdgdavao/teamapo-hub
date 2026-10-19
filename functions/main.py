@@ -2245,17 +2245,41 @@ def deleteUser(req: https_fn.CallableRequest) -> Dict[str, Any]:
     The client used to call a function with this name that did not exist, so the
     single-user delete button always failed. It then fell back to deleting the
     users document straight from the browser, which left the Firebase Auth
-    account alive. That orphan is not cosmetic: the account can still sign in,
-    AuthContext throws when it finds no profile and signs the client out, but
-    that does nothing to the ID token, and every callable's permission check was
-    skipped when the users document was absent. So an orphaned account could
-    reach Admin SDK writes that never pass through firestore.rules.
+    account alive. That orphan is not hypothetical: the account can still sign
+    in, AuthContext throws when it finds no profile and signs the client out,
+    but that does nothing to the ID token. Callables fail closed on the missing
+    profile (_caller_profile), yet the dangling identity keeps its credentials,
+    email and profile pictures alive in Auth and Storage, and revocation
+    tooling that keys off Firestore never fires for it.
 
     Both halves are deleted here, in that order. Deleting the document first
     would re-open that window whenever the Auth call failed.
 
+    The document itself can no longer be deleted from any client:
+    firestore.rules denies every client (`allow delete: if false`), so this
+    callable - reached only by an active administrator - is the single
+    deletion path, and the only one that lands an audit entry.
+
+    Additional safeguards, all evaluated BEFORE anything is deleted:
+    - Reserved accounts: the platform superuser (SUPERUSER_EMAIL) cannot be
+      deleted, and neither can the last remaining active administrator.
+    - DPA/governance: an account that still owns an active event
+      (draft/published/ongoing) is refused. Their events would be left
+      ownerless and unmanageable, since rules pin organizer.uid immutably.
+      The admin completes, cancels, or deletes those events first; the
+      confirmation in the Users UI shows the count so this refusal is
+      predictable.
+    - No self-deletion: use deactivation instead.
+
+    After both halves succeed, the account's profile-picture prefix in
+    Cloud Storage (profilePictures/{uid}/...) is removed as best-effort PII
+    cleanup: a storage failure is logged and reported in the audit entry but
+    never blocks or rolls back the deletion.
+
     Idempotent per AGENTS.md 3.4: deleting an already-deleted account succeeds
-    rather than erroring, so a retry after a dropped response is safe.
+    rather than erroring, so a retry after a dropped response is safe. A retry
+    that removed nothing (no Auth account, no document) writes no audit entry,
+    so the user_deleted trail holds exactly one record per real deletion.
     """
     if not req.auth:
         raise https_fn.HttpsError(
@@ -2303,6 +2327,32 @@ def deleteUser(req: https_fn.CallableRequest) -> Dict[str, Any]:
                     message="Cannot delete the platform's last remaining active administrator."
                 )
 
+    # Ownerless-events guard. Equality query only (organizer.uid), so no
+    # composite index is required; owned events are counted and active ones
+    # (draft/published/ongoing) named in the refusal.
+    owned_event_titles: List[str] = []
+    owned_event_count = 0
+    for ev in get_db().collection('events').where(
+        filter=FieldFilter('organizer.uid', '==', target_uid)
+    ).stream():
+        owned_event_count += 1
+        ev_data = ev.to_dict() or {}
+        if ev_data.get('status') in ['draft', 'published', 'ongoing']:
+            owned_event_titles.append(f"{ev_data.get('title') or ev.id} [{ev_data.get('status')}]")
+    if owned_event_titles:
+        shown = ', '.join(owned_event_titles[:3])
+        if len(owned_event_titles) > 3:
+            shown += f" and {len(owned_event_titles) - 3} more"
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
+            message=(
+                "This account still owns active event(s) their attendee traffic "
+                "depends on: "
+                f"{shown}. Complete, cancel, or delete those events first, or "
+                "reassign them, then delete the account."
+            )
+        )
+
     # Auth first. If this raises for any reason other than the account already
     # being gone, the Firestore document survives and the caller retries.
     auth_deleted = False
@@ -2323,24 +2373,51 @@ def deleteUser(req: https_fn.CallableRequest) -> Dict[str, Any]:
     if target_doc.exists:
         target_ref.delete()
 
-    log_audit_entry(
-        db=get_db(),
-        category='user_management',
-        action='user_deleted',
-        actor_uid=req.auth.uid,
-        actor_email=caller.get('email', req.auth.token.get('email', '')),
-        actor_name=caller.get('displayName'),
-        actor_role=caller.get('role', 'admin'),
-        target_type='user',
-        target_id=target_uid,
-        target_label=target_data.get('displayName') or target_data.get('email') or target_uid,
-        details={
-            'deletedEmail': target_data.get('email'),
-            'deletedRole': target_data.get('role'),
-            'authAccountRemoved': auth_deleted
-        },
-        status='success'
-    )
+    # Best-effort PII cleanup (Philippines DPA 2012 retention): the account's
+    # profile pictures outlive the identity unless removed here. Runs even for
+    # the orphan case (Auth alive, document already gone), because the old
+    # client-side flow never cleaned these files. A storage failure is logged
+    # and never blocks or rolls back the two-halves deletion.
+    removed_profile_files = 0
+    try:
+        bucket = storage.bucket()
+        for blob in bucket.list_blobs(prefix=f'profilePictures/{target_uid}/'):
+            blob.delete()
+            removed_profile_files += 1
+        if removed_profile_files:
+            logger.info(
+                f"deleteUser: removed {removed_profile_files} profile picture file(s) "
+                f"for {target_uid}"
+            )
+    except Exception as storage_error:
+        logger.error(f"deleteUser: profile picture cleanup for {target_uid} failed: {storage_error}")
+
+    if target_doc.exists or auth_deleted or removed_profile_files:
+        log_audit_entry(
+            db=get_db(),
+            category='user_management',
+            action='user_deleted',
+            actor_uid=req.auth.uid,
+            actor_email=caller.get('email', req.auth.token.get('email', '')),
+            actor_name=caller.get('displayName'),
+            actor_role=caller.get('role', 'admin'),
+            target_type='user',
+            target_id=target_uid,
+            target_label=target_data.get('displayName') or target_data.get('email') or target_uid,
+            details={
+                'deletedEmail': target_data.get('email'),
+                'deletedRole': target_data.get('role'),
+                'authAccountRemoved': auth_deleted,
+                'ownedEventDocuments': owned_event_count,
+                'profilePictureFilesRemoved': removed_profile_files
+            },
+            status='success'
+        )
+    else:
+        # Pure no-op retry: both halves and the storage prefix were already
+        # absent. Nothing changed, so the audit trail stays honest (one
+        # user_deleted per actual deletion).
+        logger.info(f"deleteUser: {target_uid} was already fully deleted; no-op")
 
     logger.info(
         f"deleteUser: {caller.get('email', req.auth.uid)} deleted account {target_uid} "

@@ -142,8 +142,8 @@ describe('Email Templates Design System & Architecture', () => {
 
   it('cross-client email compatibility headers and defensive light mode meta tags are present', () => {
     const baseContent = readFileSync(join(TEMPLATES_DIR, 'base_template.html'), 'utf8');
-    expect(baseContent).toContain('meta name="color-scheme" content="light"');
-    expect(baseContent).toContain('meta name="supported-color-schemes" content="light"');
+    expect(baseContent).toMatch(/meta name="color-scheme" content="light( only)?"/);
+    expect(baseContent).toMatch(/meta name="supported-color-schemes" content="light( only)?"/);
     expect(baseContent).toContain('meta name="viewport" content="width=device-width, initial-scale=1.0"');
     expect(baseContent).toContain('mso-table-lspace');
     expect(baseContent).toContain('role="presentation"');

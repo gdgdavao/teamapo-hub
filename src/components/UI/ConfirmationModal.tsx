@@ -13,6 +13,8 @@ interface ConfirmationModalProps {
   cancelText?: string;
   type?: 'danger' | 'warning' | 'info';
   isLoading?: boolean;
+  /** Disables the confirm action when a pre-flight check proves the call must fail. */
+  confirmDisabled?: boolean;
 }
 
 const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
@@ -24,7 +26,8 @@ const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
   confirmText = 'Confirm',
   cancelText = 'Cancel',
   type = 'danger',
-  isLoading = false
+  isLoading = false,
+  confirmDisabled = false
 }) => (
   <Modal
     open={isOpen}
@@ -36,7 +39,12 @@ const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
         <Button variant="outlined" onClick={onClose} disabled={isLoading}>
           {cancelText}
         </Button>
-        <Button variant={type === 'info' ? 'filled' : 'danger'} onClick={onConfirm} loading={isLoading}>
+        <Button
+          variant={type === 'info' ? 'filled' : 'danger'}
+          onClick={onConfirm}
+          loading={isLoading}
+          disabled={confirmDisabled}
+        >
           {isLoading ? 'Working...' : confirmText}
         </Button>
       </>

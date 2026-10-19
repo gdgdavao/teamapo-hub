@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAbility } from '@casl/react';
 import { 
   CameraIcon,
@@ -9,7 +10,8 @@ import {
   XMarkIcon,
   UserPlusIcon,
   MagnifyingGlassIcon,
-  StopIcon
+  StopIcon,
+  ComputerDesktopIcon
 } from '@heroicons/react/24/outline';
 import { CheckCircleIcon as CheckCircleSolidIcon, XCircleIcon as XCircleSolidIcon, ExclamationTriangleIcon, InformationCircleIcon } from '@heroicons/react/20/solid';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
@@ -20,14 +22,18 @@ import { Registration as FirestoreRegistration, Event } from '../../../../types'
 import { asRegistration } from '../../../../auth/ability';
 import ForceCheckInModal from './ForceCheckInModal';
 import WalkInRegistrationModal from './WalkInRegistrationModal';
+import KioskSetupModal from '../../../../components/KioskSetupModal';
 import { RegistrationService } from '../../../../services/registrationService';
 import { EventService } from '../../../../services/eventService';
 import type { WalkInRegistrationData } from './WalkInRegistrationModal';
 import toast from 'react-hot-toast';
 import { logger } from '../../../../utils/logger';
 import { toDateSafe } from '../../../../utils/dateUtils';
-import { BrowserQRCodeReader } from '@zxing/browser';
+import { BrowserQRCodeReader, type IScannerControls } from '@zxing/browser';
 import { Result } from '@zxing/library';
+import { CameraService } from '../../../../services/cameraService';
+import { useMediaQuery } from '../../../../hooks/useMediaQuery';
+import { getKioskCamera } from '../../../../hooks/useKioskCamera';
 
 interface Registration {
   id: string;
@@ -203,6 +209,7 @@ interface CheckInTabProps {
 const CheckInTab: React.FC<CheckInTabProps> = ({ eventId }) => {
   const { userProfile } = useAuth();
   const ability = useAbility();
+  const isMobile = useMediaQuery('(max-width: 640px)');
   const [registrations, setRegistrations] = useState<Registration[]>([]);
   const [loading, setLoading] = useState(true);
   const [isCameraActive, setIsCameraActive] = useState(false);
@@ -240,10 +247,25 @@ const CheckInTab: React.FC<CheckInTabProps> = ({ eventId }) => {
 
   // Walk-in registration modal state
   const [isWalkInModalOpen, setIsWalkInModalOpen] = useState(false);
+
+  // Kiosk mode launcher state & modal
+  const navigate = useNavigate();
+  const [isKioskSetupOpen, setIsKioskSetupOpen] = useState(false);
+
+  const handleLaunchKiosk = () => {
+    stopCamera();
+    setIsKioskSetupOpen(true);
+  };
+
+  const handleKioskLaunch = () => {
+    setIsKioskSetupOpen(false);
+    navigate(`/events/${eventId}/kiosk`);
+  };
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const codeReaderRef = useRef<BrowserQRCodeReader | null>(null);
+  const scannerControlsRef = useRef<IScannerControls | null>(null);
   const scanningRef = useRef<boolean>(false);
 
   // Events first — the roster is scoped to whichever event is selected.
@@ -369,31 +391,49 @@ const CheckInTab: React.FC<CheckInTabProps> = ({ eventId }) => {
 
   // Camera control functions
   const startCamera = async () => {
+    // Hardware idempotency: a double-tap on "Start Camera" must not spawn a
+    // second concurrent acquisition against the same lens (the loser used to
+    // leak as a dead stream with the LED on).
+    if (streamRef.current) return;
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { 
-          facingMode: 'environment', // Use back camera on mobile
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        } 
-      });
-      
+      // Gate before the ladder: a plain-http venue LAN has no
+      // navigator.mediaDevices and would die as a cryptic TypeError below.
+      const support = CameraService.supportsKioskCamera();
+      if (support) {
+        toast.error(support.message);
+        return;
+      }
+
+      const storedCamera = getKioskCamera(eventId);
+      const { stream } = await CameraService.acquireKioskStream(
+        {
+          deviceId: storedCamera?.deviceId,
+          facingMode: storedCamera?.facingMode || 'environment',
+        },
+        {
+          preferOsDefault: !isMobile && !storedCamera?.deviceId,
+          deviceIdExact: false,
+          onFallback: (stage) => log.warn('Camera ladder fallback:', stage),
+        }
+      );
+
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         streamRef.current = stream;
         setIsCameraActive(true);
-        
+
         // Initialize QR code reader
         if (!codeReaderRef.current) {
           codeReaderRef.current = new BrowserQRCodeReader();
         }
-        
+
         // Start continuous scanning
         startQRScanning();
       }
     } catch (error) {
       log.error('Error accessing camera:', error);
-      toast.error('Unable to access camera. Please check permissions and try again.');
+      toast.error(CameraService.describeCameraFailure(error).message);
     }
   };
 
@@ -401,65 +441,106 @@ const CheckInTab: React.FC<CheckInTabProps> = ({ eventId }) => {
     // Stop QR scanning
     scanningRef.current = false;
     setIsScanning(false);
-    
+
+    if (scannerControlsRef.current) {
+      try {
+        scannerControlsRef.current.stop();
+      } catch {
+        // Ignore
+      }
+      scannerControlsRef.current = null;
+    }
+
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current.getTracks().forEach((track) => {
+        try {
+          track.stop();
+          track.enabled = false;
+        } catch {
+          // Ignore
+        }
+      });
       streamRef.current = null;
     }
     if (videoRef.current) {
-      videoRef.current.srcObject = null;
+      if (videoRef.current.srcObject) {
+        const stream = videoRef.current.srcObject as MediaStream;
+        stream.getTracks?.().forEach((track) => {
+          try {
+            track.stop();
+            track.enabled = false;
+          } catch {
+            // Ignore
+          }
+        });
+      }
+      try {
+        videoRef.current.pause();
+        videoRef.current.srcObject = null;
+      } catch {
+        // Ignore
+      }
     }
+    codeReaderRef.current = null;
     setIsCameraActive(false);
   };
 
   const startQRScanning = async () => {
-    if (!videoRef.current || !codeReaderRef.current) return;
-    
+    if (!videoRef.current) return;
+    if (!codeReaderRef.current) {
+      codeReaderRef.current = new BrowserQRCodeReader();
+    }
+
+    if (scannerControlsRef.current) {
+      try {
+        scannerControlsRef.current.stop();
+      } catch {
+        // Ignore
+      }
+      scannerControlsRef.current = null;
+    }
+
     scanningRef.current = true;
     setIsScanning(true);
-    
-    const scan = async () => {
-      if (!scanningRef.current || !videoRef.current || !codeReaderRef.current) return;
-      
-      try {
-        const result: Result = await codeReaderRef.current.decodeOnceFromVideoDevice(undefined, videoRef.current);
-        
-        if (result && result.getText()) {
-          const qrCode = result.getText();
-          log.info('QR Code detected:', qrCode);
-          
-          // Vibrate if supported (for mobile feedback)
-          if ('vibrate' in navigator) {
-            navigator.vibrate(200);
-          }
-          
-          // Pause scanning while processing
-          setIsScanning(false);
-          
-          // Process the QR code
-          await handleQRCodeScan(qrCode);
-          
-          // Wait a bit before scanning again to avoid duplicate scans
-          setTimeout(() => {
-            if (scanningRef.current) {
-              startQRScanning();
+
+    try {
+      scannerControlsRef.current = await codeReaderRef.current.decodeFromVideoElement(
+        videoRef.current,
+        async (result, error) => {
+          if (!scanningRef.current) return;
+
+          if (result && result.getText()) {
+            const qrCode = result.getText();
+            log.info('QR Code detected:', qrCode);
+
+            // Vibrate if supported (for mobile feedback)
+            if ('vibrate' in navigator) {
+              navigator.vibrate(200);
             }
-          }, 2000);
+
+            // Pause scanning while processing
+            scanningRef.current = false;
+            setIsScanning(false);
+
+            // Process the QR code
+            await handleQRCodeScan(qrCode);
+
+            // Wait a bit before scanning again to avoid duplicate scans
+            setTimeout(() => {
+              if (scanningRef.current) {
+                setIsScanning(true);
+              }
+            }, 2000);
+          }
+
+          if (error && (error as Error).name !== 'NotFoundException') {
+            log.debug('Scanning frame notice:', error);
+          }
         }
-      } catch (error: any) {
-        // NotFoundException is expected when no QR code is in view
-        if (error.name !== 'NotFoundException') {
-          log.warn('QR scanning error:', error);
-        }
-        
-        // Continue scanning
-        if (scanningRef.current) {
-          requestAnimationFrame(scan);
-        }
-      }
-    };
-    
-    scan();
+      );
+    } catch (scanErr) {
+      log.warn('Scanner start warning:', scanErr);
+    }
   };
 
   // Cleanup camera on component unmount
@@ -851,27 +932,50 @@ const CheckInTab: React.FC<CheckInTabProps> = ({ eventId }) => {
       {/* Date Warning Alert */}
         <DateWarningAlert event={currentEvent} />
 
-        {/* Walk-In Registration Button - Only show for published/ongoing events when user has permission */}
-        {currentEvent && canCreateWalkIn && (currentEvent.status === 'published' || currentEvent.status === 'ongoing') && (
-          <div className="bg-gradient-to-r from-surface-container-low to-primary-container border border-outline-variant rounded-xl p-4">
-            <div className="flex items-center justify-between">
+        {/* Quick Operations: Kiosk Mode & Walk-In */}
+        {currentEvent && canCheckIn && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Kiosk Mode Card */}
+            <div className="bg-gradient-to-r from-surface to-secondary-container/40 border border-outline-variant rounded-xl p-4 flex items-center justify-between">
               <div className="flex items-center space-x-3">
                 <div className="bg-secondary-container p-2 rounded-lg">
-                  <UserPlusIcon className="h-6 w-6 text-primary" />
+                  <ComputerDesktopIcon className="h-6 w-6 text-primary" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-semibold text-on-surface">Walk-In Registration</h3>
-                  <p className="text-sm text-on-surface-variant">Register attendees on-site without online payment</p>
+                  <h3 className="text-sm font-semibold text-on-surface">Attendee Kiosk Mode</h3>
+                  <p className="text-xs sm:text-sm text-on-surface-variant">Launch full-screen self-check-in station for attendees</p>
                 </div>
               </div>
               <button
-                onClick={() => setIsWalkInModalOpen(true)}
-                className="px-4 py-2 bg-primary text-white font-medium rounded-lg hover:bg-primary-hover transition-colors flex items-center space-x-2"
+                onClick={handleLaunchKiosk}
+                className="px-4 py-2 bg-secondary text-on-secondary font-medium rounded-lg hover:bg-secondary-hover transition-colors flex items-center space-x-2 shrink-0 min-h-[44px]"
               >
-                <UserPlusIcon className="h-5 w-5" />
-                <span>Add Walk-In</span>
+                <ComputerDesktopIcon className="h-5 w-5" />
+                <span>Launch Kiosk</span>
               </button>
             </div>
+
+            {/* Walk-In Registration Card */}
+            {canCreateWalkIn && (currentEvent.status === 'published' || currentEvent.status === 'ongoing') ? (
+              <div className="bg-gradient-to-r from-surface-container-low to-primary-container border border-outline-variant rounded-xl p-4 flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="bg-secondary-container p-2 rounded-lg">
+                    <UserPlusIcon className="h-6 w-6 text-primary" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-semibold text-on-surface">Walk-In Registration</h3>
+                    <p className="text-xs sm:text-sm text-on-surface-variant">Register attendees on-site without online payment</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsWalkInModalOpen(true)}
+                  className="px-4 py-2 bg-primary text-white font-medium rounded-lg hover:bg-primary-hover transition-colors flex items-center space-x-2 shrink-0 min-h-[44px]"
+                >
+                  <UserPlusIcon className="h-5 w-5" />
+                  <span>Add Walk-In</span>
+                </button>
+              </div>
+            ) : <div />}
           </div>
         )}
 
@@ -926,14 +1030,18 @@ const CheckInTab: React.FC<CheckInTabProps> = ({ eventId }) => {
                   {/* Scanning overlay */}
                   {isCameraActive && (
                     <div className="absolute inset-0 pointer-events-none">
-                      <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-48 border-2 rounded-lg transition-colors duration-fast ease-quart overflow-hidden ${
+                      <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-48 border-2 rounded-lg transition-colors duration-fast ease-quart relative ${
                         isScanning ? 'border-primary' : 'border-success'
                       }`}>
                         {isScanning && (
-                          <div
-                            className="absolute inset-x-0 h-0.5 bg-gradient-to-r from-transparent via-primary to-transparent animate-scanline motion-reduce:hidden pointer-events-none"
-                            style={{ top: '50%' }}
-                          />
+                          <div className="absolute inset-0 overflow-hidden rounded-[6px] pointer-events-none">
+                            <div className="w-full h-full flex flex-col justify-end animate-scanline motion-reduce:hidden">
+                              <div className="relative w-full flex items-center justify-center">
+                                <div className="absolute w-full h-6 bg-gradient-to-r from-transparent via-primary/20 to-transparent blur-sm pointer-events-none" />
+                                <div className="w-full h-0.5 bg-gradient-to-r from-transparent via-primary to-transparent shadow-[0_0_12px_2px_rgba(26,115,232,0.85)] pointer-events-none" />
+                              </div>
+                            </div>
+                          </div>
                         )}
                         <div className={`absolute -top-1 -left-1 w-4 h-4 border-t-2 border-l-2 rounded-tl-lg ${
                           isScanning ? 'border-primary' : 'border-success'
@@ -1318,6 +1426,14 @@ const CheckInTab: React.FC<CheckInTabProps> = ({ eventId }) => {
           onSubmit={handleWalkInRegistration}
         />
       )}
+
+      {/* Kiosk Mode Onboarding & Setup Modal */}
+      <KioskSetupModal
+        open={isKioskSetupOpen}
+        eventId={eventId}
+        onLaunch={handleKioskLaunch}
+        onCancel={() => setIsKioskSetupOpen(false)}
+      />
     </>
   );
 

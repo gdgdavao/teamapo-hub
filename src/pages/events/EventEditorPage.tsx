@@ -124,6 +124,7 @@ const EventEditorPage: React.FC = () => {
 
   const [currentStep, setCurrentStep] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [eventId, setEventId] = useState<string | null>(null);
   const [eventSlug, setEventSlug] = useState<string | null>(null);
   const targetEventId = routeEventId || eventId;
@@ -357,12 +358,12 @@ const EventEditorPage: React.FC = () => {
 
     let toastId: string | undefined;
     try {
-      setLoading(true);
+      setIsSubmitting(true);
 
       // Client-side validation first
       if (!formData.title || !formData.description || !formData.startDate || !formData.startTime) {
         toast.error('Please complete all required fields.');
-        setLoading(false);
+        setIsSubmitting(false);
         return;
       }
 
@@ -373,12 +374,12 @@ const EventEditorPage: React.FC = () => {
         // Check if user document exists in Firestore
         if (!userProfile) {
           toast.error('User profile not found. Please sign out and sign in again.');
-          setLoading(false);
+          setIsSubmitting(false);
           return;
         }
       } catch (authError) {
         toast.error('Authentication expired. Please sign in again.');
-        setLoading(false);
+        setIsSubmitting(false);
         return;
       }
 
@@ -389,7 +390,7 @@ const EventEditorPage: React.FC = () => {
         if (!validation?.data?.isValid) {
           const errs = validation?.data?.errors || ['Validation failed'];
           toast.error(errs.join(', '));
-          setLoading(false);
+          setIsSubmitting(false);
           return;
         }
       } catch (_fnErr) {
@@ -399,13 +400,13 @@ const EventEditorPage: React.FC = () => {
       // Basic client-side validation (keeping it simple for now as a fallback)
       if (!formData.title.trim()) {
         toast.error('Event title is required');
-        setLoading(false);
+        setIsSubmitting(false);
         return;
       }
       
       if (!formData.description.trim()) {
         toast.error('Event description is required');
-        setLoading(false);
+        setIsSubmitting(false);
         return;
       }
 
@@ -418,13 +419,13 @@ const EventEditorPage: React.FC = () => {
       // When editing, allow keeping the same date even if it's today or in the past
       if (!isEditMode && startDateTime < now) {
         toast.error('Event start date must be in the future.');
-        setLoading(false);
+        setIsSubmitting(false);
         return;
       }
       
       if (endDateTime <= startDateTime) {
         toast.error('Event end date must be after the start date.');
-        setLoading(false);
+        setIsSubmitting(false);
         return;
       }
 
@@ -603,7 +604,7 @@ const EventEditorPage: React.FC = () => {
         }
       }
     } finally {
-      setLoading(false);
+      setIsSubmitting(false);
     }
   };
 
@@ -1861,8 +1862,8 @@ const EventEditorPage: React.FC = () => {
               <Button
                 variant="filled"
                 onClick={() => handleSaveEvent(false)}
-                disabled={loading || authLoading}
-                loading={loading}
+                disabled={loading || authLoading || isSubmitting}
+                loading={isSubmitting}
               >
                 Update Event
               </Button>
@@ -1871,16 +1872,16 @@ const EventEditorPage: React.FC = () => {
                 <Button
                   variant="outlined"
                   onClick={() => handleSaveEvent(false)}
-                  disabled={loading || authLoading}
-                  loading={loading}
+                  disabled={loading || authLoading || isSubmitting}
+                  loading={isSubmitting}
                 >
                   Save as Draft
                 </Button>
                 <Button
                   variant="filled"
                   onClick={() => handleSaveEvent(true)}
-                  disabled={loading || authLoading}
-                  loading={loading}
+                  disabled={loading || authLoading || isSubmitting}
+                  loading={isSubmitting}
                 >
                   Publish Event
                 </Button>
@@ -2053,14 +2054,14 @@ const EventEditorPage: React.FC = () => {
                       navigate('/events');
                     }
                   }}
-                  disabled={loading}
+                  disabled={loading || isSubmitting}
                 >
                   Cancel
                 </Button>
                 <Button
                   variant="outlined"
                   onClick={() => setCurrentStep(Math.max(0, currentStep - 1))}
-                  disabled={currentStep === 0 || loading}
+                  disabled={currentStep === 0 || loading || isSubmitting}
                 >
                   Previous
                 </Button>
@@ -2072,8 +2073,8 @@ const EventEditorPage: React.FC = () => {
                       <Button
                         variant="tonal"
                         onClick={() => handleSaveEvent(false)}
-                        disabled={loading || authLoading}
-                        loading={loading}
+                        disabled={loading || authLoading || isSubmitting}
+                        loading={isSubmitting}
                       >
                         Save Changes
                       </Button>
@@ -2081,7 +2082,7 @@ const EventEditorPage: React.FC = () => {
                     <Button
                       variant="filled"
                       onClick={() => setCurrentStep(Math.min(steps.length - 1, currentStep + 1))}
-                      disabled={loading}
+                      disabled={loading || isSubmitting}
                     >
                       Next
                     </Button>
@@ -2090,8 +2091,8 @@ const EventEditorPage: React.FC = () => {
                   <Button
                     variant="filled"
                     onClick={() => handleSaveEvent(false)}
-                    disabled={loading || authLoading}
-                    loading={loading}
+                    disabled={loading || authLoading || isSubmitting}
+                    loading={isSubmitting}
                   >
                     Update Event
                   </Button>
@@ -2100,16 +2101,16 @@ const EventEditorPage: React.FC = () => {
                     <Button
                       variant="tonal"
                       onClick={() => handleSaveEvent(false)}
-                      disabled={loading || authLoading}
-                      loading={loading}
+                      disabled={loading || authLoading || isSubmitting}
+                      loading={isSubmitting}
                     >
                       Save as Draft
                     </Button>
                     <Button
                       variant="filled"
                       onClick={() => handleSaveEvent(true)}
-                      disabled={loading || authLoading}
-                      loading={loading}
+                      disabled={loading || authLoading || isSubmitting}
+                      loading={isSubmitting}
                     >
                       Publish Event
                     </Button>
@@ -2148,8 +2149,8 @@ const EventEditorPage: React.FC = () => {
                 variant="filled"
                 size="sm"
                 onClick={() => handleSaveEvent(false)}
-                disabled={loading || authLoading}
-                loading={loading}
+                disabled={loading || authLoading || isSubmitting}
+                loading={isSubmitting}
               >
                 Save Changes
               </Button>
@@ -2168,8 +2169,8 @@ const EventEditorPage: React.FC = () => {
                 variant="tonal"
                 size="sm"
                 onClick={() => handleSaveEvent(false)}
-                disabled={loading || authLoading}
-                loading={loading}
+                disabled={loading || authLoading || isSubmitting}
+                loading={isSubmitting}
               >
                 Save as Draft
               </Button>

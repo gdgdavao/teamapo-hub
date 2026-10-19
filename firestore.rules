@@ -59,7 +59,14 @@ service cloud.firestore {
         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'displayName', 'photoURL', 'phoneNumber', 'organization', 'bio', 'skills', 'socialLinks', 'updatedAt'
         ]));
-      allow delete: if isAdmin();
+
+      // No client, not even an admin, may delete a user document. Removing the
+      // document alone leaves the Firebase Auth account alive (the account
+      // could still sign in) and drops the audit entry that the deleteUser
+      // callable writes. Deletion is a two-halves operation (Auth identity AND
+      // profile document) and belongs to the Admin SDK: the `deleteUser`
+      // callable in functions/main.py, which the Admin SDK path bypasses rules.
+      allow delete: if false;
     }
 
     match /events/{eventId} {

@@ -4,10 +4,10 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-    <meta name="color-scheme" content="light" />
-    <meta name="supported-color-schemes" content="light" />
+    <meta name="color-scheme" content="light only" />
+    <meta name="supported-color-schemes" content="light only" />
     <meta name="x-apple-disable-message-reformatting" />
-    <title>TeamApo Hub - Google Developer Groups Davao</title>
+    <title>Google Developer Groups - Davao</title>
     <!--[if mso]>
     <noscript>
       <xml>
@@ -18,21 +18,42 @@
     </noscript>
     <![endif]-->
     <style type="text/css">
+      :root {
+        color-scheme: light only;
+        supported-color-schemes: light only;
+      }
       body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
       table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
       img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; }
-      body { margin: 0; padding: 0; width: 100% !important; min-width: 100%; background-color: #f8fafd; }
+      body { margin: 0; padding: 0; width: 100% !important; min-width: 100%; background-color: #f8fafd !important; color: #1f1f1f !important; }
       a[x-apple-data-detectors] { color: inherit !important; text-decoration: none !important; font-size: inherit !important; font-family: inherit !important; font-weight: inherit !important; line-height: inherit !important; }
+
+      /* Defensive overrides against email client dark-mode color inversion */
+      @media (prefers-color-scheme: dark) {
+        body, .email-bg, [data-ogsc] {
+          background-color: #f8fafd !important;
+          color: #1f1f1f !important;
+        }
+        .card-container, [data-ogsc] .card-container {
+          background-color: #ffffff !important;
+          border-color: #dadce0 !important;
+          color: #1f1f1f !important;
+        }
+        h1, h2, h3, h4, p, span, td, div {
+          color: #1f1f1f !important;
+        }
+      }
     </style>
   </head>
-  <body style="margin:0;padding:0;background-color:#f8fafd;color:#1f1f1f;font-family:'Google Sans', Roboto, -apple-system, BlinkMacSystemFont, Arial, sans-serif;-webkit-font-smoothing:antialiased;">
-    <div style="background-color:#f8fafd;margin:0;padding:36px 12px;min-height:100%;width:100%;">
+  <body class="email-body" style="margin:0;padding:0;background-color:#f8fafd;color:#1f1f1f;font-family:'Google Sans', Roboto, -apple-system, BlinkMacSystemFont, Arial, sans-serif;-webkit-font-smoothing:antialiased;">
+    <div class="email-bg" style="background-color:#f8fafd;margin:0;padding:36px 12px;min-height:100%;width:100%;">
       <!--[if (gte mso 9)|(IE)]>
       <table align="center" border="0" cellpadding="0" cellspacing="0" width="600" style="width:600px;">
         <tr>
           <td align="center" valign="top">
       <![endif]-->
       <table
+        class="card-container"
         align="center"
         width="100%"
         role="presentation"

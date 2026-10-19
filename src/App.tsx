@@ -16,6 +16,7 @@ import AuthActionPage from './pages/auth/AuthActionPage';
 import EventListPage from './pages/events/EventListPage';
 import EventEditorPage from './pages/events/EventEditorPage';
 import EventWorkspacePage from './pages/events/workspace/EventWorkspacePage';
+import EventKioskPage from './pages/events/kiosk/EventKioskPage';
 import LegacyRedirect from './pages/events/workspace/LegacyRedirect';
 import LegacyRegisterRedirect from './pages/events/workspace/LegacyRegisterRedirect';
 
@@ -88,6 +89,14 @@ const AppContent: React.FC = () => {
         </Route>
 
         {/* Public & standalone views */}
+        <Route
+          path="/events/:eventId/kiosk"
+          element={
+            <RequireAbility ability="read" on="Event">
+              <EventKioskPage />
+            </RequireAbility>
+          }
+        />
         <Route path="/events/:eventId/preview" element={<RegistrationPage isPreview={true} />} />
         <Route path="/e" element={<NotFoundPage />} />
         <Route path="/e/:slug" element={<RegistrationPage />} />

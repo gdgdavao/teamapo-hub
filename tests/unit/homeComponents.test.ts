@@ -265,7 +265,7 @@ describe('UpcomingEventsList', () => {
     expect(html).toContain('GDG DevFest Davao 2026');
     expect(html).toContain('Check in');
     expect(html).toContain('View roster');
-    expect(html).toContain('/events/event-1/check-in');
+    expect(html).toContain('/events/event-1/kiosk');
     expect(html).toContain('/events/event-1/attendees');
     expect(html).toContain('150 attendees registered');
   });

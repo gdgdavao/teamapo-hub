@@ -1,12 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useAbility } from '@casl/react';
+import { stripFormattedLabelSyntax } from '../../../../components/FormattedLabelText';
 import {
   UserIcon,
   CalendarDaysIcon,
   CurrencyDollarIcon,
   DocumentTextIcon,
   TicketIcon,
-  PencilSquareIcon,
   CheckIcon,
   XMarkIcon,
   ArrowTopRightOnSquareIcon,
@@ -16,6 +16,9 @@ import {
   PhoneIcon,
   EnvelopeIcon,
   ChevronDownIcon,
+  ChevronUpIcon,
+  MagnifyingGlassIcon,
+  ClipboardDocumentListIcon,
   ArrowPathIcon,
   CheckCircleIcon,
 } from '@heroicons/react/24/outline';
@@ -58,6 +61,7 @@ export interface AttendeeRegistration {
     ticketPrice: number;
   };
   status: 'pending' | 'confirmed' | 'approved' | 'rejected' | 'paid' | 'attended' | 'cancelled';
+  registrationStatus?: string;
   registrationDate: string;
   paymentStatus?: 'pending' | 'paid' | 'failed' | 'refunded';
   paymentProof?: {
@@ -190,22 +194,83 @@ const derivePaymentView = (
   return { kind: 'pending', label: 'PENDING', tone: 'warning' };
 };
 
-const formatFormResponseValue = (value: unknown): string => {
-  if (value === null || value === undefined) return 'No response';
-  if (Array.isArray(value)) {
-    return value.length > 0 ? value.join(', ') : 'None selected';
+export interface ResolvedResponseField {
+  key: string;
+  label: string;
+  value: unknown;
+  type?: string;
+  isCustom?: boolean;
+  gridSize?: 'full' | 'half';
+}
+
+const isFieldAnswered = (field: ResolvedResponseField): boolean => {
+  if (field.value === null || field.value === undefined || field.value === '') return false;
+  if (Array.isArray(field.value) && field.value.length === 0) return false;
+  return true;
+};
+
+const formatFieldValueForCopy = (field: ResolvedResponseField): string => {
+  if (!isFieldAnswered(field)) return 'Not provided';
+  if (Array.isArray(field.value)) return field.value.join(', ');
+  if (typeof field.value === 'boolean') return field.value ? 'Yes' : 'No';
+  if (typeof field.value === 'object') {
+    const obj = field.value as Record<string, any>;
+    if (obj.name && obj.phone) return `${obj.name} (${obj.phone})`;
+    return JSON.stringify(field.value);
   }
-  if (typeof value === 'boolean') {
-    return value ? 'Yes' : 'No';
+  return String(field.value);
+};
+
+const isCopyableField = (field: ResolvedResponseField): boolean => {
+  const normKey = field.key.toLowerCase();
+  const normLabel = field.label.toLowerCase();
+  const type = field.type;
+  return (
+    type === 'email' ||
+    type === 'phone' ||
+    normKey === '3' ||
+    normKey.includes('email') ||
+    normKey.includes('phone') ||
+    normLabel.includes('email') ||
+    normLabel.includes('phone')
+  );
+};
+
+const getFieldIcon = (field: ResolvedResponseField) => {
+  const normKey = field.key.toLowerCase();
+  const normLabel = field.label.toLowerCase();
+  const type = field.type;
+
+  if (type === 'email' || normKey.includes('email') || normLabel.includes('email')) {
+    return <EnvelopeIcon className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />;
   }
-  if (typeof value === 'object') {
-    const obj = value as Record<string, any>;
-    if (obj.name && obj.phone) {
-      return `${obj.name} (${obj.phone})`;
-    }
-    return JSON.stringify(value);
+  if (
+    type === 'phone' ||
+    normKey === '3' ||
+    normKey.includes('phone') ||
+    normKey.includes('mobile') ||
+    normKey.includes('contact') ||
+    normLabel.includes('phone') ||
+    normLabel.includes('mobile') ||
+    normLabel.includes('contact')
+  ) {
+    return <PhoneIcon className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />;
   }
-  return String(value);
+  if (normKey.includes('name') || normKey === '1' || normLabel.includes('name')) {
+    return <UserIcon className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />;
+  }
+  if (
+    normKey.includes('organization') ||
+    normKey.includes('company') ||
+    normKey.includes('school') ||
+    normLabel.includes('organization') ||
+    normLabel.includes('company') ||
+    normLabel.includes('school') ||
+    normLabel.includes('university')
+  ) {
+    return <BuildingOfficeIcon className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />;
+  }
+  return <DocumentTextIcon className="h-3.5 w-3.5 shrink-0 text-on-surface-variant/70" aria-hidden="true" />;
 };
 
 export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> = ({
@@ -219,14 +284,6 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
   onDeleteRegistration,
 }) => {
   const ability = useAbility();
-
-  // Inline edit state for attendee details
-  const [isEditingAttendee, setIsEditingAttendee] = useState(false);
-  const [attendeeName, setAttendeeName] = useState('');
-  const [attendeeEmail, setAttendeeEmail] = useState('');
-  const [attendeePhone, setAttendeePhone] = useState('');
-  const [attendeeOrg, setAttendeeOrg] = useState('');
-  const [isSavingAttendee, setIsSavingAttendee] = useState(false);
 
   // Action states
   const [isProcessingAction, setIsProcessingAction] = useState(false);
@@ -251,14 +308,346 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
   const [overrideEmailFor, setOverrideEmailFor] = useState<string | null>(null);
   const [overrideEmail, setOverrideEmail] = useState('');
 
+  // Registration responses search, filter, and progressive disclosure
+  const [responseSearchQuery, setResponseSearchQuery] = useState('');
+  const [responseFilter, setResponseFilter] = useState<'all' | 'answered' | 'unanswered'>('all');
+  const [isResponsesExpanded, setIsResponsesExpanded] = useState(false);
+
+  // Reset filter & expand state when registration changes
+  useEffect(() => {
+    setResponseSearchQuery('');
+    setResponseFilter('all');
+    setIsResponsesExpanded(false);
+  }, [registration?.id]);
+
+  const currentEvent = events.find((e) => e.id === registration?.event.id);
+
+  const effectivePhone = useMemo(() => {
+    if (registration?.attendee.phone) return registration.attendee.phone;
+    if (!registration?.formSubmission) return undefined;
+    const found = Object.entries(registration.formSubmission).find(([k, v]) => {
+      if (!v || typeof v !== 'string') return false;
+      const fieldDef = currentEvent?.registrationForm?.find((f) => f.id === k);
+      const label = fieldDef ? fieldDef.label.toLowerCase() : k.toLowerCase();
+      return (
+        fieldDef?.type === 'phone' ||
+        k === '3' ||
+        k.toLowerCase().includes('phone') ||
+        k.toLowerCase().includes('mobile') ||
+        (k.toLowerCase().includes('contact') && !k.toLowerCase().includes('emergency')) ||
+        label.includes('phone') ||
+        label.includes('mobile') ||
+        (label.includes('contact') && !label.includes('emergency'))
+      );
+    });
+    return found ? String(found[1]) : undefined;
+  }, [registration?.attendee.phone, registration?.formSubmission, currentEvent?.registrationForm]);
+
+  const effectiveOrg = useMemo(() => {
+    if (registration?.attendee.organization) return registration.attendee.organization;
+    if (!registration?.formSubmission) return undefined;
+    const found = Object.entries(registration.formSubmission).find(([k, v]) => {
+      if (!v || typeof v !== 'string') return false;
+      const fieldDef = currentEvent?.registrationForm?.find((f) => f.id === k);
+      const label = fieldDef ? fieldDef.label.toLowerCase() : k.toLowerCase();
+      return (
+        k.toLowerCase().includes('organization') ||
+        k.toLowerCase().includes('company') ||
+        k.toLowerCase().includes('school') ||
+        k.toLowerCase().includes('university') ||
+        k.toLowerCase().includes('affiliation') ||
+        label.includes('organization') ||
+        label.includes('company') ||
+        label.includes('school') ||
+        label.includes('university') ||
+        label.includes('affiliation')
+      );
+    });
+    return found ? String(found[1]) : undefined;
+  }, [registration?.attendee.organization, registration?.formSubmission, currentEvent?.registrationForm]);
+
+  // Resolve unified registration responses in the exact sequence configured in the Event Form Builder
+  const unifiedResponses = useMemo<ResolvedResponseField[]>(() => {
+    if (!registration) return [];
+
+    const responses = (registration.formSubmission || {}) as Record<string, any>;
+    const formFields = currentEvent?.registrationForm || [];
+    const result: ResolvedResponseField[] = [];
+    const handledKeys = new Set<string>();
+
+    if (formFields.length > 0) {
+      // 1. Process all fields from the Event's Form Builder in their configured order
+      for (const field of formFields) {
+        if (field.type === 'spacer') continue;
+
+        handledKeys.add(field.id);
+        handledKeys.add(field.id.toLowerCase());
+
+        let val = responses[field.id] ?? responses[field.id.toLowerCase()];
+
+        // If not in responses, check if it maps to a standard attendee property
+        if (val === undefined || val === null || val === '') {
+          const rawLabel = stripFormattedLabelSyntax(field.label).toLowerCase();
+          const rawId = field.id.toLowerCase();
+          if (
+            field.type === 'email' ||
+            rawId.includes('email') ||
+            rawLabel.includes('email')
+          ) {
+            val = registration.attendee.email;
+          } else if (
+            rawId.includes('name') ||
+            rawId === '1' ||
+            rawLabel.includes('name')
+          ) {
+            val = registration.attendee.name;
+          } else if (
+            field.type === 'phone' ||
+            rawId === '3' ||
+            rawId.includes('phone') ||
+            rawLabel.includes('phone') ||
+            rawLabel.includes('mobile') ||
+            ((rawId.includes('contact') || rawLabel.includes('contact')) &&
+             !rawId.includes('emergency') &&
+             !rawLabel.includes('emergency'))
+          ) {
+            val = registration.attendee.phone || effectivePhone;
+          } else if (
+            rawId.includes('organization') ||
+            rawId.includes('company') ||
+            rawId.includes('school') ||
+            rawLabel.includes('organization') ||
+            rawLabel.includes('company') ||
+            rawLabel.includes('school') ||
+            rawLabel.includes('university')
+          ) {
+            val = registration.attendee.organization || effectiveOrg;
+          }
+        }
+
+        result.push({
+          key: field.id,
+          label: stripFormattedLabelSyntax(field.label),
+          value: val,
+          type: field.type,
+          gridSize: field.gridSize || (field.type === 'textarea' ? 'full' : 'half'),
+        });
+      }
+
+      // Check if primary contact fields (Name & Email) were omitted from the custom form definition
+      const hasEmailField = formFields.some(
+        (f) => f.type === 'email' || f.id.toLowerCase().includes('email') || f.label.toLowerCase().includes('email')
+      );
+      if (!hasEmailField && registration.attendee.email) {
+        result.unshift({
+          key: 'email',
+          label: 'Email Address',
+          value: registration.attendee.email,
+          type: 'email',
+          gridSize: 'half',
+        });
+      }
+
+      const hasNameField = formFields.some(
+        (f) => f.id.toLowerCase().includes('name') || f.label.toLowerCase().includes('name')
+      );
+      if (!hasNameField && registration.attendee.name) {
+        result.unshift({
+          key: 'name',
+          label: 'Full Name',
+          value: registration.attendee.name,
+          type: 'text',
+          gridSize: 'half',
+        });
+      }
+    } else {
+      // 2. Fallback when event does not have a custom form configured
+      result.push(
+        {
+          key: 'name',
+          label: 'Full Name',
+          value: registration.attendee.name,
+          type: 'text',
+          gridSize: 'half',
+        },
+        {
+          key: 'email',
+          label: 'Email Address',
+          value: registration.attendee.email,
+          type: 'email',
+          gridSize: 'half',
+        },
+        {
+          key: 'phone',
+          label: 'Phone Number',
+          value: registration.attendee.phone || effectivePhone,
+          type: 'phone',
+          gridSize: 'half',
+        },
+        {
+          key: 'organization',
+          label: 'Organization / School',
+          value: registration.attendee.organization || effectiveOrg,
+          type: 'text',
+          gridSize: 'half',
+        }
+      );
+    }
+
+    // 3. Append any legacy/unmapped responses from formSubmission that weren't in form definition
+    for (const [key, val] of Object.entries(responses)) {
+      if (
+        !handledKeys.has(key) &&
+        !handledKeys.has(key.toLowerCase()) &&
+        val !== null &&
+        val !== undefined &&
+        val !== ''
+      ) {
+        if (
+          (key === '1' && registration.attendee.name) ||
+          (key === '2' && registration.attendee.email) ||
+          (key === '3' && (registration.attendee.phone || effectivePhone))
+        ) {
+          continue;
+        }
+
+        const humanLabel = key.replace(/([A-Z])/g, ' $1').replace(/_/g, ' ');
+        result.push({
+          key,
+          label: humanLabel.charAt(0).toUpperCase() + humanLabel.slice(1),
+          value: val,
+          isCustom: true,
+          gridSize: typeof val === 'string' && val.length > 50 ? 'full' : 'half',
+        });
+      }
+    }
+
+    return result;
+  }, [registration, currentEvent?.registrationForm, effectivePhone, effectiveOrg]);
+
+  const answeredCount = useMemo(() => {
+    return unifiedResponses.filter(isFieldAnswered).length;
+  }, [unifiedResponses]);
+
+  const unansweredCount = unifiedResponses.length - answeredCount;
+
+  const filteredResponses = useMemo(() => {
+    const query = responseSearchQuery.trim().toLowerCase();
+
+    return unifiedResponses.filter((field) => {
+      const answered = isFieldAnswered(field);
+      if (responseFilter === 'answered' && !answered) return false;
+      if (responseFilter === 'unanswered' && answered) return false;
+
+      if (!query) return true;
+
+      const labelMatch = field.label.toLowerCase().includes(query);
+      const valueStr = formatFieldValueForCopy(field).toLowerCase();
+      const valueMatch = valueStr.includes(query);
+
+      return labelMatch || valueMatch;
+    });
+  }, [unifiedResponses, responseSearchQuery, responseFilter]);
+
+  const isFilteringOrSearching = !!responseSearchQuery.trim() || responseFilter !== 'all';
+
+  const handleCopyAllResponses = () => {
+    if (unifiedResponses.length === 0 || !registration) return;
+    const lines = [
+      `Registration Responses — ${registration.attendee.name} (${registration.event.title})`,
+      `Submitted: ${formatDate(registration.registrationDate)}`,
+      '',
+      ...unifiedResponses.map((f) => `• ${f.label}: ${formatFieldValueForCopy(f)}`),
+    ];
+    navigator.clipboard
+      .writeText(lines.join('\n'))
+      .then(() => toast.success('All responses copied to clipboard'))
+      .catch(() => toast.error('Failed to copy to clipboard. Please try again.'));
+  };
+
+  const renderResponseValue = (field: ResolvedResponseField) => {
+    const { value } = field;
+
+    if (value === null || value === undefined || value === '') {
+      return <span className="italic text-on-surface-variant/70">Not provided</span>;
+    }
+
+    if (Array.isArray(value)) {
+      if (value.length === 0) {
+        return <span className="italic text-on-surface-variant/70">None selected</span>;
+      }
+      return (
+        <div className="flex flex-wrap gap-1 mt-1">
+          {value.map((item, idx) => (
+            <span
+              key={idx}
+              className="inline-flex items-center rounded-md bg-surface-container-high px-2 py-0.5 text-xs font-medium text-on-surface"
+            >
+              {String(item)}
+            </span>
+          ))}
+        </div>
+      );
+    }
+
+    if (typeof value === 'boolean') {
+      return (
+        <div className="mt-1">
+          <span
+            className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium ${
+              value
+                ? 'bg-success-container text-on-success-container'
+                : 'bg-surface-container-high text-on-surface-variant'
+            }`}
+          >
+            {value ? 'Yes' : 'No'}
+          </span>
+        </div>
+      );
+    }
+
+    if (typeof value === 'object') {
+      const obj = value as Record<string, any>;
+      if (obj.name && obj.phone) {
+        return (
+          <p className="mt-1 text-sm font-semibold text-on-surface">
+            {obj.name} <span className="text-xs font-normal text-on-surface-variant">({obj.phone})</span>
+          </p>
+        );
+      }
+      return (
+        <p className="mt-1 text-xs font-mono text-on-surface bg-surface-container-high rounded p-1.5 break-all">
+          {JSON.stringify(value)}
+        </p>
+      );
+    }
+
+    const strVal = String(value);
+
+    if (strVal.startsWith('http://') || strVal.startsWith('https://')) {
+      return (
+        <a
+          href={strVal}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-1 inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline break-all"
+        >
+          <span>{strVal}</span>
+          <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        </a>
+      );
+    }
+
+    return (
+      <p className="mt-1 text-sm font-semibold text-on-surface break-words whitespace-pre-wrap">
+        {strVal}
+      </p>
+    );
+  };
+
   // Sync state whenever registration changes
   useEffect(() => {
     if (registration) {
-      setAttendeeName(registration.attendee.name || '');
-      setAttendeeEmail(registration.attendee.email || '');
-      setAttendeePhone(registration.attendee.phone || '');
-      setAttendeeOrg(registration.attendee.organization || '');
-      setIsEditingAttendee(false);
       setProofImageError(false);
 
       const rawUrl = registration.paymentProof?.proofImageUrl;
@@ -288,7 +677,6 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
 
   if (!registration) return null;
 
-  const currentEvent = events.find((e) => e.id === registration.event.id);
   const eventOrganizerUid = currentEvent?.organizer?.uid || (registration as any)?.organizerUid;
   const registrationEntity = asRegistration({
     ...(registration as any),
@@ -320,51 +708,40 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
       .catch(() => toast.error('Failed to copy to clipboard. Please try again.'));
   };
 
-  const handleSaveAttendeeDetails = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!canUpdate) {
-      toast.error('You do not have permission to update attendee details');
-      return;
-    }
-    if (!attendeeName.trim()) {
-      toast.error('Attendee name is required');
-      return;
-    }
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!attendeeEmail.trim() || !emailRegex.test(attendeeEmail.trim())) {
-      toast.error('Please enter a valid email address');
-      return;
-    }
-
-    try {
-      setIsSavingAttendee(true);
-      await RegistrationService.updateAttendeeDetails(registration.id, {
-        name: attendeeName,
-        email: attendeeEmail,
-        phone: attendeePhone,
-        organization: attendeeOrg,
-      });
-
-      const updatedRegistration: AttendeeRegistration = {
-        ...registration,
-        attendee: {
-          ...registration.attendee,
-          name: attendeeName.trim(),
-          email: attendeeEmail.trim().toLowerCase(),
-          phone: attendeePhone.trim() || undefined,
-          organization: attendeeOrg.trim() || undefined,
-        },
-      };
-
-      onUpdateRegistration(updatedRegistration);
-      setIsEditingAttendee(false);
-      toast.success('Attendee details updated successfully');
-    } catch (error) {
-      logger.error('Failed to update attendee details:', error);
-      toast.error('Failed to update attendee details. Please try again.');
-    } finally {
-      setIsSavingAttendee(false);
-    }
+  const renderFieldTile = (field: ResolvedResponseField) => {
+    const answered = isFieldAnswered(field);
+    return (
+      <div
+        key={field.key}
+        className={`rounded-lg bg-surface-container-low p-sm transition-colors duration-fast ${
+          field.gridSize === 'full' ? 'sm:col-span-2' : 'sm:col-span-1'
+        } ${!answered ? 'opacity-85' : ''}`}
+      >
+        <div className="flex items-center justify-between gap-1">
+          <span className="text-xs font-medium text-on-surface-variant flex items-center gap-1 min-w-0">
+            {getFieldIcon(field)}
+            <span className="truncate" title={field.label}>{field.label}</span>
+            {field.isCustom && (
+              <span className="shrink-0 rounded bg-surface-container-highest px-1 py-0.2 text-[10px] text-on-surface-variant">
+                Additional
+              </span>
+            )}
+          </span>
+          {field.value && isCopyableField(field) && (
+            <button
+              type="button"
+              onClick={() => copyToClipboard(String(field.value), field.label)}
+              className="text-on-surface-variant hover:text-primary transition-colors p-0.5 rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-primary shrink-0"
+              title={`Copy ${field.label}`}
+              aria-label={`Copy ${field.label}`}
+            >
+              <ClipboardDocumentIcon className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+        {renderResponseValue(field)}
+      </div>
+    );
   };
 
   // Free registrations have no proof to verify, and RegistrationService already
@@ -409,6 +786,12 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
       if (!isFree && hasPendingProof) {
         await onPaymentVerification(registration.id, 'approved');
       }
+      onUpdateRegistration({
+        ...registration,
+        status: 'approved',
+        registrationStatus: 'approved',
+        ...(isFree ? { paymentStatus: 'paid' as const } : {})
+      });
       toast.success(isFree ? 'Registration accepted' : 'Registration and payment accepted');
       onClose();
     } catch (error) {
@@ -436,6 +819,11 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
       if (hasPendingProof) {
         await onPaymentVerification(registration.id, 'rejected');
       }
+      onUpdateRegistration({
+        ...registration,
+        status: 'rejected',
+        registrationStatus: 'rejected'
+      });
       toast.success('Registration rejected');
       onClose();
     } catch (error) {
@@ -537,7 +925,7 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
               variant="danger"
               size="sm"
               onClick={() => setShowDeleteConfirm(true)}
-              disabled={isProcessingAction || isSavingAttendee || isConfirmed || !canDelete}
+              disabled={isProcessingAction || isConfirmed || !canDelete}
               title={
                 !canDelete
                   ? 'Delete permission required'
@@ -558,7 +946,7 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
                 size="sm"
                 onClick={handleReject}
                 loading={isProcessingAction}
-                disabled={isAlreadyAccepted || isSavingAttendee || !canUpdate}
+                disabled={isAlreadyAccepted || !canUpdate}
                 title={!canUpdate ? 'Update permission required' : undefined}
                 className="!text-error !border-error/50 enabled:hover:!bg-error-container/20"
                 icon={<XMarkIcon className="h-4 w-4" />}
@@ -571,7 +959,7 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
                 size="sm"
                 onClick={handleAccept}
                 loading={isProcessingAction}
-                disabled={isAlreadyAccepted || isSavingAttendee || !canUpdate || (!isFree && hasPendingProof && !canVerifyPayment)}
+                disabled={isAlreadyAccepted || !canUpdate || (!isFree && hasPendingProof && !canVerifyPayment)}
                 title={
                   !canUpdate
                     ? 'Update permission required'
@@ -613,7 +1001,9 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
                       <Badge tone="neutral">Online</Badge>
                     )}
                   </div>
-                  <p className="text-xs text-on-surface-variant flex items-center gap-1.5 mt-0.5">
+                  <p className="text-xs text-on-surface-variant flex flex-wrap items-center gap-1.5 mt-0.5">
+                    <span className="font-medium text-on-surface">{registration.attendee.email}</span>
+                    <span>•</span>
                     <span>{registration.event.title}</span>
                     <span>•</span>
                     <span>Registered {formatDate(registration.registrationDate)}</span>
@@ -648,160 +1038,214 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
 
           {/* Main 2-Column Content Grid */}
           <div className="grid grid-cols-1 gap-md lg:grid-cols-12">
-            {/* Left Column (Attendee Details + Ticket/Pricing) */}
+            {/* Left Column (Registration Responses + Email History) */}
             <div className="space-y-md lg:col-span-7">
-              {/* Attendee Details Card */}
+              {/* Registration Responses Card */}
               <div className="rounded-xl border border-outline-variant bg-surface p-md">
-                <div className="flex items-center justify-between border-b border-outline-variant pb-sm mb-md">
+                {/* Header with Title, Answered Counter, and Copy All */}
+                <div className="flex flex-wrap items-center justify-between gap-xs border-b border-outline-variant pb-sm mb-md">
                   <div className="flex items-center gap-xs">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-container text-on-primary-container">
-                      <UserIcon className="h-4 w-4" />
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-container text-on-primary-container shrink-0">
+                      <DocumentTextIcon className="h-4 w-4" />
                     </div>
                     <div>
-                      <h4 className="text-sm font-semibold text-on-surface">
-                        Attendee Information
-                      </h4>
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-sm font-semibold text-on-surface">
+                          Registration Responses
+                        </h4>
+                        {unifiedResponses.length > 0 && (
+                          <span className="text-xs text-on-surface-variant font-medium">
+                            ({answeredCount}/{unifiedResponses.length} answered)
+                          </span>
+                        )}
+                      </div>
                       <p className="text-xs text-on-surface-variant">
-                        Core participant profile &amp; contact
+                        Answers submitted via the registration form
                       </p>
                     </div>
                   </div>
 
-                  {!isEditingAttendee && canUpdate && (
-                    <Button
-                      variant="outlined"
-                      size="sm"
-                      onClick={() => setIsEditingAttendee(true)}
-                      icon={<PencilSquareIcon className="h-3.5 w-3.5" />}
-                      className="min-h-[36px]"
-                    >
-                      Edit Details
-                    </Button>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {unifiedResponses.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleCopyAllResponses}
+                        className="inline-flex min-h-[36px] items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium text-on-surface-variant hover:text-primary hover:bg-surface-container-high transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary active:scale-[0.98]"
+                        title="Copy all responses to clipboard"
+                        aria-label="Copy all responses to clipboard"
+                      >
+                        <ClipboardDocumentListIcon className="h-4 w-4 text-primary" aria-hidden="true" />
+                        <span>Copy All</span>
+                      </button>
+                    )}
+                    <Badge tone="neutral">
+                      {unifiedResponses.length} {unifiedResponses.length === 1 ? 'Field' : 'Fields'}
+                    </Badge>
+                  </div>
                 </div>
 
-                {isEditingAttendee ? (
-                  <form onSubmit={handleSaveAttendeeDetails} className="space-y-sm">
-                    <Input
-                      label="Full Name"
-                      value={attendeeName}
-                      onChange={(e) => setAttendeeName(e.target.value)}
-                      placeholder="e.g. Jane Doe"
-                      required
-                    />
-                    <Input
-                      label="Email Address"
-                      type="email"
-                      value={attendeeEmail}
-                      onChange={(e) => setAttendeeEmail(e.target.value)}
-                      placeholder="e.g. jane@example.com"
-                      required
-                    />
-                    <Input
-                      label="Phone Number"
-                      type="tel"
-                      value={attendeePhone}
-                      onChange={(e) => setAttendeePhone(e.target.value)}
-                      placeholder="e.g. +63 912 345 6789"
-                    />
-                    <Input
-                      label="Organization / School"
-                      value={attendeeOrg}
-                      onChange={(e) => setAttendeeOrg(e.target.value)}
-                      placeholder="e.g. University of Mindanao / Tech Co."
-                    />
-
-                    <div className="flex items-center justify-end gap-xs pt-xs border-t border-outline-variant">
-                      <Button
-                        type="button"
-                        variant="outlined"
-                        size="sm"
-                        onClick={() => {
-                          setAttendeeName(registration.attendee.name || '');
-                          setAttendeeEmail(registration.attendee.email || '');
-                          setAttendeePhone(registration.attendee.phone || '');
-                          setAttendeeOrg(registration.attendee.organization || '');
-                          setIsEditingAttendee(false);
-                        }}
-                        disabled={isSavingAttendee}
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        type="submit"
-                        variant="filled"
-                        size="sm"
-                        loading={isSavingAttendee}
-                        icon={<CheckIcon className="h-4 w-4" />}
-                      >
-                        Save Changes
-                      </Button>
-                    </div>
-                  </form>
-                ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-sm">
-                    <div className="rounded-lg bg-surface-container-low p-sm">
-                      <span className="text-xs font-medium text-on-surface-variant flex items-center gap-1">
-                        <UserIcon className="h-3.5 w-3.5" /> Full Name
-                      </span>
-                      <p className="mt-1 text-sm font-semibold text-on-surface">
-                        {registration.attendee.name}
-                      </p>
-                    </div>
-
-                    <div className="rounded-lg bg-surface-container-low p-sm">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-medium text-on-surface-variant flex items-center gap-1">
-                          <EnvelopeIcon className="h-3.5 w-3.5" /> Email Address
-                        </span>
+                {/* Search & Filter Controls (Rendered when form has more than 4 fields) */}
+                {unifiedResponses.length > 4 && (
+                  <div className="mb-md space-y-2">
+                    <div className="relative">
+                      <MagnifyingGlassIcon
+                        className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-outline-variant h-4 w-4"
+                        aria-hidden="true"
+                      />
+                      <input
+                        type="text"
+                        placeholder="Search questions or answers..."
+                        value={responseSearchQuery}
+                        onChange={(e) => setResponseSearchQuery(e.target.value)}
+                        className="w-full min-h-[40px] h-10 pl-9 pr-8 text-xs bg-surface-container-low text-on-surface border border-outline-variant rounded-lg placeholder:text-on-surface-variant/60 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors"
+                        aria-label="Search registration questions or answers"
+                      />
+                      {responseSearchQuery && (
                         <button
                           type="button"
-                          onClick={() => copyToClipboard(registration.attendee.email, 'Email')}
-                          className="text-on-surface-variant hover:text-primary transition-colors"
-                          title="Copy email"
-                          aria-label="Copy email"
+                          onClick={() => setResponseSearchQuery('')}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded text-on-surface-variant hover:text-on-surface focus:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+                          aria-label="Clear search"
                         >
-                          <ClipboardDocumentIcon className="h-3.5 w-3.5" />
+                          <XMarkIcon className="h-3.5 w-3.5" />
                         </button>
-                      </div>
-                      <p className="mt-1 text-sm text-on-surface truncate">
-                        {registration.attendee.email}
-                      </p>
+                      )}
                     </div>
 
-                    <div className="rounded-lg bg-surface-container-low p-sm">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-medium text-on-surface-variant flex items-center gap-1">
-                          <PhoneIcon className="h-3.5 w-3.5" /> Phone Number
+                    <div className="flex flex-wrap items-center gap-1.5" role="tablist" aria-label="Filter responses">
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={responseFilter === 'all'}
+                        onClick={() => setResponseFilter('all')}
+                        className={`inline-flex min-h-[32px] items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+                          responseFilter === 'all'
+                            ? 'bg-primary text-white shadow-xs'
+                            : 'bg-surface-container-low text-on-surface-variant hover:bg-surface-container-high border border-outline-variant/60'
+                        }`}
+                      >
+                        <span>All</span>
+                        <span className={`text-[11px] px-1.5 py-0.2 rounded-full font-semibold ${
+                          responseFilter === 'all' ? 'bg-primary-hover text-white' : 'bg-surface-container-highest text-on-surface'
+                        }`}>
+                          {unifiedResponses.length}
                         </span>
-                        {registration.attendee.phone && (
-                          <button
-                            type="button"
-                            onClick={() => copyToClipboard(registration.attendee.phone!, 'Phone')}
-                            className="text-on-surface-variant hover:text-primary transition-colors"
-                            title="Copy phone"
-                            aria-label="Copy phone"
-                          >
-                            <ClipboardDocumentIcon className="h-3.5 w-3.5" />
-                          </button>
-                        )}
-                      </div>
-                      <p className="mt-1 text-sm text-on-surface">
-                        {registration.attendee.phone || (
-                          <span className="italic text-on-surface-variant">Not provided</span>
-                        )}
-                      </p>
-                    </div>
+                      </button>
 
-                    <div className="rounded-lg bg-surface-container-low p-sm">
-                      <span className="text-xs font-medium text-on-surface-variant flex items-center gap-1">
-                        <BuildingOfficeIcon className="h-3.5 w-3.5" /> Organization / School
-                      </span>
-                      <p className="mt-1 text-sm text-on-surface">
-                        {registration.attendee.organization || (
-                          <span className="italic text-on-surface-variant">Not provided</span>
-                        )}
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={responseFilter === 'answered'}
+                        onClick={() => setResponseFilter('answered')}
+                        className={`inline-flex min-h-[32px] items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+                          responseFilter === 'answered'
+                            ? 'bg-primary text-white shadow-xs'
+                            : 'bg-surface-container-low text-on-surface-variant hover:bg-surface-container-high border border-outline-variant/60'
+                        }`}
+                      >
+                        <span>Answered</span>
+                        <span className={`text-[11px] px-1.5 py-0.2 rounded-full font-semibold ${
+                          responseFilter === 'answered' ? 'bg-primary-hover text-white' : 'bg-surface-container-highest text-on-surface'
+                        }`}>
+                          {answeredCount}
+                        </span>
+                      </button>
+
+                      {unansweredCount > 0 && (
+                        <button
+                          type="button"
+                          role="tab"
+                          aria-selected={responseFilter === 'unanswered'}
+                          onClick={() => setResponseFilter('unanswered')}
+                          className={`inline-flex min-h-[32px] items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+                            responseFilter === 'unanswered'
+                              ? 'bg-primary text-white shadow-xs'
+                              : 'bg-surface-container-low text-on-surface-variant hover:bg-surface-container-high border border-outline-variant/60'
+                          }`}
+                        >
+                          <span>Unanswered</span>
+                          <span className={`text-[11px] px-1.5 py-0.2 rounded-full font-semibold ${
+                            responseFilter === 'unanswered' ? 'bg-primary-hover text-white' : 'bg-surface-container-highest text-on-surface'
+                          }`}>
+                            {unansweredCount}
+                          </span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Content: Empty state / Filtered results / Progressive disclosure */}
+                {unifiedResponses.length === 0 ? (
+                  <div className="py-md text-center text-xs text-on-surface-variant">
+                    No form responses on file.
+                  </div>
+                ) : isFilteringOrSearching ? (
+                  filteredResponses.length === 0 ? (
+                    <div className="py-lg text-center rounded-lg border border-dashed border-outline-variant/80 bg-surface-container-low/50 p-md">
+                      <p className="text-xs text-on-surface-variant">
+                        No responses match {responseSearchQuery ? `"${responseSearchQuery}"` : 'the selected filter'}.
                       </p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setResponseSearchQuery('');
+                          setResponseFilter('all');
+                        }}
+                        className="mt-2 text-xs font-semibold text-primary hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-2 py-1"
+                      >
+                        Reset search & filters
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="max-h-[460px] overflow-y-auto pr-1">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-sm">
+                        {filteredResponses.map(renderFieldTile)}
+                      </div>
+                    </div>
+                  )
+                ) : unifiedResponses.length <= 6 ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-sm">
+                    {unifiedResponses.map(renderFieldTile)}
+                  </div>
+                ) : !isResponsesExpanded ? (
+                  <div className="relative">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-sm">
+                      {unifiedResponses.slice(0, 6).map(renderFieldTile)}
+                    </div>
+                    {/* Gradient Fade Mask */}
+                    <div className="absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-surface via-surface/90 to-transparent pointer-events-none rounded-b-xl" />
+                    <div className="relative -mt-6 text-center z-10">
+                      <button
+                        type="button"
+                        onClick={() => setIsResponsesExpanded(true)}
+                        className="inline-flex min-h-[44px] items-center gap-2 px-4 py-2 rounded-full bg-surface border border-outline-variant text-xs font-semibold text-primary shadow-sm hover:bg-primary-container/20 hover:border-primary/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary transition-[color,background-color,border-color,transform] duration-short2 ease-emphasized-standard active:scale-[0.98]"
+                        aria-label={`View all ${unifiedResponses.length} responses, ${unifiedResponses.length - 6} more`}
+                      >
+                        <span>View All {unifiedResponses.length} Responses</span>
+                        <span className="text-[11px] font-normal text-on-surface-variant">
+                          (+{unifiedResponses.length - 6} more)
+                        </span>
+                        <ChevronDownIcon className="h-4 w-4 text-primary" aria-hidden="true" />
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-sm">
+                    <div className="max-h-[460px] overflow-y-auto pr-1">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-sm">
+                        {unifiedResponses.map(renderFieldTile)}
+                      </div>
+                    </div>
+                    <div className="pt-xs text-center border-t border-outline-variant/40">
+                      <button
+                        type="button"
+                        onClick={() => setIsResponsesExpanded(false)}
+                        className="inline-flex min-h-[44px] items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-medium text-on-surface-variant hover:text-primary hover:bg-surface-container-high transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary active:scale-[0.98]"
+                      >
+                        <span>Show Less</span>
+                        <ChevronUpIcon className="h-4 w-4" aria-hidden="true" />
+                      </button>
                     </div>
                   </div>
                 )}
@@ -935,97 +1379,6 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
                   </div>
                 )}
               </div>
-
-              {/* Ticket & Pricing Card */}
-              <div className="rounded-xl border border-outline-variant bg-surface p-md">
-                <div className="flex items-center gap-xs border-b border-outline-variant pb-sm mb-md">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-container text-on-primary-container">
-                    <TicketIcon className="h-4 w-4" />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-semibold text-on-surface">
-                      Ticket &amp; Pricing
-                    </h4>
-                    <p className="text-xs text-on-surface-variant">
-                      Tier benefits, quantity, and breakdown
-                    </p>
-                  </div>
-                </div>
-
-                <div className="space-y-sm">
-                  <div className="flex items-center justify-between rounded-lg bg-surface-container-low p-sm">
-                    <div>
-                      <span className="text-xs font-medium text-on-surface-variant">Tier</span>
-                      <p className="text-sm font-semibold text-on-surface">
-                        {ticketType?.name ||
-                          registration.pricing?.ticketTypeName ||
-                          'General Admission'}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-xs font-medium text-on-surface-variant">Quantity</span>
-                      <p className="text-sm font-semibold text-on-surface">
-                        {registration.quantity || 1} ticket(s)
-                      </p>
-                    </div>
-                  </div>
-
-                  {ticketType?.description && (
-                    <p className="text-xs text-on-surface-variant px-1">
-                      {ticketType.description}
-                    </p>
-                  )}
-
-                  {ticketType?.benefits && ticketType.benefits.length > 0 && (
-                    <div className="rounded-lg bg-surface-container-low p-sm space-y-1">
-                      <span className="text-xs font-semibold text-on-surface-variant">
-                        Included Benefits:
-                      </span>
-                      <ul className="space-y-1 text-xs text-on-surface">
-                        {ticketType.benefits.map((benefit, i) => (
-                          <li key={i} className="flex items-center gap-1.5">
-                            <CheckIcon className="h-3.5 w-3.5 text-success shrink-0" />
-                            <span>{benefit}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {/* Financial Breakdown */}
-                  <div className="rounded-lg border border-outline-variant bg-surface p-sm space-y-xs text-xs">
-                    {registration.promoCode && (
-                      <div className="flex items-center justify-between text-success">
-                        <span>Promo Code Applied:</span>
-                        <span className="font-mono font-semibold">
-                          {registration.promoCode}
-                        </span>
-                      </div>
-                    )}
-                    {typeof registration.originalAmount === 'number' && (
-                      <div className="flex items-center justify-between text-on-surface-variant">
-                        <span>Base Price:</span>
-                        <span>{formatCurrency(registration.originalAmount)}</span>
-                      </div>
-                    )}
-                    {typeof registration.discountAmount === 'number' &&
-                      registration.discountAmount > 0 && (
-                        <div className="flex items-center justify-between text-success">
-                          <span>Discount:</span>
-                          <span>-{formatCurrency(registration.discountAmount)}</span>
-                        </div>
-                      )}
-                    <div className="flex items-center justify-between border-t border-outline-variant pt-xs text-sm font-semibold text-on-surface">
-                      <span>Total Amount:</span>
-                      <span className="text-base text-primary">
-                        {formatCurrency(
-                          registration.totalAmount ?? registration.event.ticketPrice
-                        )}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
             </div>
 
             {/* Right Column (Payment Verification + Custom Responses + Audit) */}
@@ -1156,41 +1509,96 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
                 </div>
               </div>
 
-              {/* Custom Form Responses Card */}
-              {registration.formSubmission &&
-                Object.keys(registration.formSubmission).length > 0 && (
-                  <div className="rounded-xl border border-outline-variant bg-surface p-md">
-                    <div className="flex items-center gap-xs border-b border-outline-variant pb-sm mb-md">
-                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-surface-container-high text-on-surface">
-                        <DocumentTextIcon className="h-4 w-4 text-primary" />
-                      </div>
-                      <div>
-                        <h4 className="text-sm font-semibold text-on-surface">
-                          Custom Form Responses
-                        </h4>
-                        <p className="text-xs text-on-surface-variant">
-                          Attendee answers to registration questions
-                        </p>
-                      </div>
-                    </div>
+              {/* Ticket & Pricing Card */}
+              <div className="rounded-xl border border-outline-variant bg-surface p-md">
+                <div className="flex items-center gap-xs border-b border-outline-variant pb-sm mb-md">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-container text-on-primary-container">
+                    <TicketIcon className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-semibold text-on-surface">
+                      Ticket &amp; Pricing
+                    </h4>
+                    <p className="text-xs text-on-surface-variant">
+                      Tier benefits, quantity, and breakdown
+                    </p>
+                  </div>
+                </div>
 
-                    <div className="space-y-xs max-h-60 overflow-y-auto pr-1">
-                      {Object.entries(registration.formSubmission).map(([key, val]) => (
-                        <div
-                          key={key}
-                          className="rounded-lg bg-surface-container-low p-sm text-xs"
-                        >
-                          <span className="font-medium text-on-surface-variant block capitalize">
-                            {key.replace(/([A-Z])/g, ' $1').replace(/_/g, ' ')}
-                          </span>
-                          <span className="text-on-surface font-medium mt-0.5 block break-words">
-                            {formatFormResponseValue(val)}
-                          </span>
-                        </div>
-                      ))}
+                <div className="space-y-sm">
+                  <div className="flex items-center justify-between rounded-lg bg-surface-container-low p-sm">
+                    <div>
+                      <span className="text-xs font-medium text-on-surface-variant">Tier</span>
+                      <p className="text-sm font-semibold text-on-surface">
+                        {ticketType?.name ||
+                          registration.pricing?.ticketTypeName ||
+                          'General Admission'}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-xs font-medium text-on-surface-variant">Quantity</span>
+                      <p className="text-sm font-semibold text-on-surface">
+                        {registration.quantity || 1} ticket(s)
+                      </p>
                     </div>
                   </div>
-                )}
+
+                  {ticketType?.description && (
+                    <p className="text-xs text-on-surface-variant px-1">
+                      {ticketType.description}
+                    </p>
+                  )}
+
+                  {ticketType?.benefits && ticketType.benefits.length > 0 && (
+                    <div className="rounded-lg bg-surface-container-low p-sm space-y-1">
+                      <span className="text-xs font-semibold text-on-surface-variant">
+                        Included Benefits:
+                      </span>
+                      <ul className="space-y-1 text-xs text-on-surface">
+                        {ticketType.benefits.map((benefit, i) => (
+                          <li key={i} className="flex items-center gap-1.5">
+                            <CheckIcon className="h-3.5 w-3.5 text-success shrink-0" />
+                            <span>{benefit}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Financial Breakdown */}
+                  <div className="rounded-lg border border-outline-variant bg-surface p-sm space-y-xs text-xs">
+                    {registration.promoCode && (
+                      <div className="flex items-center justify-between text-success">
+                        <span>Promo Code Applied:</span>
+                        <span className="font-mono font-semibold">
+                          {registration.promoCode}
+                        </span>
+                      </div>
+                    )}
+                    {typeof registration.originalAmount === 'number' && (
+                      <div className="flex items-center justify-between text-on-surface-variant">
+                        <span>Base Price:</span>
+                        <span>{formatCurrency(registration.originalAmount)}</span>
+                      </div>
+                    )}
+                    {typeof registration.discountAmount === 'number' &&
+                      registration.discountAmount > 0 && (
+                        <div className="flex items-center justify-between text-success">
+                          <span>Discount:</span>
+                          <span>-{formatCurrency(registration.discountAmount)}</span>
+                        </div>
+                      )}
+                    <div className="flex items-center justify-between border-t border-outline-variant pt-xs text-sm font-semibold text-on-surface">
+                      <span>Total Amount:</span>
+                      <span className="text-base text-primary">
+                        {formatCurrency(
+                          registration.totalAmount ?? registration.event.ticketPrice
+                        )}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
 
               {/* Audit & ID Metadata Card */}
               <div className="rounded-xl border border-outline-variant bg-surface p-md space-y-xs text-xs text-on-surface-variant">

@@ -51,6 +51,11 @@ describe('resolveDisplayStatus', () => {
       paymentStatus: 'pending',
     };
     expect(resolveDisplayStatus(reg)).toBe('confirmed');
+
+    // Also supports optimistic UI updates where status is set directly
+    expect(resolveDisplayStatus({ status: 'approved', paymentStatus: 'pending' })).toBe('confirmed');
+    expect(resolveDisplayStatus({ status: 'confirmed', paymentStatus: 'pending' })).toBe('confirmed');
+    expect(resolveDisplayStatus({ status: 'rejected', paymentStatus: 'pending' })).toBe('rejected');
   });
 
   it('resolves paid paymentStatus to "confirmed"', () => {

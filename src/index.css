@@ -111,15 +111,30 @@
 }
 
 @keyframes scanline-pulse {
-  0%,
-  100% {
-    opacity: 0.35;
-    transform: translateY(-6px);
+  0% {
+    transform: translateY(-100%);
   }
   50% {
-    opacity: 0.9;
-    transform: translateY(6px);
+    transform: translateY(0%);
   }
+  100% {
+    transform: translateY(-100%);
+  }
+}
+
+@keyframes confetti-fall {
+  0% {
+    opacity: 1;
+    transform: translateY(0) rotate(0deg) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(340px) rotate(380deg) scale(0.6);
+  }
+}
+
+.animate-confetti-fall {
+  animation: confetti-fall 2.8s ease-out forwards;
 }
 
 @layer base {
@@ -473,7 +488,7 @@
   /* Inline spinner, inherits the current text colour so it works on any
      Button variant without a per-variant colour. */
   .spinner {
-    @apply inline-block rounded-full border-2 border-current border-t-transparent;
+    @apply inline-block rounded-full border-2 border-current border-t-transparent w-5 h-5;
     animation: spin 0.7s linear infinite;
   }
 
@@ -699,7 +714,7 @@
 
   /* Reticle scanline for QR viewfinder. */
   .animate-scanline {
-    animation: scanline-pulse 2s var(--motion-ease-quart) infinite;
+    animation: scanline-pulse 2.4s ease-in-out infinite;
   }
 }
 

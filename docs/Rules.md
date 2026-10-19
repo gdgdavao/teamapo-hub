@@ -63,7 +63,7 @@ The table below defines the strict 1:1 contract between CASL and `firestore.rule
 | `update`/`delete` on `PaymentProof` where `organizerUid == uid` | `ownsEvent(data.eventId) && hasPerm('payments', 'canVerify')` |
 | `create Event` | `allow create: if isAdmin() \|\| (isOrganizer() && hasPerm('events', 'canCreate') && request.resource.data.organizer.uid == request.auth.uid)`. |
 | `read`/`create User`, `update User` where `uid != me` | `match /users/{userId}` |
-| `delete User` where `uid != me` and `role != 'admin'` | **Stricter than the rules.** `firestore.rules` says `allow delete: if isAdmin()` with neither restriction. See §4.4. |
+| `delete User` where `uid != me` and `role != 'admin'` | **Rules now close it entirely:** `allow delete: if false` on `/users/{userId}`. Deletion is a two-halves operation (Firebase Auth identity + profile document) and happens only through the `deleteUser` Admin SDK callable, which enforces the self-delete, superuser, last-admin, and owned-active-events guards and writes the audit entry. See §4.4. |
 | `functions/main.py` `require_elevated` / `require_admin` | `isAdmin() \|\| ownsEvent(eventId)`, plus the `isActive == true` check the callable layer used to omit |
 
 Three CASL behaviours the ability depends on, all pinned by
@@ -153,7 +153,7 @@ function isValidDocumentType() {
 
 | Collection Path | Read | List | Create | Update | Delete | Key Security Constraints |
 | :--- | :---: | :---: | :---: | :---: | :---: | :--- |
-| `/users/{userId}` | Owner / Admin | Admin | Admin | Owner / Admin | Admin | Email syntax validated; Role restricted to `admin` or `organizer`. Privilege escalation blocked. |
+| `/users/{userId}` | Owner / Admin | Admin | Admin | Owner / Admin | **Denied (callable-only)** | Email syntax validated; Role restricted to `admin` or `organizer`. Privilege escalation blocked. Client deletes denied: deletion is the `deleteUser` Admin SDK callable's two-halves operation (Auth + doc) with audit, so a document-only orphan is impossible. |
 | `/events/{eventId}` | Public | Public | Organizer / Admin | Organizer / Admin / Restricted Anonymous | Organizer / Admin | Anonymous updates restricted strictly to `['ticketTypes', 'currentAttendees', 'promoCodes', 'updatedAt']`. |
 | `/events/{id}/forms/{formId}` | Public | Public | Event Organizer / Admin | Event Organizer / Admin | Event Organizer / Admin | Scoped to parent event owner (`event.organizer.uid == request.auth.uid`). |
 | `/events/{id}/config/{configId}` | Organizer / Admin | Organizer / Admin | Event Organizer / Admin | Event Organizer / Admin | Event Organizer / Admin | Protected configuration settings. |
@@ -208,30 +208,38 @@ function isValidDocumentType() {
                      isValidEmail(resource.data.email) &&
                      resource.data.role in ['admin', 'organizer'];
     allow update: if isAuthenticated() && (isAdmin() || isOwner(userId));
-    allow delete: if isAuthenticated() && isAdmin();
+    // Two-halves deletion: a document-only delete leaves the Auth account alive.
+    allow delete: if false;
   }
   ```
-  Non-admin users cannot create accounts or promote accounts to admin. Organizers cannot change their assigned roles.
+  Non-admin users cannot create accounts or promote accounts to admin. Organizers cannot change their assigned roles. No client — not even an admin — can delete a user document: the only removal path is the `deleteUser` Admin SDK callable.
 
 * **Known gap — the superuser tier is enforced twice, and only once server-side.**
   `AdminUsersPage` lets one administrator (identified by `VITE_SUPERUSER_EMAIL`,
   baked into the browser bundle at build time) delete other administrators'
   accounts, and hides the button for everyone else. That was the entire
-  enforcement: `firestore.rules` says `allow delete: if isAdmin()`, with no
+  enforcement: `firestore.rules` used to say `allow delete: if isAdmin()`, with no
   "not another admin" clause and no superuser concept, so the disabled button was
   the only thing standing between an admin and a peer's account.
   The rule now lives in two places that must agree:
   - **Client** — the ability's `delete User` condition, which only decides what
     the UI offers. Readable by anyone with devtools.
   - **Server** — the `deleteUser` callable, which reads `SUPERUSER_EMAIL` from
-    its own environment and refuses otherwise. This is the half that holds.
+    its own environment and refuses otherwise, also guarding the last remaining
+    active administrator and accounts that still own active events
+    (draft/published/ongoing) whose `organizer.uid` is immutable. This is the
+    half that holds.
 
-  Deletion goes through that callable rather than a direct `deleteDoc`, because
-  removing the `users` document alone leaves the Firebase Auth account alive, and
-  an orphaned account can still sign in. `SUPERUSER_EMAIL` is currently absent
-  from `functions/.env.example` (the `.env.*` glob in `.gitignore` excludes it),
-  so a deployment without it has no superuser tier at all and `deleteUser` will
-  refuse to remove any administrator.
+  Deletion goes through that callable — now exclusively, since rules deny all
+  direct client deletes — because removing the `users` document alone leaves the
+  Firebase Auth account alive, and an orphaned account can still sign in. The
+  callable removes both halves (Auth identity first, then the document), cleans
+  up the account's `profilePictures/{uid}/` Cloud Storage files as best-effort
+  PII retention cleanup (Philippines DPA 2012), and lands the single audit
+  entry. `SUPERUSER_EMAIL` is currently absent from `functions/.env.example`
+  (the `.env.*` glob in `.gitignore` excludes it), so a deployment without it
+  has no superuser tier at all and `deleteUser` will refuse to remove any
+  administrator.
 
 ---
 

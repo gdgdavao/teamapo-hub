@@ -2,6 +2,8 @@ import { ALLOWED_VERIFY_HOSTS } from '../../config/app';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { BrowserQRCodeReader, type IScannerControls } from '@zxing/browser';
+import { CameraService } from '../../services/cameraService';
+import { useMediaQuery } from '../../hooks/useMediaQuery';
 import { 
   CheckCircleIcon, 
   XCircleIcon, 
@@ -91,6 +93,7 @@ const CertificateVerificationPage: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   
   // Camera/Scanner state
+  const isMobile = useMediaQuery('(max-width: 640px)');
   const [hasCamera, setHasCamera] = useState(false);
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
@@ -113,13 +116,15 @@ const CertificateVerificationPage: React.FC = () => {
   useEffect(() => {
     const checkCamera = async () => {
       try {
-        if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+        // Secure-origin gate first: a plain-http LAN exposes no
+        // navigator.mediaDevices at all, so enumeration would throw.
+        const support = CameraService.supportsKioskCamera();
+        if (support) {
           setHasCamera(false);
           setAvailableCameras([]);
           return;
         }
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const videoDevices = devices.filter(device => device.kind === 'videoinput');
+        const videoDevices = await CameraService.listVideoInputs();
         setAvailableCameras(videoDevices);
         setHasCamera(videoDevices.length > 0);
       } catch (error) {
@@ -176,85 +181,108 @@ const CertificateVerificationPage: React.FC = () => {
     }
   }, []);
 
-  // Start camera for QR scanning
-  const startCamera = async () => {
+  // Shared scanner startup: acquire through the CameraService ladder and
+  // register the ZXing decoder on the attached video element. The start and
+  // flip paths previously each duplicated the acquisition, the QR callback,
+  // and the error mapping — there is one copy now.
+  const launchScanner = async (requestedFacing: 'environment' | 'user') => {
+    setScanError(null);
+    setIsCameraLoading(true);
+    setIsCameraActive(true);
+
     try {
-      setScanError(null);
-      setIsCameraLoading(true);
-      setIsCameraActive(true);
-      
-      // Get camera stream with explicit constraints
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: facingMode,
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        }
-      });
-      
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        streamRef.current = stream;
-        
-        if (!codeReaderRef.current) {
-          codeReaderRef.current = new BrowserQRCodeReader();
-        }
+      // Engine ladder parity with the kiosk: OS-default camera first on
+      // desktop, requested lens first on mobile (drivers that honor
+      // facingMode); 15s wireless-camera ceiling with orphan rescue;
+      // engine-specific remediation copy on failure.
+      const { stream } = await CameraService.acquireKioskStream(
+        { facingMode: requestedFacing },
+        { preferOsDefault: !isMobile, onFallback: (stage) => logger.warn('Camera ladder fallback:', stage) }
+      );
 
-        setIsCameraLoading(false);
-        setIsScanning(true);
+      if (!videoRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      streamRef.current = stream;
+      videoRef.current.srcObject = stream;
+      // WebKit de-pipelines a stream that moves between video elements:
+      // load() restarts the decoder before play().
+      try {
+        videoRef.current.load();
+      } catch {
+        // Ignore
+      }
+      try {
+        await videoRef.current.play();
+      } catch {
+        // Autoplay ignore
+      }
 
-        // Start continuous scanning from video element
-        scannerControlsRef.current = await codeReaderRef.current.decodeFromVideoElement(
-          videoRef.current,
-          (result, error) => {
-            if (result) {
-              const qrText = result.getText();
-              logger.log('QR Code detected:', qrText);
-              
-              // Vibrate if supported (for mobile feedback)
-              if ('vibrate' in navigator) {
-                navigator.vibrate(200);
-              }
+      if (!codeReaderRef.current) {
+        codeReaderRef.current = new BrowserQRCodeReader();
+      }
+      setIsCameraLoading(false);
+      setIsScanning(true);
 
-              // Parse and validate the QR code
-              const parsed = parseQRCode(qrText);
-              
-              if (parsed.valid && parsed.code) {
-                // Stop scanning
-                stopCamera();
-                // Set the verification code and trigger verification
-                setVerificationCode(parsed.code);
-                verifyCertificate(parsed.code);
-              } else {
-                setScanError(parsed.error || 'Invalid QR code');
-              }
+      // Start continuous scanning from the video element; all camera hardware
+      // stops as soon as a code lands (stopCamera clears the ZXing controls
+      // and the acquired stream).
+      scannerControlsRef.current = await codeReaderRef.current.decodeFromVideoElement(
+        videoRef.current,
+        (result, error) => {
+          if (result) {
+            const qrText = result.getText();
+            logger.log('QR Code detected:', qrText);
+
+            // Vibrate if supported (for mobile feedback)
+            if ('vibrate' in navigator) {
+              navigator.vibrate(200);
             }
-            
-            if (error && error.name !== 'NotFoundException') {
-              logger.warn('QR scanning error:', error);
+
+            // Parse and validate the QR code
+            const parsed = parseQRCode(qrText);
+
+            if (parsed.valid && parsed.code) {
+              stopCamera();
+              setVerificationCode(parsed.code);
+              verifyCertificate(parsed.code);
+            } else {
+              setScanError(parsed.error || 'Invalid QR code');
             }
           }
-        );
-      }
+
+          if (error && (error as { name?: string }).name !== 'NotFoundException') {
+            logger.warn('QR scanning error:', error);
+          }
+        }
+      );
     } catch (error: unknown) {
       logger.error('Error accessing camera:', error);
-      
-      // Specific error messages based on error type
-      const err = error as Error & { name?: string };
-      if (err.name === 'NotAllowedError') {
-        setScanError('Camera permission denied. Please allow camera access in your browser settings and try again.');
-      } else if (err.name === 'NotFoundError') {
-        setScanError('No camera found on this device.');
-      } else if (err.name === 'NotReadableError') {
-        setScanError('Camera is already in use by another application.');
-      } else {
-        setScanError('Unable to access camera. Please check permissions and try again.');
-      }
-      
+      // Engine-specific copy (Safari address-bar camera lock, Firefox door
+      // hanger, busy-camera app name) instead of name-string mapping.
+      setScanError(CameraService.describeCameraFailure(error).message);
       setIsCameraActive(false);
       setIsScanning(false);
       setIsCameraLoading(false);
     }
+  };
+
+  const startCamera = () => launchScanner(facingMode);
+
+  // Flip camera between front and back
+  const handleFlipCamera = async () => {
+    // Stop current camera first
+    stopCamera();
+
+    const newFacingMode = facingMode === 'environment' ? 'user' : 'environment';
+    setFacingMode(newFacingMode);
+
+    // Small delay to ensure cleanup
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    // Restart the acquisition with the new facing mode
+    await launchScanner(newFacingMode);
   };
 
   const stopCamera = () => {
@@ -280,84 +308,6 @@ const CertificateVerificationPage: React.FC = () => {
     setScanError(null);
   };
 
-  // Flip camera between front and back
-  const handleFlipCamera = async () => {
-    // Stop current camera first
-    stopCamera();
-    
-    // Toggle facing mode
-    const newFacingMode = facingMode === 'environment' ? 'user' : 'environment';
-    setFacingMode(newFacingMode);
-    
-    // Small delay to ensure cleanup
-    await new Promise(resolve => setTimeout(resolve, 100));
-    
-    // Restart camera with new facing mode - need to call with updated state
-    try {
-      setScanError(null);
-      setIsCameraLoading(true);
-      setIsCameraActive(true);
-      
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: newFacingMode,
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        }
-      });
-      
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        streamRef.current = stream;
-        
-        if (!codeReaderRef.current) {
-          codeReaderRef.current = new BrowserQRCodeReader();
-        }
-
-        setIsCameraLoading(false);
-        setIsScanning(true);
-
-        scannerControlsRef.current = await codeReaderRef.current.decodeFromVideoElement(
-          videoRef.current,
-          (result, error) => {
-            if (result) {
-              const qrText = result.getText();
-              logger.log('QR Code detected:', qrText);
-              
-              if ('vibrate' in navigator) {
-                navigator.vibrate(200);
-              }
-
-              const parsed = parseQRCode(qrText);
-              
-              if (parsed.valid && parsed.code) {
-                stopCamera();
-                setVerificationCode(parsed.code);
-                verifyCertificate(parsed.code);
-              } else {
-                setScanError(parsed.error || 'Invalid QR code');
-              }
-            }
-            
-            if (error && error.name !== 'NotFoundException') {
-              logger.warn('QR scanning error:', error);
-            }
-          }
-        );
-      }
-    } catch (error: unknown) {
-      logger.error('Error flipping camera:', error);
-      const err = error as Error & { name?: string };
-      if (err.name === 'NotAllowedError') {
-        setScanError('Camera permission denied.');
-      } else {
-        setScanError('Unable to switch camera. Try again.');
-      }
-      setIsCameraActive(false);
-      setIsScanning(false);
-      setIsCameraLoading(false);
-    }
-  };
 
   // Auto-verify if code is provided in URL
   useEffect(() => {
