@@ -678,7 +678,8 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
   if (!registration) return null;
 
   const registrationEntity = asRegistration(registration as any);
-  const canDelete = ability.can('delete', registrationEntity);
+  const isAdmin = ability.can('manage', 'all');
+  const canDelete = isAdmin || ability.can('delete', registrationEntity) || ability.can('delete', 'Registration');
   const canUpdate = ability.can('update', registrationEntity);
   const canVerifyPayment = ability.can('update', 'PaymentProof');
   const ticketType = currentEvent?.ticketTypes?.find(
@@ -884,7 +885,7 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
       setShowDeleteConfirm(false);
       return;
     }
-    if (isConfirmed) {
+    if (!isAdmin && isConfirmed) {
       toast.error('Confirmed registrations cannot be deleted.');
       setShowDeleteConfirm(false);
       return;
@@ -917,11 +918,11 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
               variant="danger"
               size="sm"
               onClick={() => setShowDeleteConfirm(true)}
-              disabled={isProcessingAction || isConfirmed || !canDelete}
+              disabled={isProcessingAction || (!isAdmin && isConfirmed) || !canDelete}
               title={
                 !canDelete
                   ? 'Delete permission required'
-                  : isConfirmed
+                  : !isAdmin && isConfirmed
                   ? 'Confirmed registrations cannot be deleted'
                   : undefined
               }
@@ -1663,10 +1664,14 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
 
       {/* Confirmation Modal for Permanent Deletion */}
       <ConfirmationModal
-        isOpen={showDeleteConfirm && !isConfirmed}
+        isOpen={showDeleteConfirm && (isAdmin || !isConfirmed)}
         onClose={() => setShowDeleteConfirm(false)}
         title="Delete Registration"
-        message={`Are you sure you want to permanently delete registration for "${registration.attendee.name}"? This will delete the record, return ticket capacity to the event, and remove associated payment proofs. This action cannot be undone.`}
+        message={
+          isConfirmed && isAdmin
+            ? `⚠️ Admin Override: Registration for "${registration.attendee.name}" is confirmed or attended. Are you sure you want to permanently delete this registration? This will delete the record, return ticket capacity to the event, and remove associated payment proofs. This action cannot be undone.`
+            : `Are you sure you want to permanently delete registration for "${registration.attendee.name}"? This will delete the record, return ticket capacity to the event, and remove associated payment proofs. This action cannot be undone.`
+        }
         type="danger"
         confirmText="Permanently Delete"
         cancelText="Cancel"

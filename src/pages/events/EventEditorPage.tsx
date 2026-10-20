@@ -78,6 +78,7 @@ interface EventFormData {
   };
   venuePlaceId?: string;
   venueMapsUrl?: string;
+  locationTba?: boolean;
 
   // Speakers (as per PRD requirement)
   speakers: {
@@ -88,6 +89,7 @@ interface EventFormData {
     bio: string;
     photoUrl?: string;
   }[];
+  speakersTba?: boolean;
 
   // Pricing & Tickets
   ticketTypes: TicketType[];
@@ -154,9 +156,11 @@ const EventEditorPage: React.FC = () => {
     timezone: 'Asia/Manila',
     venueType: 'offline',
     city: 'Davao City',
+    locationTba: false,
 
     // Speakers
     speakers: [],
+    speakersTba: false,
 
     // New ticket system
     ticketTypes: [],
@@ -311,7 +315,9 @@ const EventEditorPage: React.FC = () => {
           venueCoordinates: event.venue.coordinates,
           venuePlaceId: event.venue.placeId,
           venueMapsUrl: event.venue.mapsUrl,
+          locationTba: Boolean(event.locationTba),
           speakers: event.speakers || [],
+          speakersTba: Boolean(event.speakersTba),
           ticketTypes: event.ticketTypes,
           isPaid: event.ticketTypes.some(ticket => ticket.price > 0),
           ticketPrice: event.ticketTypes[0]?.price || 0,
@@ -461,6 +467,8 @@ const EventEditorPage: React.FC = () => {
       // Create or update event first (without base64 image data or local blob previews)
       const eventDataWithoutBase64Image = {
         ...formData,
+        locationTba: Boolean(formData.locationTba),
+        speakersTba: Boolean(formData.speakersTba),
         imageUrl: selectedCoverFile ? undefined : formData.imageUrl,
         speakers: (formData.speakers || []).map((s) => ({
           ...s,
@@ -933,6 +941,23 @@ const EventEditorPage: React.FC = () => {
         </div>
       </div>
 
+      <div className="rounded-xl border border-outline-variant bg-surface-container-low/50 p-4">
+        <label className="flex items-start gap-3 cursor-pointer select-none min-h-control">
+          <input
+            type="checkbox"
+            checked={Boolean(formData.locationTba)}
+            onChange={(e) => setFormData(prev => ({ ...prev, locationTba: e.target.checked }))}
+            className="mt-0.5 h-5 w-5 rounded border-outline-variant text-primary focus:ring-primary accent-primary"
+          />
+          <div>
+            <span className="text-sm font-semibold text-on-surface">Location to be announced (TBA)</span>
+            <p className="text-xs text-on-surface-variant mt-0.5">
+              Hides the specific venue location and map on the public registration page with a &quot;To Be Announced&quot; placeholder until you are ready to reveal it.
+            </p>
+          </div>
+        </label>
+      </div>
+
       {formData.venueType !== 'online' && (
         <VenueLocationPicker
           value={{
@@ -1030,6 +1055,23 @@ const EventEditorPage: React.FC = () => {
             <PlusIcon className="w-4 h-4" />
             <span>Add Speaker</span>
           </button>
+        </div>
+
+        <div className="rounded-xl border border-outline-variant bg-surface-container-low/50 p-4">
+          <label className="flex items-start gap-3 cursor-pointer select-none min-h-control">
+            <input
+              type="checkbox"
+              checked={Boolean(formData.speakersTba)}
+              onChange={(e) => setFormData(prev => ({ ...prev, speakersTba: e.target.checked }))}
+              className="mt-0.5 h-5 w-5 rounded border-outline-variant text-primary focus:ring-primary accent-primary"
+            />
+            <div>
+              <span className="text-sm font-semibold text-on-surface">Speakers to be announced (TBA)</span>
+              <p className="text-xs text-on-surface-variant mt-0.5">
+                Displays a &quot;Speakers To Be Announced — Check back soon&quot; teaser section on the public registration page until the speaker lineup is ready to be revealed.
+              </p>
+            </div>
+          </label>
         </div>
 
         {formData.speakers.length === 0 ? (

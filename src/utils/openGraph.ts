@@ -31,6 +31,8 @@ export interface EventMetadata {
   };
   status?: string;
   isPublished?: boolean;
+  locationTba?: boolean;
+  speakersTba?: boolean;
 }
 
 export const DEFAULT_OG_IMAGE = 'https://raw.githubusercontent.com/gdgdavao/assets-cdn/main/banner.png';
@@ -217,7 +219,7 @@ export function buildEventHtmlWithMeta(
           }
         : {
             '@type': 'Place',
-            name: event.venue?.name || 'Venue TBA',
+            name: event.locationTba ? 'Venue TBA' : (event.venue?.name || 'Venue TBA'),
             address: {
               '@type': 'PostalAddress',
               streetAddress: event.venue?.address || '',

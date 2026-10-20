@@ -208,6 +208,18 @@ class EmailTemplateLoader:
         
         return reminder_times.get(reminder_type, "soon")
     
+    def format_tba_badge(self, text: str = "TBA") -> str:
+        """
+        Get HTML for Google Material 3 TBA status badge.
+        
+        Args:
+            text: Badge label (defaults to "TBA")
+            
+        Returns:
+            Inline HTML span with Google Material 3 neutral container styling
+        """
+        return f'<span style="display: inline-block; padding: 2px 8px; font-size: 11px; font-weight: 600; background-color: #e8eaed; color: #3c4043; border-radius: 4px; vertical-align: middle; margin-left: 6px; letter-spacing: 0.5px;">{text}</span>'
+    
     def get_default_footer_message(self, template_name: str, context: Dict[str, Any]) -> str:
         """
         Get default footer message based on template type.

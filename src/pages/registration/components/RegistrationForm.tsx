@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CheckCircleIcon, TicketIcon, UserIcon, ExclamationCircleIcon } from '@heroicons/react/24/outline';
+import { CheckCircleIcon, TicketIcon, UserIcon, ExclamationCircleIcon, PaperClipIcon } from '@heroicons/react/24/outline';
 import { StarIcon } from '@heroicons/react/24/solid';
 import { EventService } from '../../../services/eventService';
 import { RegistrationService } from '../../../services/registrationService';
@@ -509,6 +509,7 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({
           label={label}
           required={field.required}
           error={errorMsg}
+          hint={field.description}
           rows={3}
           value={raw}
           onBlur={() => handleDynamicBlur(field)}
@@ -526,11 +527,12 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({
           label={label}
           required={field.required}
           error={errorMsg}
+          hint={field.description}
           value={raw}
           onBlur={() => handleDynamicBlur(field)}
           onChange={(e) => setResponse(field.id, e.target.value)}
         >
-          <option value="">Select an option</option>
+          <option value="">{field.placeholder || 'Select an option'}</option>
           {field.options?.map((option) => (
             <option key={option} value={option}>{option}</option>
           ))}
@@ -548,6 +550,9 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({
             {label}
             {field.required && <span className="ml-3xs text-error" aria-hidden="true">*</span>}
           </legend>
+          {field.description && (
+            <p className="mb-2xs text-xs text-on-surface-variant">{field.description}</p>
+          )}
           <div className="space-y-2xs">
             {field.options?.map((option) => (
               <label
@@ -589,6 +594,9 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({
             {label}
             {field.required && <span className="ml-3xs text-error" aria-hidden="true">*</span>}
           </legend>
+          {field.description && (
+            <p className="mb-2xs text-xs text-on-surface-variant">{field.description}</p>
+          )}
           <div className="space-y-2xs">
             {field.options?.map((option) => (
               <label
@@ -626,9 +634,62 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({
     }
 
     if (field.type === 'checkbox') {
+      // If checkbox has multiple options, render as option list (multi-select) matching FormBuilder
+      if (field.options && field.options.length > 0) {
+        const current: string[] = Array.isArray(raw) ? raw : [];
+        const isInvalid = Boolean(errorMsg);
+        return (
+          <fieldset id={field.id} aria-invalid={isInvalid} aria-describedby={isInvalid ? `${field.id}-error` : undefined}>
+            <legend className="mb-2xs text-sm font-medium text-on-surface">
+              {label}
+              {field.required && <span className="ml-3xs text-error" aria-hidden="true">*</span>}
+            </legend>
+            {field.description && (
+              <p className="mb-2xs text-xs text-on-surface-variant">{field.description}</p>
+            )}
+            <div className="space-y-2xs">
+              {field.options.map((option) => (
+                <label
+                  key={option}
+                  className={`flex min-h-control cursor-pointer items-center gap-3 rounded-md border bg-surface px-md py-2xs transition-[border-color,background-color] duration-fast ease-quart hover:border-outline hover:bg-surface-container-low ${
+                    isInvalid ? 'border-error' : 'border-outline-variant'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={current.includes(option)}
+                    onBlur={() => handleDynamicBlur(field)}
+                    onChange={(e) =>
+                      setResponse(
+                        field.id,
+                        e.target.checked
+                          ? [...current, option]
+                          : current.filter((v) => v !== option)
+                      )
+                    }
+                    className="h-4 w-4 shrink-0 rounded accent-primary"
+                  />
+                  <span className="min-w-0 text-base text-on-surface">{option}</span>
+                </label>
+              ))}
+            </div>
+            {isInvalid && (
+              <p id={`${field.id}-error`} role="alert" className="animate-rise-in motion-reduce:animate-none mt-2xs flex items-center gap-3xs text-sm text-error">
+                <ExclamationCircleIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                {errorMsg}
+              </p>
+            )}
+          </fieldset>
+        );
+      }
+
+      // Standalone single checkbox (e.g. agreement / consent without options)
       const isInvalid = Boolean(errorMsg);
       return (
         <div id={field.id}>
+          {field.description && (
+            <p className="mb-2xs text-xs text-on-surface-variant">{field.description}</p>
+          )}
           <label className={`flex min-h-control cursor-pointer items-start gap-3 rounded-md border bg-surface p-md transition-[border-color,background-color] duration-fast ease-quart hover:border-outline hover:bg-surface-container-low ${
             isInvalid ? 'border-error' : 'border-outline-variant'
           }`}>
@@ -665,6 +726,9 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({
             {label}
             {field.required && <span className="ml-3xs text-error" aria-hidden="true">*</span>}
           </p>
+          {field.description && (
+            <p className="mb-2xs text-xs text-on-surface-variant">{field.description}</p>
+          )}
           <div className="flex flex-wrap items-center gap-3xs">
             {[1, 2, 3, 4, 5].map((star) => (
               <Button
@@ -703,6 +767,98 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({
       );
     }
 
+    if (field.type === 'file') {
+      return (
+        <div id={field.id}>
+          <p className="mb-2xs text-sm font-medium text-on-surface">
+            {label}
+            {field.required && <span className="ml-3xs text-error" aria-hidden="true">*</span>}
+          </p>
+          {field.description && (
+            <p className="mb-2xs text-xs text-on-surface-variant">{field.description}</p>
+          )}
+          <div className="border-2 border-dashed border-outline-variant rounded-xl p-5 text-center bg-surface-container-low/40">
+            <PaperClipIcon className="h-6 w-6 text-on-surface-variant mx-auto mb-1.5" aria-hidden="true" />
+            <p className="text-sm font-medium text-on-surface">File upload is not supported in online registration</p>
+            <p className="text-xs text-on-surface-variant mt-0.5">Please bring the required document or present it at check-in</p>
+          </div>
+        </div>
+      );
+    }
+
+    if (field.type === 'phone') {
+      return (
+        <Input
+          id={field.id}
+          name={field.id}
+          type="tel"
+          label={label}
+          required={field.required}
+          error={errorMsg}
+          hint={field.description}
+          value={raw}
+          autoComplete="tel"
+          onBlur={() => handleDynamicBlur(field)}
+          onChange={(e) => setResponse(field.id, e.target.value)}
+          placeholder={field.placeholder || 'e.g. 09123456789'}
+        />
+      );
+    }
+
+    if (field.type === 'email') {
+      return (
+        <Input
+          id={field.id}
+          name={field.id}
+          type="email"
+          label={label}
+          required={field.required}
+          error={errorMsg}
+          hint={field.description}
+          value={raw}
+          autoComplete="email"
+          onBlur={() => handleDynamicBlur(field)}
+          onChange={(e) => setResponse(field.id, e.target.value)}
+          placeholder={field.placeholder || 'your.name@example.com'}
+        />
+      );
+    }
+
+    if (field.type === 'number') {
+      return (
+        <Input
+          id={field.id}
+          name={field.id}
+          type="number"
+          label={label}
+          required={field.required}
+          error={errorMsg}
+          hint={field.description}
+          value={raw}
+          onBlur={() => handleDynamicBlur(field)}
+          onChange={(e) => setResponse(field.id, e.target.value)}
+          placeholder={placeholderFor()}
+        />
+      );
+    }
+
+    if (field.type === 'date') {
+      return (
+        <Input
+          id={field.id}
+          name={field.id}
+          type="date"
+          label={label}
+          required={field.required}
+          error={errorMsg}
+          hint={field.description}
+          value={raw}
+          onBlur={() => handleDynamicBlur(field)}
+          onChange={(e) => setResponse(field.id, e.target.value)}
+        />
+      );
+    }
+
     return (
       <Input
         id={field.id}
@@ -711,6 +867,7 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({
         label={label}
         required={field.required}
         error={errorMsg}
+        hint={field.description}
         value={raw}
         onBlur={() => handleDynamicBlur(field)}
         onChange={(e) => setResponse(field.id, e.target.value)}

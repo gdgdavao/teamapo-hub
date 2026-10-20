@@ -436,19 +436,23 @@ const EventRegistrationPage: React.FC<EventRegistrationPageProps> = ({ isPreview
   // agree with it. Previously a banner-only event rendered with no image at all,
   // and the -mt-20 overlap pulled the title card up over bare grey.
   const heroImage = event.imageUrl || event.bannerUrl;
-  const venueLine = formatEventLocation(event.venue, { fallback: 'Venue to be announced' });
+  const isVenueTba = Boolean(event.locationTba);
+  const venueLine = isVenueTba
+    ? 'To Be Announced'
+    : formatEventLocation(event.venue, { fallback: 'Venue to be announced' });
 
-  const resolvedMapsUrl =
-    event.venue.mapsUrl ||
-    getOpenStreetMapUrl(
-      event.venue.coordinates,
-      [event.venue.name, event.venue.address, event.venue.city].filter(Boolean).join(', ')
-    );
+  const resolvedMapsUrl = isVenueTba
+    ? undefined
+    : event.venue.mapsUrl ||
+      getOpenStreetMapUrl(
+        event.venue.coordinates,
+        [event.venue.name, event.venue.address, event.venue.city].filter(Boolean).join(', ')
+      );
 
   const facts = [
     { key: 'date', label: 'Date', value: formatDate(event.startDate), Icon: CalendarDaysIcon },
     { key: 'time', label: 'Time', value: `${formatTime(event.startDate)} to ${formatTime(event.endDate)}`, Icon: ClockIcon },
-    { key: 'venue', label: 'Venue', value: venueLine, Icon: MapPinIcon, mapsUrl: resolvedMapsUrl }
+    { key: 'venue', label: 'Venue', value: venueLine, Icon: MapPinIcon, mapsUrl: resolvedMapsUrl, isTba: isVenueTba }
   ];
 
   const step = (index: number) => ({ animationDelay: `${index * 90}ms` });
@@ -633,13 +637,20 @@ const EventRegistrationPage: React.FC<EventRegistrationPageProps> = ({ isPreview
             can be scanned against each other. */}
         <Reveal>
           <dl className="grid grid-cols-1 divide-y divide-outline-variant sm:grid-cols-3 sm:divide-y-0 sm:divide-x border border-outline-variant bg-surface rounded-xl overflow-hidden">
-            {facts.map(({ key, label, value, Icon, mapsUrl }: any) => (
+            {facts.map(({ key, label, value, Icon, mapsUrl, isTba }: any) => (
               <div key={key} className="flex items-start gap-3 p-5">
                 <Icon className="w-5 h-5 mt-0.5 flex-shrink-0 text-primary" aria-hidden="true" />
                 <div className="min-w-0">
                   <dt className="text-xs font-semibold uppercase tracking-[0.12em] text-on-surface-variant">{label}</dt>
-                  <dd className="mt-1 text-base text-on-surface break-words">{value}</dd>
-                  {mapsUrl && event.venue.type !== 'online' && (
+                  <dd className="mt-1 text-base text-on-surface break-words flex items-center gap-2">
+                    <span>{value}</span>
+                    {isTba && (
+                      <span className="inline-flex items-center rounded-full bg-secondary-container px-2 py-0.5 text-xs font-semibold text-on-secondary-container">
+                        TBA
+                      </span>
+                    )}
+                  </dd>
+                  {mapsUrl && event.venue.type !== 'online' && !isTba && (
                     <a
                       href={mapsUrl}
                       target="_blank"
@@ -680,7 +691,7 @@ const EventRegistrationPage: React.FC<EventRegistrationPageProps> = ({ isPreview
           </Reveal>
         )}
 
-        {event.venue.type !== 'online' && (event.venue.name || event.venue.address) && (
+        {event.venue.type !== 'online' && !isVenueTba && (event.venue.name || event.venue.address) && (
           <Reveal className="mt-6">
             <section className="rounded-xl border border-outline-variant bg-surface p-6 sm:p-8">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -727,7 +738,20 @@ const EventRegistrationPage: React.FC<EventRegistrationPageProps> = ({ isPreview
           </Reveal>
         )}
 
-        {event.speakers && event.speakers.length > 0 && (
+        {event.speakersTba ? (
+          <Reveal className="mt-10 sm:mt-14">
+            <section className="rounded-xl border border-outline-variant bg-surface p-6 sm:p-8 text-center">
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-success">Lineup</p>
+              <h2 className="mt-2 text-2xl sm:text-3xl font-bold tracking-tight text-on-surface">Meet the speakers</h2>
+              <div className="mt-4 max-w-md mx-auto rounded-xl border border-dashed border-outline-variant bg-surface-container-low/50 p-6">
+                <p className="text-base font-semibold text-on-surface">Speakers To Be Announced</p>
+                <p className="mt-1 text-sm text-on-surface-variant leading-relaxed">
+                  The speaker lineup for this event will be revealed soon. Check back closer to the event date!
+                </p>
+              </div>
+            </section>
+          </Reveal>
+        ) : event.speakers && event.speakers.length > 0 ? (
           <section className="mt-10 sm:mt-14">
             <Reveal>
               <p className="text-xs font-semibold uppercase tracking-[0.14em] text-success">Lineup</p>
@@ -772,7 +796,7 @@ const EventRegistrationPage: React.FC<EventRegistrationPageProps> = ({ isPreview
               ))}
             </div>
           </section>
-        )}
+        ) : null}
       </main>
 
       {/* Public Page Footer */}

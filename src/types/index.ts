@@ -166,6 +166,8 @@ export interface Event {
   endDate: Timestamp;
   timezone: string;
   venue: Venue;
+  locationTba?: boolean;
+  speakersTba?: boolean;
   ticketTypes: TicketType[];
   promoCodes?: PromoCode[];
   paymentConfigs?: PaymentConfig[];
