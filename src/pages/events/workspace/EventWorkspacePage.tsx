@@ -168,12 +168,18 @@ const EventWorkspacePage: React.FC = () => {
       if (!eventId) return;
       try {
         setLoading(true);
-        // Proactively warm up registrations and stats so Attendees, Check-in, and Overview tabs render with zero latency
-        void RegistrationService.prefetchEventRegistrations(eventId);
-        void AnalyticsService.getEventStats(eventId);
         const data = await EventService.getEvent(eventId);
         if (isMounted) {
           setEvent(data);
+          if (data) {
+            // Proactively warm up stats & registrations only if authorized
+            void AnalyticsService.getEventStats(eventId).catch((err) => {
+              logger.warn('[EventWorkspace] Prewarm stats skipped/failed:', err);
+            });
+            if (ability.can('read', 'Registration')) {
+              void RegistrationService.prefetchEventRegistrations(eventId);
+            }
+          }
         }
       } catch (error) {
         logger.error('[EventWorkspace] Failed to fetch event:', error);
@@ -190,7 +196,7 @@ const EventWorkspacePage: React.FC = () => {
     return () => {
       isMounted = false;
     };
-  }, [eventId]);
+  }, [eventId, ability, currentUser?.uid, userProfile?.uid]);
 
   const handleTabChange = (targetTab: EventWorkspaceTab) => {
     if (!eventId) return;
@@ -223,11 +229,7 @@ const EventWorkspacePage: React.FC = () => {
     );
   }
 
-  const canAccessWorkspace =
-    ability.can('read', 'all') ||
-    Boolean(event && currentUser?.uid && event.organizer?.uid === currentUser.uid);
-
-  if (!event || !eventId || !canAccessWorkspace) {
+  if (!event || !eventId) {
     return (
       <AppShell title="Event Workspace" subtitle="Event not found">
         <div className="rounded-xl border border-outline-variant bg-white p-12 text-center shadow-sm">
@@ -239,6 +241,29 @@ const EventWorkspacePage: React.FC = () => {
             <Link
               to="/events"
               className="inline-flex min-h-[48px] items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-white transition-colors duration-fast ease-quart hover:bg-primary-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+            >
+              <ArrowLeftIcon className="h-4 w-4" />
+              Return to Events
+            </Link>
+          </div>
+        </div>
+      </AppShell>
+    );
+  }
+
+  const canAccessWorkspace = ability.can('read', 'Event');
+  if (!canAccessWorkspace) {
+    return (
+      <AppShell title="Event Workspace" subtitle="Access Restricted">
+        <div className="rounded-xl border border-outline-variant bg-white p-12 text-center shadow-sm max-w-2xl mx-auto">
+          <p className="text-base font-semibold text-on-surface">Workspace Access Restricted</p>
+          <p className="mt-2 text-sm text-on-surface-variant">
+            You do not have permission to view events on this platform.
+          </p>
+          <div className="mt-6 flex flex-wrap justify-center gap-3">
+            <Link
+              to="/events"
+              className="inline-flex min-h-[48px] items-center gap-2 rounded-lg border border-outline-variant bg-white px-5 py-2.5 text-sm font-medium text-on-surface hover:bg-surface-container-low transition-colors duration-fast ease-quart focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
             >
               <ArrowLeftIcon className="h-4 w-4" />
               Return to Events

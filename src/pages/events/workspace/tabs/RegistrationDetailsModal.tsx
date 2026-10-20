@@ -33,7 +33,7 @@ import {
 } from '../../../../components/UI';
 import { RegistrationService } from '../../../../services/registrationService';
 import { EmailService, type EmailLog } from '../../../../services/emailService';
-import { asRegistration, asPaymentProof } from '../../../../auth/ability';
+import { asRegistration } from '../../../../auth/ability';
 import { Event } from '../../../../types';
 import { getDownloadUrlFromPath } from '../../../../utils/storageUtils';
 import { getRegistrationTotalAmount } from '../../../../utils/pricing';
@@ -677,18 +677,10 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
 
   if (!registration) return null;
 
-  const eventOrganizerUid = currentEvent?.organizer?.uid || (registration as any)?.organizerUid;
-  const registrationEntity = asRegistration({
-    ...(registration as any),
-    organizerUid: eventOrganizerUid,
-  });
-  const paymentProofEntity = asPaymentProof({
-    organizerUid: eventOrganizerUid,
-  } as any);
-
+  const registrationEntity = asRegistration(registration as any);
   const canDelete = ability.can('delete', registrationEntity);
   const canUpdate = ability.can('update', registrationEntity);
-  const canVerifyPayment = ability.can('update', paymentProofEntity);
+  const canVerifyPayment = ability.can('update', 'PaymentProof');
   const ticketType = currentEvent?.ticketTypes?.find(
     (tt) => tt.id === registration.ticketTypeId
   );

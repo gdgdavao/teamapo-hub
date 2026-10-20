@@ -10,4 +10,4 @@ if command -v brew >/dev/null 2>&1 && brew --prefix openjdk@21 >/dev/null 2>&1; 
   export PATH="${java_prefix}/bin:${PATH}"
 fi
 
-exec bunx firebase-tools@latest "$@"
+exec bunx firebase-tools "$@"

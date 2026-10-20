@@ -1,16 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { Can } from '@casl/react';
+import { useAbility } from '@casl/react';
 import { 
   PlusIcon, 
   MagnifyingGlassIcon, 
   CalendarDaysIcon,
   UsersIcon,
   ShareIcon,
-  ArrowRightIcon
+  ArrowRightIcon,
+  EyeIcon
 } from '@heroicons/react/24/outline';
 import { CheckCircleIcon, XCircleIcon, ClockIcon } from '@heroicons/react/20/solid';
 import { Link } from 'react-router-dom';
-import { useAuth } from '../../contexts/AuthContext';
 import { EmptyState, LoadingSpinner, ProgressBar, Select } from '../../components/UI';
 import { EventService } from '../../services/eventService';
 import { RegistrationService } from '../../services/registrationService';
@@ -21,12 +21,17 @@ import AppShell from '../../layout/AppShell';
 import { toDateSafe, formatEventDate } from '../../utils/dateUtils';
 import { formatEventLocation } from '../../utils/venueUtils';
 import { usePrefetchEvent } from '../../hooks/usePrefetchEvent';
+import { useAuth } from '../../contexts/AuthContext';
 
-// Removed FeedbackModalState - now using dedicated page
-
+// Dedicated events workspace supporting both admin (RBAC) and organizer (ABPAC)
 const EventsWorkspace: React.FC = () => {
-  const { userProfile } = useAuth();
-  const { getPrefetchProps } = usePrefetchEvent();
+  const ability = useAbility();
+  const { userProfile, currentUser } = useAuth();
+  const currentUid = userProfile?.uid || currentUser?.uid;
+  const canReadAll = ability.can('read', 'all');
+  const canReadEvents = ability.can('read', 'Event');
+  const canCreateEvent = ability.can('create', 'Event');
+  const { getPrefetchProps } = usePrefetchEvent({ prefetchRegistrations: false });
 
   // Dev diagnostics helper (no-ops in production)
   const isDevEnv = process.env.NODE_ENV !== 'production';
@@ -41,7 +46,6 @@ const EventsWorkspace: React.FC = () => {
     [isDevEnv]
   );
 
-  // This page is now admin-only
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [sortBy, setSortBy] = useState('startDate');
@@ -51,12 +55,12 @@ const EventsWorkspace: React.FC = () => {
 
   // Removed feedbackModal state - now using dedicated page
 
-  // This page is now admin-only, so always fetch all events
+  // Fetch events
   useEffect(() => {
     const fetchEvents = async () => {
       try {
         setLoading(true);
-        // Admin can see all events - load events immediately for sub-50ms render
+
         const eventsData = await EventService.getAllEvents();
         setEvents(eventsData);
         setLoading(false);
@@ -74,27 +78,29 @@ const EventsWorkspace: React.FC = () => {
           }))
         );
 
-        // Fetch attendee counts in background to update real approved counts without delaying initial paint
-        RegistrationService.getAllRegistrations() // firestore:unscoped-ok - admin event list attendee aggregation
-          .then((allRegistrations) => {
-            const approvedCountByEventId = new Map<string, number>();
-            for (const reg of allRegistrations) {
-              if ((reg as any).registrationStatus === 'approved') {
-                const count = reg.quantity || 1;
-                approvedCountByEventId.set(reg.eventId, (approvedCountByEventId.get(reg.eventId) || 0) + count);
+        if (canReadAll) {
+          // Fetch attendee counts in background to update real approved counts without delaying initial paint
+          RegistrationService.getAllRegistrations() // firestore:unscoped-ok - admin event list attendee aggregation
+            .then((allRegistrations) => {
+              const approvedCountByEventId = new Map<string, number>();
+              for (const reg of allRegistrations) {
+                if ((reg as any).registrationStatus === 'approved') {
+                  const count = reg.quantity || 1;
+                  approvedCountByEventId.set(reg.eventId, (approvedCountByEventId.get(reg.eventId) || 0) + count);
+                }
               }
-            }
 
-            setEvents(prev =>
-              prev.map(event => ({
-                ...event,
-                currentAttendees: approvedCountByEventId.get(event.id) ?? event.currentAttendees ?? 0,
-              }))
-            );
-          })
-          .catch((err) => {
-            logger.warn('Failed to refresh real attendee counts in background:', err);
-          });
+              setEvents(prev =>
+                prev.map(event => ({
+                  ...event,
+                  currentAttendees: approvedCountByEventId.get(event.id) ?? event.currentAttendees ?? 0,
+                }))
+              );
+            })
+            .catch((err) => {
+              logger.warn('Failed to refresh real attendee counts in background:', err);
+            });
+        }
       } catch (error) {
         logger.error('Error fetching events:', error);
         toast.error('Failed to load events. Please refresh the page.');
@@ -105,7 +111,7 @@ const EventsWorkspace: React.FC = () => {
     };
 
     fetchEvents();
-  }, [userProfile?.role]);
+  }, [canReadAll]);
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -227,10 +233,7 @@ const getPageSubtitle = () => {
       subtitle={getPageSubtitle()}
       fullWidth={true}
       actions={
-        // Home for the "Create Event" action now that it no longer lives on the
-        // dashboard. Gated on the same permission as the /events/create route it
-        // links to, so the CTA and the destination cannot disagree.
-        <Can do="read" on="all" passThrough>
+        canCreateEvent ? (
           <Link
             to="/events/create"
             className="inline-flex items-center min-h-[48px] px-4 py-2.5 bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors duration-200 font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
@@ -238,7 +241,7 @@ const getPageSubtitle = () => {
             <PlusIcon className="w-5 h-5 mr-2" />
             Create Event
           </Link>
-        </Can>
+        ) : undefined
       }
     >
         {/* Filters and Search */}
@@ -290,136 +293,152 @@ const getPageSubtitle = () => {
 
         {/* Events Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6">
-          {sortedEvents.map((event, index) => (
-            <div
-              key={event.id}
-              style={{ animationDelay: `${Math.min(index * 30, 150)}ms` }}
-              className="group bg-surface rounded-xl shadow-elevation-0 border border-outline-variant overflow-hidden hover:shadow-elevation-1 hover:-translate-y-0.5 transition-[transform,box-shadow] duration-fast ease-quart animate-rise-in motion-reduce:animate-none flex flex-col"
-              {...getPrefetchProps(event.id, event.slug)}
-            >
-              {/* Event Image */}
-              <div className="relative h-48 bg-surface-container-high overflow-hidden flex-shrink-0">
-                {event.imageUrl ? (
-                  <img
-                    src={event.imageUrl}
-                    alt={event.title}
-                    className="w-full h-full object-cover transition-transform duration-base ease-quart group-hover:scale-105"
-                  />
-                ) : (
-                  <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-secondary-container to-primary-container">
-                    <CalendarDaysIcon className="h-12 w-12 text-primary transition-transform duration-fast ease-quart group-hover:scale-110" />
-                  </div>
-                )}
-                {/* Status Badge */}
-                <div className="absolute top-3 right-3 flex items-center">
-                  <div className={`flex items-center space-x-1 px-2.5 py-1 rounded-full text-xs font-semibold shadow-sm ${getStatusColor(event.status)}`}>
-                    {getStatusIcon(event.status)}
-                    <span className="capitalize">{event.status}</span>
-                  </div>
-                </div>
-                {/* Price Badge */}
-                <div className="absolute bottom-3 left-3">
-                  <div className="bg-black bg-opacity-75 text-white px-2 py-1 rounded-md text-sm font-medium">
-                    {formatPrice(event.ticketTypes)}
-                  </div>
-                </div>
-              </div>
+          {sortedEvents.map((event, index) => {
+            const canManage = canReadEvents;
+            const targetHref = canManage ? `/events/${event.id}` : `/e/${event.slug || event.id}`;
+            const prefetchProps = canManage ? getPrefetchProps(event.id, event.slug) : {};
 
-              {/* Event Content */}
-              <div className="p-4 md:p-6 flex-1 flex flex-col">
-                {/* Title and Category */}
-                <div className="mb-3">
-                  <Link
-                    to={`/events/${event.id}`}
-                    className="block group"
-                    {...getPrefetchProps(event.id, event.slug)}
-                  >
-                    <h3 className="text-lg font-semibold text-on-surface mb-1 line-clamp-2 group-hover:text-primary-hover transition-colors">
-                      {event.title}
-                    </h3>
-                  </Link>
-                  <div className="flex items-center space-x-2 text-sm text-on-surface-variant">
-                    <span className="bg-surface-container px-2 py-1 rounded-md">{event.category}</span>
-                    {event.tags?.slice(0, 2).map((tag, tagIndex) => (
-                      <span key={tagIndex} className="bg-secondary-container text-primary px-2 py-1 rounded-md">
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Description */}
-                <p className="text-sm text-on-surface-variant mb-4 line-clamp-3">
-                  {event.shortDescription || event.description}
-                </p>
-
-                {/* Event Details */}
-                <div className="space-y-2 mb-4">
-                  <div className="flex items-center text-sm text-on-surface-variant">
-                    <CalendarDaysIcon className="h-4 w-4 mr-2 text-outline-variant" />
-                    <span>{formatDate(event.startDate)}</span>
-                  </div>
-                  <div className="flex items-center text-sm text-on-surface-variant">
-                    <UsersIcon className="h-4 w-4 mr-2 text-outline-variant" />
-                    <span>
-                      {event.currentAttendees} attendees
-                      {event.maxAttendees && ` / ${event.maxAttendees} max`}
-                    </span>
-                  </div>
-                  <div className="flex items-center text-sm text-on-surface-variant">
-                    <svg className="h-4 w-4 mr-2 text-outline-variant" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                    </svg>
-                    <span>{formatEventLocation(event.venue)}</span>
-                  </div>
-                </div>
-
-                {/* Attendee Progress Bar */}
-                {event.maxAttendees && (
-                  <div className="mb-4">
-                    <div className="flex justify-between text-sm text-on-surface-variant mb-1">
-                      <span>Registration Progress</span>
-                      <span>{Math.round((event.currentAttendees / event.maxAttendees) * 100)}%</span>
-                    </div>
-                    <ProgressBar
-                      value={Math.min((event.currentAttendees / event.maxAttendees) * 100, 100)}
-                      size="sm"
-                      color="bg-blue-600"
-                      label="Registration progress"
-                      showValue
+            return (
+              <div
+                key={event.id}
+                style={{ animationDelay: `${Math.min(index * 30, 150)}ms` }}
+                className="group bg-surface rounded-xl shadow-elevation-0 border border-outline-variant overflow-hidden hover:shadow-elevation-1 hover:-translate-y-0.5 transition-[transform,box-shadow] duration-fast ease-quart animate-rise-in motion-reduce:animate-none flex flex-col"
+                {...prefetchProps}
+              >
+                {/* Event Image */}
+                <div className="relative h-48 bg-surface-container-high overflow-hidden flex-shrink-0">
+                  {event.imageUrl ? (
+                    <img
+                      src={event.imageUrl}
+                      alt={event.title}
+                      className="w-full h-full object-cover transition-transform duration-base ease-quart group-hover:scale-105"
                     />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-secondary-container to-primary-container">
+                      <CalendarDaysIcon className="h-12 w-12 text-primary transition-transform duration-fast ease-quart group-hover:scale-110" />
+                    </div>
+                  )}
+                  {/* Status Badge */}
+                  <div className="absolute top-3 right-3 flex items-center">
+                    <div className={`flex items-center space-x-1 px-2.5 py-1 rounded-full text-xs font-semibold shadow-sm ${getStatusColor(event.status)}`}>
+                      {getStatusIcon(event.status)}
+                      <span className="capitalize">{event.status}</span>
+                    </div>
                   </div>
-                )}
+                  {/* Price Badge */}
+                  <div className="absolute bottom-3 left-3">
+                    <div className="bg-black bg-opacity-75 text-white px-2 py-1 rounded-md text-sm font-medium">
+                      {formatPrice(event.ticketTypes)}
+                    </div>
+                  </div>
+                </div>
 
-                {/* Action Buttons */}
-                <div className="mt-auto flex items-center justify-between pt-3 border-t border-outline-variant">
-                  <Link
-                    to={`/events/${event.id}`}
-                    className="inline-flex min-h-[48px] items-center gap-1.5 px-4 py-2.5 text-sm font-medium rounded-lg bg-primary-container text-primary hover:bg-secondary-container active:scale-[0.98] transition-[background-color,color,transform] duration-fast ease-quart"
-                    {...getPrefetchProps(event.id, event.slug)}
-                  >
-                    <span>Manage Event</span>
-                    <ArrowRightIcon className="h-4 w-4 transition-transform duration-fast ease-quart group-hover:translate-x-0.5" />
-                  </Link>
+                {/* Event Content */}
+                <div className="p-4 md:p-6 flex-1 flex flex-col">
+                  {/* Title and Category */}
+                  <div className="mb-3">
+                    <Link
+                      to={targetHref}
+                      className="block group"
+                      {...prefetchProps}
+                    >
+                      <h3 className="text-lg font-semibold text-on-surface mb-1 line-clamp-2 group-hover:text-primary-hover transition-colors">
+                        {event.title}
+                      </h3>
+                    </Link>
+                    <div className="flex flex-wrap items-center gap-2 text-sm text-on-surface-variant">
+                      <span className="bg-surface-container px-2 py-0.5 rounded-md text-xs font-medium">{event.category}</span>
+                      {event.tags?.slice(0, 2).map((tag, tagIndex) => (
+                        <span key={tagIndex} className="bg-secondary-container text-primary px-2 py-0.5 rounded-md text-xs">
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
 
-                  <button
-                    onClick={() => event.status === 'published' ? handleShareEvent(event.id, event.title, event.slug) : null}
-                    className={`flex items-center justify-center min-h-[48px] min-w-[48px] rounded-lg transition-colors ${
-                      event.status === 'published'
-                        ? 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container cursor-pointer'
-                        : 'text-outline-variant cursor-not-allowed'
-                    }`}
-                    title={event.status === 'published' ? 'Share Registration Link' : 'Event must be published to share'}
-                    disabled={event.status !== 'published'}
-                    aria-label="Share Registration Link"
-                  >
-                    <ShareIcon className="h-5 w-5" />
-                  </button>
+                  {/* Description */}
+                  <p className="text-sm text-on-surface-variant mb-4 line-clamp-3">
+                    {event.shortDescription || event.description}
+                  </p>
+
+                  {/* Event Details */}
+                  <div className="space-y-2 mb-4">
+                    <div className="flex items-center text-sm text-on-surface-variant">
+                      <CalendarDaysIcon className="h-4 w-4 mr-2 text-outline-variant" />
+                      <span>{formatDate(event.startDate)}</span>
+                    </div>
+                    <div className="flex items-center text-sm text-on-surface-variant">
+                      <UsersIcon className="h-4 w-4 mr-2 text-outline-variant" />
+                      <span>
+                        {event.currentAttendees} attendees
+                        {event.maxAttendees && ` / ${event.maxAttendees} max`}
+                      </span>
+                    </div>
+                    <div className="flex items-center text-sm text-on-surface-variant">
+                      <svg className="h-4 w-4 mr-2 text-outline-variant" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                      </svg>
+                      <span>{formatEventLocation(event.venue)}</span>
+                    </div>
+                  </div>
+
+                  {/* Attendee Progress Bar */}
+                  {event.maxAttendees && (
+                    <div className="mb-4">
+                      <div className="flex justify-between text-sm text-on-surface-variant mb-1">
+                        <span>Registration Progress</span>
+                        <span>{Math.round((event.currentAttendees / event.maxAttendees) * 100)}%</span>
+                      </div>
+                      <ProgressBar
+                        value={Math.min((event.currentAttendees / event.maxAttendees) * 100, 100)}
+                        size="sm"
+                        color="bg-blue-600"
+                        label="Registration progress"
+                        showValue
+                      />
+                    </div>
+                  )}
+
+                  {/* Action Buttons */}
+                  <div className="mt-auto flex items-center justify-between pt-3 border-t border-outline-variant">
+                    {canManage ? (
+                      <Link
+                        to={`/events/${event.id}`}
+                        className="inline-flex min-h-[48px] items-center gap-1.5 px-4 py-2.5 text-sm font-medium rounded-lg bg-primary-container text-primary hover:bg-secondary-container active:scale-[0.98] transition-[background-color,color,transform] duration-fast ease-quart"
+                        {...prefetchProps}
+                      >
+                        <span>Manage Event</span>
+                        <ArrowRightIcon className="h-4 w-4 transition-transform duration-fast ease-quart group-hover:translate-x-0.5" />
+                      </Link>
+                    ) : (
+                      <Link
+                        to={`/e/${event.slug || event.id}`}
+                        className="inline-flex min-h-[48px] items-center gap-1.5 px-4 py-2.5 text-sm font-medium rounded-lg bg-surface-container text-on-surface hover:bg-surface-container-high active:scale-[0.98] transition-[background-color,color,transform] duration-fast ease-quart"
+                      >
+                        <span>View Public Page</span>
+                        <EyeIcon className="h-4 w-4 transition-transform duration-fast ease-quart group-hover:translate-x-0.5" />
+                      </Link>
+                    )}
+
+                    <button
+                      onClick={() => event.status === 'published' ? handleShareEvent(event.id, event.title, event.slug) : null}
+                      className={`flex items-center justify-center min-h-[48px] min-w-[48px] rounded-lg transition-colors ${
+                        event.status === 'published'
+                          ? 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container cursor-pointer'
+                          : 'text-outline-variant cursor-not-allowed'
+                      }`}
+                      title={event.status === 'published' ? 'Share Registration Link' : 'Event must be published to share'}
+                      disabled={event.status !== 'published'}
+                      aria-label="Share Registration Link"
+                    >
+                      <ShareIcon className="h-5 w-5" />
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         {sortedEvents.length === 0 && (
@@ -432,16 +451,14 @@ const getPageSubtitle = () => {
                 : 'Get started by creating your first event.'
             }
             action={
-              !searchTerm && statusFilter === 'all' ? (
-                <Can do="read" on="all" passThrough>
-                  <Link
-                    to="/events/create"
-                    className="inline-flex items-center min-h-[48px] px-4 py-2.5 bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors duration-200 font-medium"
-                  >
-                    <PlusIcon className="w-5 h-5 mr-2" />
-                    Create Event
-                  </Link>
-                </Can>
+              !searchTerm && statusFilter === 'all' && canCreateEvent ? (
+                <Link
+                  to="/events/create"
+                  className="inline-flex items-center min-h-[48px] px-4 py-2.5 bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors duration-200 font-medium"
+                >
+                  <PlusIcon className="w-5 h-5 mr-2" />
+                  Create Event
+                </Link>
               ) : undefined
             }
           />

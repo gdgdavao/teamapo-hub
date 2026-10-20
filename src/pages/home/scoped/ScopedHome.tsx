@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { useAbility } from '@casl/react';
 import {
   UserGroupIcon,
   ArrowRightIcon,
@@ -34,6 +35,8 @@ const formatPeso = (value: number) =>
  */
 const ScopedHome: React.FC = () => {
   const { userProfile } = useAuth();
+  const ability = useAbility();
+  const canCreateEvent = ability.can('create', 'Event');
   const organizerUid = userProfile?.uid;
   const [events, setEvents] = useState<Event[]>([]);
   const [registrations, setRegistrations] = useState<Registration[]>([]);
@@ -193,7 +196,7 @@ const ScopedHome: React.FC = () => {
       fullWidth={true}
     >
       <div className="space-y-6 max-w-screen-2xl mx-auto">
-        {backlog && (
+        {backlog ? (
           <section
             aria-label="Pending registrations"
             className="rounded-xl border border-warning-container bg-warning-container p-5 sm:p-6"
@@ -223,14 +226,38 @@ const ScopedHome: React.FC = () => {
               </div>
             </div>
           </section>
-        )}
+        ) : canCreateEvent ? (
+          <section
+            aria-label="Create an event"
+            className="rounded-xl border border-outline-variant bg-white p-5 sm:p-6"
+          >
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-base font-semibold text-on-surface">
+                  Ready to host your next event?
+                </h2>
+                <p className="mt-1 text-sm text-on-surface-variant">
+                  Set up registrations, tickets, and check-in workflows in minutes.
+                </p>
+              </div>
+              <div className="flex flex-shrink-0">
+                <Button
+                  href="/events/create"
+                  iconTrailing={<ArrowRightIcon className="h-4 w-4" />}
+                >
+                  Create an event
+                </Button>
+              </div>
+            </div>
+          </section>
+        ) : null}
 
         <StatStrip metrics={metrics} ariaLabel="Your event totals" />
 
         <UpcomingEventsList
           events={events}
           registrationCounts={registrationCounts}
-          canViewAllEvents={false}
+          canViewAllEvents={true}
         />
       </div>
     </AppShell>

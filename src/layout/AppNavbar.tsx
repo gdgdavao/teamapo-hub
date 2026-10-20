@@ -69,26 +69,27 @@ const AppNavbar: React.FC = () => {
     };
   }, [isMobileMenuOpen]);
 
-  // Which pages this account may reach, rather than what its role is.
-  // `read 'User'` is admin-only in the ability table, and is the same
-  // discriminator the /users route uses, so the nav and the gate agree.
+  // Which pages this account may reach, derived strictly via CASL ability.
+  // Organizers and admins holding `read 'Event'` may access Events.
+  // `read 'User'` is admin-only, matching the /users route gate.
+  // `manage 'AuditLog'` is superuser/admin-only, matching /audit-logs.
   const ability = useAbility();
+  const canReadEvents = ability.can('read', 'Event');
   const canReadUsers = ability.can('read', 'User');
   const canManageAuditLogs = ability.can('manage', 'AuditLog');
 
   // Display text, not a permission, so it stays on the raw role.
   const isAdmin = userProfile?.role === 'admin';
 
-  // "Events" is admin-only because /events is gated `read 'all'` and lists
-  // every event through the unscoped getAllEvents(). Rendering it for an
-  // organizer pointed at a page that answers /forbidden, so it is not offered
-  // at all. Organizers reach their events from Home instead.
-  // "Audit Logs" is restricted exclusively to the superuser tier.
   const navItems = [
     { name: 'Home', href: '/', icon: HomeIcon },
-    ...(canReadUsers
+    ...(canReadEvents
       ? [
           { name: 'Events', href: '/events', icon: CalendarDaysIcon },
+        ]
+      : []),
+    ...(canReadUsers
+      ? [
           { name: 'Users', href: '/users', icon: UserCircleIcon },
         ]
       : []),

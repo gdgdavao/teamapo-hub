@@ -94,7 +94,9 @@ export class RegistrationService {
         return;
       }
     }
-    void this.getEventRegistrations(eventId);
+    void this.getEventRegistrations(eventId).catch(() => {
+      // Opportunistic background prefetch: gracefully swallow permission errors or aborted requests
+    });
   }
 
   private static async adjustTicketSales(params: {
@@ -1410,7 +1412,6 @@ export class RegistrationService {
       // Create registration document
       const registration: Omit<Registration, 'id'> = {
         eventId: data.eventId,
-        organizerUid: event.organizer.uid,
         userId: '', // Anonymous - walk-in attendee
         userDetails: {
           name: data.userDetails.name,

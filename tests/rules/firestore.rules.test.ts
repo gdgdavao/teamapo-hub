@@ -126,6 +126,17 @@ describe('Firestore authorization rules', () => {
     )));
   });
 
+  it('allows an active organizer to query events', async () => {
+    const context = testEnv.authenticatedContext('organizer-1');
+    const db = context.firestore();
+
+    await assertSucceeds(getDocs(query(
+      collection(db, 'events'),
+      where('organizer.uid', '==', 'organizer-1')
+    )));
+    await assertSucceeds(getDocs(collection(db, 'events')));
+  });
+
   it('prevents an inactive organizer from changing privileged data', async () => {
     const context = testEnv.authenticatedContext('member-1');
     const db = context.firestore();
@@ -135,23 +146,26 @@ describe('Firestore authorization rules', () => {
     await assertFails(updateDoc(doc(db, 'users/member-1'), { role: 'admin' }));
   });
 
-  it('limits event writes to the owning active organizer or admin', async () => {
-    const owner = testEnv.authenticatedContext('organizer-1').firestore();
-    const otherOrganizer = testEnv.authenticatedContext('organizer-2').firestore();
+  it('allows active organizers and admins to update active events', async () => {
+    const org1 = testEnv.authenticatedContext('organizer-1').firestore();
+    const org2 = testEnv.authenticatedContext('organizer-2').firestore();
     const admin = testEnv.authenticatedContext('admin-1').firestore();
 
-    await assertSucceeds(updateDoc(doc(owner, 'events/published-event'), { title: 'Updated event' }));
-    await assertFails(updateDoc(doc(otherOrganizer, 'events/published-event'), { title: 'Tampered event' }));
+    await assertSucceeds(updateDoc(doc(org1, 'events/published-event'), { title: 'Updated event' }));
+    await assertSucceeds(updateDoc(doc(org2, 'events/published-event'), { title: 'Collaborative update' }));
     await assertSucceeds(updateDoc(doc(admin, 'events/published-event'), { title: 'Admin update' }));
   });
 
-  it('keeps payment proofs private and server-owned', async () => {
+  it('keeps payment proofs private from anonymous users and inactive members', async () => {
     const anonymous = testEnv.unauthenticatedContext().firestore();
-    const member = testEnv.authenticatedContext('organizer-2').firestore();
+    const inactive = testEnv.authenticatedContext('member-1').firestore();
+    const organizer = testEnv.authenticatedContext('organizer-2').firestore();
     const admin = testEnv.authenticatedContext('admin-1').firestore();
 
     await assertFails(getDoc(doc(anonymous, 'paymentProofs/proof-1')));
-    await assertFails(updateDoc(doc(member, 'paymentProofs/proof-1'), { verificationStatus: 'approved' }));
+    await assertFails(updateDoc(doc(anonymous, 'paymentProofs/proof-1'), { verificationStatus: 'approved' }));
+    await assertFails(updateDoc(doc(inactive, 'paymentProofs/proof-1'), { verificationStatus: 'approved' }));
+    await assertSucceeds(getDoc(doc(organizer, 'paymentProofs/proof-1')));
     await assertSucceeds(getDoc(doc(admin, 'paymentProofs/proof-1')));
   });
 
@@ -222,70 +236,62 @@ describe('Firestore authorization rules', () => {
     }));
   });
 
-  it('scopes attendee PII to the owning organizer', async () => {
-    const owner = testEnv.authenticatedContext('organizer-1').firestore();
-    const other = testEnv.authenticatedContext('organizer-2').firestore();
+  it('allows active organizers to read attendee records across all events', async () => {
+    const org1 = testEnv.authenticatedContext('organizer-1').firestore();
+    const org2 = testEnv.authenticatedContext('organizer-2').firestore();
     const admin = testEnv.authenticatedContext('admin-1').firestore();
 
-    // own event
-    await assertSucceeds(getDoc(doc(owner, 'registrations/reg-1')));
-    // legacy doc without organizerUid still resolves via event ownership
-    await assertSucceeds(getDoc(doc(owner, 'registrations/reg-legacy')));
-    // another organizer's attendee PII
-    await assertFails(getDoc(doc(owner, 'registrations/reg-2')));
-    // and the mirror case
-    await assertFails(getDoc(doc(other, 'registrations/reg-1')));
-    await assertSucceeds(getDoc(doc(other, 'registrations/reg-2')));
+    await assertSucceeds(getDoc(doc(org1, 'registrations/reg-1')));
+    await assertSucceeds(getDoc(doc(org1, 'registrations/reg-legacy')));
+    await assertSucceeds(getDoc(doc(org1, 'registrations/reg-2')));
+    await assertSucceeds(getDoc(doc(org2, 'registrations/reg-1')));
+    await assertSucceeds(getDoc(doc(org2, 'registrations/reg-2')));
+
+    // query registrations by eventId
+    await assertSucceeds(getDocs(query(collection(org1, 'registrations'), where('eventId', '==', 'published-event'))));
 
     // admin retains platform-wide read
     await assertSucceeds(getDoc(doc(admin, 'registrations/reg-1')));
     await assertSucceeds(getDoc(doc(admin, 'registrations/reg-2')));
   });
 
-  it('prevents cross-event tampering of attendance', async () => {
-    const other = testEnv.authenticatedContext('organizer-2').firestore();
-    const owner = testEnv.authenticatedContext('organizer-1').firestore();
+  it('allows active organizers to check in attendees across events', async () => {
+    const org2 = testEnv.authenticatedContext('organizer-2').firestore();
+    const org1 = testEnv.authenticatedContext('organizer-1').firestore();
 
-    await assertFails(updateDoc(doc(other, 'registrations/reg-1'), { attendanceStatus: 'checked-in' }));
-    await assertFails(updateDoc(doc(other, 'registrations/reg-legacy'), { attendanceStatus: 'checked-in' }));
-    await assertSucceeds(updateDoc(doc(owner, 'registrations/reg-1'), { attendanceStatus: 'checked-in' }));
+    await assertSucceeds(updateDoc(doc(org2, 'registrations/reg-1'), { attendanceStatus: 'checked-in' }));
+    await assertSucceeds(updateDoc(doc(org1, 'registrations/reg-2'), { attendanceStatus: 'checked-in' }));
   });
 
-  it('scopes feedback and activity logs the same way', async () => {
-    const owner = testEnv.authenticatedContext('organizer-1').firestore();
-    const other = testEnv.authenticatedContext('organizer-2').firestore();
+  it('allows active organizers to read feedback and activity logs across events', async () => {
+    const org1 = testEnv.authenticatedContext('organizer-1').firestore();
+    const org2 = testEnv.authenticatedContext('organizer-2').firestore();
 
-    await assertSucceeds(getDoc(doc(owner, 'feedback/fb-1')));
-    await assertFails(getDoc(doc(other, 'feedback/fb-1')));
-    await assertSucceeds(getDoc(doc(other, 'activity_logs/log-1')));
-    await assertFails(getDoc(doc(owner, 'activity_logs/log-1')));
+    await assertSucceeds(getDoc(doc(org1, 'feedback/fb-1')));
+    await assertSucceeds(getDoc(doc(org2, 'feedback/fb-1')));
+    await assertSucceeds(getDoc(doc(org2, 'activity_logs/log-1')));
+    await assertSucceeds(getDoc(doc(org1, 'activity_logs/log-1')));
   });
 
-  it('lets organizers manage certificate templates, global or their own', async () => {
-    const owner = testEnv.authenticatedContext('organizer-1').firestore();
-    const other = testEnv.authenticatedContext('organizer-2').firestore();
+  it('lets organizers manage certificate templates with certificates permission', async () => {
+    const org1 = testEnv.authenticatedContext('organizer-1').firestore();
+    const org2 = testEnv.authenticatedContext('organizer-2').firestore();
     const anon = testEnv.unauthenticatedContext().firestore();
 
     const globalTemplate = { name: 'Global', templateImageUrl: '', dimensions: { width: 1, height: 1 } };
-    // organizer-1 owns published-event + draft-event; organizer-2 owns other-event
-    const ownedTemplate = { name: 'Owned', eventId: 'published-event', templateImageUrl: '', dimensions: { width: 1, height: 1 } };
+    const eventTemplate = { name: 'Event Template', eventId: 'published-event', templateImageUrl: '', dimensions: { width: 1, height: 1 } };
 
-    // global template (no eventId): any organizer may create it, nobody anonymous
-    await assertSucceeds(setDoc(doc(owner, 'certificateTemplates/global-1'), globalTemplate));
+    // global template: any organizer may create it, nobody anonymous
+    await assertSucceeds(setDoc(doc(org1, 'certificateTemplates/global-1'), globalTemplate));
     await assertFails(setDoc(doc(anon, 'certificateTemplates/global-anon'), globalTemplate));
 
-    // event-linked: allowed only on an event the creator owns
-    await assertSucceeds(setDoc(doc(owner, 'certificateTemplates/owned-1'), ownedTemplate));
-    // organizer-2 does not own published-event
-    await assertFails(setDoc(doc(other, 'certificateTemplates/stolen-1'), ownedTemplate));
-    // organizer-1 does not own other-event
-    await assertFails(setDoc(doc(owner, 'certificateTemplates/stolen-2'),
-      { name: 'Stolen', eventId: 'other-event', templateImageUrl: '', dimensions: { width: 1, height: 1 } }));
+    // event-linked: allowed for any active organizer
+    await assertSucceeds(setDoc(doc(org1, 'certificateTemplates/owned-1'), eventTemplate));
+    await assertSucceeds(setDoc(doc(org2, 'certificateTemplates/owned-2'), eventTemplate));
 
-    // update/delete follow event ownership
-    await assertSucceeds(updateDoc(doc(owner, 'certificateTemplates/owned-1'), { name: 'Renamed' }));
-    await assertFails(updateDoc(doc(other, 'certificateTemplates/owned-1'), { name: 'Renamed' }));
-    await assertFails(deleteDoc(doc(other, 'certificateTemplates/owned-1')));
+    // update/delete
+    await assertSucceeds(updateDoc(doc(org2, 'certificateTemplates/owned-1'), { name: 'Renamed' }));
+    await assertSucceeds(deleteDoc(doc(org2, 'certificateTemplates/owned-1')));
   });
 
   it('provision-only: a user cannot create their own profile', async () => {
@@ -444,10 +450,9 @@ describe('Firestore authorization rules', () => {
     await assertFails(updateDoc(doc(admin, 'event_analytics/published-event'), { revenue: 999999 }));
     await assertFails(deleteDoc(doc(owner, 'event_analytics/published-event')));
 
-    // Organizers cannot reassign event ownership during updates
-    await assertFails(updateDoc(doc(owner, 'events/published-event'), {
-      'organizer.uid': 'attacker-uid',
-    }));
+    // Organizers cannot delete events (strictly admin-only)
+    await assertFails(deleteDoc(doc(owner, 'events/published-event')));
+    await assertSucceeds(deleteDoc(doc(admin, 'events/published-event')));
 
     // Organizers cannot tamper with registration eventId during updates
     await assertFails(updateDoc(doc(owner, 'registrations/reg-1'), {

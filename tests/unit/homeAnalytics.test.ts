@@ -218,12 +218,9 @@ describe('create event reachability', () => {
   });
 
   it('gates both entry points on the permission, not the raw role', () => {
-    // Organizers cannot create events; an ungated CTA sent them to a page they
-    // cannot use. This was `userProfile?.role === 'admin'` twice, which counted
-    // occurrences of a string rather than checking a rule - and the two CTAs
-    // had drifted from the /events/create route gate they lead to. All three now
-    // read `read 'all'`, which only admins hold, so they cannot disagree.
-    const gates = manageEventsPage.match(/<Can do="read" on="all" passThrough>/g) ?? [];
+    // Both CTAs lead to /events/create. They are gated on canCreateEvent (ability.can('create', 'Event')),
+    // not on the raw role.
+    const gates = manageEventsPage.match(/canCreateEvent \?/g) ?? [];
     expect(gates.length).toBe(2);
     expect(manageEventsPage).not.toMatch(/userProfile\?\.role === 'admin'/);
   });

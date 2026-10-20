@@ -107,16 +107,8 @@ export class UserService {
       );
       const registrationsSnapshot = await getDocs(registrationsQuery);
 
-      // Get events organized (for organizers)
-      let eventsOrganized = 0;
-      if (user.role === 'organizer') {
-        const eventsQuery = query(
-          collection(db, 'events'),
-          where('organizer.uid', '==', user.uid)
-        );
-        const eventsSnapshot = await getDocs(eventsQuery);
-        eventsOrganized = eventsSnapshot.size;
-      }
+      // Events are communal; individual organizer counts are not tracked
+      const eventsOrganized = 0;
 
       // Calculate total revenue from user's registrations
       let totalRevenue = 0;
@@ -416,7 +408,6 @@ export class UserService {
       const [
         registrationsSnapshot,
         attendedSnapshot,
-        eventsSnapshot,
         certificatesSnapshot
       ] = await Promise.all([
         getDocs(query(
@@ -427,10 +418,6 @@ export class UserService {
           collection(db, 'registrations'),
           where('userDetails.email', '==', user.email),
           where('attendanceStatus', '==', 'checked-in')
-        )),
-        getDocs(query(
-          collection(db, 'events'),
-          where('organizer.uid', '==', userId)
         )),
         getDocs(query(
           collection(db, 'certificates'),
@@ -450,7 +437,7 @@ export class UserService {
       return {
         eventsRegistered: registrationsSnapshot.size,
         eventsAttended: attendedSnapshot.size,
-        eventsOrganized: eventsSnapshot.size,
+        eventsOrganized: 0,
         certificatesEarned: certificatesSnapshot.size,
         totalSpent,
         lastActivity: user.lastLogin || null

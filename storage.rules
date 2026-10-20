@@ -13,9 +13,8 @@ service firebase.storage {
         firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.isActive == true &&
         firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role in ['admin', 'organizer'];
     }
-    function ownsEvent(eventId) {
-      return organizer() && firestore.exists(/databases/(default)/documents/events/$(eventId)) &&
-        firestore.get(/databases/(default)/documents/events/$(eventId)).data.organizer.uid == request.auth.uid;
+    function canManageEvent(eventId) {
+      return admin() || (organizer() && firestore.exists(/databases/(default)/documents/events/$(eventId)));
     }
     function image() {
       return request.resource != null && request.resource.size < 5 * 1024 * 1024 &&
@@ -28,23 +27,23 @@ service firebase.storage {
 
     match /events/{eventId}/images/{imageId} {
       allow read: if true;
-      allow create, update: if ownsEvent(eventId) && image();
-      allow delete: if admin() || ownsEvent(eventId);
+      allow create, update: if canManageEvent(eventId) && image();
+      allow delete: if admin() || canManageEvent(eventId);
     }
     match /events/{eventId}/documents/{fileId} {
       allow read: if true;
-      allow create, update: if ownsEvent(eventId) && document();
-      allow delete: if admin() || ownsEvent(eventId);
+      allow create, update: if canManageEvent(eventId) && document();
+      allow delete: if admin() || canManageEvent(eventId);
     }
     match /event-images/{eventId}/{fileId} {
       allow read: if true;
-      allow create, update: if ownsEvent(eventId) && image();
-      allow delete: if admin() || ownsEvent(eventId);
+      allow create, update: if canManageEvent(eventId) && image();
+      allow delete: if admin() || canManageEvent(eventId);
     }
     match /payment-qr/{eventId}/{fileId} {
       allow read: if true;
-      allow create, update: if ownsEvent(eventId) && image();
-      allow delete: if admin() || ownsEvent(eventId);
+      allow create, update: if canManageEvent(eventId) && image();
+      allow delete: if admin() || canManageEvent(eventId);
     }
     match /certificates/{certificateId} {
       allow read: if true;
@@ -58,7 +57,7 @@ service firebase.storage {
     match /payment-proofs/{registrationId}/{proofId} {
       allow read: if admin() || (authenticated() &&
         firestore.exists(/databases/(default)/documents/registrations/$(registrationId)) &&
-        ownsEvent(firestore.get(/databases/(default)/documents/registrations/$(registrationId)).data.eventId));
+        canManageEvent(firestore.get(/databases/(default)/documents/registrations/$(registrationId)).data.eventId));
       // Anonymous proof uploads are handled by a trusted callable function.
       allow create, update, delete: if admin();
     }
@@ -74,8 +73,8 @@ service firebase.storage {
     }
     match /speaker-photos/{eventId}/{speakerId}/{fileId} {
       allow read: if true;
-      allow create, update: if ownsEvent(eventId) && image();
-      allow delete: if admin() || ownsEvent(eventId);
+      allow create, update: if canManageEvent(eventId) && image();
+      allow delete: if admin() || canManageEvent(eventId);
     }
     match /system/{allPaths=**} {
       allow read: if true;
