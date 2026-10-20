@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation, useParams, Link } from 'react-router-dom';
+import { useAbility } from '@casl/react';
+import { asEvent } from '../../auth/ability';
 import { httpsCallable } from 'firebase/functions';
 import toast from 'react-hot-toast';
 import { useAuth } from '../../contexts/AuthContext';
@@ -116,11 +118,20 @@ const EventEditorPage: React.FC = () => {
   const location = useLocation();
   const { eventId: routeEventId } = useParams<{ eventId?: string }>();
   const { currentUser, userProfile, loading: authLoading } = useAuth();
+  const ability = useAbility();
 
   // /events/create and /events/edit/:eventId both render this page. The param is
   // the honest signal; the pathname substring is a belt-and-braces fallback for a
   // deep link that lost its param.
   const isEditMode = Boolean(routeEventId) || location.pathname.includes('/edit/');
+
+  // Route protection: verify ability to create when in create mode
+  useEffect(() => {
+    if (!authLoading && !isEditMode && !ability.can('create', 'Event')) {
+      toast.error('You do not have permission to create events.');
+      navigate('/forbidden', { replace: true });
+    }
+  }, [authLoading, isEditMode, ability, navigate]);
 
   const [currentStep, setCurrentStep] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -261,6 +272,14 @@ const EventEditorPage: React.FC = () => {
       setLoading(true);
       const event = await EventService.getEvent(eventId);
       if (event) {
+        // Enforce ABPAC / RBAC on editing: only admins or owning organizers with update capability may edit
+        const isPermittedToEdit = ability.can('read', 'all') || ability.can('update', asEvent(event));
+        if (!isPermittedToEdit) {
+          toast.error('You do not have permission to edit this event.');
+          navigate('/forbidden', { replace: true });
+          return;
+        }
+
         setEventId(eventId);
         if (event.slug) {
           setEventSlug(event.slug);

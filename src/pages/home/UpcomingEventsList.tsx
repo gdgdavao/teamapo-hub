@@ -64,7 +64,7 @@ export const UpcomingEventsList: React.FC<UpcomingEventsListProps> = ({
 }) => {
   const navigate = useNavigate();
   const [kioskEventId, setKioskEventId] = useState<string | null>(null);
-  const { prefetch, getPrefetchProps } = usePrefetchEvent();
+  const { prefetch, getPrefetchProps } = usePrefetchEvent({ prefetchRegistrations: false });
   const now = Date.now();
 
   const handleKioskLaunch = () => {

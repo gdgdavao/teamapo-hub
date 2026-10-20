@@ -1,6 +1,10 @@
 import React from 'react';
-import { Toaster, ToastBar, toast } from 'react-hot-toast';
+import { Toaster, ToastBar } from 'react-hot-toast';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
+import toast, { installToastDeduplication } from './toast';
+
+// Install global double-trigger prevention
+installToastDeduplication();
 
 /**
  * AppToaster: Accessible, responsive Material 3 toast container for TeamApo Hub.

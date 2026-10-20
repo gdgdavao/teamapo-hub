@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import {
   ClipboardDocumentIcon,
@@ -63,6 +63,18 @@ export const EventSettingsTab: React.FC<EventSettingsTabProps> = ({
   const [copiedId, setCopiedId] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isExportingEmails, setIsExportingEmails] = useState(false);
+
+  // Registration form fields are stored in a subcollection, not on the event doc.
+  // Fetch the count once so the stat card reflects the real value.
+  const [customFieldCount, setCustomFieldCount] = useState<number>(
+    event.registrationForm?.length ?? 0
+  );
+  useEffect(() => {
+    if (event.registrationForm !== undefined) return; // already hydrated
+    EventService.getEventRegistrationForm(event.id).then((fields) => {
+      setCustomFieldCount(fields.length);
+    });
+  }, [event.id, event.registrationForm]);
 
   // Danger Zone delete modal state
   const [deleteModal, setDeleteModal] = useState<DeleteModalState>({
@@ -298,7 +310,7 @@ export const EventSettingsTab: React.FC<EventSettingsTabProps> = ({
           <div className="p-3 rounded-lg bg-surface-container-low border border-outline-variant">
             <span className="text-xs text-on-surface-variant block">Custom Fields</span>
             <span className="text-sm font-semibold text-on-surface">
-              {event.registrationForm?.length || 0} questions
+              {customFieldCount} questions
             </span>
           </div>
         </div>
@@ -421,20 +433,20 @@ export const EventSettingsTab: React.FC<EventSettingsTabProps> = ({
         </div>
       </div>
 
-      {/* 3. Event Ownership & Metadata */}
+      {/* 3. Event Metadata */}
       <div className="rounded-xl border border-outline-variant bg-white p-6 shadow-sm">
-        <h2 className="text-lg font-semibold text-on-surface mb-4">Event Ownership & Metadata</h2>
+        <h2 className="text-lg font-semibold text-on-surface mb-4">Event Metadata</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <div className="p-3.5 rounded-lg bg-surface-container-low border border-outline-variant">
             <div className="flex items-center gap-2 text-xs font-medium text-on-surface-variant mb-1">
               <UserCircleIcon className="h-4 w-4 text-outline-variant" />
-              <span>Organizer</span>
+              <span>Event Governance</span>
             </div>
             <div className="text-sm font-semibold text-on-surface truncate">
-              {event.organizer?.name || 'Unknown Organizer'}
+              Communal Event
             </div>
             <div className="text-xs text-on-surface-variant truncate mt-0.5">
-              {event.organizer?.email || 'No email provided'}
+              Managed collaboratively by GDG Davao organizers
             </div>
           </div>
 

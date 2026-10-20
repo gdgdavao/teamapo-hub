@@ -109,19 +109,6 @@ export const asPaymentProof = (proof: PaymentProof) => subject('PaymentProof', p
 export const asUser = (user: User) => subject('User', user);
 export const asAuditLog = (log: AuditLog) => subject('AuditLog', log);
 
-/**
- * Event ownership is `organizer.uid` (nested); everything denormalised off an
- * event carries the flat `organizerUid`. These mirror firestore.rules
- * `ownsEvent()` and `ownsDocByEventId()` respectively.
- *
- * `ownsDocByEventId` also has an `eventId` fallback for documents written
- * before scripts/backfill-organizer-uid.cjs ran. That path resolves by reading
- * the event to check ownership, which a browser cannot do synchronously, so it
- * is intentionally not modelled here — the browser copy is only ever a UX hint.
- */
-const OWNS_EVENT = (uid: string) => ({ 'organizer.uid': uid });
-const OWNS_EVENT_DOC = (uid: string) => ({ organizerUid: uid });
-
 function noRules(): AppAbility {
   return createMongoAbility<AppAbility>(DENY_ALL);
 }
@@ -146,9 +133,7 @@ export function defineAbilityFor(subject: AbilitySubject | null | undefined): Ap
 
   if (subject.role === 'admin') {
     const rules: RawRuleOf<AppAbility>[] = [
-      // Platform-wide read. This is what separates the admin-only routes
-      // (/events lists every event via getAllEvents(), /users lists every
-      // account) from the workspace routes an organizer may enter.
+      // Platform-wide read.
       { action: 'read', subject: 'all' },
       // Unconditional full control of event-scoped data: an admin owns nothing
       // individually, so there is nothing to condition on. Spelled out
@@ -172,9 +157,6 @@ export function defineAbilityFor(subject: AbilitySubject | null | undefined): Ap
 
     return createMongoAbility<AppAbility>(rules);
   }
-
-  const ownsEvent = OWNS_EVENT(subject.uid);
-  const ownsEventDoc = OWNS_EVENT_DOC(subject.uid);
 
   // Normalize permissions with backward-compatible defaults
   const perms = subject.permissions ?? DEFAULT_ORGANIZER_PERMISSIONS;
@@ -204,9 +186,9 @@ export function defineAbilityFor(subject: AbilitySubject | null | undefined): Ap
     rules.push({ action: 'create', subject: 'Event' });
   }
 
-  // Active event lifecycle condition: organizers cannot mutate completed or cancelled events
+  // Active event lifecycle condition: organizers cannot mutate completed or cancelled events.
+  // Events are communal (no creator ownership).
   const activeEventConditions = {
-    'organizer.uid': subject.uid,
     status: { $nin: ['completed', 'cancelled'] },
   };
 
@@ -214,43 +196,36 @@ export function defineAbilityFor(subject: AbilitySubject | null | undefined): Ap
     rules.push({ action: 'update', subject: 'Event', conditions: activeEventConditions });
   }
 
-  if (eventsPerm.canDelete === true) {
-    rules.push({ action: 'delete', subject: 'Event', conditions: ownsEvent });
-  }
+  // Event deletion is reserved exclusively for platform administrators.
+  // Organizers cannot delete events; they can only archive or cancel them via update.
 
-  // Manage is granted only if both update and delete are permitted for an active event
-  if (eventsPerm.canUpdate !== false && eventsPerm.canDelete === true) {
-    rules.push({ action: 'manage', subject: 'Event', conditions: activeEventConditions });
-  }
-
-  // Attendees / Registration permissions
+  // Attendees / Registration permissions (communal event access)
   if (attendeesPerm.canUpdate !== false) {
-    rules.push({ action: 'create', subject: 'Registration', conditions: ownsEventDoc });
-    rules.push({ action: 'update', subject: 'Registration', conditions: ownsEventDoc });
+    rules.push({ action: 'create', subject: 'Registration' });
+    rules.push({ action: 'update', subject: 'Registration' });
   }
 
   if (attendeesPerm.canUpdate !== false && checkinPerm.canCheckIn !== false) {
-    rules.push({ action: 'checkin', subject: 'Registration', conditions: ownsEventDoc });
+    rules.push({ action: 'checkin', subject: 'Registration' });
   }
 
   if (attendeesPerm.canDelete === true) {
-    rules.push({ action: 'delete', subject: 'Registration', conditions: ownsEventDoc });
+    rules.push({ action: 'delete', subject: 'Registration' });
   }
 
   if (attendeesPerm.canExport !== false) {
     rules.push({ action: 'export', subject: 'Registration' });
-    rules.push({ action: 'export', subject: 'Registration', conditions: ownsEventDoc });
   }
 
   // Certificate permissions
   if (certificatesPerm.canManage !== false) {
-    rules.push({ action: 'update', subject: 'Certificate', conditions: ownsEventDoc });
+    rules.push({ action: 'update', subject: 'Certificate' });
   }
 
   // Payment proof permissions
   if (paymentsPerm.canVerify !== false) {
-    rules.push({ action: 'update', subject: 'PaymentProof', conditions: ownsEventDoc });
-    rules.push({ action: 'delete', subject: 'PaymentProof', conditions: ownsEventDoc });
+    rules.push({ action: 'update', subject: 'PaymentProof' });
+    rules.push({ action: 'delete', subject: 'PaymentProof' });
   }
 
   return createMongoAbility<AppAbility>(rules);

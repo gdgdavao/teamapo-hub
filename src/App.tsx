@@ -1,5 +1,5 @@
 import React from 'react';
-import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import AbilityContextProvider from './auth/AbilityProvider';
 import RequireAbility, { RequireAnonymous } from './auth/RequireAbility';
@@ -62,12 +62,13 @@ const AppContent: React.FC = () => {
               vercel.json answers it with a 308 to `/` so old links survive. */}
           <Route path="/" element={<RequireAbility ability="read" on="Event"><HomePage /></RequireAbility>} />
 
-          {/* Platform administration. `read 'all'` is what an organizer lacks: it
-              is granted only to admins, and /events lists every event through the
-              unscoped getAllEvents() rather than one organizer's own. */}
-          <Route path="/events" element={<RequireAbility ability="read" on="all"><EventListPage /></RequireAbility>} />
-          <Route path="/events/create" element={<RequireAbility ability="read" on="all"><EventEditorPage /></RequireAbility>} />
-          <Route path="/events/edit/:eventId" element={<RequireAbility ability="read" on="all"><EventEditorPage /></RequireAbility>} />
+          {/* Events Management: Organizers and Admins may access /events.
+              Creation is gated on `create 'Event'` (`events.canCreate !== false`).
+              Editing is area-gated on `read 'Event'`, with entity-level ownership
+              verified inside EventEditorPage. Users is admin-only (`read 'User'`). */}
+          <Route path="/events" element={<RequireAbility ability="read" on="Event"><EventListPage /></RequireAbility>} />
+          <Route path="/events/create" element={<RequireAbility ability="create" on="Event"><EventEditorPage /></RequireAbility>} />
+          <Route path="/events/edit/:eventId" element={<RequireAbility ability="read" on="Event"><EventEditorPage /></RequireAbility>} />
           <Route path="/users" element={<RequireAbility ability="read" on="User"><UsersPage /></RequireAbility>} />
           <Route path="/audit-logs" element={<RequireAbility ability="manage" on="AuditLog"><AuditLogsPage /></RequireAbility>} />
 

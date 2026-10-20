@@ -154,14 +154,14 @@ def _caller_profile(req: https_fn.CallableRequest) -> Dict[str, Any]:
 
 
 def require_elevated(req: https_fn.CallableRequest, organizer_uid: Optional[str] = None) -> Dict[str, Any]:
-    """Require an active administrator, or the organizer who owns the event.
+    """Require an active administrator or an active organizer.
 
+    Under the communal event model, active organizers and administrators can
+    perform operations on events and their attendees.
     Returns the caller's profile so callers can read role-specific fields.
     """
     user_data = _caller_profile(req)
-    if user_data.get('role') == 'admin':
-        return user_data
-    if organizer_uid is not None and req.auth.uid == organizer_uid:
+    if user_data.get('role') in ('admin', 'organizer') and user_data.get('isActive') is not False:
         return user_data
     raise https_fn.HttpsError(
         code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
@@ -1402,9 +1402,6 @@ def createAnonymousRegistration(req: https_fn.CallableRequest) -> Dict[str, Any]
             'paymentLinkToken': token,
             'paymentLinkExpiresAt': datetime.utcnow() + timedelta(hours=24),
             'paymentLinkStatus': 'active',
-            # Denormalized owner so firestore.rules can scope attendee PII without a
-            # per-document get(). See scripts/backfill-organizer-uid.cjs for existing docs.
-            'organizerUid': (event.get('organizer') or {}).get('uid', ''),
         }
         if isinstance(form.get('customResponses'), dict):
             registration['customResponses'] = form['customResponses']
@@ -1573,7 +1570,6 @@ def registerForEvent(req: https_fn.CallableRequest) -> Dict[str, Any]:
             'attendanceStatus': 'not_attended',
             'createdAt': firestore.SERVER_TIMESTAMP,
             'updatedAt': firestore.SERVER_TIMESTAMP,
-            'organizerUid': (event_data.get('organizer') or {}).get('uid', ''),
         }
         
         registration_ref.set(registration)
@@ -2326,32 +2322,6 @@ def deleteUser(req: https_fn.CallableRequest) -> Dict[str, Any]:
                     code=https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
                     message="Cannot delete the platform's last remaining active administrator."
                 )
-
-    # Ownerless-events guard. Equality query only (organizer.uid), so no
-    # composite index is required; owned events are counted and active ones
-    # (draft/published/ongoing) named in the refusal.
-    owned_event_titles: List[str] = []
-    owned_event_count = 0
-    for ev in get_db().collection('events').where(
-        filter=FieldFilter('organizer.uid', '==', target_uid)
-    ).stream():
-        owned_event_count += 1
-        ev_data = ev.to_dict() or {}
-        if ev_data.get('status') in ['draft', 'published', 'ongoing']:
-            owned_event_titles.append(f"{ev_data.get('title') or ev.id} [{ev_data.get('status')}]")
-    if owned_event_titles:
-        shown = ', '.join(owned_event_titles[:3])
-        if len(owned_event_titles) > 3:
-            shown += f" and {len(owned_event_titles) - 3} more"
-        raise https_fn.HttpsError(
-            code=https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
-            message=(
-                "This account still owns active event(s) their attendee traffic "
-                "depends on: "
-                f"{shown}. Complete, cancel, or delete those events first, or "
-                "reassign them, then delete the account."
-            )
-        )
 
     # Auth first. If this raises for any reason other than the account already
     # being gone, the Firestore document survives and the caller retries.

@@ -19,7 +19,6 @@ import { db } from '../../../../config/firebase';
 import { SkeletonList } from '../../../../components/UI';
 import { useAuth } from '../../../../contexts/AuthContext';
 import { Registration as FirestoreRegistration, Event } from '../../../../types';
-import { asRegistration } from '../../../../auth/ability';
 import ForceCheckInModal from './ForceCheckInModal';
 import WalkInRegistrationModal from './WalkInRegistrationModal';
 import KioskSetupModal from '../../../../components/KioskSetupModal';
@@ -224,9 +223,8 @@ const CheckInTab: React.FC<CheckInTabProps> = ({ eventId }) => {
   const [currentEvent, setCurrentEvent] = useState<Event | null>(null);
   const [activeTab, setActiveTab] = useState<'ready' | 'checkedIn'>('ready');
 
-  const eventOrganizerUid = currentEvent?.organizer?.uid;
-  const canCheckIn = ability.can('checkin', asRegistration({ organizerUid: eventOrganizerUid } as any));
-  const canCreateWalkIn = ability.can('create', asRegistration({ organizerUid: eventOrganizerUid } as any));
+  const canCheckIn = ability.can('checkin', 'Registration');
+  const canCreateWalkIn = ability.can('create', 'Registration');
   
   // Force check-in modal state
   const [forceCheckInModal, setForceCheckInModal] = useState<{

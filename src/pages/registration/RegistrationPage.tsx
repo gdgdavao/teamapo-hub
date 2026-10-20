@@ -146,8 +146,8 @@ const EventRegistrationPage: React.FC<EventRegistrationPageProps> = ({ isPreview
           },
       organizer: {
         '@type': 'Organization',
-        name: event.organizer.name,
-        email: event.organizer.email
+        name: event.organizer?.name || 'GDG Davao',
+        email: event.organizer?.email || 'davao@gdg.org.ph'
       },
       offers: event.ticketTypes?.map(ticket => ({
         '@type': 'Offer',

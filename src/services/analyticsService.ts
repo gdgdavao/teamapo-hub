@@ -199,49 +199,53 @@ export class AnalyticsService {
       `stats:event:${eventId}`,
       async () => {
         try {
+          const eventSnapshot = await getDoc(doc(db, this.EVENTS_COLLECTION, eventId));
+
+          if (!eventSnapshot.exists()) {
+            throw new Error('Event not found');
+          }
+
           const [
-            eventSnapshot,
-            registrationsSnapshot,
-            feedbackSnapshot,
-            certificatesSnapshot
-          ] = await Promise.all([
-        getDoc(doc(db, this.EVENTS_COLLECTION, eventId)),
-        getDocs(query(
-          collection(db, this.REGISTRATIONS_COLLECTION),
-          where('eventId', '==', eventId)
-        )),
-        getDocs(query(
-          collection(db, this.FEEDBACK_COLLECTION),
-          where('eventId', '==', eventId)
-        )),
-        getDocs(query(
-          collection(db, this.CERTIFICATES_COLLECTION),
-          where('eventId', '==', eventId)
-        ))
-      ]);
+            registrationsResult,
+            feedbackResult,
+            certificatesResult
+          ] = await Promise.allSettled([
+            getDocs(query(
+              collection(db, this.REGISTRATIONS_COLLECTION),
+              where('eventId', '==', eventId)
+            )),
+            getDocs(query(
+              collection(db, this.FEEDBACK_COLLECTION),
+              where('eventId', '==', eventId)
+            )),
+            getDocs(query(
+              collection(db, this.CERTIFICATES_COLLECTION),
+              where('eventId', '==', eventId)
+            ))
+          ]);
 
-      if (!eventSnapshot.exists()) {
-        throw new Error('Event not found');
-      }
+          const eventData = eventSnapshot.data();
+          const eventPromoCodes = eventData.promoCodes || [];
 
-      const eventData = eventSnapshot.data();
-      const eventPromoCodes = eventData.promoCodes || [];
+          // Helper function to filter out placeholder documents
+          const filterPlaceholderDocs = (docs: any[]) => {
+            return docs.filter(doc => {
+              const data = doc.data();
+              const docId = doc.id;
+              // Exclude documents with _placeholder: true or IDs starting with underscore
+              return !data._placeholder && !docId.startsWith('_');
+            });
+          };
 
-      // Helper function to filter out placeholder documents
-      const filterPlaceholderDocs = (docs: any[]) => {
-        return docs.filter(doc => {
-          const data = doc.data();
-          const docId = doc.id;
-          // Exclude documents with _placeholder: true or IDs starting with underscore
-          return !data._placeholder && !docId.startsWith('_');
-        });
-      };
+          // Filter out placeholder documents
+          const registrationsDocs = registrationsResult.status === 'fulfilled' ? registrationsResult.value.docs : [];
+          const feedbackDocs = feedbackResult.status === 'fulfilled' ? feedbackResult.value.docs : [];
+          const certificatesDocs = certificatesResult.status === 'fulfilled' ? certificatesResult.value.docs : [];
 
-      // Filter out placeholder documents
-      const realRegistrations = filterPlaceholderDocs(registrationsSnapshot.docs);
-      const realCheckedInCount = realRegistrations.filter(doc => doc.data().attendanceStatus === 'checked-in').length;
-      const realFeedback = filterPlaceholderDocs(feedbackSnapshot.docs);
-      const realCertificates = filterPlaceholderDocs(certificatesSnapshot.docs);
+          const realRegistrations = filterPlaceholderDocs(registrationsDocs);
+          const realCheckedInCount = realRegistrations.filter(doc => doc.data().attendanceStatus === 'checked-in').length;
+          const realFeedback = filterPlaceholderDocs(feedbackDocs);
+          const realCertificates = filterPlaceholderDocs(certificatesDocs);
 
       // Calculate revenue and promo code statistics
       let revenue = 0;

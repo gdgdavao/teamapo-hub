@@ -28,7 +28,7 @@ describe('usePrefetchEvent hook (DOM)', () => {
   });
 
   it('triggers prefetch after hover debounce time (65ms)', () => {
-    const { result } = renderHook(() => usePrefetchEvent({ debounceMs: 65 }));
+    const { result } = renderHook(() => usePrefetchEvent({ debounceMs: 65, prefetchRegistrations: true }));
     const props = result.current.getPrefetchProps('evt-123', 'devfest-slug');
 
     act(() => {
@@ -67,7 +67,7 @@ describe('usePrefetchEvent hook (DOM)', () => {
   });
 
   it('triggers prefetch immediately on touchstart without debounce delay', () => {
-    const { result } = renderHook(() => usePrefetchEvent());
+    const { result } = renderHook(() => usePrefetchEvent({ prefetchRegistrations: true }));
     const props = result.current.getPrefetchProps('evt-touch-789');
 
     act(() => {
@@ -79,8 +79,8 @@ describe('usePrefetchEvent hook (DOM)', () => {
     expect(RegistrationService.prefetchEventRegistrations).toHaveBeenCalledWith('evt-touch-789');
   });
 
-  it('allows disabling registration prefetch via options', () => {
-    const { result } = renderHook(() => usePrefetchEvent({ prefetchRegistrations: false }));
+  it('defaults registration prefetch to false when options are omitted', () => {
+    const { result } = renderHook(() => usePrefetchEvent());
     const props = result.current.getPrefetchProps('evt-no-regs');
 
     act(() => {

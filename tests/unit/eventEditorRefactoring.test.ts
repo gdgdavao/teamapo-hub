@@ -75,7 +75,8 @@ describe('Event Editor & Feedback Tab Refactoring', () => {
 
   describe('EventService data invariants', () => {
     it('creates feedback form safely without undefined', () => {
-      expect(eventServiceSource).toContain('fields: eventData.feedbackForm ?? []');
+      // removeUndefinedValues sanitizes the fields array before writing to Firestore
+      expect(eventServiceSource).toContain('this.removeUndefinedValues(eventData.feedbackForm ?? [])');
     });
 
     it('treats promoCodes and feedbackForm as optional in EventFormData', () => {

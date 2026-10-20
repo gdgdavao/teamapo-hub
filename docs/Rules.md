@@ -33,17 +33,18 @@ flowchart TD
     
     UserDoc --> RoleCheck{User Role in Firestore}
     RoleCheck -- role == 'admin' --> AdminPerms[Full Administrative Access: RBAC]
-    RoleCheck -- role == 'organizer' --> OrgPerms[Organizer Access: ABPAC via users/uid.permissions & Ownership]
+    RoleCheck -- role == 'organizer' --> OrgPerms[Organizer Access: ABPAC via users/uid.permissions across Communal Events]
     RoleCheck -- Not found / Other --> Deny[Default Deny]
 ```
 
 ### 2.0 Hybrid RBAC + ABPAC Architecture & Client-Side CASL Alignment
 
-TeamApo Hub implements a **Hybrid RBAC (Role-Based Access Control) + ABPAC (Attribute-Based Policy Access Control)** authorization architecture:
+TeamApo Hub implements a **Hybrid RBAC (Role-Based Access Control) + ABPAC (Attribute-Based Policy Access Control)** authorization architecture with a **Communal Event Model**:
 1. **Unrestricted Admin (RBAC)**: The `admin` role maintains full platform-wide access across all collections, subcollections, routes, and cloud functions.
-2. **Granular Organizer Capabilities (ABPAC)**: Organizers operate under fine-grained domain permissions stored in `users/{userId}.permissions` (`events`, `attendees`, `checkin`, `payments`, `certificates`, `feedback`) that are evaluated in tandem with document ownership attributes (`organizer.uid == auth.uid` or `organizerUid == auth.uid`).
-3. **Resource Lifecycle Constraints (ABAC)**: Completed or cancelled events (`status in ['completed', 'cancelled']`) are frozen from updates and subcollection modifications for non-administrators. Force-deletion of events containing active registrations is reserved for administrators.
-4. **Dual-Layer Synchronization**: `src/auth/ability.ts` builds a CASL ability from the signed-in user's profile and permissions, and `RequireAbility` uses it to decide what to render. **`firestore.rules` is the authoritative security boundary; CASL is the client-side UX alignment layer.** Whenever a rule clause changes, the matching ability rule must change with it.
+2. **Communal Events & Granular Organizer Capabilities (ABPAC)**: Events are community assets without individual creator ownership. Organizers operate under fine-grained domain permissions stored in `users/{userId}.permissions` (`events`, `attendees`, `checkin`, `payments`, `certificates`, `feedback`) that govern functional actions across all events.
+3. **Resource Lifecycle Constraints (ABAC)**: Completed or cancelled events (`status in ['completed', 'cancelled']`) are frozen from updates and subcollection modifications for non-administrators.
+4. **Destructive Action Hardening**: Event deletion is reserved exclusively for platform administrators (`allow delete: if isAdmin()`). Organizers cannot delete events; they can archive or cancel events via `events.canUpdate`.
+5. **Dual-Layer Synchronization**: `src/auth/ability.ts` builds a CASL ability from the signed-in user's profile and permissions, and `RequireAbility` uses it to decide what to render. **`firestore.rules` is the authoritative security boundary; CASL is the client-side UX alignment layer.** Whenever a rule clause changes, the matching ability rule must change with it.
 
 The table below defines the strict 1:1 contract between CASL and `firestore.rules`:
 
@@ -51,20 +52,19 @@ The table below defines the strict 1:1 contract between CASL and `firestore.rule
 | :--- | :--- |
 | absent — no profile, `isActive !== true`, or an unrecognised role | `isAdmin()` / `isOrganizer()` requiring `isActive == true`. Fail-closed at every branch. |
 | `read` on `Event`, `Registration`, `Certificate`, `PaymentProof`, `Feedback` (unconditioned) | Reaching the workspace at all. Area access gated by granular functional permissions (`attendees.canRead`, `certificates.canManage`, `payments.canVerify`, `feedback.canRead`). |
-| `read 'all'` | `allow list: if isAdmin()` and the unscoped `getAllEvents()` / `getUsers()` reads. Admin only. |
-| `manage Event` where `organizer.uid == uid` and active lifecycle | Granted only if both `events.canUpdate !== false` and `events.canDelete === true` on active events (`status not in ['completed', 'cancelled']`). |
-| `update Event` where `organizer.uid == uid` and active lifecycle | `ownsEvent(eventId) && hasPerm('events', 'canUpdate') && !(resource.data.status in ['completed', 'cancelled'])`. Completed/cancelled events are frozen from organizer edits. |
-| `delete Event` where `organizer.uid == uid` | `ownsEvent(eventId) && hasPerm('events', 'canDelete')`. Client UI also prevents non-admins from force-deleting events with existing attendee registrations. |
-| `update` on `Registration` where `organizerUid == uid` | `ownsDocByEventId(data) && hasPerm('attendees', 'canUpdate')` |
-| `delete` on `Registration` where `organizerUid == uid` | `ownsDocByEventId(data) && hasPerm('attendees', 'canDelete')` |
+| `read 'all'` | `allow list: if isAdmin()` and the admin-only user administration routes. |
+| `update Event` on active lifecycle | `isOrganizer() && hasPerm('events', 'canUpdate') && !(resource.data.status in ['completed', 'cancelled'])`. Completed/cancelled events are frozen from organizer edits. Communal: no creator ownership. |
+| `delete Event` | **Admin only.** `allow delete: if isAdmin()`. Organizers cannot delete events under any circumstances. |
+| `create Event` | `allow create: if isAdmin() \|\| (isOrganizer() && hasPerm('events', 'canCreate'))`. No creator ownership field written. |
+| `update` on `Registration` | `isOrganizer() && hasPerm('attendees', 'canUpdate')`. Communal access across events. |
+| `delete` on `Registration` | `isOrganizer() && hasPerm('attendees', 'canDelete')`. Communal access across events. |
 | `export` on `Registration` | UI gating on `attendees.canExport !== false` for attendee CSV and email log downloads. |
-| `checkin` on `Registration` where `organizerUid == uid` | `attendees.canUpdate !== false && checkin.canCheckIn !== false` for QR scanning and manual check-ins. |
-| `update` on `Certificate` where `organizerUid == uid` | `ownsDocByEventId(data) && hasPerm('certificates', 'canManage')` |
-| `update`/`delete` on `PaymentProof` where `organizerUid == uid` | `ownsEvent(data.eventId) && hasPerm('payments', 'canVerify')` |
-| `create Event` | `allow create: if isAdmin() \|\| (isOrganizer() && hasPerm('events', 'canCreate') && request.resource.data.organizer.uid == request.auth.uid)`. |
+| `checkin` on `Registration` | `attendees.canUpdate !== false && checkin.canCheckIn !== false` for QR scanning and manual check-ins across events. |
+| `update` on `Certificate` | `isOrganizer() && hasPerm('certificates', 'canManage')`. Communal access. |
+| `update`/`delete` on `PaymentProof` | `isOrganizer() && hasPerm('payments', 'canVerify')`. Communal access. |
 | `read`/`create User`, `update User` where `uid != me` | `match /users/{userId}` |
-| `delete User` where `uid != me` and `role != 'admin'` | **Rules now close it entirely:** `allow delete: if false` on `/users/{userId}`. Deletion is a two-halves operation (Firebase Auth identity + profile document) and happens only through the `deleteUser` Admin SDK callable, which enforces the self-delete, superuser, last-admin, and owned-active-events guards and writes the audit entry. See §4.4. |
-| `functions/main.py` `require_elevated` / `require_admin` | `isAdmin() \|\| ownsEvent(eventId)`, plus the `isActive == true` check the callable layer used to omit |
+| `delete User` where `uid != me` and `role != 'admin'` | **Rules now close it entirely:** `allow delete: if false` on `/users/{userId}`. Deletion is a two-halves operation (Firebase Auth identity + profile document) and happens only through the `deleteUser` Admin SDK callable, which enforces the self-delete, superuser, and last-admin guards and writes the audit entry. |
+| `functions/main.py` `require_elevated` / `require_admin` | `isAdmin() \|\| (isOrganizer() && isActive == true)` |
 
 Three CASL behaviours the ability depends on, all pinned by
 `tests/unit/ability.test.ts`:

@@ -1216,10 +1216,9 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
     );
   }
 
-  const eventOrganizerUid = currentEvent?.organizer?.uid;
-  const canUpdateRegistrations = ability.can('update', asRegistration({ organizerUid: eventOrganizerUid } as any));
-  const canDeleteRegistrations = ability.can('delete', asRegistration({ organizerUid: eventOrganizerUid } as any));
-  const canVerifyPayments = ability.can('update', asPaymentProof({ organizerUid: eventOrganizerUid } as any));
+  const canUpdateRegistrations = ability.can('update', 'Registration');
+  const canDeleteRegistrations = ability.can('delete', 'Registration');
+  const canVerifyPayments = ability.can('update', 'PaymentProof');
 
   const headerActions = selectedRegistrations.size > 0 ? (
     <div className="flex flex-wrap items-center gap-3">

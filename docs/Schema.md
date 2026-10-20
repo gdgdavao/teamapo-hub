@@ -82,7 +82,7 @@ Primary entity representing GDG Davao events, workshops, meetups, and conference
 | `shortDescription`| `string` | Yes | - | 1-2 sentence preview summary for cards and metadata. |
 | `imageUrl` | `string` | No | - | Public banner image URL in Cloud Storage. |
 | `bannerUrl` | `string` | No | - | High-resolution hero image URL. |
-| `organizer` | `map` | Yes | - | Map: `{ uid: string, name: string, email: string }`. |
+| `organizer` | `map` | No | - | [Deprecated] Legacy creator map. Events are communal with no individual owner. |
 | `speakers` | `array<map>`| Yes | `[]` | Array of `Speaker` objects (see [Embedded Types](#4-embedded-data-structures)). |
 | `startDate` | `timestamp` | Yes | - | Event start time (with timezone). |
 | `endDate` | `timestamp` | Yes | - | Event conclusion time (`endDate >= startDate`). |
@@ -140,7 +140,7 @@ Captures attendee registrations for specific events.
 | `paymentLinkExpiresAt` | `timestamp`| No | - | Expiration timestamp for payment session. |
 | `paymentLinkStatus` | `string` | No | `'active'` | Enum: `'active'`, `'consumed'`, `'expired'`. |
 | `attendanceStatus` | `string` | Yes | `'registered'` | Enum: `'registered'`, `'confirmed'`, `'checked-in'`, `'no-show'`, `'pending'`, `'not_attended'`, `'cancelled'`. |
-| `organizerUid` | `string` | Yes | — | Owning organizer's uid, denormalized from the event. Drives per-event access scoping in `firestore.rules` (Data Privacy Act 2012). Backfill with `bun run firebase:backfill-organizer-uid`. |
+| `organizerUid` | `string` | No | — | [Deprecated] Legacy owning organizer UID. Communal event model grants access to all active organizers. |
 | `checkInTime` | `timestamp` | No | - | Timestamp when attendee was scanned on-site. |
 | `feedbackSubmitted` | `boolean` | Yes | `false` | Flag indicating post-event feedback survey completion. |
 | `feedbackRequestSent` | `boolean` | Yes | `false` | Flag indicating feedback invitation email sent. |
@@ -425,7 +425,7 @@ The following composite indexes are deployed via [firestore.indexes.json](../fir
 ### Collection Group: `events`
 1. `(isPublished ASC, startDate ASC)` — Powers public upcoming event discovery.
 2. `(isPublished ASC, status ASC, startDate ASC)` — Filters public active events by status.
-3. `(organizer.uid ASC, createdAt DESC)` — Powers organizer dashboard event list.
+3. `(organizer.uid ASC, createdAt DESC)` — [Deprecated] Legacy organizer dashboard event list (retired in favor of communal event queries).
 4. `(category ASC, isPublished ASC, startDate ASC)` — Category filtering on public explore page.
 5. `(venue.city ASC, isPublished ASC, startDate ASC)` — City/location filtering.
 6. `(venue.type ASC, isPublished ASC, startDate ASC)` — Filter by Online vs Offline.
@@ -435,7 +435,7 @@ The following composite indexes are deployed via [firestore.indexes.json](../fir
 
 ### Collection Group: `registrations`
 1. `(eventId ASC, registrationDate DESC)` — Organizer attendee roster sorted chronologically.
-2. `(organizerUid ASC, registrationDate DESC)` — Organizer-scoped attendee list (see §Registrations).
+2. `(organizerUid ASC, registrationDate DESC)` — [Deprecated] Legacy organizer-scoped attendee list (retired in favor of communal attendee access).
 3. `(eventId ASC, paymentStatus ASC, registrationDate DESC)` — Filter registrations by payment state.
 4. `(eventId ASC, attendanceStatus ASC)` — Attendance dashboard & check-in filtering.
 

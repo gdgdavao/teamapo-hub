@@ -87,10 +87,7 @@ describe('defineAbilityFor: fail closed', () => {
 });
 
 describe('organizer', () => {
-  it('may enter the event workspace, and read is area access rather than ownership', () => {
-    // read is intentionally unconditioned: a rule with conditions would fail
-    // the bare-subject check a route guard performs. Scoping happens on
-    // `manage`, which is what gates the workspace chrome.
+  it('may enter the event workspace and read all events', () => {
     const ability = defineAbilityFor(organizer());
     expect(ability.can('read', 'Event')).toBe(true);
     expect(ability.can('read', ownedEvent)).toBe(true);
@@ -98,31 +95,29 @@ describe('organizer', () => {
     expect(ability.can('read', 'all')).toBe(false);
   });
 
-  it('may manage only its own events', () => {
-    // This is the gate on /events/:eventId. An organizer who is not the owner
-    // must not be offered Edit, the Settings tab, or the Danger Zone.
+  it('may update any active event (communal event model)', () => {
     const ability = defineAbilityFor(organizer());
-    expect(ability.can('manage', ownedEvent)).toBe(true);
-    expect(ability.can('manage', otherEvent)).toBe(false);
+    expect(ability.can('update', ownedEvent)).toBe(true);
+    expect(ability.can('update', otherEvent)).toBe(true);
   });
 
   it('may create an event', () => {
     expect(defineAbilityFor(organizer()).can('create', 'Event')).toBe(true);
   });
 
-  it('may update and delete only events it owns, via manage', () => {
+  it('cannot delete events (deletion is strictly admin-only)', () => {
     const ability = defineAbilityFor(organizer());
-    expect(ability.can('update', ownedEvent)).toBe(true);
-    expect(ability.can('delete', ownedEvent)).toBe(true);
-    expect(ability.can('update', otherEvent)).toBe(false);
+    expect(ability.can('delete', 'Event')).toBe(false);
+    expect(ability.can('delete', ownedEvent)).toBe(false);
     expect(ability.can('delete', otherEvent)).toBe(false);
   });
 
-  it('may write only the registration and credential rows it owns', () => {
+  it('may write registration rows across events according to domain permissions', () => {
     const ability = defineAbilityFor(organizer());
     expect(ability.can('update', ownedRegistration)).toBe(true);
-    expect(ability.can('delete', ownedRegistration)).toBe(true);
-    expect(ability.can('update', otherRegistration)).toBe(false);
+    expect(ability.can('update', otherRegistration)).toBe(true);
+    expect(ability.can('checkin', ownedRegistration)).toBe(true);
+    expect(ability.can('checkin', otherRegistration)).toBe(true);
   });
 
   it('may not administer users', () => {
@@ -198,12 +193,11 @@ describe('negation semantics', () => {
   });
 
   it('ignores conditions when checked against a subject type, so a conditional verb is never a route gate', () => {
-    // `can('manage', 'Event')` means "hold any manage rule touching Event" and
-    // answers true for an organizer despite the ownership condition. Guards must
-    // therefore use the unconditioned `read` and check ownership against an
-    // entity. If this ever flips, the workspace gate silently stops working.
+    // `can('update', 'Event')` means "hold any update rule touching Event" and
+    // answers true for an organizer despite the lifecycle condition. Guards must
+    // therefore use the unconditioned `read` and check against an entity.
     const ability = defineAbilityFor(organizer());
-    expect(ability.can('manage', 'Event')).toBe(true);
+    expect(ability.can('update', 'Event')).toBe(true);
     expect(ability.can('read', 'Event')).toBe(true);
     // The read verbs an organizer must NOT be able to route-guard on stay closed.
     expect(ability.can('read', 'all')).toBe(false);
@@ -261,16 +255,10 @@ describe('hybrid RBAC + ABPAC: granular permissions & lifecycle invariants', () 
     expect(adminAbility.can('manage', completedOwnedEvent)).toBe(true);
   });
 
-  it('denies event deletion when canDelete is false', () => {
-    const ability = defineAbilityFor(
-      organizer({
-        permissions: {
-          events: { canCreate: true, canUpdate: true, canDelete: false },
-        },
-      })
-    );
+  it('denies event deletion for organizers (event deletion is admin-only)', () => {
+    const ability = defineAbilityFor(organizer());
     expect(ability.can('delete', ownedEvent)).toBe(false);
-    expect(ability.can('manage', ownedEvent)).toBe(false);
+    expect(ability.can('delete', otherEvent)).toBe(false);
     expect(ability.can('update', ownedEvent)).toBe(true);
   });
 
@@ -339,7 +327,7 @@ describe('hybrid RBAC + ABPAC: granular permissions & lifecycle invariants', () 
     const fullAbility = defineAbilityFor(organizer());
     expect(fullAbility.can('checkin', ownedRegistration)).toBe(true);
     expect(fullAbility.can('create', ownedRegistration)).toBe(true);
-    expect(fullAbility.can('checkin', otherRegistration)).toBe(false);
+    expect(fullAbility.can('checkin', otherRegistration)).toBe(true);
 
     const staffAbility = defineAbilityFor(
       organizer({

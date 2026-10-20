@@ -152,10 +152,14 @@ export interface Event {
   shortDescription: string;
   imageUrl?: string;
   bannerUrl?: string;
-  organizer: {
-    uid: string;
-    name: string;
-    email: string;
+  /**
+   * @deprecated Events are communal and have no owner.
+   * Kept optional for backward compatibility during migration.
+   */
+  organizer?: {
+    uid?: string;
+    name?: string;
+    email?: string;
   };
   speakers: Speaker[];
   startDate: Timestamp;

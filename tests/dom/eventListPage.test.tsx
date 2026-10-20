@@ -21,9 +21,19 @@ vi.mock('react-hot-toast', () => ({
   },
 }));
 
+let mockAuthProfile: any = {
+  uid: 'admin-1',
+  email: 'admin@gdgdavao.org',
+  role: 'admin',
+  isActive: true,
+  displayName: 'Admin User',
+};
+
 vi.mock('@/services/eventService', () => ({
   EventService: {
     getAllEvents: vi.fn(),
+    getEventsByOrganizer: vi.fn().mockResolvedValue([]),
+    getPublishedEvents: vi.fn().mockResolvedValue([]),
     prefetchEvent: vi.fn(),
   },
 }));
@@ -32,24 +42,21 @@ vi.mock('@/services/registrationService', () => ({
   RegistrationService: {
     getEventRegistrations: vi.fn().mockResolvedValue([]),
     getAllRegistrations: vi.fn().mockResolvedValue([]),
+    getRegistrationsByOrganizer: vi.fn().mockResolvedValue([]),
     prefetchEventRegistrations: vi.fn(),
   },
 }));
 
 vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({
-    currentUser: { uid: 'admin-1', email: 'admin@gdgdavao.org', displayName: 'Admin User' },
-    userProfile: { uid: 'admin-1', email: 'admin@gdgdavao.org', role: 'admin', isActive: true, displayName: 'Admin User' },
+    currentUser: mockAuthProfile ? { uid: mockAuthProfile.uid, email: mockAuthProfile.email } : null,
+    userProfile: mockAuthProfile,
     loading: false,
   }),
   AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
-const TEST_ABILITY = defineAbilityFor({
-  uid: 'admin-1',
-  role: 'admin',
-  isActive: true,
-});
+const getAbility = () => defineAbilityFor(mockAuthProfile);
 
 const MOCK_EVENTS = [
   {
@@ -78,13 +85,20 @@ describe('EventListPage - Dedicated Card Grid View', () => {
   const renderEventListPage = () =>
     render(
       <MemoryRouter initialEntries={['/events']}>
-        <AbilityProvider value={TEST_ABILITY}>
+        <AbilityProvider value={getAbility()}>
           <EventListPage />
         </AbilityProvider>
       </MemoryRouter>
     );
 
   it('renders the card grid and does NOT display a list view toggle or table', async () => {
+    mockAuthProfile = {
+      uid: 'admin-1',
+      email: 'admin@gdgdavao.org',
+      role: 'admin',
+      isActive: true,
+      displayName: 'Admin User',
+    };
     vi.mocked(EventService.getAllEvents).mockResolvedValueOnce(MOCK_EVENTS as any);
 
     renderEventListPage();
@@ -112,6 +126,13 @@ describe('EventListPage - Dedicated Card Grid View', () => {
   });
 
   it('renders EmptyState primitive when no events match or exist', async () => {
+    mockAuthProfile = {
+      uid: 'admin-1',
+      email: 'admin@gdgdavao.org',
+      role: 'admin',
+      isActive: true,
+      displayName: 'Admin User',
+    };
     vi.mocked(EventService.getAllEvents).mockResolvedValueOnce([]);
 
     renderEventListPage();
@@ -119,5 +140,53 @@ describe('EventListPage - Dedicated Card Grid View', () => {
     expect(await screen.findByText('No events found')).toBeInTheDocument();
     expect(screen.getByText('Get started by creating your first event.')).toBeInTheDocument();
     expect(screen.getAllByRole('link', { name: /create event/i })).toHaveLength(2);
+  });
+
+  it('loads events for an organizer and renders Manage Event for all communal events', async () => {
+    mockAuthProfile = {
+      uid: 'org-1',
+      email: 'jane@gdgdavao.org',
+      role: 'organizer',
+      isActive: true,
+      displayName: 'Jane Organizer',
+    };
+
+    const firstEvent = {
+      id: 'event-1',
+      slug: 'jane-workshop',
+      title: 'Jane Workshop 2026',
+      status: 'draft',
+      startDate: new Date('2026-11-20T08:00:00Z'),
+      ticketTypes: [],
+      currentAttendees: 10,
+    };
+
+    const secondEvent = {
+      id: 'event-2',
+      slug: 'community-summit',
+      title: 'Community Summit 2026',
+      status: 'published',
+      startDate: new Date('2026-12-01T08:00:00Z'),
+      ticketTypes: [],
+      currentAttendees: 50,
+    };
+
+    vi.mocked(EventService.getAllEvents).mockResolvedValueOnce([firstEvent as any, secondEvent as any]);
+
+    renderEventListPage();
+
+    // Both events should render in the list
+    expect(await screen.findByText('Jane Workshop 2026')).toBeInTheDocument();
+    expect(screen.getByText('Community Summit 2026')).toBeInTheDocument();
+
+    // In the communal model, all events render "Manage Event" pointing to /events/:id
+    const manageLinks = screen.getAllByRole('link', { name: /manage event/i });
+    expect(manageLinks).toHaveLength(2);
+    expect(manageLinks[0]).toHaveAttribute('href', '/events/event-2');
+    expect(manageLinks[1]).toHaveAttribute('href', '/events/event-1');
+
+    // No ownership pills or ownership filter
+    expect(screen.queryByText('Your event')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/filter events by ownership/i)).not.toBeInTheDocument();
   });
 });

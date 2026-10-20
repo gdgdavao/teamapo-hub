@@ -218,14 +218,7 @@ Two distinctions the gate depends on:
   the login form carrying `?from=`, so a deep link survives the detour.
   `LoginPage` re-validates `?from=` rather than trusting it. Signed in without
   permission goes to `/forbidden`, which can explain why.
-- **Ownership is checked where the entity is, not in the gate.** CASL ignores a
-  rule's conditions when the argument is a subject *type*, so
-  `can('manage', 'Event')` answers true for an organizer whose `manage Event`
-  rule is conditioned on ownership. Route gates therefore only use the
-  unconditioned `read` verbs; `EventWorkspacePage` checks
-  `can('manage', asEvent(event))` once it has loaded the event, and a
-  non-owner falls through to the same "Event not found" shell — they should not
-  learn the event exists.
+- **Communal Event Architecture**: Events belong to the organization rather than individual creators. All active organizers have access to all events, with functional actions governed strictly by RBAC (admin vs organizer) and ABPAC (`users/{uid}.permissions`). Event deletion is strictly admin-only (`allow delete: if isAdmin()`).
 
 `tests/unit/routeIntegrity.test.ts` parses the route table and fails the build if any
 `Link`/`navigate` target does not resolve, so a stale path cannot reach production.
@@ -235,12 +228,7 @@ Two distinctions the gate depends on:
 one-file wrapper folders, no `components/` ↔ `pages/` coupling, no primitives
 imported by path).
 
-**Data scoping (Data Privacy Act 2012).** `registrations`, `feedback` and `activity_logs`
-are flat collections whose documents carry both `eventId` and a denormalized `organizerUid`.
-`firestore.rules` scopes them with `ownsDocByEventId()`, so an organizer can only ever read or
-modify records for events they own — they cannot read another organizer's attendee PII.
-Existing documents are backfilled by `scripts/backfill-organizer-uid.cjs`; documents without
-the field fall back to an event-ownership check until backfilled.
+**Communal Data Governance**: `registrations`, `feedback`, and `activity_logs` are accessible across the organizer team based on granular domain permissions (`attendees.canRead`, `feedback.canRead`, etc.), enabling seamless collaboration across events while maintaining least-privilege security. Existing documents with legacy `organizerUid` can be cleaned using `scripts/strip-event-ownership.cjs`.
 
 ### 3.3 Dynamic Certificate Engine
 Certificates are generated via client-side composition or Cloud Functions:

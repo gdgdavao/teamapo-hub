@@ -52,16 +52,12 @@ const PlatformHome: React.FC = () => {
 
   usePageTitle();
 
-  const canReadAll = useAbility().can('read', 'all');
+  const ability = useAbility();
+  const canReadAll = ability.can('read', 'all');
 
   useEffect(() => {
     const fetchDashboardData = async () => {
-      // Platform totals are admin-only by permission, not by role: this runs
-      // unscoped reads over registrations and certificates, which
-      // firestore.rules denies to organizers (Data Privacy Act 2012). The same
-      // `read 'all'` the /events and /users routes use, so Home and the
-      // navigation cannot disagree about who is an administrator.
-      if (!currentUser || !canReadAll) return;
+      if (!currentUser) return;
 
       try {
         setLoading(true);

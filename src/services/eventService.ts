@@ -385,7 +385,7 @@ export class EventService {
   /**
    * Create a new event with proper validation and error handling
    */
-  static async createEvent(eventData: EventFormData, organizerUid: string): Promise<string> {
+  static async createEvent(eventData: EventFormData, _organizerUid?: string): Promise<string> {
     try {
       // Validate required fields client-side first
       this.validateEventData(eventData);
@@ -407,9 +407,6 @@ export class EventService {
       // Generate a new event ID
       const eventRef = doc(collection(db, this.EVENTS_COLLECTION));
       const eventId = eventRef.id;
-
-      // Get organizer information
-      const organizerInfo = await this.getOrganizerInfo(organizerUid);
 
       // Build the venue object carefully
       const venue: any = {
@@ -453,17 +450,12 @@ export class EventService {
       // Generate a unique slug from the title
       const slug = await this.generateUniqueSlug(eventData.title);
 
-      // Convert form data to Event object (only include defined fields to avoid Firestore errors)
+      // Convert form data to Event object (communal events: no creator ownership)
       const event: any = {
         slug,
         title: eventData.title.trim(),
         description: eventData.description.trim(),
         shortDescription: eventData.shortDescription.trim(),
-        organizer: {
-          uid: organizerUid,
-          name: organizerInfo.name,
-          email: organizerInfo.email
-        },
   speakers: this.sanitizeSpeakers(eventData.speakers || []),
         startDate: this.combineDateAndTime(eventData.startDate, eventData.startTime),
         endDate: this.combineDateAndTime(eventData.endDate, eventData.endTime),
@@ -827,36 +819,12 @@ export class EventService {
   }
 
   /**
-   * Get events by organizer
+   * Get events by organizer.
+   * Under the communal event model, all events belong to the community,
+   * so this delegates to getAllEvents().
    */
-  static async getEventsByOrganizer(organizerUid: string): Promise<Event[]> {
-    if (!organizerUid) return [];
-
-    return swrCache.getOrFetch(
-      `events:organizer:${organizerUid}`,
-      async () => {
-        try {
-          const eventsRef = collection(db, this.EVENTS_COLLECTION);
-          const q = query(
-            eventsRef,
-            where('organizer.uid', '==', organizerUid),
-            orderBy('createdAt', 'desc')
-          );
-
-          const querySnapshot = await getDocs(q);
-          const events = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Event));
-          for (const ev of events) {
-            swrCache.set(`event:${ev.id}`, ev);
-            if (ev.slug) swrCache.set(`slug:${ev.slug}`, ev);
-          }
-          return events;
-        } catch (error) {
-          logger.error('Error getting events by organizer:', error);
-          throw new Error('Failed to get events');
-        }
-      },
-      this.CACHE_TTL_MS
-    );
+  static async getEventsByOrganizer(_organizerUid?: string): Promise<Event[]> {
+    return this.getAllEvents();
   }
 
   /**
@@ -1073,20 +1041,20 @@ export class EventService {
    */
   private static async createEventForms(eventId: string, eventData: EventFormData): Promise<void> {
     try {
-      // Create registration form
+      // Create registration form — sanitize fields to strip any undefined optional properties
       const registrationFormRef = doc(db, `${this.EVENTS_COLLECTION}/${eventId}/forms/registration`);
       await setDoc(registrationFormRef, {
         type: 'registration',
-        fields: eventData.registrationForm,
+        fields: this.removeUndefinedValues(eventData.registrationForm),
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       });
 
-      // Create feedback form
+      // Create feedback form — sanitize fields to strip any undefined optional properties
       const feedbackFormRef = doc(db, `${this.EVENTS_COLLECTION}/${eventId}/forms/feedback`);
       await setDoc(feedbackFormRef, {
         type: 'feedback',
-        fields: eventData.feedbackForm ?? [],
+        fields: this.removeUndefinedValues(eventData.feedbackForm ?? []),
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       });
@@ -1103,18 +1071,20 @@ export class EventService {
     try {
       if (eventData.registrationForm) {
         const registrationFormRef = doc(db, `${this.EVENTS_COLLECTION}/${eventId}/forms/registration`);
+        // Sanitize fields to strip any undefined optional properties (e.g. placeholder, options, validation)
         await setDoc(registrationFormRef, {
           type: 'registration',
-          fields: eventData.registrationForm,
+          fields: this.removeUndefinedValues(eventData.registrationForm),
           updatedAt: serverTimestamp()
         }, { merge: true });
       }
 
       if (eventData.feedbackForm) {
         const feedbackFormRef = doc(db, `${this.EVENTS_COLLECTION}/${eventId}/forms/feedback`);
+        // Sanitize fields to strip any undefined optional properties
         await setDoc(feedbackFormRef, {
           type: 'feedback',
-          fields: eventData.feedbackForm,
+          fields: this.removeUndefinedValues(eventData.feedbackForm),
           updatedAt: serverTimestamp()
         }, { merge: true });
       }

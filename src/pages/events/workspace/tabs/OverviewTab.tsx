@@ -139,15 +139,21 @@ const OverviewTab: React.FC<OverviewTabProps> = ({ eventId }) => {
       try {
         setLoading(true);
 
-        const [eventData, statsData, registrationsData] = await Promise.all([
-          EventService.getEvent(eventId),
+        const eventData = await EventService.getEvent(eventId);
+        if (!eventData) throw new Error('Event not found');
+        setEvent(eventData);
+
+        const [statsResult, registrationsResult] = await Promise.allSettled([
           AnalyticsService.getEventStats(eventId),
-          RegistrationService.getEventRegistrations(eventId)
+          RegistrationService.getEventRegistrations(eventId),
         ]);
 
-        setEvent(eventData);
-        setStats(statsData);
-        setRegistrations(registrationsData);
+        if (statsResult.status === 'fulfilled') {
+          setStats(statsResult.value);
+        }
+        if (registrationsResult.status === 'fulfilled') {
+          setRegistrations(registrationsResult.value);
+        }
       } catch (error) {
         logger.error('Error loading analytics:', error);
         toast.error('Failed to load analytics data. Please refresh and try again.');
@@ -377,17 +383,17 @@ const OverviewTab: React.FC<OverviewTabProps> = ({ eventId }) => {
             </p>
           </div>
 
-          {/* Organizer */}
+          {/* Host */}
           <div className="p-4 rounded-lg bg-surface-container-low border border-outline-variant space-y-1">
             <div className="flex items-center gap-2 text-xs font-medium text-on-surface-variant">
               <UserCircleIcon className="h-4 w-4 text-primary" />
-              <span>Organizer</span>
+              <span>Community Host</span>
             </div>
             <div className="text-sm font-semibold text-on-surface truncate">
               {event.organizer?.name || 'GDG Davao'}
             </div>
             <p className="text-xs text-on-surface-variant truncate">
-              {event.organizer?.email || 'organizer@gdgdavao.org'}
+              {event.organizer?.email || 'davao@gdg.org.ph'}
             </p>
           </div>
         </div>
