@@ -1661,11 +1661,12 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
           onStatusChange={handleStatusChange}
           onPaymentVerification={handlePaymentVerification}
           onDeleteRegistration={async (registrationId) => {
-            if (!canDeleteRegistrations) {
+            const isAdmin = ability.can('manage', 'all');
+            if (!canDeleteRegistrations && !isAdmin) {
               toast.error('You do not have permission to delete registrations');
               return;
             }
-            await RegistrationService.deleteRegistration(registrationId);
+            await RegistrationService.deleteRegistration(registrationId, isAdmin);
             setRegistrations((prev) => prev.filter((r) => r.id !== registrationId));
           }}
         />

@@ -180,8 +180,14 @@ export function validateDynamicField(field: FormField, value: unknown): Validati
       return { isValid: false, error: `${label} is required.` };
     }
 
-    if (field.type === 'checkbox' && value !== true) {
-      return { isValid: false, error: `${label} must be checked.` };
+    if (field.type === 'checkbox') {
+      if (field.options && field.options.length > 0) {
+        if (!Array.isArray(value) || value.length === 0) {
+          return { isValid: false, error: `Please select at least one option for ${label}.` };
+        }
+      } else if (value !== true) {
+        return { isValid: false, error: `${label} must be checked.` };
+      }
     }
 
     if (field.type === 'multiselect' && (!Array.isArray(value) || value.length === 0)) {

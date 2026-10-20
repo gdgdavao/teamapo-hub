@@ -183,6 +183,7 @@ describe('Email Templates Design System & Architecture', () => {
     expect(reminder).toContain('{{event_date}}');
     expect(reminder).toContain('{{event_location}}');
     expect(reminder).toContain('{{maps_button}}');
+    expect(reminder).toContain('{{reminder_checklist_items}}');
 
     const feedback = readFileSync(join(TEMPLATES_DIR, 'feedback_request.html'), 'utf8');
     expect(feedback).toContain('{{event_title}}');
@@ -237,6 +238,40 @@ describe('Email Templates Design System & Architecture', () => {
     expect(serviceContent).toContain("if status == 'pending':");
     expect(serviceContent).toContain("'skipped': True");
     expect(serviceContent).toContain('Pending payment emails are discontinued');
+  });
+
+  it('email templates and services support TBA for event location and speaker lineup', () => {
+    const loaderContent = readFileSync(LOADER_FILE, 'utf8');
+    const serviceContent = readFileSync(EMAIL_SERVICE_FILE, 'utf8');
+    const registrationHtml = readFileSync(join(TEMPLATES_DIR, 'registration_confirmation.html'), 'utf8');
+    const reminderHtml = readFileSync(join(TEMPLATES_DIR, 'event_reminder.html'), 'utf8');
+
+    // Loader provides Google M3 TBA status badge helper
+    expect(loaderContent).toContain('def format_tba_badge(');
+    expect(loaderContent).toContain('#e8eaed');
+    expect(loaderContent).toContain('#3c4043');
+
+    // Email service supports location_tba and speakers_tba
+    expect(serviceContent).toContain('location_tba: bool = False');
+    expect(serviceContent).toContain('speakers_tba: bool = False');
+    expect(serviceContent).toContain('format_tba_badge');
+
+    // Map button is suppressed when location is TBA
+    expect(serviceContent).toContain('if maps_url and not location_tba:');
+
+    // Location is formatted with TBA badge or plain text fallback
+    expect(serviceContent).toContain('To Be Announced');
+    expect(serviceContent).toContain('To Be Announced (TBA)');
+
+    // Next steps and reminder checklist adapt for TBA state
+    expect(serviceContent).toContain('Venue location will be announced soon');
+    expect(serviceContent).toContain('Keynote &amp; speaker lineup will be revealed soon');
+
+    // Template HTML retains placeholder hooks
+    expect(registrationHtml).toContain('{{event_location}}');
+    expect(registrationHtml).toContain('{{maps_button}}');
+    expect(reminderHtml).toContain('{{event_location}}');
+    expect(reminderHtml).toContain('{{reminder_checklist_items}}');
   });
 });
 

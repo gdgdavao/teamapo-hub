@@ -1218,8 +1218,9 @@ export class RegistrationService {
   /**
    * Delete a registration and its associated payment proofs
    * @param registrationId - Registration ID to delete
+   * @param force - Bypass confirmed registration checks (admin only)
    */
-  static async deleteRegistration(registrationId: string): Promise<void> {
+  static async deleteRegistration(registrationId: string, force = false): Promise<void> {
     try {
       // Get registration data first to find associated payment proofs
       const registrationRef = doc(db, 'registrations', registrationId);
@@ -1231,14 +1232,16 @@ export class RegistrationService {
 
       const registrationData = registrationSnap.data();
 
-      // Prevent deleting confirmed or attended registrations
+      // Prevent deleting confirmed or attended registrations unless force is true (admin override)
       const displayStatus = resolveDisplayStatus(registrationData as StatusBearingRegistration);
       if (
-        displayStatus === 'confirmed' ||
-        displayStatus === 'attended' ||
-        registrationData.paymentStatus === 'paid' ||
-        registrationData.registrationStatus === 'approved' ||
-        registrationData.status === 'confirmed'
+        !force && (
+          displayStatus === 'confirmed' ||
+          displayStatus === 'attended' ||
+          registrationData.paymentStatus === 'paid' ||
+          registrationData.registrationStatus === 'approved' ||
+          registrationData.status === 'confirmed'
+        )
       ) {
         throw new Error('Cannot delete a confirmed registration');
       }
@@ -1248,22 +1251,26 @@ export class RegistrationService {
       if (registrationData.attendanceStatus !== 'cancelled' && 
           registrationData.ticketTypeId && 
           registrationData.quantity) {
-        await this.adjustTicketSales({
-          eventId: registrationData.eventId,
-          ticketTypeId: registrationData.ticketTypeId,
-          delta: -registrationData.quantity // Negative to add back to available
-        });
+        try {
+          await this.adjustTicketSales({
+            eventId: registrationData.eventId,
+            ticketTypeId: registrationData.ticketTypeId,
+            delta: -registrationData.quantity // Negative to add back to available
+          });
 
-        // Also decrement attendee count
-        const eventRef = doc(db, this.EVENTS_COLLECTION, registrationData.eventId);
-        await updateDoc(eventRef, {
-          currentAttendees: increment(-registrationData.quantity),
-          updatedAt: serverTimestamp()
-        });
+          // Also decrement attendee count
+          const eventRef = doc(db, this.EVENTS_COLLECTION, registrationData.eventId);
+          await updateDoc(eventRef, {
+            currentAttendees: increment(-registrationData.quantity),
+            updatedAt: serverTimestamp()
+          });
 
-        // Decrement promo code usage if a promo code was used
-        if (registrationData.promoCodeId) {
-          await this.decrementPromoCodeUsage(registrationData.eventId, registrationData.promoCodeId);
+          // Decrement promo code usage if a promo code was used
+          if (registrationData.promoCodeId) {
+            await this.decrementPromoCodeUsage(registrationData.eventId, registrationData.promoCodeId);
+          }
+        } catch (adjustError) {
+          logger.warn('Failed to adjust ticket sales during registration deletion:', adjustError);
         }
       }
       
@@ -1278,23 +1285,27 @@ export class RegistrationService {
       }
 
       // Also query for any other payment proofs linked to this registration
-      const paymentProofsQuery = query(
-        collection(db, 'paymentProofs'),
-        where('registrationId', '==', registrationId)
-      );
-      const paymentProofsSnap = await getDocs(paymentProofsQuery);
-      
-      // Delete all found payment proofs
-      const deletePromises = paymentProofsSnap.docs.map(async (proofDoc) => {
-        try {
-          const { PaymentService } = await import('./paymentService');
-          await PaymentService.deletePaymentProof(proofDoc.id);
-        } catch (error) {
-          logger.warn(`Failed to delete payment proof ${proofDoc.id}:`, error);
-        }
-      });
-      
-      await Promise.all(deletePromises);
+      try {
+        const paymentProofsQuery = query(
+          collection(db, 'paymentProofs'),
+          where('registrationId', '==', registrationId)
+        );
+        const paymentProofsSnap = await getDocs(paymentProofsQuery);
+        
+        // Delete all found payment proofs
+        const deletePromises = paymentProofsSnap.docs.map(async (proofDoc) => {
+          try {
+            const { PaymentService } = await import('./paymentService');
+            await PaymentService.deletePaymentProof(proofDoc.id);
+          } catch (error) {
+            logger.warn(`Failed to delete payment proof ${proofDoc.id}:`, error);
+          }
+        });
+        
+        await Promise.all(deletePromises);
+      } catch (proofQueryError) {
+        logger.warn('Failed to query or delete additional payment proofs for registration:', proofQueryError);
+      }
       
       // Finally, delete the registration document
       await deleteDoc(registrationRef);

@@ -299,12 +299,20 @@ class EmailService:
         qr_code_data: Optional[str] = None,
         requires_payment: bool = False,
         is_free_registration: Optional[bool] = None,
-        maps_url: Optional[str] = None
+        maps_url: Optional[str] = None,
+        location_tba: bool = False,
+        speakers_tba: bool = False
     ) -> Dict[str, Any]:
         """Send registration confirmation email."""
         if is_free_registration is None:
             is_free_registration = not requires_payment
         
+        # Auto-detect location TBA from flag or string value
+        norm_location = (event_location or '').strip().lower()
+        if location_tba or norm_location in ('tbd', 'tba', 'to be announced', 'venue tba', 'venue: to be announced'):
+            location_tba = True
+            maps_url = None
+
         # Different subject based on whether registration is approved or just submitted
         if registration_id and qr_code_data:
             subject = f"Registration Approved - {event_title}"
@@ -321,7 +329,9 @@ class EmailService:
             qr_code_data=qr_code_data,
             requires_payment=requires_payment,
             is_free_registration=is_free_registration,
-            maps_url=maps_url
+            maps_url=maps_url,
+            location_tba=location_tba,
+            speakers_tba=speakers_tba
         )
         
         # Create text content
@@ -333,7 +343,9 @@ class EmailService:
             registration_id=registration_id,
             requires_payment=requires_payment,
             is_free_registration=is_free_registration,
-            maps_url=maps_url
+            maps_url=maps_url,
+            location_tba=location_tba,
+            speakers_tba=speakers_tba
         )
         
         tags = [
@@ -484,10 +496,18 @@ class EmailService:
         event_location: str,
         registration_id: str,
         reminder_type: str = "24h",  # "24h" or "1h"
-        maps_url: Optional[str] = None
+        maps_url: Optional[str] = None,
+        location_tba: bool = False,
+        speakers_tba: bool = False
     ) -> Dict[str, Any]:
         """Send event reminder email."""
         
+        # Auto-detect location TBA from flag or string value
+        norm_location = (event_location or '').strip().lower()
+        if location_tba or norm_location in ('tbd', 'tba', 'to be announced', 'venue tba', 'venue: to be announced'):
+            location_tba = True
+            maps_url = None
+
         reminder_times = {
             "24h": "24 hours",
             "1h": "1 hour"
@@ -501,7 +521,9 @@ class EmailService:
             event_date=event_date,
             event_location=event_location,
             reminder_type=reminder_type,
-            maps_url=maps_url
+            maps_url=maps_url,
+            location_tba=location_tba,
+            speakers_tba=speakers_tba
         )
         
         text_content = self._create_event_reminder_text(
@@ -510,7 +532,9 @@ class EmailService:
             event_date=event_date,
             event_location=event_location,
             reminder_type=reminder_type,
-            maps_url=maps_url
+            maps_url=maps_url,
+            location_tba=location_tba,
+            speakers_tba=speakers_tba
         )
         
         tags = [
@@ -577,23 +601,34 @@ class EmailService:
         qr_code_data: Optional[str] = None,
         requires_payment: bool = False,
         is_free_registration: bool = False,
-        maps_url: Optional[str] = None
+        maps_url: Optional[str] = None,
+        location_tba: bool = False,
+        speakers_tba: bool = False
     ) -> str:
         """Create HTML content for registration confirmation email."""
         maps_button = ""
-        if maps_url:
+        if maps_url and not location_tba:
             maps_button = f"""<div style="margin: 16px 0 20px 0;"><table role="presentation" border="0" cellpadding="0" cellspacing="0" style="border-collapse: separate;"><tr><td align="center" style="border-radius: 24px; background-color: #0b57d0;"><a href="{maps_url}" target="_blank" rel="noopener noreferrer" style="display: inline-block; padding: 12px 24px; font-family: 'Google Sans', Roboto, -apple-system, BlinkMacSystemFont, Arial, sans-serif; font-size: 14px; font-weight: 500; color: #ffffff; text-decoration: none; border-radius: 24px; min-height: 48px; box-sizing: border-box; line-height: 24px;">View Location on Map</a></td></tr></table></div>"""
+
+        display_location = event_location
+        if location_tba:
+            display_location = f"To Be Announced {template_loader.format_tba_badge('TBA')}"
 
         if is_free_registration:
             registration_status_title = "You're all set!"
             registration_status_message = (
                 "Your registration is complete and no payment is required for this event."
             )
-            next_steps_items = """
-  <li>Save this email for your records.</li>
-  <li>Watch your inbox for event reminders and organizer updates.</li>
-  <li>Arrive early on event day for a smooth check-in.</li>
-"""
+            items = [
+                "Save this email for your records.",
+                "Watch your inbox for event reminders and organizer updates."
+            ]
+            if location_tba:
+                items.append("Venue location will be announced soon — watch your email for the final venue details.")
+            if speakers_tba:
+                items.append("Keynote & speaker lineup will be revealed soon on the event page.")
+            items.append("Arrive early on event day for a smooth check-in.")
+            next_steps_items = "\n".join(f"  <li>{item}</li>" for item in items) + "\n"
             closing_message = (
                 "Thanks again for registering. We look forward to seeing you at the event!"
             )
@@ -602,18 +637,23 @@ class EmailService:
             registration_status_message = (
                 "We received your registration and payment proof. Our team will manually verify your payment."
             )
-            next_steps_items = """
-  <li>We'll review your payment proof and confirm your registration.</li>
-  <li>Once verified, you'll receive a final confirmation email with your QR code and registration details.</li>
-  <li>If we need additional information, we'll contact you at this email address.</li>
-"""
+            items = [
+                "We'll review your payment proof and confirm your registration.",
+                "Once verified, you'll receive a final confirmation email with your QR code and registration details."
+            ]
+            if location_tba:
+                items.append("Venue location will be announced soon — check your inbox for location updates.")
+            if speakers_tba:
+                items.append("Speaker lineup will be announced soon on the event page.")
+            items.append("If we need additional information, we'll contact you at this email address.")
+            next_steps_items = "\n".join(f"  <li>{item}</li>" for item in items) + "\n"
             closing_message = "Please keep an eye on your inbox for updates."
         
         context = {
             'user_name': user_name,
             'event_title': event_title,
             'event_date': event_date,
-            'event_location': event_location,
+            'event_location': display_location,
             'registration_id': registration_id or '',
             'qr_code_data': qr_code_data or '',
             'registration_status_title': registration_status_title,
@@ -765,23 +805,45 @@ class EmailService:
         event_date: str,
         event_location: str,
         reminder_type: str,
-        maps_url: Optional[str] = None
+        maps_url: Optional[str] = None,
+        location_tba: bool = False,
+        speakers_tba: bool = False
     ) -> str:
         """Create HTML content for event reminder email."""
         
         time_text = template_loader.get_reminder_time_text(reminder_type)
         
         maps_button = ""
-        if maps_url:
+        if maps_url and not location_tba:
             maps_button = f"""<div style="margin: 16px 0 20px 0;"><table role="presentation" border="0" cellpadding="0" cellspacing="0" style="border-collapse: separate;"><tr><td align="center" style="border-radius: 24px; background-color: #0b57d0;"><a href="{maps_url}" target="_blank" rel="noopener noreferrer" style="display: inline-block; padding: 12px 24px; font-family: 'Google Sans', Roboto, -apple-system, BlinkMacSystemFont, Arial, sans-serif; font-size: 14px; font-weight: 500; color: #ffffff; text-decoration: none; border-radius: 24px; min-height: 48px; box-sizing: border-box; line-height: 24px;">View Location on Map</a></td></tr></table></div>"""
+
+        display_location = event_location
+        if location_tba:
+            display_location = f"To Be Announced {template_loader.format_tba_badge('TBA')}"
+
+        checklist = []
+        if location_tba:
+            checklist.append("Venue location will be announced soon — watch your inbox for arrival details")
+        else:
+            checklist.append("Plan your route to the venue in advance")
+        checklist.append("Bring a valid ID for venue entry")
+        checklist.append("Arrive 15 minutes early for check-in")
+        checklist.append("Have your phone ready with your check-in QR code")
+        if speakers_tba:
+            checklist.append("Keynote &amp; speaker lineup will be revealed soon")
+        else:
+            checklist.append("Prepare any questions you might have for speakers")
+
+        reminder_checklist_items = "\n".join(f"    <li>{item}</li>" for item in checklist)
 
         context = {
             'user_name': user_name,
             'event_title': event_title,
             'event_date': event_date,
-            'event_location': event_location,
+            'event_location': display_location,
             'time_text': time_text,
-            'maps_button': maps_button
+            'maps_button': maps_button,
+            'reminder_checklist_items': reminder_checklist_items
         }
         
         return template_loader.render_email_template(
@@ -818,24 +880,31 @@ class EmailService:
         registration_id: Optional[str] = None,
         requires_payment: bool = False,
         is_free_registration: bool = False,
-        maps_url: Optional[str] = None
+        maps_url: Optional[str] = None,
+        location_tba: bool = False,
+        speakers_tba: bool = False
     ) -> str:
         """Create plain text content for registration confirmation email."""
+        display_location = "To Be Announced (TBA)" if location_tba else event_location
         registration_status_text = (
             "NO PAYMENT REQUIRED: Your registration is complete."
             if is_free_registration
             else "PAYMENT VERIFICATION: We received your payment proof and will verify it shortly."
         )
 
-        next_steps_text = (
-            "- Save this email for your records\n"
-            "- Watch your inbox for event reminders and organizer updates\n"
-            "- Arrive 15 minutes early for check-in"
-            if is_free_registration
-            else "- We'll review your payment proof and registration details\n"
-                 "- You'll receive a final confirmation and QR code after approval\n"
-                 "- If we need more details, we'll contact you by email"
-        )
+        steps = ["- Save this email for your records", "- Watch your inbox for event reminders and organizer updates"] if is_free_registration else [
+            "- We'll review your payment proof and registration details",
+            "- You'll receive a final confirmation and QR code after approval"
+        ]
+        if location_tba:
+            steps.append("- Venue location is To Be Announced (we'll email you once confirmed)")
+        if speakers_tba:
+            steps.append("- Speaker lineup will be announced soon on the event page")
+        if is_free_registration:
+            steps.append("- Arrive 15 minutes early for check-in")
+        else:
+            steps.append("- If we need more details, we'll contact you by email")
+        next_steps_text = "\n".join(steps)
 
         payment_text = (
             "\nPAYMENT REQUIRED: Please complete your payment to secure your spot. Check your email for payment instructions.\n"
@@ -843,7 +912,7 @@ class EmailService:
             else ""
         )
         
-        maps_text = f"- Location Map: {maps_url}\n" if maps_url else ""
+        maps_text = f"- Location Map: {maps_url}\n" if (maps_url and not location_tba) else ""
         
         return f"""
 Registration Confirmed - {event_title}
@@ -855,7 +924,7 @@ Thank you for registering for {event_title}. We're excited to have you join us!
 EVENT DETAILS:
 - Event: {event_title}
 - Date: {event_date}
-- Location: {event_location}
+- Location: {display_location}
 {maps_text}{f'- Registration ID: {registration_id}' if registration_id else ''}
 {registration_status_text}
 {payment_text}
@@ -869,7 +938,7 @@ Google Developer Groups - Davao
 
 ---
 This email was sent to {user_name} for their registration to {event_title}.
-© 2024 GDG Davao. All rights reserved.
+© 2026 GDG Davao. All rights reserved.
         """
     
     def _create_payment_notification_text(
@@ -994,7 +1063,9 @@ This certificate was generated for {user_name} for their participation in {event
         event_date: str,
         event_location: str,
         reminder_type: str,
-        maps_url: Optional[str] = None
+        maps_url: Optional[str] = None,
+        location_tba: bool = False,
+        speakers_tba: bool = False
     ) -> str:
         """Create plain text content for event reminder email."""
         
@@ -1005,7 +1076,11 @@ This certificate was generated for {user_name} for their participation in {event
         }
         
         time_text = reminder_times.get(reminder_type, "soon")
-        maps_text = f"- Location Map: {maps_url}\n" if maps_url else ""
+        display_location = "To Be Announced (TBA)" if location_tba else event_location
+        maps_text = f"- Location Map: {maps_url}\n" if (maps_url and not location_tba) else ""
+        
+        venue_check = "- Venue location will be announced soon (watch your inbox for updates)" if location_tba else "- Plan your route to the venue"
+        speaker_check = "- Keynote & speaker lineup will be revealed soon" if speakers_tba else "- Prepare any questions you might have"
         
         return f"""
 Event Reminder - {event_title}
@@ -1017,15 +1092,14 @@ Hello {user_name}!
 EVENT DETAILS:
 - Event: {event_title}
 - Date & Time: {event_date}
-- Location: {event_location}
+- Location: {display_location}
 {maps_text}
-
 REMINDER CHECKLIST:
-- Plan your route to the venue
+{venue_check}
 - Bring a valid ID for check-in
 - Arrive 15 minutes early
 - Bring your phone for QR code check-in
-- Prepare any questions you might have
+{speaker_check}
 
 We're excited to see you there!
 
@@ -1034,7 +1108,7 @@ Google Developer Groups - Davao
 
 ---
 This reminder was sent to {user_name} for {event_title}.
-© 2024 GDG Davao. All rights reserved.
+© 2026 GDG Davao. All rights reserved.
         """
     
     def _create_feedback_request_text(

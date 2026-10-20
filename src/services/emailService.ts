@@ -128,6 +128,8 @@ export class EmailService {
     requiresPayment?: boolean;
     emailType?: 'submitted' | 'approved';
     isResend?: boolean;
+    locationTba?: boolean;
+    speakersTba?: boolean;
   }): Promise<{ success: boolean; message: string; emailId?: string }> {
     try {
       const sendConfirmationEmail = httpsCallable(functions, 'sendConfirmationEmail');
@@ -190,6 +192,9 @@ export class EmailService {
     registrationId?: string;
     reminderType?: '24h' | '1h';
     isResend?: boolean;
+    locationTba?: boolean;
+    speakersTba?: boolean;
+    mapsUrl?: string;
   }): Promise<{ success: boolean; message: string; emailId?: string }> {
     try {
       const sendEventReminder = httpsCallable(functions, 'sendEventReminder');
@@ -339,8 +344,8 @@ export class EmailService {
             userEmail: targetEmail,
             userName: emailLog.userName,
             eventTitle: emailLog.eventTitle || '',
-            eventDate: 'TBD',
-            eventLocation: 'TBD',
+            eventDate: 'To Be Announced',
+            eventLocation: 'To Be Announced',
             registrationId: emailLog.registrationId,
             reminderType: emailLog.reminderType as any,
             isResend

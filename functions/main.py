@@ -2526,11 +2526,17 @@ def sendConfirmationEmail(req: https_fn.CallableRequest) -> Dict[str, Any]:
             # Get venue information - handle both nested venue object and flat structure
             venue = event_data.get('venue', {})
             venue_type = venue.get('type') or event_data.get('venueType')
+            location_tba = bool(event_data.get('locationTba', False))
+            speakers_tba = bool(event_data.get('speakersTba', False))
             
-            logger.info(f"venue_type: {venue_type}")
+            logger.info(f"venue_type: {venue_type}, location_tba: {location_tba}, speakers_tba: {speakers_tba}")
             
-            if venue_type == 'online':
+            if location_tba:
+                event_location = 'To Be Announced'
+                maps_url = ''
+            elif venue_type == 'online':
                 event_location = venue.get('onlineUrl') or venue.get('url') or 'Online Event'
+                maps_url = ''
             elif venue_type == 'offline':
                 # Try nested venue object first, then flat structure
                 venue_name = venue.get('name') or event_data.get('venueName', '')
@@ -2546,16 +2552,16 @@ def sendConfirmationEmail(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 if venue_city:
                     location_parts.append(venue_city)
                 
-                event_location = ', '.join(location_parts) if location_parts else 'TBD'
+                event_location = ', '.join(location_parts) if location_parts else 'To Be Announced'
                 logger.info(f"Built location: {event_location} from parts: {location_parts}")
+                maps_url = venue.get('mapsUrl') or ''
+                if not maps_url and event_location != 'To Be Announced':
+                    import urllib.parse
+                    maps_url = f"https://www.openstreetmap.org/search?query={urllib.parse.quote(event_location)}"
             else:
-                logger.info(f"Unknown venue type: {venue_type}, using TBD")
-
-            # Extract or build location map URL
-            maps_url = venue.get('mapsUrl') or ''
-            if not maps_url and venue_type in ['offline', 'hybrid'] and event_location != 'TBD':
-                import urllib.parse
-                maps_url = f"https://www.openstreetmap.org/search?query={urllib.parse.quote(event_location)}"
+                logger.info(f"Unknown venue type: {venue_type}, using To Be Announced")
+                event_location = 'To Be Announced'
+                maps_url = ''
             
             # Generate QR code only for approved registrations
             qr_code_data = None
@@ -2603,7 +2609,9 @@ def sendConfirmationEmail(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 qr_code_data=qr_code_data,
                 requires_payment=requires_payment,
                 is_free_registration=is_free_registration,
-                maps_url=maps_url
+                maps_url=maps_url,
+                location_tba=location_tba,
+                speakers_tba=speakers_tba
             )
 
             # Log activity for traceability
@@ -2929,21 +2937,33 @@ def sendEventReminder(req: https_fn.CallableRequest) -> Dict[str, Any]:
 
         # Gate to elevated organizer or admin
         organizer_uid = None
+        location_tba = bool(data.get('locationTba', False))
+        speakers_tba = bool(data.get('speakersTba', False))
         if registration_id and registration_id != 'unknown':
             reg_doc = get_db().collection('registrations').document(registration_id).get()
             if reg_doc.exists:
                 reg_data = reg_doc.to_dict() or {}
                 organizer_uid = reg_data.get('organizerUid')
-                if not organizer_uid and reg_data.get('eventId'):
+                if reg_data.get('eventId'):
                     ev_doc = get_db().collection('events').document(reg_data['eventId']).get()
                     if ev_doc.exists:
-                        organizer_uid = (ev_doc.to_dict() or {}).get('organizer', {}).get('uid')
+                        ev_data = ev_doc.to_dict() or {}
+                        if not organizer_uid:
+                            organizer_uid = (ev_data.get('organizer') or {}).get('uid')
+                        if 'locationTba' not in data and 'locationTba' in ev_data:
+                            location_tba = bool(ev_data.get('locationTba', False))
+                        if 'speakersTba' not in data and 'speakersTba' in ev_data:
+                            speakers_tba = bool(ev_data.get('speakersTba', False))
         require_elevated(req, organizer_uid)
 
-        maps_url = data.get('mapsUrl') or ''
-        if not maps_url and event_location and event_location != 'TBD':
-            import urllib.parse
-            maps_url = f"https://www.openstreetmap.org/search?query={urllib.parse.quote(event_location)}"
+        if location_tba:
+            event_location = 'To Be Announced'
+            maps_url = ''
+        else:
+            maps_url = data.get('mapsUrl') or ''
+            if not maps_url and event_location and event_location not in ('TBD', 'To Be Announced'):
+                import urllib.parse
+                maps_url = f"https://www.openstreetmap.org/search?query={urllib.parse.quote(event_location)}"
 
         # Send email using Resend
         email_result = email_service.send_event_reminder(
@@ -2951,10 +2971,12 @@ def sendEventReminder(req: https_fn.CallableRequest) -> Dict[str, Any]:
             user_name=user_name,
             event_title=event_title,
             event_date=event_date,
-            event_location=event_location or 'TBD',
+            event_location=event_location or 'To Be Announced',
             registration_id=registration_id or 'unknown',
             reminder_type=reminder_type,
-            maps_url=maps_url
+            maps_url=maps_url,
+            location_tba=location_tba,
+            speakers_tba=speakers_tba
         )
 
         # Log activity for traceability
@@ -3757,12 +3779,18 @@ def sendCheckInNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
 
             event_title = event_data.get('title', 'Event')
             event_date = event_data.get('date', 'TBD')
-            event_location = event_data.get('location', 'TBD')
-            venue = event_data.get('venue', {})
-            maps_url = venue.get('mapsUrl') or ''
-            if not maps_url and event_location and event_location != 'TBD':
-                import urllib.parse
-                maps_url = f"https://www.openstreetmap.org/search?query={urllib.parse.quote(event_location)}"
+            location_tba = bool(event_data.get('locationTba', False))
+            speakers_tba = bool(event_data.get('speakersTba', False))
+            if location_tba:
+                event_location = 'To Be Announced'
+                maps_url = ''
+            else:
+                event_location = event_data.get('location') or 'To Be Announced'
+                venue = event_data.get('venue', {})
+                maps_url = venue.get('mapsUrl') or ''
+                if not maps_url and event_location not in ('TBD', 'To Be Announced'):
+                    import urllib.parse
+                    maps_url = f"https://www.openstreetmap.org/search?query={urllib.parse.quote(event_location)}"
 
             # Send email using Resend (using event reminder template as base)
             email_result = email_service.send_event_reminder(
@@ -3773,7 +3801,9 @@ def sendCheckInNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 event_location=event_location,
                 registration_id=registration_id,
                 reminder_type="checked_in",  # Custom type for check-in
-                maps_url=maps_url
+                maps_url=maps_url,
+                location_tba=location_tba,
+                speakers_tba=speakers_tba
             )
 
             # Log activity for traceability
