@@ -1,7 +1,7 @@
 # Development Handoff
 
 TeamApo Hub local development must use the Firebase emulators and synthetic fixture
-data. Copy `env.example` to `.env`, set a local-only `APOHUB_SEED_PASSWORD`,
+data. Copy `.env.example` to `.env`, set a local-only `APOHUB_SEED_PASSWORD`,
 and run `bun run dev:apohub`.
 
 Before changing Firebase rules or payment workflows:

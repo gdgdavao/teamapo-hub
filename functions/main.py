@@ -197,8 +197,8 @@ def log_audit_entry(
     db,
     category: str,
     action: str,
-    actor_uid: str,
-    actor_email: str,
+    actor_uid: Optional[str] = None,
+    actor_email: Optional[str] = None,
     actor_name: Optional[str] = None,
     actor_role: str = 'admin',
     target_type: Optional[str] = None,
@@ -2675,7 +2675,6 @@ def deleteUser(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 'deletedEmail': target_data.get('email'),
                 'deletedRole': target_data.get('role'),
                 'authAccountRemoved': auth_deleted,
-                'ownedEventDocuments': owned_event_count,
                 'profilePictureFilesRemoved': removed_profile_files
             },
             status='success'

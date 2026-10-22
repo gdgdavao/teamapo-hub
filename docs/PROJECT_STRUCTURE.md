@@ -16,7 +16,7 @@ teamapo-hub/
 ├── firestore.indexes.json
 ├── firebase.json         Emulator and deploy config
 ├── vercel.json           Frontend hosting config
-└── env.example           Template for .env
+├── .env.example          Template for .env
 ```
 
 ## `src/`

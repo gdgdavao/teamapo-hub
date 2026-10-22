@@ -17,7 +17,7 @@ How to set up, run, test and deploy TeamApo Hub locally. For the system design, 
 git clone https://github.com/gdgdavao/teamapo-hub.git
 cd teamapo-hub
 bun install
-cp env.example .env
+cp .env.example .env
 
 # Cloud Functions run from this venv. Without it the emulator falls back to the
 # system python, which does not have firebase_functions installed.

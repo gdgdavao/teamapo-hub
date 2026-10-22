@@ -2,6 +2,8 @@
   "name": "apohub-gdgdavao",
   "private": true,
   "version": "1.5.1",
+  "description": "TeamApo Hub — GDG Davao Event Lifecycle Management Platform",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",

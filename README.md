@@ -27,7 +27,7 @@ cd teamapo-hub
 bun install
 
 # Copy environment variables
-cp env.example .env
+cp .env.example .env
 
 # Start local development server with emulators and sample data
 bun run dev:apohub
@@ -67,7 +67,7 @@ Start with [Product](PRODUCT.md), then [Contributing Guidelines](CONTRIBUTING.md
 - **Forms**: React Hook Form
 - **PDF Generation**: jsPDF + html2canvas
 - **Testing**: Vitest (unit in `node`, components in `jsdom`), Firebase Rules Unit Testing
-- **CI**: GitHub Actions, five gates ([workflow](.github/workflows/ci.yml))
+- **CI**: Verification quality gates (TypeScript typecheck, ESLint, Vitest unit & DOM suites, production build)
 
 ## Getting Started as a Contributor
 

@@ -64,3 +64,6 @@ certificate-emails-backup.json
 # AI Agent Interconnected Memory Map (can be bulky)
 .memory/
 memory/
+
+# Scratch directory
+scratch/
