@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { CheckCircleIcon } from '@heroicons/react/24/outline';
 import { Button, Input } from '../../../components/UI';
+import { EventService } from '../../../services/eventService';
 import { TicketType, PromoCode, TicketPricing } from '../../../types';
 import {
+  ApplicablePromoCode,
   calculateTicketPricing,
   getCurrentTicketPricing,
   calculateSavingsPercentage,
@@ -11,6 +13,8 @@ import {
 
 interface TicketSelectorProps {
   ticketTypes: TicketType[];
+  eventId?: string;
+  hasPromoCodes?: boolean;
   promoCodes?: PromoCode[];
   onSelectionChange: (selection: TicketSelection) => void;
   className?: string;
@@ -28,16 +32,21 @@ export interface TicketSelection {
 
 const TicketSelector: React.FC<TicketSelectorProps> = ({
   ticketTypes,
+  eventId,
+  hasPromoCodes = false,
   promoCodes = [],
   onSelectionChange,
   className = ''
 }) => {
   const [selectedTicketType, setSelectedTicketType] = useState<string>('');
   const [promoCode, setPromoCode] = useState<string>('');
-  const [appliedPromoCode, setAppliedPromoCode] = useState<PromoCode | undefined>(undefined);
+  const [appliedPromoCode, setAppliedPromoCode] = useState<ApplicablePromoCode | undefined>(undefined);
   const [promoCodeValid, setPromoCodeValid] = useState<boolean>(false);
   const [promoCodeError, setPromoCodeError] = useState<string>('');
+  const [isValidatingPromo, setIsValidatingPromo] = useState<boolean>(false);
   const [ticketPricings, setTicketPricings] = useState<Record<string, TicketPricing>>({});
+
+  const showPromoCodeInput = Boolean(hasPromoCodes || promoCodes.length > 0);
 
   // Create a stable reference to ticketTypes IDs to prevent infinite loops
   const ticketTypeIds = useMemo(() => ticketTypes.map(t => t.id).join(','), [ticketTypes]);
@@ -99,6 +108,36 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTicketType, appliedPromoCode, ticketTypeIds]); // Use stable ticketTypeIds
 
+  const handleTicketTypeChange = async (newTicketTypeId: string) => {
+    setSelectedTicketType(newTicketTypeId);
+    if (appliedPromoCode && eventId) {
+      setIsValidatingPromo(true);
+      try {
+        const result = await EventService.validatePromoCodeRemote({
+          eventId,
+          code: appliedPromoCode.code,
+          ticketTypeId: newTicketTypeId
+        });
+        if (result.valid && result.code && result.discountType && typeof result.discountValue === 'number') {
+          setAppliedPromoCode({
+            code: result.code,
+            discountType: result.discountType,
+            discountValue: result.discountValue,
+            maxDiscountAmount: result.maxDiscountAmount
+          });
+          setPromoCodeValid(true);
+          setPromoCodeError('');
+        } else {
+          setAppliedPromoCode(undefined);
+          setPromoCodeValid(false);
+          setPromoCodeError(result.message || 'Promo code is not valid for the selected ticket.');
+        }
+      } finally {
+        setIsValidatingPromo(false);
+      }
+    }
+  };
+
   const handlePromoCodeChange = (code: string) => {
     setPromoCode(code);
     setPromoCodeError('');
@@ -106,7 +145,7 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
     setAppliedPromoCode(undefined);
   };
 
-  const handleApplyPromo = () => {
+  const handleApplyPromo = async () => {
     if (!selectedTicketType) {
       setPromoCodeError('Select a ticket type first');
       setPromoCodeValid(false);
@@ -114,7 +153,8 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
       return;
     }
 
-    if (!promoCode) {
+    const trimmedCode = promoCode.trim();
+    if (!trimmedCode) {
       setPromoCodeError('Enter a promo code');
       setPromoCodeValid(false);
       setAppliedPromoCode(undefined);
@@ -122,9 +162,39 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
     }
 
     const ticketType = ticketTypes.find(t => t.id === selectedTicketType);
-    const found = promoCodes.find(p => p.code.toLowerCase() === promoCode.toLowerCase());
     if (!ticketType) return;
 
+    if (eventId) {
+      setIsValidatingPromo(true);
+      setPromoCodeError('');
+      try {
+        const result = await EventService.validatePromoCodeRemote({
+          eventId,
+          code: trimmedCode,
+          ticketTypeId: selectedTicketType
+        });
+
+        if (result.valid && result.code && result.discountType && typeof result.discountValue === 'number') {
+          setAppliedPromoCode({
+            code: result.code,
+            discountType: result.discountType,
+            discountValue: result.discountValue,
+            maxDiscountAmount: result.maxDiscountAmount
+          });
+          setPromoCodeValid(true);
+          setPromoCodeError('');
+        } else {
+          setAppliedPromoCode(undefined);
+          setPromoCodeValid(false);
+          setPromoCodeError(result.message || 'Invalid promo code.');
+        }
+      } finally {
+        setIsValidatingPromo(false);
+      }
+      return;
+    }
+
+    const found = promoCodes.find(p => p.code.toLowerCase() === trimmedCode.toLowerCase());
     if (!found) {
       setPromoCodeError('Promo code not found');
       setPromoCodeValid(false);
@@ -194,7 +264,7 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
           value={ticketType.id}
           checked={isSelected}
           disabled={!isAvailable}
-          onChange={() => setSelectedTicketType(ticketType.id)}
+          onChange={() => void handleTicketTypeChange(ticketType.id)}
           aria-label={`${ticketType.name}, ${formatAmount(pricing?.currentPrice ?? ticketType.price)}${
             isAvailable ? '' : ', sold out'
           }`}
@@ -278,27 +348,41 @@ return (
       </div>
 
       {/* Promo Code */}
-      {selectedTicketType && promoCodes.length > 0 && (
+      {selectedTicketType && showPromoCodeInput && (
         <div className="space-y-3">
           <Input
             mono
             label="Promo Code (Optional)"
             value={promoCode}
+            disabled={isValidatingPromo}
             onChange={(e) => handlePromoCodeChange(e.target.value.toUpperCase())}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void handleApplyPromo();
+              }
+            }}
             placeholder="Enter promo code"
             error={promoCodeError || undefined}
             aria-describedby={undefined}
           />
           {promoCodeValid && appliedPromoCode && (
-            <p className="flex items-center gap-2 text-base text-success">
+            <p role="status" aria-live="polite" className="flex items-center gap-2 text-base text-success">
               <CheckCircleIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
               <span>Promo code applied!</span>
             </p>
           )}
           <div className="flex flex-wrap gap-2">
-            <Button variant="tonal" onClick={handleApplyPromo}>Apply</Button>
+            <Button
+              type="button"
+              variant="tonal"
+              loading={isValidatingPromo}
+              onClick={() => void handleApplyPromo()}
+            >
+              Apply
+            </Button>
             {appliedPromoCode && (
-              <Button variant="text" onClick={handleClearPromo}>Clear</Button>
+              <Button type="button" variant="text" onClick={handleClearPromo}>Clear</Button>
             )}
           </div>
         </div>

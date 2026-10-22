@@ -1,6 +1,7 @@
 import {
   collection,
   deleteDoc,
+  deleteField,
   doc,
   getDoc,
   getDocs,
@@ -22,6 +23,7 @@ import { db, functions } from '../config/firebase';
 import { logger } from '../utils/logger';
 import { Registration, Event, TicketPricing } from '../types';
 import { EmailService } from './emailService';
+import { EventService } from './eventService';
 import { resolveDisplayStatus, StatusBearingRegistration } from '../utils/registrationStatus';
 import { toDateSafe, toISOStringSafe } from '../utils/dateUtils';
 import { AuditLogService } from './auditLogService';
@@ -171,16 +173,23 @@ export class RegistrationService {
    */
   private static async incrementPromoCodeUsage(eventId: string, promoCodeId: string): Promise<void> {
     const eventRef = doc(db, this.EVENTS_COLLECTION, eventId);
+    const promoConfigRef = doc(db, this.EVENTS_COLLECTION, eventId, 'config', 'promoCodes');
 
     try {
       await runTransaction(db, async transaction => {
-        const eventSnapshot = await transaction.get(eventRef);
+        const [eventSnapshot, promoConfigSnapshot] = await Promise.all([
+          transaction.get(eventRef),
+          transaction.get(promoConfigRef)
+        ]);
         if (!eventSnapshot.exists()) {
           throw new Error('Event not found');
         }
 
         const eventData = eventSnapshot.data() as Event;
-        const promoCodes = Array.isArray(eventData.promoCodes) ? [...eventData.promoCodes] : [];
+        const configPromos = promoConfigSnapshot.exists() ? promoConfigSnapshot.data()?.promoCodes : null;
+        const promoCodes = Array.isArray(configPromos)
+          ? [...configPromos]
+          : (Array.isArray(eventData.promoCodes) ? [...eventData.promoCodes] : []);
         const promoIndex = promoCodes.findIndex(pc => pc.id === promoCodeId);
 
         if (promoIndex < 0) {
@@ -203,13 +212,22 @@ export class RegistrationService {
           currentUses: currentUses + 1
         };
 
-        transaction.update(eventRef, {
+        transaction.set(promoConfigRef, {
           promoCodes,
           updatedAt: serverTimestamp()
-        });
+        }, { merge: true });
+
+        if ('promoCodes' in (eventData as any)) {
+          transaction.update(eventRef, {
+            promoCodes: deleteField(),
+            hasPromoCodes: promoCodes.some(pc => pc.isActive !== false),
+            updatedAt: serverTimestamp()
+          });
+        }
 
         logger.log(`Promo code "${promoCode.code}" usage incremented: ${currentUses} -> ${currentUses + 1}`);
       });
+      swrCache.delete(`promos:${eventId}`);
     } catch (error) {
       logger.error('Error incrementing promo code usage:', error);
       throw error;
@@ -221,16 +239,23 @@ export class RegistrationService {
    */
   private static async decrementPromoCodeUsage(eventId: string, promoCodeId: string): Promise<void> {
     const eventRef = doc(db, this.EVENTS_COLLECTION, eventId);
+    const promoConfigRef = doc(db, this.EVENTS_COLLECTION, eventId, 'config', 'promoCodes');
 
     try {
       await runTransaction(db, async transaction => {
-        const eventSnapshot = await transaction.get(eventRef);
+        const [eventSnapshot, promoConfigSnapshot] = await Promise.all([
+          transaction.get(eventRef),
+          transaction.get(promoConfigRef)
+        ]);
         if (!eventSnapshot.exists()) {
           throw new Error('Event not found');
         }
 
         const eventData = eventSnapshot.data() as Event;
-        const promoCodes = Array.isArray(eventData.promoCodes) ? [...eventData.promoCodes] : [];
+        const configPromos = promoConfigSnapshot.exists() ? promoConfigSnapshot.data()?.promoCodes : null;
+        const promoCodes = Array.isArray(configPromos)
+          ? [...configPromos]
+          : (Array.isArray(eventData.promoCodes) ? [...eventData.promoCodes] : []);
         const promoIndex = promoCodes.findIndex(pc => pc.id === promoCodeId);
 
         if (promoIndex < 0) {
@@ -247,13 +272,22 @@ export class RegistrationService {
           currentUses: Math.max(0, currentUses - 1)
         };
 
-        transaction.update(eventRef, {
+        transaction.set(promoConfigRef, {
           promoCodes,
           updatedAt: serverTimestamp()
-        });
+        }, { merge: true });
+
+        if ('promoCodes' in (eventData as any)) {
+          transaction.update(eventRef, {
+            promoCodes: deleteField(),
+            hasPromoCodes: promoCodes.some(pc => pc.isActive !== false),
+            updatedAt: serverTimestamp()
+          });
+        }
 
         logger.log(`Promo code "${promoCode.code}" usage decremented: ${currentUses} -> ${Math.max(0, currentUses - 1)}`);
       });
+      swrCache.delete(`promos:${eventId}`);
     } catch (error) {
       logger.error('Error decrementing promo code usage:', error);
       // Don't throw - this is a cleanup operation
@@ -1159,44 +1193,50 @@ export class RegistrationService {
         }
       }
       
-      // Calculate pricing
+      // Calculate pricing (authoritative promo code validation and discount calculation
+      // happens server-side inside createAnonymousRegistration transaction)
       const originalPrice = ticketType.price || 0;
       let discountAmount = 0;
-      let promoCode = null;
-      
-      // Check promo code if provided
+      let appliedCode: string | undefined;
+
       if (registrationData.promoCode) {
-        const promoCodes = eventData.promoCodes || [];
-        const validPromoCode = promoCodes.find((pc: any) => 
-          pc.code === registrationData.promoCode && 
-          pc.isActive &&
-          (!pc.maxUses || pc.currentUses < pc.maxUses)
-        );
-        
-        if (validPromoCode) {
-          promoCode = validPromoCode as any;
-          if (validPromoCode.discountType === 'percentage') {
-            discountAmount = (originalPrice * validPromoCode.discountValue) / 100;
-          } else {
-            discountAmount = validPromoCode.discountValue;
+        const remoteValidation = await EventService.validatePromoCodeRemote({
+          eventId: registrationData.eventId,
+          code: registrationData.promoCode,
+          ticketTypeId: registrationData.ticketTypeId
+        });
+
+        if (!remoteValidation.valid) {
+          return {
+            isValid: false,
+            pricing: {} as TicketPricing,
+            message: remoteValidation.message || 'Invalid promo code'
+          };
+        }
+
+        appliedCode = remoteValidation.code || registrationData.promoCode.trim().toUpperCase();
+        if (typeof remoteValidation.discountAmount === 'number') {
+          discountAmount = remoteValidation.discountAmount;
+        } else if (remoteValidation.discountType === 'percentage' && typeof remoteValidation.discountValue === 'number') {
+          discountAmount = (originalPrice * remoteValidation.discountValue) / 100;
+          if (typeof remoteValidation.maxDiscountAmount === 'number') {
+            discountAmount = Math.min(discountAmount, remoteValidation.maxDiscountAmount);
           }
-        } else {
-          // Invalid promo code - reset it
-          logger.warn('Invalid promo code provided:', registrationData.promoCode);
+        } else if (typeof remoteValidation.discountValue === 'number') {
+          discountAmount = Math.min(remoteValidation.discountValue, originalPrice);
         }
       }
-      
+
       const currentPrice = Math.max(0, originalPrice - discountAmount);
-      
+
       const pricing: TicketPricing = {
         ticketTypeId: registrationData.ticketTypeId,
         originalPrice,
         currentPrice,
         discountAmount,
-        ...(promoCode ? { 
+        ...(appliedCode ? {
           discountType: 'promo_code' as const,
-          promoCode: (promoCode as any).code,
-          promoCodeId: (promoCode as any).id  // Add the promo code ID
+          promoCode: appliedCode
         } : {})
       };
       

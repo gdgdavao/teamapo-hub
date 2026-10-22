@@ -211,11 +211,10 @@ export class CameraService {
 
     for (const attempt of this.buildLadder(prefs, options)) {
       try {
-        console.log('[CameraService] Acquiring stream for stage:', attempt.stage, attempt.constraints);
         logger.debug('CameraService: acquiring stream', attempt.stage, attempt.constraints);
         const stream = await raceWithTimeout(attempt.constraints, timeoutMs);
         const deviceId = stream.getVideoTracks()?.[0]?.getSettings?.().deviceId;
-        console.log('[CameraService] Acquired stream successfully:', {
+        logger.debug('[CameraService] Acquired stream successfully:', {
           stage: attempt.stage,
           negotiatedDeviceId: deviceId,
           trackCount: stream.getVideoTracks().length,
@@ -225,12 +224,11 @@ export class CameraService {
         lastError = err;
         options.onFallback?.(attempt.stage, err);
         const failureKind = this.classifyCameraError(err);
-        console.warn('[CameraService] Attempt failed:', {
+        logger.warn('CameraService attempt failed:', {
           stage: attempt.stage,
           failureKind,
           error: err,
         });
-        logger.warn('CameraService attempt failed:', attempt.stage, err);
         if (FATAL_KINDS.has(failureKind)) throw err;
         if (failureKind === 'not-found' && attempt.stage === 'default') throw err;
 
@@ -240,7 +238,7 @@ export class CameraService {
         if (failureKind === 'in-use') {
           const delay = options.settleDelayMs ?? 350;
           if (delay > 0) {
-            console.log(`[CameraService] Waiting settle delay (${delay}ms) for lens release...`);
+            logger.debug(`[CameraService] Waiting settle delay (${delay}ms) for lens release...`);
             await new Promise((res) => setTimeout(res, delay));
           }
         }

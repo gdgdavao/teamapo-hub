@@ -169,6 +169,16 @@ export interface Event {
   locationTba?: boolean;
   speakersTba?: boolean;
   ticketTypes: TicketType[];
+  /**
+   * Public boolean flag indicating whether this event has active promo codes configured.
+   * Actual promo code configurations reside in `events/{eventId}/config/promoCodes`
+   * so they are never exposed on the public `/events/{eventId}` Listen/channel stream.
+   */
+  hasPromoCodes?: boolean;
+  /**
+   * @deprecated Moved to `events/{eventId}/config/promoCodes` to prevent client-side leakage.
+   * Kept optional for legacy backward-compatibility reads in organizer views.
+   */
   promoCodes?: PromoCode[];
   paymentConfigs?: PaymentConfig[];
   registrationForm?: FormField[];
@@ -260,6 +270,17 @@ export interface PromoCode {
   createdBy: string;
   createdAt: Timestamp;
   updatedAt: Timestamp;
+}
+
+/**
+ * Minimal safe discount payload returned by the `validatePromoCode` Cloud Function.
+ * Never exposes `maxUses`, `currentUses`, `createdBy`, or other codes.
+ */
+export interface ValidatedPromoDiscount {
+  code: string;
+  discountType: 'percentage' | 'fixed';
+  discountValue: number;
+  maxDiscountAmount?: number;
 }
 
 export interface TicketPricing {

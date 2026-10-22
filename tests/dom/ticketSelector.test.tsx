@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import TicketSelector, { TicketSelection } from '@/pages/registration/components/TicketSelector';
+import { EventService } from '@/services/eventService';
 import { TicketType, PromoCode } from '@/types';
 
 describe('TicketSelector Single Ticket per Person Contract', () => {
@@ -122,5 +123,49 @@ describe('TicketSelector Single Ticket per Person Contract', () => {
     expect(lastSelection!.quantity).toBe(1);
     expect(lastSelection!.discountAmount).toBe(100);
     expect(lastSelection!.totalAmount).toBe(400);
+  });
+
+  it('validates promo codes server-side via EventService.validatePromoCodeRemote when eventId and hasPromoCodes are provided', async () => {
+    const user = userEvent.setup();
+    let lastSelection: TicketSelection | null = null;
+    const handleSelectionChange = vi.fn((sel: TicketSelection) => {
+      lastSelection = sel;
+    });
+
+    const validateSpy = vi.spyOn(EventService, 'validatePromoCodeRemote').mockResolvedValueOnce({
+      valid: true,
+      code: 'DISCOUNT20',
+      discountType: 'percentage',
+      discountValue: 20,
+      discountAmount: 100,
+      finalPrice: 400,
+    });
+
+    render(
+      <TicketSelector
+        ticketTypes={mockTickets}
+        eventId="evt-secure-1"
+        hasPromoCodes={true}
+        onSelectionChange={handleSelectionChange}
+      />
+    );
+
+    await user.click(screen.getByRole('radio', { name: /VIP Admission/i }));
+
+    const promoInput = screen.getByLabelText(/Promo Code/i);
+    await user.type(promoInput, 'discount20');
+    await user.click(screen.getByRole('button', { name: /Apply/i }));
+
+    expect(validateSpy).toHaveBeenCalledWith({
+      eventId: 'evt-secure-1',
+      code: 'DISCOUNT20',
+      ticketTypeId: 'vip-pass',
+    });
+    expect(await screen.findByText(/Promo code applied!/i)).toBeInTheDocument();
+    expect(lastSelection!.promoCode).toBe('DISCOUNT20');
+    expect(lastSelection!.discountAmount).toBe(100);
+    expect(lastSelection!.totalAmount).toBe(400);
+
+    validateSpy.mockRestore();
   });
 });

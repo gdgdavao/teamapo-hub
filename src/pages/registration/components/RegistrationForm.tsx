@@ -894,7 +894,8 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({
             )}
             <TicketSelector
               ticketTypes={activeTicketTypes}
-              promoCodes={event.promoCodes || []}
+              eventId={event.id}
+              hasPromoCodes={Boolean(event.hasPromoCodes || (event.promoCodes && event.promoCodes.length > 0))}
               onSelectionChange={handleTicketSelectionChange}
             />
           </Card>

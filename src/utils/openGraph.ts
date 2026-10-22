@@ -349,8 +349,7 @@ export async function fetchEventFromFirestore(
       const data = parseFirestoreDocument(doc);
       return { id, ...data } as unknown as EventMetadata;
     }
-  } catch (error) {
-    console.error('[openGraph] Failed to fetch event from Firestore REST API:', error);
+  } catch {
     return null;
   }
 

@@ -1,10 +1,16 @@
-import { TicketType, PromoCode, TicketPricing } from '../types';
+import { TicketType, PromoCode, TicketPricing, ValidatedPromoDiscount } from '../types';
 import { toDateSafe } from './dateUtils';
+
+export type ApplicablePromoCode = PromoCode | ValidatedPromoDiscount;
+
+function isFullPromoCode(promo: ApplicablePromoCode): promo is PromoCode {
+  return 'isActive' in promo;
+}
 
 export interface PricingCalculationInput {
   ticketType: TicketType;
   quantity?: number;
-  promoCode?: PromoCode;
+  promoCode?: ApplicablePromoCode;
   currentDate?: Date;
 }
 
@@ -31,7 +37,12 @@ export function calculateTicketPricing(input: PricingCalculationInput): PricingC
 
   // Apply promo code if provided
   if (promoCode) {
-    const promoValidation = validatePromoCode(promoCode, ticketType, currentDate);
+    // If a full PromoCode is provided (organizer views / unit tests), validate locally.
+    // If a server-validated ValidatedPromoDiscount is provided, the Cloud Function already verified eligibility.
+    const promoValidation = isFullPromoCode(promoCode)
+      ? validatePromoCode(promoCode, ticketType, currentDate)
+      : { isValid: true, errors: [] };
+
     if (promoValidation.isValid) {
       promoApplied = true;
       
@@ -39,10 +50,10 @@ export function calculateTicketPricing(input: PricingCalculationInput): PricingC
         const promoDiscount = (currentPrice * promoCode.discountValue) / 100;
         const maxDiscount = promoCode.maxDiscountAmount || Infinity;
         const actualDiscount = Math.min(promoDiscount, maxDiscount);
-        currentPrice -= actualDiscount;
+        currentPrice = Math.max(0, currentPrice - actualDiscount);
       } else if (promoCode.discountType === 'fixed') {
         const fixedDiscount = Math.min(promoCode.discountValue, currentPrice);
-        currentPrice -= fixedDiscount;
+        currentPrice = Math.max(0, currentPrice - fixedDiscount);
       }
     } else {
       errors.push(...promoValidation.errors);

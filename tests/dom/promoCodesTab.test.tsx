@@ -6,6 +6,7 @@ import PromoCodesTab from '@/pages/events/workspace/tabs/PromoCodesTab';
 const EVENT_ID = 'evt_promo_test';
 
 const getEvent = vi.fn();
+const getEventPromoCodes = vi.fn();
 const updatePromoCodes = vi.fn();
 
 vi.mock('@/config/firebase', () => ({
@@ -18,6 +19,7 @@ vi.mock('@/config/firebase', () => ({
 vi.mock('@/services/eventService', () => ({
   EventService: {
     getEvent: (...args: unknown[]) => getEvent(...args),
+    getEventPromoCodes: (...args: unknown[]) => getEventPromoCodes(...args),
     updatePromoCodes: (...args: unknown[]) => updatePromoCodes(...args),
   },
 }));
@@ -63,9 +65,10 @@ describe('PromoCodesTab', () => {
     getEvent.mockResolvedValue({
       id: EVENT_ID,
       title: 'DevFest Davao',
-      promoCodes: [EXISTING_CODE],
+      hasPromoCodes: true,
       ticketTypes: [{ id: 'tt_1', name: 'General', price: 500 }],
     });
+    getEventPromoCodes.mockResolvedValue([EXISTING_CODE]);
   });
 
   it('renders the event promo codes', async () => {
@@ -74,6 +77,7 @@ describe('PromoCodesTab', () => {
     expect(await screen.findByText('EARLYBIRD')).toBeInTheDocument();
     expect(screen.getByText('Early Bird')).toBeInTheDocument();
     expect(getEvent).toHaveBeenCalledWith(EVENT_ID);
+    expect(getEventPromoCodes).toHaveBeenCalledWith(EVENT_ID);
   });
 
   it('hides the ticket-type tip when the event has ticket types', async () => {
@@ -100,9 +104,9 @@ describe('PromoCodesTab', () => {
     getEvent.mockResolvedValue({
       id: EVENT_ID,
       title: 'DevFest Davao',
-      promoCodes: [],
       ticketTypes: [{ id: 'tt_1', name: 'General', price: 500 }],
     });
+    getEventPromoCodes.mockResolvedValue([]);
     updatePromoCodes.mockResolvedValue(undefined);
 
     render(<PromoCodesTab eventId={EVENT_ID} />);

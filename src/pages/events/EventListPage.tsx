@@ -38,10 +38,9 @@ const EventsWorkspace: React.FC = () => {
   const logDiagnostics = React.useCallback(
     (label: string, payload: any) => {
       if (!isDevEnv) return;
-      // Use groupCollapsed to avoid noisy consoles but keep data accessible
-      console.groupCollapsed(`[AdminManageEventsPage] ${label}`);
+      logger.group(`[AdminManageEventsPage] ${label}`);
       logger.log(payload);
-      console.groupEnd();
+      logger.groupEnd();
     },
     [isDevEnv]
   );

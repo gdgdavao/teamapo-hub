@@ -33,6 +33,12 @@ service cloud.firestore {
       return isAdmin() || isOrganizer();
     }
 
+    // Prevent exposing non-empty promoCodes arrays on public /events/{eventId} documents.
+    // Promo codes must reside in /events/{eventId}/config/promoCodes.
+    function hasNoPublicPromoCodes(data) {
+      return !('promoCodes' in data) || (data.promoCodes is list && data.promoCodes.size() == 0);
+    }
+
     match /users/{userId} {
       allow read: if isAuthenticated() && (isAdmin() || isOwner(userId));
       allow list: if isAdmin();
@@ -57,12 +63,13 @@ service cloud.firestore {
     match /events/{eventId} {
       allow read: if (('isPublished' in resource.data) && resource.data.isPublished == true && resource.data.status in ['published', 'ongoing']) ||
         isAdmin() || isOrganizer();
-      allow create: if isAdmin() || (isOrganizer() && hasPerm('events', 'canCreate'));
-      allow update: if isAdmin() || (
+      allow create: if (isAdmin() || (isOrganizer() && hasPerm('events', 'canCreate'))) &&
+        hasNoPublicPromoCodes(request.resource.data);
+      allow update: if (isAdmin() || (
         isOrganizer() &&
         hasPerm('events', 'canUpdate') &&
         !(resource.data.status in ['completed', 'cancelled'])
-      );
+      )) && hasNoPublicPromoCodes(request.resource.data);
       allow delete: if isAdmin();
       match /forms/{formId} {
         allow read: if get(/databases/$(database)/documents/events/$(eventId)).data.isPublished == true || canManageEvent(eventId);
@@ -72,6 +79,11 @@ service cloud.firestore {
         allow read: if canManageEvent(eventId);
         allow write: if isAdmin() || (isOrganizer() && hasPerm('events', 'canUpdate') && !(get(/databases/$(database)/documents/events/$(eventId)).data.status in ['completed', 'cancelled']));
       }
+    }
+
+    // PROMO CODES: Completely lock down direct client access to any top-level promocodes collection.
+    match /promocodes/{codeId} {
+      allow read, write: if false;
     }
 
     match /registrations/{registrationId} {

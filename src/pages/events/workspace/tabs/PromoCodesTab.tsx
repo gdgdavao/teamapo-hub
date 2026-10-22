@@ -14,9 +14,10 @@ interface PromoCodesTabProps {
 }
 
 /**
- * Promo codes are stored on the event document as `event.promoCodes`, not in
- * their own collection. PromoCodeManager is presentational — it takes the array
- * and three callbacks — so this panel owns loading and saving and nothing else.
+ * Promo codes are stored in the protected `events/{eventId}/config/promoCodes`
+ * subcollection document (with legacy fallback to `event.promoCodes`).
+ * PromoCodeManager is presentational — it takes the array and three callbacks —
+ * so this panel owns loading and saving and nothing else.
  */
 const PromoCodesTab: React.FC<PromoCodesTabProps> = ({ eventId }) => {
   const { userProfile } = useAuth();
@@ -27,8 +28,13 @@ const PromoCodesTab: React.FC<PromoCodesTabProps> = ({ eventId }) => {
   const load = useCallback(async () => {
     try {
       setLoading(true);
-      const event = await EventService.getEvent(eventId);
-      setPromoCodes(event?.promoCodes ?? []);
+      const [event, loadedPromoCodes] = await Promise.all([
+        EventService.getEvent(eventId),
+        typeof EventService.getEventPromoCodes === 'function'
+          ? EventService.getEventPromoCodes(eventId)
+          : Promise.resolve(undefined)
+      ]);
+      setPromoCodes(loadedPromoCodes ?? event?.promoCodes ?? []);
       setTicketTypes(event?.ticketTypes ?? []);
     } catch (error) {
       logger.error('Error loading promo codes:', error);

@@ -912,8 +912,8 @@ def duplicate_event(req: https_fn.CallableRequest) -> Dict[str, Any]:
             'updatedAt': firestore.SERVER_TIMESTAMP
         })
         
-        # Remove fields that shouldn't be copied
-        fields_to_remove = ['publishedAt', 'completedAt']
+        # Remove fields that shouldn't be copied to public event document
+        fields_to_remove = ['publishedAt', 'completedAt', 'promoCodes']
         for field in fields_to_remove:
             new_event_data.pop(field, None)
         
@@ -931,6 +931,39 @@ def duplicate_event(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 'updatedAt': firestore.SERVER_TIMESTAMP
             })
             new_forms_ref.document(form_doc.id).set(form_data)
+
+        # Copy config subcollection (including config/promoCodes)
+        original_configs = original_event_ref.collection('config').stream()
+        new_configs_ref = new_event_ref.collection('config')
+        copied_promo_config = False
+        for cfg_doc in original_configs:
+            cfg_data = cfg_doc.to_dict() or {}
+            if cfg_doc.id == 'promoCodes' and isinstance(cfg_data.get('promoCodes'), list):
+                copied_promo_config = True
+                reset_codes = []
+                for pc in cfg_data['promoCodes']:
+                    if isinstance(pc, dict):
+                        pc_copy = dict(pc)
+                        pc_copy['currentUses'] = 0
+                        reset_codes.append(pc_copy)
+                cfg_data['promoCodes'] = reset_codes
+            cfg_data['updatedAt'] = firestore.SERVER_TIMESTAMP
+            new_configs_ref.document(cfg_doc.id).set(cfg_data)
+
+        # Migrate legacy promoCodes from original event document into new event's config/promoCodes
+        legacy_promos = original_event_data.get('promoCodes')
+        if not copied_promo_config and isinstance(legacy_promos, list) and len(legacy_promos) > 0:
+            reset_codes = []
+            for pc in legacy_promos:
+                if isinstance(pc, dict):
+                    pc_copy = dict(pc)
+                    pc_copy['currentUses'] = 0
+                    reset_codes.append(pc_copy)
+            new_configs_ref.document('promoCodes').set({
+                'promoCodes': reset_codes,
+                'updatedAt': firestore.SERVER_TIMESTAMP
+            })
+            new_event_ref.update({'hasPromoCodes': any(pc.get('isActive', False) for pc in reset_codes)})
         
         logger.info(f"Event {event_id} duplicated successfully as {new_event_id}")
         return {
@@ -1161,6 +1194,12 @@ def deleteEventData(req: https_fn.CallableRequest) -> Dict[str, Any]:
         forms_docs = forms_ref.stream()
         for form_doc in forms_docs:
             form_doc.reference.delete()
+
+        # Delete config subcollection (including config/promoCodes)
+        config_ref = event_ref.collection('config')
+        config_docs = config_ref.stream()
+        for cfg_doc in config_docs:
+            cfg_doc.reference.delete()
         
         # Delete registrations
         registrations_ref = get_db().collection('registrations').where(
@@ -1217,6 +1256,213 @@ def deleteEventData(req: https_fn.CallableRequest) -> Dict[str, Any]:
         )
 
 
+def _coerce_utc_datetime(val: Any) -> Optional[datetime]:
+    """Convert Firestore Timestamp, dict, ISO string, or datetime to timezone-aware UTC datetime."""
+    if val is None:
+        return None
+    if isinstance(val, datetime):
+        return val if val.tzinfo is not None else val.replace(tzinfo=timezone.utc)
+    if hasattr(val, 'timestamp'):
+        try:
+            return datetime.fromtimestamp(val.timestamp(), tz=timezone.utc)
+        except Exception:
+            return None
+    if isinstance(val, dict):
+        secs = val.get('seconds') or val.get('_seconds')
+        if isinstance(secs, (int, float)):
+            return datetime.fromtimestamp(float(secs), tz=timezone.utc)
+    if isinstance(val, str) and val.strip():
+        try:
+            dt = datetime.fromisoformat(val.strip().replace('Z', '+00:00'))
+            return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+        except Exception:
+            return None
+    return None
+
+
+def _load_event_promo_codes(db, event_id: str, event_data: Dict[str, Any], tx=None):
+    """Load promo codes from events/{event_id}/config/promoCodes with fallback to legacy event_data['promoCodes'].
+
+    Returns (promo_codes_list, config_ref, from_config_subcollection).
+    """
+    config_ref = db.collection('events').document(event_id).collection('config').document('promoCodes')
+    config_snap = config_ref.get(transaction=tx) if tx is not None else config_ref.get()
+    if config_snap.exists:
+        cfg_data = config_snap.to_dict() or {}
+        codes = cfg_data.get('promoCodes')
+        if isinstance(codes, list):
+            return list(codes), config_ref, True
+    legacy_codes = event_data.get('promoCodes')
+    if isinstance(legacy_codes, list):
+        return list(legacy_codes), config_ref, False
+    return [], config_ref, False
+
+
+def _evaluate_promo_code(
+    promo_codes: List[Dict[str, Any]],
+    raw_code: str,
+    ticket_type: Optional[Dict[str, Any]] = None,
+    now_utc: Optional[datetime] = None
+) -> Dict[str, Any]:
+    """Validate a promo code server-side and compute discount parameters without leaking internal state."""
+    if not raw_code or not isinstance(raw_code, str) or not raw_code.strip():
+        return {'valid': False, 'message': 'Please enter a promo code.'}
+
+    normalized = raw_code.strip().upper()
+    now_dt = now_utc or datetime.now(timezone.utc)
+
+    matched_index = -1
+    matched_promo: Optional[Dict[str, Any]] = None
+    for idx, pc in enumerate(promo_codes):
+        if isinstance(pc, dict) and str(pc.get('code', '')).strip().upper() == normalized:
+            matched_index = idx
+            matched_promo = pc
+            break
+
+    if matched_promo is None:
+        return {'valid': False, 'message': 'Invalid promo code.'}
+
+    if matched_promo.get('isActive') is False:
+        return {'valid': False, 'message': 'This promo code is no longer active.'}
+
+    valid_from = _coerce_utc_datetime(matched_promo.get('validFrom'))
+    if valid_from and now_dt < valid_from:
+        return {'valid': False, 'message': 'This promo code is not yet valid.'}
+
+    valid_until = _coerce_utc_datetime(matched_promo.get('validUntil'))
+    if valid_until and now_dt > valid_until:
+        return {'valid': False, 'message': 'This promo code has expired.'}
+
+    max_uses = matched_promo.get('maxUses')
+    current_uses = int(matched_promo.get('currentUses') or matched_promo.get('usedCount') or 0)
+    if isinstance(max_uses, (int, float)) and max_uses > 0 and current_uses >= int(max_uses):
+        return {'valid': False, 'message': 'This promo code usage limit has been reached.'}
+
+    applicable_tickets = matched_promo.get('applicableTicketTypes')
+    if (
+        ticket_type is not None and
+        isinstance(applicable_tickets, list) and
+        len(applicable_tickets) > 0 and
+        ticket_type.get('id') not in applicable_tickets
+    ):
+        return {'valid': False, 'message': 'This promo code is not applicable to the selected ticket type.'}
+
+    discount_type = matched_promo.get('discountType', 'percentage')
+    if discount_type not in ('percentage', 'fixed'):
+        discount_type = 'percentage'
+    discount_value = float(matched_promo.get('discountValue') or 0)
+    max_discount = matched_promo.get('maxDiscountAmount')
+    max_discount_val = float(max_discount) if isinstance(max_discount, (int, float)) and max_discount > 0 else None
+
+    original_price = float(ticket_type.get('price') or 0) if ticket_type else 0.0
+    if discount_type == 'percentage':
+        raw_discount = (original_price * discount_value) / 100.0
+        discount_amount = min(raw_discount, max_discount_val) if max_discount_val is not None else raw_discount
+        discount_amount = min(discount_amount, original_price)
+    else:
+        discount_amount = min(discount_value, original_price)
+
+    final_price = max(0.0, original_price - discount_amount)
+
+    return {
+        'valid': True,
+        'index': matched_index,
+        'promo': matched_promo,
+        'code': str(matched_promo.get('code') or normalized).strip().upper(),
+        'promoCodeId': matched_promo.get('id'),
+        'discountType': discount_type,
+        'discountValue': discount_value,
+        'maxDiscountAmount': max_discount_val,
+        'discountAmount': discount_amount,
+        'finalPrice': final_price,
+    }
+
+
+@https_fn.on_call()
+def validatePromoCode(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """Validate an event promo code server-side using Firebase Admin SDK.
+
+    Returns ONLY minimal discount parameters required by the UI (`valid`, `code`,
+    `discountType`, `discountValue`, `maxDiscountAmount`, `discountAmount`, `finalPrice`).
+    Never exposes the full promo code list, usage counters, or internal metadata.
+    """
+    data = req.data or {}
+    code = data.get('code')
+    event_id = data.get('eventId')
+    ticket_type_id = data.get('ticketTypeId')
+
+    if not code or not isinstance(code, str) or not code.strip():
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+            message="The function must be called with a non-empty string 'code' argument."
+        )
+
+    normalized_code = code.strip().upper()
+    db = get_db()
+
+    # If eventId is provided, evaluate against the event's protected config/promoCodes document
+    if event_id and isinstance(event_id, str):
+        event_doc = db.collection('events').document(event_id).get()
+        if not event_doc.exists:
+            return {'valid': False, 'message': 'Event not found.'}
+
+        event_data = event_doc.to_dict() or {}
+        ticket_type = None
+        if ticket_type_id and isinstance(ticket_type_id, str):
+            for tt in (event_data.get('ticketTypes') or []):
+                if isinstance(tt, dict) and tt.get('id') == ticket_type_id:
+                    ticket_type = tt
+                    break
+
+        promo_codes, _, _ = _load_event_promo_codes(db, event_id, event_data)
+        eval_res = _evaluate_promo_code(promo_codes, normalized_code, ticket_type)
+        if not eval_res.get('valid'):
+            return {'valid': False, 'message': eval_res.get('message', 'Invalid promo code.')}
+
+        response: Dict[str, Any] = {
+            'valid': True,
+            'code': eval_res['code'],
+            'discountType': eval_res['discountType'],
+            'discountValue': eval_res['discountValue'],
+            'discountAmount': eval_res['discountAmount'],
+            'finalPrice': eval_res['finalPrice'],
+        }
+        if eval_res.get('maxDiscountAmount') is not None:
+            response['maxDiscountAmount'] = eval_res['maxDiscountAmount']
+        return response
+
+    # Fallback: top-level promocodes/{normalizedCode} lookup if called without eventId
+    promo_doc = db.collection('promocodes').document(normalized_code).get()
+    if not promo_doc.exists:
+        return {'valid': False, 'message': 'Invalid promo code.'}
+
+    promo = promo_doc.to_dict() or {}
+    if promo.get('isActive') is False:
+        return {'valid': False, 'message': 'This promo code is no longer active.'}
+
+    expires_at = _coerce_utc_datetime(promo.get('expiresAt') or promo.get('validUntil'))
+    if expires_at and datetime.now(timezone.utc) > expires_at:
+        return {'valid': False, 'message': 'This promo code has expired.'}
+
+    max_uses = promo.get('maxUses')
+    used_count = int(promo.get('usedCount') or promo.get('currentUses') or 0)
+    if isinstance(max_uses, (int, float)) and max_uses > 0 and used_count >= int(max_uses):
+        return {'valid': False, 'message': 'This promo code limit has been reached.'}
+
+    return {
+        'valid': True,
+        'code': normalized_code,
+        'discountType': promo.get('discountType') or 'percentage',
+        'discountValue': float(promo.get('discountValue') or 0),
+    }
+
+
+@https_fn.on_call()
+def validate_promo_code(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """Snake_case alias for validatePromoCode."""
+    return validatePromoCode(req)
+
+
 @https_fn.on_call()
 def validateRegistration(req: https_fn.CallableRequest) -> Dict[str, Any]:
     """
@@ -1235,7 +1481,8 @@ def validateRegistration(req: https_fn.CallableRequest) -> Dict[str, Any]:
             )
         
         # Get event data
-        event_ref = get_db().collection('events').document(event_id)
+        db = get_db()
+        event_ref = db.collection('events').document(event_id)
         event_doc = event_ref.get()
         
         if not event_doc.exists:
@@ -1244,7 +1491,7 @@ def validateRegistration(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 message="Event not found"
             )
         
-        event_data = event_doc.to_dict()
+        event_data = event_doc.to_dict() or {}
         
         # Check if event is published
         if not event_data.get('isPublished', False):
@@ -1278,31 +1525,24 @@ def validateRegistration(req: https_fn.CallableRequest) -> Dict[str, Any]:
             )
         
         # Calculate pricing
-        original_price = ticket_type.get('price', 0)
+        original_price = float(ticket_type.get('price', 0) or 0)
         current_price = original_price
+        safe_promo_summary = None
         
-        # Apply promo code if provided
-        promo_code_data = None
-        if promo_code:
-            promoCodes = event_data.get('promoCodes', [])
-            for pc in promoCodes:
-                if pc.get('code') == promo_code and pc.get('isActive', False):
-                    promo_code_data = pc
-                    break
-            
-            if promo_code_data:
-                discount_type = promo_code_data.get('discountType', 'percentage')
-                discount_value = promo_code_data.get('discountValue', 0)
-                
-                if discount_type == 'percentage':
-                    current_price = original_price * (1 - discount_value / 100)
-                elif discount_type == 'fixed':
-                    current_price = max(0, original_price - discount_value)
+        # Apply promo code if provided via protected config/promoCodes
+        if promo_code and isinstance(promo_code, str) and promo_code.strip():
+            promo_codes, _, _ = _load_event_promo_codes(db, event_id, event_data)
+            eval_res = _evaluate_promo_code(promo_codes, promo_code, ticket_type)
+            if eval_res.get('valid'):
+                current_price = eval_res['finalPrice']
+                safe_promo_summary = {
+                    'code': eval_res['code'],
+                    'discountType': eval_res['discountType'],
+                    'discountValue': eval_res['discountValue'],
+                }
         
         # Calculate totals
-        original_amount = original_price * quantity
         discount_amount = (original_price - current_price) * quantity
-        total_amount = current_price * quantity
         
         return {
             'isValid': True,
@@ -1310,7 +1550,7 @@ def validateRegistration(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 'originalPrice': original_price,
                 'currentPrice': current_price,
                 'discountAmount': discount_amount,
-                'promoCode': promo_code_data
+                'promoCode': safe_promo_summary
             },
             'message': 'Registration validation successful'
         }
@@ -1334,6 +1574,7 @@ def createAnonymousRegistration(req: https_fn.CallableRequest) -> Dict[str, Any]
     details = form.get('userDetails') or {}
     ticket_id = form.get('ticketTypeId')
     quantity = form.get('quantity', 1)
+    raw_promo_code = form.get('promoCode')
     if (not isinstance(event_id, str) or not isinstance(form, dict) or
             not isinstance(details, dict) or not isinstance(ticket_id, str) or
             not isinstance(quantity, int) or quantity != 1 or
@@ -1386,15 +1627,55 @@ def createAnonymousRegistration(req: https_fn.CallableRequest) -> Dict[str, Any]
         maximum = ticket.get('maxQuantity')
         if isinstance(maximum, int) and sold + 1 > maximum:
             raise https_fn.HttpsError(https_fn.FunctionsErrorCode.RESOURCE_EXHAUSTED, 'Ticket is sold out')
+
         price = float(ticket.get('price') or 0)
+        discount_amount = 0.0
+        final_price = price
+        applied_promo_code: Optional[str] = None
+        applied_promo_id: Optional[str] = None
+        updated_promo_codes: Optional[List[Dict[str, Any]]] = None
+        promo_config_ref = None
+        had_legacy_promos = False
+
+        if isinstance(raw_promo_code, str) and raw_promo_code.strip():
+            promo_codes, promo_config_ref, from_config = _load_event_promo_codes(db, event_id, event, tx=tx)
+            had_legacy_promos = not from_config and 'promoCodes' in event
+            eval_res = _evaluate_promo_code(promo_codes, raw_promo_code, ticket)
+            if not eval_res.get('valid'):
+                raise https_fn.HttpsError(
+                    https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
+                    eval_res.get('message', 'Invalid promo code.')
+                )
+            discount_amount = float(eval_res['discountAmount'])
+            final_price = float(eval_res['finalPrice'])
+            applied_promo_code = eval_res['code']
+            applied_promo_id = eval_res.get('promoCodeId')
+            promo_idx = eval_res['index']
+            updated_promo = dict(promo_codes[promo_idx])
+            updated_promo['currentUses'] = int(updated_promo.get('currentUses') or 0) + 1
+            promo_codes[promo_idx] = updated_promo
+            updated_promo_codes = promo_codes
+
         ticket['currentSold'] = sold + 1
         tickets[index] = ticket
-        registration = {
+        pricing_map: Dict[str, Any] = {
+            'ticketTypeId': ticket_id,
+            'originalPrice': price,
+            'currentPrice': final_price,
+            'discountAmount': discount_amount,
+        }
+        if applied_promo_code:
+            pricing_map['discountType'] = 'promo_code'
+            pricing_map['promoCode'] = applied_promo_code
+            if applied_promo_id:
+                pricing_map['promoCodeId'] = applied_promo_id
+
+        registration: Dict[str, Any] = {
             'id': registration_ref.id, 'eventId': event_id, 'userId': '',
             'userDetails': details, 'ticketTypeId': ticket_id, 'quantity': 1,
-            'originalAmount': price, 'discountAmount': 0,
-            'totalAmount': price, 'currency': 'PHP',
-            'pricing': {'originalPrice': price, 'currentPrice': price, 'discountAmount': 0},
+            'originalAmount': price, 'discountAmount': discount_amount,
+            'totalAmount': final_price, 'currency': 'PHP',
+            'pricing': pricing_map,
             'paymentStatus': 'pending', 'attendanceStatus': 'pending',
             'feedbackSubmitted': False, 'certificateIssued': False,
             'qrCode': f'registration:{registration_ref.id}',
@@ -1403,14 +1684,30 @@ def createAnonymousRegistration(req: https_fn.CallableRequest) -> Dict[str, Any]
             'paymentLinkExpiresAt': datetime.utcnow() + timedelta(hours=24),
             'paymentLinkStatus': 'active',
         }
+        if applied_promo_code:
+            registration['promoCode'] = applied_promo_code
+        if applied_promo_id:
+            registration['promoCodeId'] = applied_promo_id
         if isinstance(form.get('customResponses'), dict):
             registration['customResponses'] = form['customResponses']
+
         tx.set(registration_ref, registration)
-        tx.update(event_ref, {
+        if updated_promo_codes is not None and promo_config_ref is not None:
+            tx.set(promo_config_ref, {
+                'promoCodes': updated_promo_codes,
+                'updatedAt': firestore.SERVER_TIMESTAMP,
+            }, merge=True)
+
+        event_update: Dict[str, Any] = {
             'ticketTypes': tickets,
             'currentAttendees': int(event.get('currentAttendees') or 0) + 1,
             'updatedAt': firestore.SERVER_TIMESTAMP,
-        })
+        }
+        if had_legacy_promos:
+            event_update['promoCodes'] = firestore.DELETE_FIELD
+            event_update['hasPromoCodes'] = True
+
+        tx.update(event_ref, event_update)
         return registration
 
     registration = reserve(transaction)

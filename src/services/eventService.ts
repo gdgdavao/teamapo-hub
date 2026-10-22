@@ -10,6 +10,7 @@ import {
   orderBy, 
   serverTimestamp,
   deleteDoc,
+  deleteField,
   Timestamp,
   onSnapshot,
   limit
@@ -121,11 +122,13 @@ export class EventService {
   static invalidateCache(eventId?: string): void {
     if (eventId) {
       swrCache.delete(`event:${eventId}`);
+      swrCache.delete(`promos:${eventId}`);
       swrCache.deletePrefix('slug:');
       swrCache.delete('events:all');
       swrCache.deletePrefix('events:organizer:');
     } else {
       swrCache.deletePrefix('event:');
+      swrCache.deletePrefix('promos:');
       swrCache.deletePrefix('slug:');
       swrCache.delete('events:all');
       swrCache.deletePrefix('events:organizer:');
@@ -244,6 +247,11 @@ export class EventService {
     // Strip functions entirely (e.g., objects carrying toDate as a function)
     if (typeof obj === 'function') {
       return undefined as any;
+    }
+
+    // Preserve Firestore Timestamp and FieldValue sentinels (deleteField, serverTimestamp, increment)
+    if (obj instanceof Timestamp || typeof (obj as any)?._methodName === 'string') {
+      return obj;
     }
 
     if (Array.isArray(obj)) {
@@ -450,19 +458,22 @@ export class EventService {
       // Generate a unique slug from the title
       const slug = await this.generateUniqueSlug(eventData.title);
 
-      // Convert form data to Event object (communal events: no creator ownership)
+      const sanitizedPromoCodes = this.sanitizePromoCodes(eventData.promoCodes || []);
+
+      // Convert form data to Event object (communal events: no creator ownership).
+      // Promo codes are isolated in `events/{eventId}/config/promoCodes` rather than on the public event doc.
       const event: any = {
         slug,
         title: eventData.title.trim(),
         description: eventData.description.trim(),
         shortDescription: eventData.shortDescription.trim(),
-  speakers: this.sanitizeSpeakers(eventData.speakers || []),
+        speakers: this.sanitizeSpeakers(eventData.speakers || []),
         startDate: this.combineDateAndTime(eventData.startDate, eventData.startTime),
         endDate: this.combineDateAndTime(eventData.endDate, eventData.endTime),
         timezone: eventData.timezone,
         venue: venue,
         ticketTypes: this.sanitizeTicketTypes(eventData.ticketTypes || []),
-        promoCodes: this.sanitizePromoCodes(eventData.promoCodes || []),
+        hasPromoCodes: sanitizedPromoCodes.some((p: any) => p.isActive !== false),
         tags: eventData.tags || [],
         category: eventData.category,
         status: 'draft',
@@ -511,6 +522,14 @@ export class EventService {
       
       // Create the event document
       await setDoc(eventRef, cleanedEvent);
+
+      // Persist promo codes in protected config subcollection if provided
+      if (sanitizedPromoCodes.length > 0) {
+        await setDoc(doc(db, this.EVENTS_COLLECTION, eventId, 'config', 'promoCodes'), {
+          promoCodes: sanitizedPromoCodes,
+          updatedAt: serverTimestamp()
+        });
+      }
 
       // Note: Base64 image uploads are now handled in the UI layer before calling createEvent
       // This prevents Firestore size limit errors from large base64 strings
@@ -581,7 +600,7 @@ export class EventService {
         }
       }
 
-      // Exclude fields handled separately (date parts, subcollection forms, registrationDeadline)
+      // Exclude fields handled separately (date parts, subcollection forms, registrationDeadline, promoCodes)
       const separateFields = new Set([
         'startDate',
         'startTime',
@@ -589,7 +608,8 @@ export class EventService {
         'endTime',
         'registrationForm',
         'feedbackForm',
-        'registrationDeadline'
+        'registrationDeadline',
+        'promoCodes'
       ]);
 
       // Only add fields that have actual values (avoid undefined)
@@ -658,7 +678,21 @@ export class EventService {
         updateData.ticketTypes = this.sanitizeTicketTypes(eventData.ticketTypes as TicketType[]);
       }
       if (eventData.promoCodes) {
-        updateData.promoCodes = this.sanitizePromoCodes(eventData.promoCodes as PromoCode[]);
+        const sanitizedPromos = this.sanitizePromoCodes(eventData.promoCodes as PromoCode[]);
+        updateData.hasPromoCodes = sanitizedPromos.some((p: any) => p.isActive !== false);
+        updateData.promoCodes = deleteField();
+        await setDoc(doc(db, this.EVENTS_COLLECTION, eventId, 'config', 'promoCodes'), {
+          promoCodes: sanitizedPromos,
+          updatedAt: serverTimestamp()
+        });
+      } else if (existingEvent?.promoCodes && existingEvent.promoCodes.length > 0) {
+        const sanitizedPromos = this.sanitizePromoCodes(existingEvent.promoCodes);
+        updateData.hasPromoCodes = sanitizedPromos.some((p: any) => p.isActive !== false);
+        updateData.promoCodes = deleteField();
+        await setDoc(doc(db, this.EVENTS_COLLECTION, eventId, 'config', 'promoCodes'), {
+          promoCodes: sanitizedPromos,
+          updatedAt: serverTimestamp()
+        });
       }
       if (eventData.speakers) {
         updateData.speakers = this.sanitizeSpeakers(eventData.speakers as any[]);
@@ -714,7 +748,38 @@ export class EventService {
   }
 
   /**
-   * Replace an event's promo codes.
+   * Read an event's promo codes from the protected `events/{eventId}/config/promoCodes`
+   * subcollection, with fallback to the legacy `event.promoCodes` array for unmigrated events.
+   */
+  static async getEventPromoCodes(eventId: string): Promise<PromoCode[]> {
+    if (!eventId) return [];
+
+    return swrCache.getOrFetch(
+      `promos:${eventId}`,
+      async () => {
+        try {
+          const configRef = doc(db, this.EVENTS_COLLECTION, eventId, 'config', 'promoCodes');
+          const configSnap = await getDoc(configRef);
+          if (configSnap.exists()) {
+            const data = configSnap.data();
+            if (Array.isArray(data.promoCodes)) {
+              return data.promoCodes as PromoCode[];
+            }
+          }
+          const event = await this.getEvent(eventId);
+          return Array.isArray(event?.promoCodes) ? event.promoCodes : [];
+        } catch (error) {
+          logger.error('Error getting event promo codes:', error);
+          return [];
+        }
+      },
+      this.CACHE_TTL_MS
+    );
+  }
+
+  /**
+   * Replace an event's promo codes in `events/{eventId}/config/promoCodes`
+   * and scrub any legacy `promoCodes` field from the public `events/{eventId}` document.
    *
    * Narrower than updateEvent on purpose: updateEvent re-reads the event and
    * will silently generate and write a slug as a side effect, which is not
@@ -722,10 +787,20 @@ export class EventService {
    */
   static async updatePromoCodes(eventId: string, promoCodes: PromoCode[]): Promise<void> {
     try {
-      await updateDoc(doc(db, this.EVENTS_COLLECTION, eventId), {
-        promoCodes: this.sanitizePromoCodes(promoCodes),
+      const sanitized = this.sanitizePromoCodes(promoCodes);
+      const hasActivePromo = sanitized.some((p: any) => p.isActive !== false);
+
+      await setDoc(doc(db, this.EVENTS_COLLECTION, eventId, 'config', 'promoCodes'), {
+        promoCodes: sanitized,
         updatedAt: serverTimestamp()
       });
+
+      await updateDoc(doc(db, this.EVENTS_COLLECTION, eventId), {
+        hasPromoCodes: hasActivePromo,
+        promoCodes: deleteField(),
+        updatedAt: serverTimestamp()
+      });
+
       this.invalidateCache(eventId);
       void AuditLogService.recordAuditLog({
         category: 'event_operations',
@@ -742,6 +817,38 @@ export class EventService {
       logger.error('Error updating promo codes:', error);
       throw new Error('Failed to update promo codes');
     }
+  }
+
+  /**
+   * Validate a promo code server-side via the `validatePromoCode` Cloud Function.
+   * Returns only minimal computed discount parameters, never raw database records.
+   */
+  static async validatePromoCodeRemote(params: {
+    eventId: string;
+    code: string;
+    ticketTypeId?: string;
+  }): Promise<{
+    valid: boolean;
+    message?: string;
+    code?: string;
+    discountType?: 'percentage' | 'fixed';
+    discountValue?: number;
+    maxDiscountAmount?: number;
+    discountAmount?: number;
+    finalPrice?: number;
+  }> {
+    const validatePromo = httpsCallable(functions, 'validatePromoCode');
+    const response = await validatePromo(params);
+    return response.data as {
+      valid: boolean;
+      message?: string;
+      code?: string;
+      discountType?: 'percentage' | 'fixed';
+      discountValue?: number;
+      maxDiscountAmount?: number;
+      discountAmount?: number;
+      finalPrice?: number;
+    };
   }
 
   /**
