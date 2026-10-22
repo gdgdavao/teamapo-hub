@@ -154,9 +154,10 @@ function isValidDocumentType() {
 | Collection Path | Read | List | Create | Update | Delete | Key Security Constraints |
 | :--- | :---: | :---: | :---: | :---: | :---: | :--- |
 | `/users/{userId}` | Owner / Admin | Admin | Admin | Owner / Admin | **Denied (callable-only)** | Email syntax validated; Role restricted to `admin` or `organizer`. Privilege escalation blocked. Client deletes denied: deletion is the `deleteUser` Admin SDK callable's two-halves operation (Auth + doc) with audit, so a document-only orphan is impossible. |
-| `/events/{eventId}` | Public | Public | Organizer / Admin | Organizer / Admin / Restricted Anonymous | Organizer / Admin | Anonymous updates restricted strictly to `['ticketTypes', 'currentAttendees', 'promoCodes', 'updatedAt']`. |
-| `/events/{id}/forms/{formId}` | Public | Public | Event Organizer / Admin | Event Organizer / Admin | Event Organizer / Admin | Scoped to parent event owner (`event.organizer.uid == request.auth.uid`). |
-| `/events/{id}/config/{configId}` | Organizer / Admin | Organizer / Admin | Event Organizer / Admin | Event Organizer / Admin | Event Organizer / Admin | Protected configuration settings. |
+| `/events/{eventId}` | Public (Published) / Organizer / Admin | Public (Published) / Organizer / Admin | Organizer / Admin | Organizer / Admin | Admin | Enforces `hasNoPublicPromoCodes(request.resource.data)` so secret promo codes cannot be written to public event documents (`hasPromoCodes: boolean` is used instead). |
+| `/events/{id}/forms/{formId}` | Public (Published) / Organizer / Admin | Public (Published) / Organizer / Admin | Organizer / Admin | Organizer / Admin | Organizer / Admin | Read allowed when parent event is published or caller can manage event. |
+| `/events/{id}/config/{configId}` | Organizer / Admin | Organizer / Admin | Organizer / Admin | Organizer / Admin | Organizer / Admin | Protected configuration settings, including `config/promoCodes` (`{ promoCodes: PromoCode[] }`). |
+| `/promocodes/{codeId}` | **Denied** | **Denied** | **Denied** | **Denied** | **Denied** | **100% Locked**. Zero direct client access; promo code validation runs exclusively via the `validatePromoCode` and `createAnonymousRegistration` Cloud Functions. |
 | `/registrations/{regId}` | Organizer / Admin | Organizer / Admin / Trusted Function | Organizer / Admin (Trusted Function for Anonymous) | Organizer / Admin / Trusted Function | Admin / Organizer | Payment-link reads and anonymous state transitions must use callable functions; direct unauthenticated client creates/reads/writes are denied. |
 | `/certificateTemplates/{id}` | Public | Public | Organizer / Admin | Organizer / Admin | Organizer / Admin | Public read enables client-side certificate dynamic preview and rendering. |
 | `/certificates/{certId}` | Public | Public | Public / Function | Restricted Anonymous / Auth | Authenticated | Anonymous create requires `eventId`, `registrationId`, `verificationCode`, and `recipientName`. Anonymous update strictly restricted to incrementing `verificationCount`. |
@@ -179,14 +180,14 @@ function isValidDocumentType() {
    2. All anonymous registrations must pass through the `createAnonymousRegistration` callable Cloud Function, which runs an atomic Firestore transaction to verify published status, check ticket inventory, calculate official ticket pricing, prevent duplicate email registrations, and initialize tickets with `paymentStatus: 'pending'` and `attendanceStatus: 'pending'`.
    3. Direct client updates cannot mark registrations as `paid` or `checked-in`. Check-ins, payment verification, and attendee management are restricted strictly to authenticated event organizers and administrators.
 
-### 4.2 Ticket Inventory Overwrite
-* **Threat**: An anonymous registrant tampers with other event properties (e.g. changing event title, dates, or prices) when decrementing ticket stock.
+### 4.2 Ticket Inventory & Promo Code Isolation (`VULN-01` & `VULN-02`)
+* **Threat**:
+  1. An unauthenticated attendee inspects browser DevTools Network tab (`Listen/channel` or REST payload) on `/e/:slug` to harvest all active promo codes, expiration dates, and usage limits from the event document.
+  2. An anonymous registrant tampers with event properties or client-side discount calculations.
 * **Mitigation**:
-   ```javascript
-   allow update: if isAuthenticated() &&
-     (isAdmin() || (isOrganizer() && resource.data.organizer.uid == request.auth.uid));
-   ```
-   Unauthenticated clients are locked out of modifying event documents. Inventory and promo-code changes must be performed by a trusted callable function.
+  1. Promo code arrays are isolated inside `/events/{eventId}/config/promoCodes` (`allow read: if canManageEvent(eventId)`), and `/events/{eventId}` enforces `hasNoPublicPromoCodes(request.resource.data)` on create/update while exposing only `hasPromoCodes: boolean`. Direct client access to `/promocodes/{codeId}` is also denied (`allow read, write: if false`).
+  2. Attendees validate codes via the `validatePromoCode` HTTPS Callable Cloud Function, which returns only `{ valid, code, discountType, discountValue, maxDiscountAmount, discountAmount, finalPrice }`.
+  3. Authoritative promo code validation, discount computation, and `currentUses` increment execute atomically inside the `createAnonymousRegistration` Admin SDK transaction.
 
 ### 4.3 Feedback Token Enumeration & PII Leakage
 * **Threat**: An attacker queries `/feedbackTokens` or attempts to guess URLs to discover attendee identities or emails.

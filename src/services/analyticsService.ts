@@ -208,7 +208,8 @@ export class AnalyticsService {
           const [
             registrationsResult,
             feedbackResult,
-            certificatesResult
+            certificatesResult,
+            promoConfigResult
           ] = await Promise.allSettled([
             getDocs(query(
               collection(db, this.REGISTRATIONS_COLLECTION),
@@ -221,11 +222,18 @@ export class AnalyticsService {
             getDocs(query(
               collection(db, this.CERTIFICATES_COLLECTION),
               where('eventId', '==', eventId)
-            ))
+            )),
+            getDoc(doc(db, this.EVENTS_COLLECTION, eventId, 'config', 'promoCodes'))
           ]);
 
           const eventData = eventSnapshot.data();
-          const eventPromoCodes = eventData.promoCodes || [];
+          const promoConfigData =
+            promoConfigResult.status === 'fulfilled' && promoConfigResult.value?.exists?.()
+              ? promoConfigResult.value.data()
+              : null;
+          const eventPromoCodes = Array.isArray(promoConfigData?.promoCodes)
+            ? promoConfigData.promoCodes
+            : (eventData.promoCodes || []);
 
           // Helper function to filter out placeholder documents
           const filterPlaceholderDocs = (docs: any[]) => {

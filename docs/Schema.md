@@ -89,7 +89,8 @@ Primary entity representing GDG Davao events, workshops, meetups, and conference
 | `timezone` | `string` | Yes | `'Asia/Manila'`| IANA timezone string. |
 | `venue` | `map` | Yes | - | Embedded `Venue` object (see [Embedded Types](#4-embedded-data-structures)). |
 | `ticketTypes` | `array<map>`| Yes | `[]` | Array of `TicketType` objects. |
-| `promoCodes` | `array<map>`| No | `[]` | Array of `PromoCode` discount configurations. |
+| `hasPromoCodes` | `boolean` | No | `false` | Public boolean indicator showing whether the event has active promo codes configured, without exposing secret codes on `/events/{eventId}`. |
+| `promoCodes` | `array<map>`| No | - | [Deprecated / Forbidden on public doc] Promo codes are isolated in `events/{eventId}/config/promoCodes` (`hasNoPublicPromoCodes` enforced in `firestore.rules`). |
 | `paymentConfigs`| `array<map>`| No | `[]` | Payment configurations (GCash, Maya, Bank Details). |
 | `tags` | `array<string>`| Yes| `[]` | Search and categorization tags (e.g. `['AI', 'Flutter']`). |
 | `category` | `string` | Yes | `'meetup'` | Category enum: `'workshop'`, `'meetup'`, `'conference'`, `'hackathon'`, `'networking'`, `'webinar'`, `'study-jam'`, `'code-lab'`. |
@@ -108,7 +109,8 @@ Primary entity representing GDG Davao events, workshops, meetups, and conference
 #### Subcollections under `events/{eventId}`:
 1. **`forms/{formId}`**: Custom dynamic form configurations for this event:
    * Fields: `id`, `name`, `type` (`'registration'` | `'feedback'`), `fields` (array of `FormField`), `isActive`, `updatedAt`.
-2. **`config/{configId}`**: Extended configuration parameters (custom domain bindings, integrations, automated trigger thresholds).
+2. **`config/{configId}`**: Protected configuration documents (`allow read: if canManageEvent(eventId)`):
+   * **`config/promoCodes`**: Stores `{ promoCodes: array<PromoCode>, updatedAt: timestamp }` so discount codes, expiration windows, and usage limits are never transmitted to unauthenticated browsers over Firestore `Listen/channel`. Validated for attendees via the `validatePromoCode` callable Cloud Function and enforced transactionally inside `createAnonymousRegistration`.
 
 ---
 

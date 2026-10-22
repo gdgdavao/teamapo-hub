@@ -475,4 +475,56 @@ describe('Firestore authorization rules', () => {
       attendanceStatus: 'confirmed',
     }));
   });
+
+  it('isolates promo codes in events/{eventId}/config/promoCodes and blocks public promoCodes on /events/{eventId}', async () => {
+    const anonymous = testEnv.unauthenticatedContext().firestore();
+    const inactive = testEnv.authenticatedContext('member-1').firestore();
+    const organizer = testEnv.authenticatedContext('organizer-1').firestore();
+    const admin = testEnv.authenticatedContext('admin-1').firestore();
+
+    const promoPayload = {
+      promoCodes: [
+        {
+          id: 'promo-1',
+          code: 'DEVFEST50',
+          name: 'DevFest 50% Off',
+          discountType: 'percentage',
+          discountValue: 50,
+          currentUses: 0,
+          isActive: true,
+        },
+      ],
+    };
+
+    // Organizers and admins can write and read events/{eventId}/config/promoCodes
+    await assertSucceeds(setDoc(doc(organizer, 'events/published-event/config/promoCodes'), promoPayload));
+    await assertSucceeds(getDoc(doc(organizer, 'events/published-event/config/promoCodes')));
+    await assertSucceeds(getDoc(doc(admin, 'events/published-event/config/promoCodes')));
+
+    // Anonymous and inactive accounts are completely denied from reading or writing config/promoCodes
+    await assertFails(getDoc(doc(anonymous, 'events/published-event/config/promoCodes')));
+    await assertFails(setDoc(doc(anonymous, 'events/published-event/config/promoCodes'), promoPayload));
+    await assertFails(getDoc(doc(inactive, 'events/published-event/config/promoCodes')));
+
+    // Direct access to top-level /promocodes/{codeId} is completely denied for all clients
+    await assertFails(getDoc(doc(anonymous, 'promocodes/DEVFEST50')));
+    await assertFails(getDoc(doc(organizer, 'promocodes/DEVFEST50')));
+    await assertFails(getDoc(doc(admin, 'promocodes/DEVFEST50')));
+    await assertFails(setDoc(doc(admin, 'promocodes/DEVFEST50'), { code: 'DEVFEST50' }));
+
+    // Writing a non-empty promoCodes array onto the public /events/{eventId} document is rejected
+    await assertFails(updateDoc(doc(organizer, 'events/published-event'), promoPayload));
+    await assertFails(updateDoc(doc(admin, 'events/published-event'), promoPayload));
+    await assertFails(setDoc(doc(organizer, 'events/leaked-event'), {
+      title: 'Leaked Event',
+      status: 'draft',
+      isPublished: false,
+      ...promoPayload,
+    }));
+
+    // Writing hasPromoCodes boolean (with promoCodes omitted or empty) on /events/{eventId} succeeds
+    await assertSucceeds(updateDoc(doc(organizer, 'events/published-event'), {
+      hasPromoCodes: true,
+    }));
+  });
 });

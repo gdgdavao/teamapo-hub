@@ -405,7 +405,7 @@ const createEventStaticHtmlPlugin = () => ({
 // ─────────────────────────────────────────────────────────────────────────────
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react(), createEventStaticHtmlPlugin()],
   resolve: {
     alias: {
@@ -413,4 +413,11 @@ export default defineConfig({
       '@assets': fileURLToPath(new URL('./src/assets', import.meta.url)),
     }
   },
-})
+  build: {
+    minify: 'esbuild',
+    sourcemap: false,
+  },
+  esbuild: {
+    drop: mode === 'production' ? ['console', 'debugger'] : [],
+  },
+}))

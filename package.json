@@ -33,6 +33,7 @@
     "firebase:backfill-organizer-uid": "node scripts/backfill-organizer-uid.cjs",
     "firebase:export-certificate-emails": "node scripts/export-certificate-emails.cjs",
     "firebase:scrub-certificate-emails": "node scripts/scrub-certificate-emails.cjs",
+    "firebase:scrub-event-promo-codes": "bun scripts/scrub-event-promo-codes.cjs",
     "firebase:rules": "firebase deploy --only firestore:rules,storage",
     "firebase:indexes": "firebase deploy --only firestore:indexes",
     "firebase:functions": "firebase deploy --only functions",

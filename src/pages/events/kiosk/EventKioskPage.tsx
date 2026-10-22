@@ -252,7 +252,7 @@ export const EventKioskPage: React.FC = () => {
 
   /** Attach a stream to the kiosk video element and play it, WebKit-safe. */
   const attachStreamToVideo = useCallback(async (stream: MediaStream): Promise<boolean> => {
-    console.log('[CameraService:Kiosk] attachStreamToVideo called with stream:', {
+    log.debug('attachStreamToVideo called with stream:', {
       id: stream.id,
       active: stream.active,
       tracks: stream.getVideoTracks().map((t) => ({
@@ -268,18 +268,18 @@ export const EventKioskPage: React.FC = () => {
     // If video element is in the middle of a render transition, poll briefly for the ref
     let video = videoRef.current;
     if (!video) {
-      console.warn('[CameraService:Kiosk] videoRef.current is null, polling...');
+      log.warn('videoRef.current is null, polling...');
       for (let i = 0; i < 10; i++) {
         await new Promise((r) => requestAnimationFrame(r));
         if (videoRef.current) {
           video = videoRef.current;
-          console.log('[CameraService:Kiosk] videoRef.current resolved on frame', i);
+          log.debug('videoRef.current resolved on frame', i);
           break;
         }
       }
     }
     if (!video) {
-      console.error('[CameraService:Kiosk] videoRef.current could not be resolved in DOM');
+      log.error('videoRef.current could not be resolved in DOM');
       return false;
     }
     video.srcObject = stream;
@@ -289,14 +289,14 @@ export const EventKioskPage: React.FC = () => {
     video.setAttribute('muted', 'true');
     try {
       await video.play();
-      console.log('[CameraService:Kiosk] video.play() resolved successfully. Video status:', {
+      log.debug('video.play() resolved successfully. Video status:', {
         videoWidth: video.videoWidth,
         videoHeight: video.videoHeight,
         readyState: video.readyState,
         paused: video.paused,
       });
     } catch (playErr) {
-      console.warn('[CameraService:Kiosk] video.play() notice:', playErr);
+      log.warn('video.play() notice:', playErr);
     }
     return true;
   }, []);
@@ -311,7 +311,7 @@ export const EventKioskPage: React.FC = () => {
       if (!liveTrack) return;
       liveTrack.onended = () => {
         if (isExitingRef.current) return;
-        console.warn('[CameraService:Kiosk] Active camera track ended (wired connection disconnected). Falling back to OS default...');
+        log.warn('Active camera track ended (wired connection disconnected). Falling back to OS default...');
         setCameraConfig({
           facingMode: cameraConfigRef.current?.facingMode || 'user',
           deviceId: undefined,
@@ -324,7 +324,7 @@ export const EventKioskPage: React.FC = () => {
 
   // Robust Camera Management: let the OS and browser negotiate cleanly via CameraService
   const startCamera = useCallback(async () => {
-    console.log('[CameraService:Kiosk] startCamera invoked', {
+    log.debug('startCamera invoked', {
       isExiting: isExitingRef.current,
       isStarting: isStartingRef.current,
       loading,
@@ -335,13 +335,13 @@ export const EventKioskPage: React.FC = () => {
     });
 
     if (isExitingRef.current || isStartingRef.current) {
-      console.log('[CameraService:Kiosk] startCamera ignored: already exiting or starting');
+      log.debug('startCamera ignored: already exiting or starting');
       return;
     }
     // A modal owns the camera: fire-and-forget triggers (devicechange,
     // mount race) must not duel with the preview the organizer is looking at.
     if (loading || !!authError || isPinModalOpen || isSetupModalOpen) {
-      console.log('[CameraService:Kiosk] startCamera ignored: camera is blocked by active modal/loading');
+      log.debug('startCamera ignored: camera is blocked by active modal/loading');
       return;
     }
     isStartingRef.current = true;
@@ -353,7 +353,7 @@ export const EventKioskPage: React.FC = () => {
       // navigator.mediaDevices and needs guidance, not a cryptic TypeError.
       const support = CameraService.supportsKioskCamera();
       if (support) {
-        console.error('[CameraService:Kiosk] supportsKioskCamera failure:', support);
+        log.error('supportsKioskCamera failure:', support);
         setCameraError(support.message);
         setIsCameraActive(false);
         return;
@@ -369,7 +369,7 @@ export const EventKioskPage: React.FC = () => {
       const activeDeviceId = storedConfig?.deviceId;
       const activeFacingMode = storedConfig?.facingMode || 'user';
 
-      console.log('[CameraService:Kiosk] calling CameraService.acquireKioskStream with:', {
+      log.debug('calling CameraService.acquireKioskStream with:', {
         eventId,
         storedConfig,
         activeDeviceId,
@@ -384,11 +384,11 @@ export const EventKioskPage: React.FC = () => {
           timeoutMs: 15000,
           preferOsDefault: !isMobile && !activeDeviceId,
           deviceIdExact: false,
-          onFallback: (stage, err) => console.warn('[CameraService:Kiosk] Camera ladder fallback:', stage, err),
+          onFallback: (stage, err) => log.warn('Camera ladder fallback:', stage, err),
         }
       );
 
-      console.log('[CameraService:Kiosk] acquireKioskStream returned:', {
+      log.debug('acquireKioskStream returned:', {
         negotiatedDeviceId: deviceId,
         streamId: stream.id,
         epoch,
@@ -403,7 +403,7 @@ export const EventKioskPage: React.FC = () => {
         isSetupModalOpen ||
         acquireEpochRef.current !== epoch
       ) {
-        console.warn('[CameraService:Kiosk] Stream dropped: superseded or modal opened while acquiring', {
+        log.warn('Stream dropped: superseded or modal opened while acquiring', {
           isExiting: isExitingRef.current,
           isPinModalOpen,
           isSetupModalOpen,
@@ -421,7 +421,7 @@ export const EventKioskPage: React.FC = () => {
       }
 
       const attached = await attachStreamToVideo(stream);
-      console.log('[CameraService:Kiosk] attachStreamToVideo returned:', attached);
+      log.debug('attachStreamToVideo returned:', attached);
       if (!attached) {
         stream.getTracks().forEach((track) => {
           try {
@@ -437,11 +437,11 @@ export const EventKioskPage: React.FC = () => {
       }
       streamRef.current = stream;
       setIsCameraActive(true);
-      console.log('[CameraService:Kiosk] Camera active! isCameraActive set to true');
+      log.debug('Camera active! isCameraActive set to true');
       wireTrackEnded(stream);
       void startScanningRef.current?.();
     } catch (err) {
-      console.error('[CameraService:Kiosk] Camera access error in kiosk:', err);
+      log.error('Camera access error in kiosk:', err);
       if (isExitingRef.current) return;
       // Typed failure copy: names the real cause (permission, jammed camera,
       // dead device, secure origin) and the engine-specific way to unblock.
@@ -723,7 +723,7 @@ export const EventKioskPage: React.FC = () => {
           try {
             await videoRef.current.play();
           } catch (playErr) {
-            console.warn('[CameraService:Kiosk] video.play() on resume notice:', playErr);
+            log.warn('video.play() on resume notice:', playErr);
           }
         }
       }
