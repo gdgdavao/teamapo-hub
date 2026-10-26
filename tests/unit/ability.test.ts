@@ -262,6 +262,18 @@ describe('hybrid RBAC + ABPAC: granular permissions & lifecycle invariants', () 
     expect(ability.can('update', ownedEvent)).toBe(true);
   });
 
+  it('grants ticket tier transfer (transfer on Registration) exclusively to administrators and denies organizers', () => {
+    const organizerAbility = defineAbilityFor(organizer());
+    expect(organizerAbility.can('transfer', 'Registration')).toBe(false);
+    expect(organizerAbility.can('transfer', ownedRegistration)).toBe(false);
+    expect(organizerAbility.can('transfer', otherRegistration)).toBe(false);
+
+    const adminAbility = defineAbilityFor(admin());
+    expect(adminAbility.can('transfer', 'Registration')).toBe(true);
+    expect(adminAbility.can('transfer', ownedRegistration)).toBe(true);
+    expect(adminAbility.can('transfer', otherRegistration)).toBe(true);
+  });
+
   it('denies attendee mutations and export when attendees permissions are disabled', () => {
     const ability = defineAbilityFor(
       organizer({

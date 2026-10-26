@@ -96,7 +96,8 @@ service cloud.firestore {
       allow update: if isAdmin() || (
         isOrganizer() &&
         hasPerm('attendees', 'canUpdate') &&
-        request.resource.data.eventId == resource.data.eventId
+        request.resource.data.eventId == resource.data.eventId &&
+        request.resource.data.get('ticketTypeId', null) == resource.data.get('ticketTypeId', null)
       );
       allow delete: if isAdmin() || (isOrganizer() && hasPerm('attendees', 'canDelete'));
     }
