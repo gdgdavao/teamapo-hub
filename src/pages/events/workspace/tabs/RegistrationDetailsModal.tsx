@@ -687,6 +687,7 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
   const isAdmin = ability.can('manage', 'all');
   const canDelete = isAdmin || ability.can('delete', registrationEntity) || ability.can('delete', 'Registration');
   const canUpdate = ability.can('update', registrationEntity);
+  const canTransferTicket = ability.can('transfer', registrationEntity);
   const canVerifyPayment = ability.can('update', 'PaymentProof');
   const ticketType = currentEvent?.ticketTypes?.find(
     (tt) => tt.id === registration.ticketTypeId
@@ -911,8 +912,8 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
   };
 
   const handleTransferTicketTier = async () => {
-    if (!canUpdate) {
-      toast.error('You do not have permission to update registrations.');
+    if (!canTransferTicket) {
+      toast.error('Only platform administrators can transfer ticket tiers.');
       return;
     }
     if (!targetTicketTypeId || targetTicketTypeId === registration.ticketTypeId) {
@@ -1584,7 +1585,7 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
                     </div>
                   </div>
 
-                  {canUpdate && (currentEvent?.ticketTypes?.length ?? 0) > 1 && (
+                  {canTransferTicket && (currentEvent?.ticketTypes?.length ?? 0) > 1 && (
                     <div className="rounded-lg border border-outline-variant/80 bg-surface-container-lowest p-sm space-y-2">
                       <label
                         htmlFor="transfer-ticket-tier-select"

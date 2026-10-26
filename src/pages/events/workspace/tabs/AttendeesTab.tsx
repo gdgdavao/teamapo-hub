@@ -1159,8 +1159,8 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
   };
 
   const handleBulkTransferTicketTier = async () => {
-    if (!canUpdateRegistrations) {
-      toast.error('You do not have permission to update registrations');
+    if (!ability.can('transfer', 'Registration')) {
+      toast.error('Only platform administrators can transfer ticket tiers.');
       return;
     }
     if (!bulkTargetTicketTypeId) {
@@ -1318,6 +1318,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
   }
 
   const canUpdateRegistrations = ability.can('update', 'Registration');
+  const canTransferTickets = ability.can('transfer', 'Registration');
   const canDeleteRegistrations = ability.can('delete', 'Registration');
   const canVerifyPayments = ability.can('update', 'PaymentProof');
 
@@ -1359,20 +1360,16 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
         <EnvelopeIcon className="w-4 h-4 mr-2" />
         {isBulkProcessing ? 'Processing...' : `Resend Emails (${selectedRegistrations.size})`}
       </button>
-      {availableTicketTypes.length > 1 && (
+      {canTransferTickets && availableTicketTypes.length > 1 && (
         <button
           type="button"
           onClick={() => {
             setBulkTargetTicketTypeId(availableTicketTypes[0]?.id || '');
             setIsBulkTransferModalOpen(true);
           }}
-          disabled={isBulkProcessing || !canUpdateRegistrations}
+          disabled={isBulkProcessing}
           className="inline-flex items-center px-4 py-2 bg-surface-container-highest text-on-surface border border-outline-variant rounded-lg hover:bg-surface-container-high transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          title={
-            !canUpdateRegistrations
-              ? 'Update permission required'
-              : 'Transfer selected registrations to another ticket tier'
-          }
+          title="Transfer selected registrations to another ticket tier"
         >
           <TicketIcon className="w-4 h-4 mr-2 text-primary" />
           {isBulkProcessing ? 'Processing...' : `Transfer Ticket (${selectedRegistrations.size})`}

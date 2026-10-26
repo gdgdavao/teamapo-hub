@@ -454,9 +454,17 @@ describe('Firestore authorization rules', () => {
     await assertFails(deleteDoc(doc(owner, 'events/published-event')));
     await assertSucceeds(deleteDoc(doc(admin, 'events/published-event')));
 
-    // Organizers cannot tamper with registration eventId during updates
+    // Organizers cannot tamper with registration eventId or ticketTypeId during updates
     await assertFails(updateDoc(doc(owner, 'registrations/reg-1'), {
       eventId: 'different-event',
+    }));
+    await assertFails(updateDoc(doc(owner, 'registrations/reg-1'), {
+      ticketTypeId: 'sponsors-tier',
+    }));
+
+    // Admins CAN transfer registration ticketTypeId
+    await assertSucceeds(updateDoc(doc(admin, 'registrations/reg-1'), {
+      ticketTypeId: 'sponsors-tier',
     }));
 
     // Organizers cannot create malformed walk-in registrations with invalid emails

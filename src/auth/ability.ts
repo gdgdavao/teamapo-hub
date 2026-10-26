@@ -54,7 +54,15 @@ export type AppSubject =
   | 'AuditLog'
   | 'Feedback';
 
-export type AppAction = 'read' | 'create' | 'update' | 'delete' | 'manage' | 'export' | 'checkin';
+export type AppAction =
+  | 'read'
+  | 'create'
+  | 'update'
+  | 'delete'
+  | 'manage'
+  | 'export'
+  | 'checkin'
+  | 'transfer';
 
 export type AppAbility = MongoAbility<[AppAction, AppSubject]>;
 

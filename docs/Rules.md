@@ -56,7 +56,8 @@ The table below defines the strict 1:1 contract between CASL and `firestore.rule
 | `update Event` on active lifecycle | `isOrganizer() && hasPerm('events', 'canUpdate') && !(resource.data.status in ['completed', 'cancelled'])`. Completed/cancelled events are frozen from organizer edits. Communal: no creator ownership. |
 | `delete Event` | **Admin only.** `allow delete: if isAdmin()`. Organizers cannot delete events under any circumstances. |
 | `create Event` | `allow create: if isAdmin() \|\| (isOrganizer() && hasPerm('events', 'canCreate'))`. No creator ownership field written. |
-| `update` on `Registration` | `isOrganizer() && hasPerm('attendees', 'canUpdate')`. Communal access across events. |
+| `update` on `Registration` | `isOrganizer() && hasPerm('attendees', 'canUpdate') && request.resource.data.ticketTypeId == resource.data.ticketTypeId`. Communal access across events; `ticketTypeId` is pinned for non-admins. |
+| `transfer` on `Registration` | **Admin only.** `allow update: if isAdmin()` (only admins may mutate `ticketTypeId` to transfer an attendee between ticket tiers). |
 | `delete` on `Registration` | `isOrganizer() && hasPerm('attendees', 'canDelete')`. Communal access across events. |
 | `export` on `Registration` | UI gating on `attendees.canExport !== false` for attendee CSV and email log downloads. |
 | `checkin` on `Registration` | `attendees.canUpdate !== false && checkin.canCheckIn !== false` for QR scanning and manual check-ins across events. |
