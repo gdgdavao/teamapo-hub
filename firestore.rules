@@ -97,7 +97,11 @@ service cloud.firestore {
         isOrganizer() &&
         hasPerm('attendees', 'canUpdate') &&
         request.resource.data.eventId == resource.data.eventId &&
-        request.resource.data.get('ticketTypeId', null) == resource.data.get('ticketTypeId', null)
+        request.resource.data.get('ticketTypeId', null) == resource.data.get('ticketTypeId', null) &&
+        // Form responses are attendee-authored answers. Editing them is an
+        // admin-only correction (CASL 'editResponses'): organizers may still
+        // update status/payment/check-in fields, never the answers themselves.
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['customResponses'])
       );
       allow delete: if isAdmin() || (isOrganizer() && hasPerm('attendees', 'canDelete'));
     }

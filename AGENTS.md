@@ -49,6 +49,7 @@ flowchart TD
      - `chrome-devtools` (`bunx chrome-devtools-mcp@latest`): Inspect DOM, console logs, network calls, capture UI screenshots, and verify WCAG 2.2 accessibility tree.
      - `apohub-dev` (`bun run scripts/mcp/server.ts`): Emulator health checks, invoke Python Cloud Functions, and inspect Firestore collections with automatic DPA 2012 PII sanitization.
      - `firebase` (`bunx firebase-tools mcp`): Rules, indexes, and cloud management.
+     - `google-pay-wallet-dev` (`https://paydeveloper.googleapis.com/mcp`, remote): Official Google Pay & Wallet Developer MCP — docs search, pass issuer/class listing, integration status; drives the Google Wallet passes work in docs/GoogleWalletPasses.md.
      - `memory-map` (`bun run scripts/mcp/memory-server.ts`): Interconnected Markdown Memory Map for long-term project knowledge retention, graph exploration, and decision logging.
    - Agent configurations are available at:
      - `.mcp.json`: Antigravity (AGY), Claude Code, Windsurf, Zed, and agent-agnostic MCP clients.

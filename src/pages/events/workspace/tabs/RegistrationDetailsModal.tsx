@@ -21,6 +21,7 @@ import {
   ClipboardDocumentListIcon,
   ArrowPathIcon,
   CheckCircleIcon,
+  PencilSquareIcon,
 } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
 import {
@@ -30,6 +31,7 @@ import {
   Badge,
   Input,
   Select,
+  Textarea,
   type BadgeTone,
 } from '../../../../components/UI';
 import { RegistrationService } from '../../../../services/registrationService';
@@ -40,6 +42,14 @@ import { getDownloadUrlFromPath } from '../../../../utils/storageUtils';
 import { getRegistrationTotalAmount } from '../../../../utils/pricing';
 import { logger } from '../../../../utils/logger';
 import { formatDateTime as formatDate } from '../../../../utils/dateUtils';
+import {
+  extractContactDetailsFromResponses,
+  resolveResendTargetEmail,
+  validateFormResponses,
+  type ResponseValidationErrors,
+  type ResponseValue,
+} from '../../../../utils/formResponses';
+import { APP_URL } from '../../../../config/app';
 
 export interface AttendeeRegistration {
   id: string;
@@ -100,6 +110,7 @@ export interface AttendeeRegistration {
     };
   };
   registrationType?: 'online' | 'walk-in';
+  walletPassToken?: string;
 }
 
 export interface RegistrationDetailsModalProps {
@@ -306,8 +317,13 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
   const [emailHistory, setEmailHistory] = useState<EmailLog[] | null>(null);
   const [isLoadingEmailHistory, setIsLoadingEmailHistory] = useState(false);
   const [resendingEmailId, setResendingEmailId] = useState<string | null>(null);
-  const [overrideEmailFor, setOverrideEmailFor] = useState<string | null>(null);
-  const [overrideEmail, setOverrideEmail] = useState('');
+
+  // Admin-only editing of the attendee's form responses. The draft holds raw
+  // customResponses values keyed by form field id; errors mirror that shape.
+  const [isEditingResponses, setIsEditingResponses] = useState(false);
+  const [responsesDraft, setResponsesDraft] = useState<Record<string, ResponseValue>>({});
+  const [responseFieldErrors, setResponseFieldErrors] = useState<ResponseValidationErrors>({});
+  const [isSavingResponses, setIsSavingResponses] = useState(false);
 
   // Registration responses search, filter, and progressive disclosure
   const [responseSearchQuery, setResponseSearchQuery] = useState('');
@@ -318,12 +334,22 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
   const [targetTicketTypeId, setTargetTicketTypeId] = useState('');
   const [isTransferringTicket, setIsTransferringTicket] = useState(false);
 
-  // Reset filter & expand state when registration changes
+  // Reset filter & expand state when registration changes. Email history is
+  // included: the modal stays mounted while the attendees list swaps the
+  // registration prop, and a cached history from the previous attendee must
+  // never be shown under the new one (fetch-once guard would skip the refetch).
   useEffect(() => {
     setResponseSearchQuery('');
     setResponseFilter('all');
     setIsResponsesExpanded(false);
     setTargetTicketTypeId(registration?.ticketTypeId || '');
+    setIsEditingResponses(false);
+    setResponsesDraft({});
+    setResponseFieldErrors({});
+    setShowEmailHistory(false);
+    setEmailHistory(null);
+    setIsLoadingEmailHistory(false);
+    setResendingEmailId(null);
   }, [registration?.id, registration?.ticketTypeId]);
 
   const currentEvent = events.find((e) => e.id === registration?.event.id);
@@ -531,6 +557,20 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
     return result;
   }, [registration, currentEvent?.registrationForm, effectivePhone, effectiveOrg]);
 
+  // The attendee's current effective email: the form response when one exists
+  // (an admin may have corrected it there), otherwise the registration's
+  // resolved attendee email. Feeds resend targeting — no manual override prompt.
+  const currentResponseEmail = useMemo(() => {
+    const emailField = unifiedResponses.find(
+      (f) =>
+        f.type === 'email' ||
+        f.key.toLowerCase().includes('email') ||
+        f.label.toLowerCase().includes('email')
+    );
+    const fromResponse = typeof emailField?.value === 'string' ? emailField.value.trim() : '';
+    return fromResponse || registration?.attendee.email || '';
+  }, [unifiedResponses, registration?.attendee.email]);
+
   const answeredCount = useMemo(() => {
     return unifiedResponses.filter(isFieldAnswered).length;
   }, [unifiedResponses]);
@@ -689,6 +729,10 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
   const canUpdate = ability.can('update', registrationEntity);
   const canTransferTicket = ability.can('transfer', registrationEntity);
   const canVerifyPayment = ability.can('update', 'PaymentProof');
+  // Admin-only correction of attendee form responses. Mirrors the
+  // firestore.rules clause that rejects customResponses changes for
+  // non-admins (docs/Rules.md §2.0).
+  const canEditResponses = ability.can('editResponses', registrationEntity);
   const ticketType = currentEvent?.ticketTypes?.find(
     (tt) => tt.id === registration.ticketTypeId
   );
@@ -744,6 +788,310 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
     );
   };
 
+  // --- Admin-only form response editing -------------------------------------
+  // Gate: CASL 'editResponses' (admins only). The firestore.rules organizer
+  // update clause rejects customResponses changes, so this UI is the UX half
+  // of that contract, never the enforcement.
+
+  const startEditingResponses = () => {
+    if (!registration) return;
+    const raw = { ...(registration.formSubmission || {}) } as Record<string, ResponseValue>;
+    const formFields = currentEvent?.registrationForm || [];
+
+    // Prefill answers that were resolved from attendee fallbacks (legacy
+    // registrations store contact details only in userDetails) so the draft
+    // shows the attendee's effective answers, and saving makes the responses
+    // self-contained.
+    for (const field of formFields) {
+      if (field.type === 'spacer' || field.type === 'file') continue;
+      const existing = raw[field.id] ?? raw[field.id.toLowerCase()];
+      if (existing === undefined || existing === null || existing === '') {
+        const resolved = unifiedResponses.find((f) => f.key === field.id)?.value;
+        if (typeof resolved === 'string' && resolved.trim()) {
+          raw[field.id] = resolved;
+        } else if (typeof resolved === 'number') {
+          raw[field.id] = resolved;
+        }
+      }
+    }
+
+    setResponsesDraft(raw);
+    setResponseFieldErrors({});
+    setIsEditingResponses(true);
+  };
+
+  const cancelEditingResponses = () => {
+    setIsEditingResponses(false);
+    setResponsesDraft({});
+    setResponseFieldErrors({});
+  };
+
+  const setDraftValue = (key: string, value: ResponseValue) => {
+    setResponsesDraft((prev) => ({ ...prev, [key]: value }));
+    setResponseFieldErrors((prev) => {
+      if (!prev[key]) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  };
+
+  const toggleDraftArrayValue = (key: string, option: string) => {
+    setResponsesDraft((prev) => {
+      const current = Array.isArray(prev[key]) ? (prev[key] as string[]) : [];
+      const next = current.includes(option)
+        ? current.filter((v) => v !== option)
+        : [...current, option];
+      return { ...prev, [key]: next };
+    });
+    setResponseFieldErrors((prev) => {
+      if (!prev[key]) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  };
+
+  const handleSaveResponses = async () => {
+    if (!registration) return;
+    const formFields = currentEvent?.registrationForm || [];
+
+    // Enforce the form's own rules on save (required fields, email/phone
+    // formats, lengths) — the service re-validates as defence in depth.
+    const errors = validateFormResponses(responsesDraft, formFields);
+    if (Object.keys(errors).length > 0) {
+      setResponseFieldErrors(errors);
+      toast.error('Please fix the highlighted responses before saving.');
+      return;
+    }
+
+    try {
+      setIsSavingResponses(true);
+      await RegistrationService.updateRegistrationFormResponses(
+        registration.id,
+        registration.event.id,
+        responsesDraft,
+        formFields
+      );
+
+      // Optimistic local update so the parent list and this modal reflect the
+      // corrected answers (and synced contact details) immediately.
+      const details = extractContactDetailsFromResponses(responsesDraft, formFields);
+      onUpdateRegistration({
+        ...registration,
+        attendee: {
+          ...registration.attendee,
+          name: details.name?.trim() || registration.attendee.name,
+          email: details.email?.trim() || registration.attendee.email,
+          phone:
+            'phone' in details
+              ? details.phone?.trim() || undefined
+              : registration.attendee.phone,
+        },
+        formSubmission: { ...responsesDraft },
+      });
+
+      toast.success('Form responses updated');
+      cancelEditingResponses();
+    } catch (error: any) {
+      logger.error('Error updating form responses:', error);
+      toast.error(error?.message || 'Failed to update form responses. Please try again.');
+    } finally {
+      setIsSavingResponses(false);
+    }
+  };
+
+  const renderResponseEditor = (field: ResolvedResponseField) => {
+    const fieldDef = currentEvent?.registrationForm?.find((f) => f.id === field.key);
+    const error = responseFieldErrors[field.key];
+    const value = responsesDraft[field.key];
+    const inputId = `response-edit-${field.key}`;
+
+    // The Input/Textarea/Select primitives own error styling and the
+    // aria-invalid/aria-describedby wiring via their `error` prop — pass the
+    // message through, don't hand-roll ARIA. This paragraph covers the bare
+    // checkbox group, which has no primitive to carry it.
+    const renderError = () =>
+      error ? (
+        <p className="mt-0.5 text-xs text-error" role="alert">
+          {error}
+        </p>
+      ) : null;
+
+    let editor: React.ReactNode;
+    if (!fieldDef) {
+      // Legacy / unmapped response: free-form text edit.
+      editor = (
+        <Input
+          id={inputId}
+          error={error}
+          type="text"
+          value={typeof value === 'string' || typeof value === 'number' ? String(value) : ''}
+          onChange={(e) => setDraftValue(field.key, e.target.value)}
+        />
+      );
+    } else {
+      switch (fieldDef.type) {
+        case 'textarea':
+          editor = (
+            <Textarea
+              id={inputId}
+              error={error}
+              value={typeof value === 'string' ? value : ''}
+              onChange={(e) => setDraftValue(field.key, e.target.value)}
+            />
+          );
+          break;
+        case 'email':
+          editor = (
+            <Input
+              id={inputId}
+              error={error}
+              type="email"
+              value={typeof value === 'string' ? value : ''}
+              onChange={(e) => setDraftValue(field.key, e.target.value)}
+            />
+          );
+          break;
+        case 'phone':
+          editor = (
+            <Input
+              id={inputId}
+              error={error}
+              type="tel"
+              value={typeof value === 'string' ? value : ''}
+              onChange={(e) => setDraftValue(field.key, e.target.value)}
+            />
+          );
+          break;
+        case 'number':
+        case 'rating':
+          editor = (
+            <Input
+              id={inputId}
+              error={error}
+              type="number"
+              min={fieldDef.validation?.min}
+              max={fieldDef.validation?.max}
+              value={typeof value === 'number' ? value : typeof value === 'string' && value ? value : ''}
+              onChange={(e) =>
+                setDraftValue(field.key, e.target.value === '' ? '' : Number(e.target.value))
+              }
+            />
+          );
+          break;
+        case 'date':
+          editor = (
+            <Input
+              id={inputId}
+              error={error}
+              type="date"
+              value={typeof value === 'string' ? value : ''}
+              onChange={(e) => setDraftValue(field.key, e.target.value)}
+            />
+          );
+          break;
+        case 'select':
+        case 'radio':
+          editor = (
+            <Select
+              id={inputId}
+              error={error}
+              value={typeof value === 'string' ? value : ''}
+              onChange={(e) => setDraftValue(field.key, e.target.value)}
+              options={[
+                { value: '', label: '—' },
+                ...(fieldDef.options || []).map((opt) => ({ value: opt, label: opt })),
+              ]}
+            />
+          );
+          break;
+        case 'multiselect':
+        case 'checkbox': {
+          const options = fieldDef.options || [];
+          if (options.length === 0) {
+            // Bare checkbox: boolean value.
+            editor = (
+              <label htmlFor={inputId} className="flex min-h-[36px] items-center gap-2 text-xs text-on-surface">
+                <input
+                  id={inputId}
+                  type="checkbox"
+                  checked={value === true}
+                  onChange={(e) => setDraftValue(field.key, e.target.checked)}
+                  className="h-4 w-4 rounded border-outline-variant text-primary focus:ring-primary"
+                />
+                Checked
+              </label>
+            );
+          } else {
+            editor = (
+              <div className="space-y-1" role="group" aria-label={field.label}>
+                {options.map((opt, optIndex) => (
+                  <label
+                    key={opt}
+                    htmlFor={`${inputId}-${optIndex}`}
+                    className="flex min-h-[32px] items-center gap-2 text-xs text-on-surface"
+                  >
+                    <input
+                      id={`${inputId}-${optIndex}`}
+                      type="checkbox"
+                      checked={Array.isArray(value) && value.includes(opt)}
+                      onChange={() => toggleDraftArrayValue(field.key, opt)}
+                      className="h-4 w-4 rounded border-outline-variant text-primary focus:ring-primary"
+                    />
+                    {opt}
+                  </label>
+                ))}
+              </div>
+            );
+          }
+          break;
+        }
+        case 'file':
+          editor = (
+            <p className="text-xs text-on-surface-variant">
+              File uploads cannot be edited here.
+            </p>
+          );
+          break;
+        default:
+          editor = (
+            <Input
+              id={inputId}
+              error={error}
+              type="text"
+              value={typeof value === 'string' || typeof value === 'number' ? String(value) : ''}
+              onChange={(e) => setDraftValue(field.key, e.target.value)}
+            />
+          );
+      }
+    }
+
+    return (
+      <div
+        key={field.key}
+        className={`rounded-lg bg-surface-container-low p-sm ${
+          field.gridSize === 'full' ? 'sm:col-span-2' : 'sm:col-span-1'
+        }`}
+      >
+        <label
+          htmlFor={inputId}
+          className="flex items-center gap-1 text-xs font-medium text-on-surface-variant"
+        >
+          {getFieldIcon(field)}
+          <span className="truncate" title={field.label}>{field.label}</span>
+          {fieldDef?.required && <span className="text-error">*</span>}
+        </label>
+        <div className="mt-1">{editor}</div>
+        {renderError()}
+      </div>
+    );
+  };
+
+  // While editing, every tile grid renders the editors instead of the tiles.
+  const renderResponseTile = (field: ResolvedResponseField) =>
+    isEditingResponses ? renderResponseEditor(field) : renderFieldTile(field);
+
   // Free registrations have no proof to verify, and RegistrationService already
   // flips paymentStatus to 'paid' on approval when totalAmount === 0. A paid
   // registration always has a proof: payment is a prerequisite for registration.
@@ -765,6 +1113,18 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
     registration.status === 'attended' ||
     registration.status === 'approved' ||
     registration.paymentStatus === 'paid';
+
+  const handleCopyPassLink = () => {
+    if (!registration?.walletPassToken) {
+      toast.error('Pass token is not available for this registration');
+      return;
+    }
+    const passUrl = `${APP_URL}/payment/success?reg=${registration.id}&token=${registration.walletPassToken}`;
+    navigator.clipboard
+      .writeText(passUrl)
+      .then(() => toast.success('Google Wallet pass link copied to clipboard'))
+      .catch(() => toast.error('Failed to copy pass link. Please try again.'));
+  };
 
   const handleAccept = async () => {
     if (!canUpdate) {
@@ -842,9 +1202,11 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
 
     try {
       setIsLoadingEmailHistory(true);
+      // Keyed by registrationId, not the email address: history follows the
+      // registration even after an admin corrects the attendee's email.
       const logs = await EmailService.getAttendeeEmails(
         registration.event.id,
-        registration.attendee.email
+        registration.id
       );
       setEmailHistory(logs);
     } catch (error) {
@@ -857,22 +1219,23 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
   };
 
   const handleResendEmail = async (log: EmailLog) => {
-    const target = overrideEmail.trim();
-    if (overrideEmailFor === log.id && target && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(target)) {
-      toast.error('Please enter a valid email address');
-      return;
-    }
+    // Target = the attendee's current form-response email (falling back to the
+    // registration's resolved email, then the original log recipient). No
+    // manual override prompt: if the address was wrong, fix it in the form
+    // responses (admin edit) and resend — the correction lives in one place.
+    const target = resolveResendTargetEmail(log.userEmail, currentResponseEmail);
+    const corrected = target !== log.userEmail;
 
     try {
       setResendingEmailId(log.id);
       const result = await EmailService.resendEmail(
         log,
-        overrideEmailFor === log.id && target ? target : undefined
+        corrected ? target : undefined
       );
       if (result.success) {
-        toast.success('Email resent');
-        setOverrideEmailFor(null);
-        setOverrideEmail('');
+        toast.success(
+          corrected ? `Email resent to ${target}` : 'Email resent'
+        );
         // The resend writes a new activity_log, so the cached list is stale.
         setEmailHistory(null);
       } else {
@@ -1014,6 +1377,18 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
                 Accept
               </Button>
 
+              {isConfirmed && registration.walletPassToken && canUpdate && (
+                <Button
+                  variant="outlined"
+                  size="sm"
+                  onClick={handleCopyPassLink}
+                  title="Copy Google Wallet pass link for attendee"
+                  icon={<TicketIcon className="h-4 w-4 text-primary" />}
+                >
+                  Copy Pass Link
+                </Button>
+              )}
+
               <Button variant="outlined" size="sm" onClick={onClose}>
                 Close
               </Button>
@@ -1108,7 +1483,41 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
                   </div>
 
                   <div className="flex items-center gap-2">
-                    {unifiedResponses.length > 0 && (
+                    {canEditResponses && unifiedResponses.length > 0 && (
+                      isEditingResponses ? (
+                        <div className="flex items-center gap-1.5">
+                          <Button
+                            variant="tonal"
+                            size="sm"
+                            onClick={handleSaveResponses}
+                            loading={isSavingResponses}
+                            icon={<CheckIcon className="h-4 w-4" />}
+                          >
+                            Save
+                          </Button>
+                          <Button
+                            variant="text"
+                            size="sm"
+                            onClick={cancelEditingResponses}
+                            disabled={isSavingResponses}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={startEditingResponses}
+                          className="inline-flex min-h-[36px] items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium text-on-surface-variant hover:text-primary hover:bg-surface-container-high transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary active:scale-[0.98]"
+                          title="Edit form responses (admin)"
+                          aria-label="Edit form responses"
+                        >
+                          <PencilSquareIcon className="h-4 w-4 text-primary" aria-hidden="true" />
+                          <span>Edit</span>
+                        </button>
+                      )
+                    )}
+                    {unifiedResponses.length > 0 && !isEditingResponses && (
                       <button
                         type="button"
                         onClick={handleCopyAllResponses}
@@ -1242,18 +1651,18 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
                   ) : (
                     <div className="max-h-[460px] overflow-y-auto pr-1">
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-sm">
-                        {filteredResponses.map(renderFieldTile)}
+                        {filteredResponses.map(renderResponseTile)}
                       </div>
                     </div>
                   )
                 ) : unifiedResponses.length <= 6 ? (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-sm">
-                    {unifiedResponses.map(renderFieldTile)}
+                    {unifiedResponses.map(renderResponseTile)}
                   </div>
                 ) : !isResponsesExpanded ? (
                   <div className="relative">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-sm">
-                      {unifiedResponses.slice(0, 6).map(renderFieldTile)}
+                      {unifiedResponses.slice(0, 6).map(renderResponseTile)}
                     </div>
                     {/* Gradient Fade Mask */}
                     <div className="absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-surface via-surface/90 to-transparent pointer-events-none rounded-b-xl" />
@@ -1276,7 +1685,7 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
                   <div className="space-y-sm">
                     <div className="max-h-[460px] overflow-y-auto pr-1">
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-sm">
-                        {unifiedResponses.map(renderFieldTile)}
+                        {unifiedResponses.map(renderResponseTile)}
                       </div>
                     </div>
                     <div className="pt-xs text-center border-t border-outline-variant/40">
@@ -1296,7 +1705,9 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
               {/* Email History. A disclosure rather than a nested dialog:
                   RegistrationDetailsModal already stacks one <dialog> (the
                   receipt lightbox) and native top-layer nesting is janky on
-                  Safari, so the resend reveals its input in place. */}
+                  Safari, so the resend happens in place. Resend targets the
+                  attendee's current form-response email — correct the address
+                  via the admin response editor above, not here. */}
               <div className="rounded-lg border border-outline-variant bg-white p-md">
                 <button
                   type="button"
@@ -1341,7 +1752,6 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
                       <ul className="space-y-xs">
                         {emailHistory.map((log) => {
                           const isResending = resendingEmailId === log.id;
-                          const isOverriding = overrideEmailFor === log.id;
                           return (
                             <li
                               key={log.id}
@@ -1361,56 +1771,15 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
                                     {formatDate(log.timestamp)}{' '}
                                     &middot; {log.userEmail}
                                   </p>
-                                  {isOverriding && (
-                                    <div className="mt-xs flex flex-wrap items-center gap-xs">
-                                      <div className="min-w-[200px] flex-1">
-                                        <Input
-                                          type="email"
-                                          value={overrideEmail}
-                                          onChange={(e) =>
-                                            setOverrideEmail(e.target.value)
-                                          }
-                                          placeholder="New email address"
-                                          aria-label={`Send to a corrected address instead of ${log.userEmail}`}
-                                        />
-                                      </div>
-                                      <Button
-                                        variant="filled"
-                                        size="sm"
-                                        onClick={() => handleResendEmail(log)}
-                                        loading={isResending}
-                                      >
-                                        Send
-                                      </Button>
-                                      <Button
-                                        variant="text"
-                                        size="sm"
-                                        onClick={() => {
-                                          setOverrideEmailFor(null);
-                                          setOverrideEmail('');
-                                        }}
-                                        disabled={isResending}
-                                      >
-                                        Cancel
-                                      </Button>
-                                    </div>
-                                  )}
                                 </div>
                                 <Button
                                   variant="tonal"
                                   size="sm"
-                                  onClick={() => {
-                                    if (isOverriding) {
-                                      handleResendEmail(log);
-                                    } else {
-                                      setOverrideEmailFor(log.id);
-                                      setOverrideEmail('');
-                                    }
-                                  }}
+                                  onClick={() => handleResendEmail(log)}
                                   loading={isResending}
                                   icon={<ArrowPathIcon className="h-4 w-4" />}
                                 >
-                                  {isOverriding ? 'Resend' : 'Resend / Fix address'}
+                                  Resend
                                 </Button>
                               </div>
                             </li>

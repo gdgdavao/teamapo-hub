@@ -21,7 +21,12 @@ import type { FirebaseError } from 'firebase/app';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '../config/firebase';
 import { logger } from '../utils/logger';
-import { Registration, Event, TicketPricing } from '../types';
+import { Registration, Event, TicketPricing, FormField } from '../types';
+import {
+  extractContactDetailsFromResponses,
+  validateFormResponses,
+  type ResponseValue,
+} from '../utils/formResponses';
 import { EmailService } from './emailService';
 import { EventService } from './eventService';
 import { resolveDisplayStatus, StatusBearingRegistration } from '../utils/registrationStatus';
@@ -463,6 +468,34 @@ export class RegistrationService {
   }
 
   /**
+   * Resolve an approved attendee's ticket details using their walletPassToken.
+   * Returns sanitized registration and event data for rendering the TicketCard.
+   */
+  static async getTicketPass(registrationId: string, token: string): Promise<{
+    registration: Partial<Registration> & { id: string; qrCode: string };
+    event: { id: string; title: string; startDate?: string | Date; timezone?: string; venue?: any; ticketTypes?: any[] };
+  } | null> {
+    try {
+      const resolve = httpsCallable(functions, 'getTicketPass');
+      const result = await resolve({ registrationId, token });
+      const data = result.data as {
+        registration?: Partial<Registration> & { id: string; qrCode: string };
+        event?: any;
+      };
+      if (data?.registration && data?.event) {
+        return {
+          registration: data.registration,
+          event: data.event,
+        };
+      }
+      return null;
+    } catch (error) {
+      logger.warn('Ticket pass could not be resolved by token:', error);
+      return null;
+    }
+  }
+
+  /**
    * Get all registrations for an event
    */
   static async getEventRegistrations(eventId: string): Promise<Registration[]> {
@@ -799,6 +832,11 @@ export class RegistrationService {
           const isFree = data.totalAmount === 0 || !data.totalAmount;
           if (isFree) {
             updateData.paymentStatus = 'paid';
+          }
+          if (!data.walletPassToken) {
+            updateData.walletPassToken = typeof crypto !== 'undefined' && crypto.randomUUID
+              ? crypto.randomUUID().replace(/-/g, '') + Math.random().toString(36).substring(2, 10)
+              : Math.random().toString(36).substring(2) + Date.now().toString(36);
           }
           const email = (data.userDetails?.email || data.attendeeEmail || data.email || '').trim();
           const name = (data.userDetails?.name || data.attendeeName || data.name || 'Attendee').trim();
@@ -1857,5 +1895,91 @@ export class RegistrationService {
       logger.error('Error transferring registration ticket type:', error);
       throw error instanceof Error ? error : new Error('Failed to transfer ticket type');
     }
+  }
+
+  /**
+   * Updates an attendee's form responses (customResponses). Admin-only per
+   * CASL 'editResponses' and the matching firestore.rules clause — the caller
+   * gates the UI; the rules are the security boundary.
+   *
+   * Enforces the event form's own validation rules (required fields, email /
+   * phone formats) before writing, and keeps `userDetails` contact fields in
+   * sync with the corrected answers so every consumer reads one truth.
+   *
+   * Idempotent: re-submitting the same responses rewrites the same values.
+   *
+   * @throws Error with a user-facing message when validation fails or the
+   *   registration does not belong to `eventId`.
+   */
+  static async updateRegistrationFormResponses(
+    registrationId: string,
+    eventId: string,
+    responses: Record<string, ResponseValue | undefined>,
+    formFields: FormField[]
+  ): Promise<void> {
+    // Validate against the form definition first — required fields and
+    // per-field type constraints (email/phone format, lengths, options).
+    const errors = validateFormResponses(responses, formFields);
+    const firstError = Object.values(errors)[0];
+    if (firstError) {
+      throw new Error(firstError);
+    }
+
+    // Zero `undefined` in Firestore writes (AGENTS.md §5.1): drop unset keys,
+    // keep explicit empty strings so an admin can clear an optional answer.
+    const sanitized: Record<string, ResponseValue> = {};
+    for (const [key, value] of Object.entries(responses)) {
+      if (value !== undefined) {
+        sanitized[key] = value;
+      }
+    }
+
+    const registrationRef = doc(db, this.REGISTRATIONS_COLLECTION, registrationId);
+    const snapshot = await getDoc(registrationRef);
+    if (!snapshot.exists()) {
+      throw new Error('Registration not found');
+    }
+    const data = snapshot.data();
+    // Scoped-write guard (AGENTS.md §5.2): never touch a registration that
+    // does not belong to the event the editor is working in.
+    if (data.eventId !== eventId) {
+      throw new Error('Registration does not belong to this event');
+    }
+
+    const updateData: Record<string, unknown> = {
+      customResponses: sanitized,
+      updatedAt: serverTimestamp(),
+    };
+
+    // Sync the contact fields the form collects so `userDetails` never
+    // contradicts the corrected responses. Dot paths update only these keys;
+    // cleared values are written as null rather than left stale.
+    const details = extractContactDetailsFromResponses(sanitized, formFields);
+    if ('name' in details) updateData['userDetails.name'] = details.name || null;
+    if ('email' in details) updateData['userDetails.email'] = details.email || null;
+    if ('phone' in details) updateData['userDetails.phoneNumber'] = details.phone || null;
+
+    await updateDoc(registrationRef, updateData);
+
+    void AuditLogService.recordAuditLog({
+      category: 'event_operations',
+      action: 'registration_responses_updated',
+      target: {
+        type: 'registration',
+        id: registrationId,
+        ...(data.userDetails?.name ? { label: data.userDetails.name } : {}),
+      },
+      details: {
+        eventId,
+        changedFields: Object.keys(sanitized),
+      },
+    });
+
+    // The attendees list and the registration document cache are stale now.
+    swrCache.delete('regs:all');
+    swrCache.delete(`regs:${eventId}`);
+    swrCache.deletePrefix('regs:organizer:');
+    swrCache.delete('stats:dashboard');
+    swrCache.delete(`stats:event:${eventId}`);
   }
 }

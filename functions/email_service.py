@@ -111,6 +111,7 @@ class EmailService:
         )
         self.mailpit_host = os.getenv('MAILPIT_SMTP_HOST', 'localhost')
         self.mailpit_port = int(os.getenv('MAILPIT_SMTP_PORT', '1025'))
+        self.app_url = os.getenv('APP_URL', 'https://apohub.gdgdavao.org').rstrip('/')
         
         if self.use_mailpit:
             logger.info(f"Mailpit dev mode active. Routing emails to SMTP {self.mailpit_host}:{self.mailpit_port}")
@@ -371,7 +372,8 @@ class EmailService:
         status: str,  # 'approved', 'rejected', 'pending'
         payment_instructions: Optional[str] = None,
         qr_code_data: Optional[str] = None,
-        is_free_registration: bool = False
+        is_free_registration: bool = False,
+        wallet_pass_token: Optional[str] = None
     ) -> Dict[str, Any]:
         """Send payment status notification email (or registration-focused copy for free events)."""
         
@@ -411,7 +413,8 @@ class EmailService:
             payment_instructions=payment_instructions,
             qr_code_data=qr_code_data,
             use_cid=bool(qr_code_data),  # Use CID for attachment if QR code exists
-            is_free_registration=is_free_registration
+            is_free_registration=is_free_registration,
+            wallet_pass_token=wallet_pass_token
         )
         
         text_content = self._create_payment_notification_text(
@@ -420,7 +423,8 @@ class EmailService:
             registration_id=registration_id,
             status=status,
             payment_instructions=payment_instructions,
-            is_free_registration=is_free_registration
+            is_free_registration=is_free_registration,
+            wallet_pass_token=wallet_pass_token
         )
         
         tags = [
@@ -677,7 +681,8 @@ class EmailService:
         payment_instructions: Optional[str] = None,
         qr_code_data: Optional[str] = None,
         use_cid: bool = False,
-        is_free_registration: bool = False
+        is_free_registration: bool = False,
+        wallet_pass_token: Optional[str] = None
     ) -> str:
         """Create HTML content for payment notification email."""
         
@@ -757,6 +762,23 @@ class EmailService:
                 </p>
             </div>
             """
+
+        # Handle Google Wallet Pass section for approved payments
+        wallet_pass_section = ""
+        if wallet_pass_token and status == 'approved':
+            pass_url = f"{self.app_url}/payment/success?reg={registration_id}&token={wallet_pass_token}"
+            wallet_pass_section = f"""
+            <div style="background-color: #f8fafd; border: 1px solid #dadce0; border-radius: 12px; padding: 20px; margin: 20px 0; text-align: center;">
+                <h3 style="color: #1f1f1f; font-family: 'Google Sans', Roboto, -apple-system, BlinkMacSystemFont, Arial, sans-serif; font-size: 16px; font-weight: 600; margin: 0 0 6px 0;">Google Wallet Digital Ticket</h3>
+                <p style="color: #5f6368; font-size: 14px; margin: 0 0 16px 0;">Add your pass to Google Wallet for easy access on your phone</p>
+                <a href="{pass_url}" target="_blank" style="display: inline-block; background-color: #0b57d0; color: #ffffff; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-weight: 600; font-size: 14px; font-family: 'Google Sans', Roboto, -apple-system, BlinkMacSystemFont, Arial, sans-serif;">
+                    Save to Google Wallet
+                </a>
+                <p style="color: #747775; font-size: 12px; margin: 12px 0 0 0; line-height: 1.4;">
+                    Supported on Android and Google Wallet app on iOS. Your QR code above works at the door on all devices.
+                </p>
+            </div>
+            """
         
         context = {
             'user_name': user_name,
@@ -770,6 +792,7 @@ class EmailService:
             'contact_prompt': contact_prompt,
             'payment_instructions_section': payment_instructions_section,
             'qr_code_section': qr_code_section,
+            'wallet_pass_section': wallet_pass_section,
             'next_steps': next_steps,
             'is_free_registration': is_free_registration
         }
@@ -948,7 +971,8 @@ This email was sent to {user_name} for their registration to {event_title}.
         registration_id: str,
         status: str,
         payment_instructions: Optional[str] = None,
-        is_free_registration: bool = False
+        is_free_registration: bool = False,
+        wallet_pass_token: Optional[str] = None
     ) -> str:
         """Create plain text content for payment notification email."""
         
@@ -997,6 +1021,10 @@ This email was sent to {user_name} for their registration to {event_title}.
             subject_label = "Registration approved" if status == 'approved' else "Payment update"
         
         instructions_text = f"\nPAYMENT INSTRUCTIONS:\n{payment_instructions}\n" if payment_instructions and status == 'pending' else ""
+        wallet_pass_text = ""
+        if wallet_pass_token and status == 'approved':
+            pass_url = f"{self.app_url}/payment/success?reg={registration_id}&token={wallet_pass_token}"
+            wallet_pass_text = f"\nGOOGLE WALLET PASS:\nSave to Google Wallet: {pass_url}\n"
         
         return f"""
 {subject_label} - {event_title}
@@ -1007,7 +1035,7 @@ Hello {user_name}!
 
 {message}
 Registration ID: {registration_id}
-{instructions_text}
+{instructions_text}{wallet_pass_text}
 NEXT STEPS:
 - {next_steps.get(status, 'Please contact us for assistance.')}
 - Keep this email for your records

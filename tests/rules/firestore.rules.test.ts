@@ -467,6 +467,18 @@ describe('Firestore authorization rules', () => {
       ticketTypeId: 'sponsors-tier',
     }));
 
+    // Form responses (customResponses) are admin-only to edit. Organizers may
+    // still update status/payment/check-in fields, never the attendee's answers.
+    await assertFails(updateDoc(doc(owner, 'registrations/reg-1'), {
+      customResponses: { '1': 'Tampered Name', '2': 'tampered@example.com' },
+    }));
+    await assertSucceeds(updateDoc(doc(owner, 'registrations/reg-1'), {
+      paymentStatus: 'paid',
+    }));
+    await assertSucceeds(updateDoc(doc(admin, 'registrations/reg-1'), {
+      customResponses: { '1': 'Corrected Name', '2': 'corrected@example.com' },
+    }));
+
     // Organizers cannot create malformed walk-in registrations with invalid emails
     await assertFails(setDoc(doc(owner, 'registrations/bad-walk-in'), {
       eventId: 'published-event',

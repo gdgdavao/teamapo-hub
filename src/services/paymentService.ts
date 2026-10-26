@@ -228,10 +228,26 @@ export class PaymentService {
         
         // Update registration payment status
         const newPaymentStatus = status === 'approved' ? 'paid' : 'failed';
-        await updateDoc(registrationRef, {
+        const regUpdate: Record<string, any> = {
           paymentStatus: newPaymentStatus,
           updatedAt: serverTimestamp()
-        });
+        };
+
+        // Mint walletPassToken if approving and token is absent
+        if (status === 'approved') {
+          const regSnap = await getDoc(registrationRef);
+          if (regSnap.exists()) {
+            const regData = regSnap.data();
+            if (!regData.walletPassToken) {
+              const mintToken = typeof crypto !== 'undefined' && crypto.randomUUID
+                ? crypto.randomUUID().replace(/-/g, '') + Math.random().toString(36).substring(2, 10)
+                : Math.random().toString(36).substring(2) + Date.now().toString(36);
+              regUpdate.walletPassToken = mintToken;
+            }
+          }
+        }
+
+        await updateDoc(registrationRef, regUpdate);
 
         // If approved, update payment details
         if (status === 'approved') {

@@ -12,6 +12,7 @@ This guide details the Model Context Protocol (MCP) servers configured for the T
 | `apohub-dev` | `bun run scripts/mcp/server.ts` | **Local Apohub Stack & Emulators**: Check Firebase emulator statuses (Firestore :8080, Auth :9099, Functions :5001, Storage :9199, UI :4000), execute local Python Cloud Functions, inspect Firestore collections with automatic PII sanitization (DPA 2012 compliance), seed data, and run quality gates. |
 | `firebase` | `bunx firebase-tools mcp` | **Firebase Platform Integration**: Official Firebase CLI MCP server for managing security rules, projects, remote config, Firestore indexes, and authentication. |
 | `memory-map` | `bun run scripts/mcp/memory-server.ts` | **Interconnected Markdown Memory Map**: Create, update, link, and search Markdown memory nodes with automatic bidirectional backlinks, category clustering, and dynamic Mermaid graph rendering in `.memory/MEMORY_MAP.md`. |
+| `google-pay-wallet-dev` | `https://paydeveloper.googleapis.com/mcp` (remote, OAuth 2.0) | **Official Google Pay & Wallet Developer MCP**: Search official Google Pay/Wallet docs, list pass issuers (`list_pass_issuers`) and pass classes, inspect Google Pay integration status/error metrics, and manage merchant accounts — the console-side companion to the Wallet passes integration (see [docs/GoogleWalletPasses.md](./GoogleWalletPasses.md)). |
 
 > [!IMPORTANT]
 > **Strict Bun Invariant**: All MCP servers in this repository execute using `bun` or `bunx`. Never invoke with `npx` or `npm`.
@@ -178,6 +179,33 @@ Any MCP-compliant tool can use the project-root [`.mcp.json`](file:///Users/gab/
   # Run Interconnected Memory Map MCP standalone
   bun run memory:mcp
   ```
+
+---
+
+### 2.6 Google Pay & Wallet Developer MCP (`google-pay-wallet-dev`)
+
+Official Google remote MCP server (`https://paydeveloper.googleapis.com/mcp`, HTTP transport, **OAuth 2.0 — no API keys**). Tools: doc search, pass issuer/class listing, Google Pay integration status & error metrics, merchant account management. Console-side companion to [docs/GoogleWalletPasses.md](./GoogleWalletPasses.md).
+
+**One-time Google Cloud prerequisites (per contributor):**
+
+1. Select/create the Google Cloud project to use with Wallet (the one that will hold the Issuer account).
+2. Enable the **Pay & Wallet Developer API** (`paydeveloper.googleapis.com`) on that project.
+3. In **Google Auth Platform → Clients → Create client**, create an OAuth client (Google does **not** support dynamic client registration for this server, so credentials are pre-registered per client type):
+   - **Antigravity** (desktop app) → *Web application* with redirect URI `https://antigravity.google/oauth-callback`
+   - **OpenCode** → *Web application* with redirect URI `http://127.0.0.1:19876/mcp/oauth/callback` (OpenCode's default MCP OAuth callback port `19876`)
+4. OAuth scopes used by the server: `https://www.googleapis.com/auth/paydeveloper.merchant` and `https://www.googleapis.com/auth/paydeveloper.issuer.readonly`.
+
+**Agent wiring** (already present in this repo — nothing to commit):
+
+| Agent | Config | Auth step |
+| :--- | :--- | :--- |
+| **OpenCode** (project) | [`opencode.json`](file:///Users/gab/Developer/apohub/opencode.json) → `mcp."google-pay-wallet-dev"` (remote URL, no secrets) | `/mcps` in the TUI → select the server → sign in (browser OAuth). If dynamic registration is rejected, add `"oauth": { "clientId": "…", "clientSecret": "…" }` from your Google Auth Platform client to the server entry — **in your global `~/.config/opencode/opencode.json(c)`, never committed**. |
+| **OpenCode** (global) | `~/.config/opencode/opencode.json(c)` → same entry for all projects | Same sign-in flow. |
+| **Antigravity** (global) | `~/.gemini/config/mcp_config.json` → official shape: `{ "google-pay-wallet-dev": { "serverUrl": "https://paydeveloper.googleapis.com/mcp", "oauth": { "clientId": "…", "clientSecret": "…" } } }` | `/mcp` (CLI) or **MCP Servers → Authenticate** (IDE/app); paste the authorization code where Antigravity asks. Fill in your own client credentials — **never commit a real client secret.** |
+| **Any agent** | Project-root [`.mcp.json`](file:///Users/gab/Developer/apohub/.mcp.json) → `{ "google-pay-wallet-dev": { "url": "https://paydeveloper.googleapis.com/mcp" } }` | Follows that agent's MCP OAuth flow. |
+
+> [!IMPORTANT]
+> The repo-committed configs deliberately contain **only the server URL**. OAuth client IDs/secrets are per-contributor, live outside the repository (global configs), and a leaked Wallet-issuer OAuth secret gives read access to your Google Wallet issuer data. Sample prompts: "List my Google Wallet pass classes." / "Show Google Pay error metrics for the last 30 days."
 
 ---
 

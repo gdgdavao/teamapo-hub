@@ -163,6 +163,12 @@ describe('admin', () => {
     expect(ability.can('delete', otherAdmin)).toBe(true);
     expect(ability.can('delete', me)).toBe(false);
   });
+
+  it('may edit attendee form responses (editResponses on Registration), reached through manage', () => {
+    const ability = defineAbilityFor(admin());
+    expect(ability.can('editResponses', otherRegistration)).toBe(true);
+    expect(ability.can('editResponses', 'Registration')).toBe(true);
+  });
 });
 
 describe('negation semantics', () => {
@@ -272,6 +278,27 @@ describe('hybrid RBAC + ABPAC: granular permissions & lifecycle invariants', () 
     expect(adminAbility.can('transfer', 'Registration')).toBe(true);
     expect(adminAbility.can('transfer', ownedRegistration)).toBe(true);
     expect(adminAbility.can('transfer', otherRegistration)).toBe(true);
+  });
+
+  it('denies editing attendee form responses (editResponses on Registration) for every organizer, even with full attendees permissions', () => {
+    const organizerAbility = defineAbilityFor(organizer());
+    expect(organizerAbility.can('editResponses', 'Registration')).toBe(false);
+    expect(organizerAbility.can('editResponses', ownedRegistration)).toBe(false);
+
+    // Even the fully-permissioned organizer never corrects attendee answers.
+    const fullOrganizer = defineAbilityFor(
+      organizer({
+        permissions: {
+          events: { canCreate: true, canUpdate: true, canDelete: false },
+          attendees: { canUpdate: true, canDelete: true, canExport: true },
+          checkin: { canCheckIn: true },
+          payments: { canVerify: true },
+          certificates: { canManage: true },
+          feedback: { canManage: true },
+        } as any,
+      })
+    );
+    expect(fullOrganizer.can('editResponses', ownedRegistration)).toBe(false);
   });
 
   it('denies attendee mutations and export when attendees permissions are disabled', () => {

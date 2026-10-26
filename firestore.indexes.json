@@ -183,7 +183,7 @@
           "order": "ASCENDING"
         },
         {
-          "fieldPath": "userEmail",
+          "fieldPath": "registrationId",
           "order": "ASCENDING"
         },
         {

@@ -213,3 +213,37 @@ export function formatEventDateTime(
 
   return `${formattedStart} at ${startTime} – ${formattedEnd} at ${endTime}${tzSuffix}`;
 }
+
+/**
+ * Formats event date and time for the TeamApo Ticket Card footer bar per docs/PassUI.md §1.4.
+ * Produces format: MM/DD/YYYY h:mmA in the specified timezone (default: Asia/Manila).
+ * Example: "09/21/2025 10:00AM".
+ */
+export function formatTicketDate(
+  value: unknown,
+  timeZone: string = 'Asia/Manila',
+  fallback: string = 'Date TBD'
+): string {
+  const date = toDateSafe(value);
+  if (!date) return fallback;
+
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      month: '2-digit',
+      day: '2-digit',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    }).formatToParts(date);
+
+    const map = Object.fromEntries(parts.map((p) => [p.type, p.value]));
+    if (!map.month || !map.day || !map.year || !map.hour || !map.minute || !map.dayPeriod) {
+      return fallback;
+    }
+    return `${map.month}/${map.day}/${map.year} ${map.hour}:${map.minute}${map.dayPeriod.toUpperCase()}`;
+  } catch {
+    return fallback;
+  }
+}

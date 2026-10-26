@@ -26,6 +26,7 @@ vi.mock('@/services/emailService', () => ({
 vi.mock('@/services/registrationService', () => ({
   RegistrationService: {
     updateAttendeeDetails: vi.fn().mockResolvedValue(undefined),
+    updateRegistrationFormResponses: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
@@ -110,14 +111,12 @@ describe('RegistrationDetailsModal email history', () => {
     expect(getAttendeeEmails).not.toHaveBeenCalled();
   });
 
-  it('scopes the query to the event and the attendee email', async () => {
+  it('scopes the query to the event and the registration', async () => {
     renderModal();
 
     await userEvent.click(screen.getByRole('button', { name: /email history/i }));
 
-    await waitFor(() =>
-      expect(getAttendeeEmails).toHaveBeenCalledWith('evt_1', 'juan@example.com')
-    );
+    await waitFor(() => expect(getAttendeeEmails).toHaveBeenCalledWith('evt_1', 'reg_1'));
   });
 
   it('fetches once and reuses the cache on re-expand', async () => {
@@ -150,35 +149,69 @@ describe('RegistrationDetailsModal email history', () => {
     ).toBeInTheDocument();
   });
 
-  it('reveals an inline address override and sends to it without a nested dialog', async () => {
+  it('resends in one click to the attendee\u2019s current email without an override prompt', async () => {
     renderModal();
 
     await userEvent.click(screen.getByRole('button', { name: /email history/i }));
-    await userEvent.click(await screen.findByRole('button', { name: /resend \/ fix address/i }));
-
-    const input = screen.getByLabelText(/send to a corrected address/i);
-    await userEvent.type(input, 'juan.new@example.com');
-    await userEvent.click(screen.getByRole('button', { name: /^send$/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /^resend$/i }));
 
     await waitFor(() => expect(resendEmail).toHaveBeenCalled());
     const [log, override] = resendEmail.mock.calls[0];
     expect(log.id).toBe('log_1');
-    expect(override).toBe('juan.new@example.com');
+    // The log recipient already matches the attendee's current email, so no
+    // override is passed and the log is not double-counted as a correction.
+    expect(override).toBeUndefined();
   });
 
-  it('rejects a malformed override address before calling the service', async () => {
-    renderModal();
+  it('refetches history when the modal switches to a different attendee', async () => {
+    const OTHER_REGISTRATION = {
+      ...REGISTRATION,
+      id: 'reg_2',
+      attendee: {
+        ...REGISTRATION.attendee,
+        name: 'Maria Santos',
+        email: 'maria@example.com',
+      },
+    };
+    const OTHER_LOG = {
+      ...LOG,
+      id: 'log_2',
+      registrationId: 'reg_2',
+      userEmail: 'maria@example.com',
+      userName: 'Maria Santos',
+    };
 
+    const { rerender } = renderModal();
     await userEvent.click(screen.getByRole('button', { name: /email history/i }));
-    await userEvent.click(await screen.findByRole('button', { name: /resend \/ fix address/i }));
+    expect(await screen.findByText('Registration Confirmation')).toBeInTheDocument();
+    expect(getAttendeeEmails).toHaveBeenCalledTimes(1);
 
-    await userEvent.type(
-      screen.getByLabelText(/send to a corrected address/i),
-      'not-an-email'
+    // Switching attendees must discard the previous attendee's cached history:
+    // the fetch-once guard would otherwise show reg_1's emails under reg_2.
+    getAttendeeEmails.mockResolvedValue([OTHER_LOG]);
+    rerender(
+      <AbilityProvider value={ADMIN}>
+        <RegistrationDetailsModal
+          isOpen
+          onClose={noop}
+          registration={OTHER_REGISTRATION}
+          events={[] as never[]}
+          onUpdateRegistration={noop}
+          onStatusChange={noop}
+          onPaymentVerification={noop}
+          onDeleteRegistration={noop}
+        />
+      </AbilityProvider>
     );
-    await userEvent.click(screen.getByRole('button', { name: /^send$/i }));
 
-    expect(resendEmail).not.toHaveBeenCalled();
+    expect(screen.queryByText('Registration Confirmation')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /email history/i }));
+
+    await waitFor(() => expect(getAttendeeEmails).toHaveBeenCalledTimes(2));
+    expect(getAttendeeEmails).toHaveBeenLastCalledWith('evt_1', 'reg_2');
+    expect(
+      await within(screen.getByRole('list')).findByText(/maria@example\.com/)
+    ).toBeInTheDocument();
   });
 
   it('reports an empty history rather than showing a dead list', async () => {
