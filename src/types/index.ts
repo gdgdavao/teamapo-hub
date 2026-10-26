@@ -804,6 +804,7 @@ export type AuditLogAction =
   | 'registration_approved'
   | 'registration_rejected'
   | 'registration_deleted'
+  | 'registration_ticket_transferred'
   | 'payment_approved'
   | 'payment_rejected'
   | 'certificate_generated'

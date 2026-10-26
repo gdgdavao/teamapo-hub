@@ -29,6 +29,7 @@ import {
   ConfirmationModal,
   Badge,
   Input,
+  Select,
   type BadgeTone,
 } from '../../../../components/UI';
 import { RegistrationService } from '../../../../services/registrationService';
@@ -313,12 +314,17 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
   const [responseFilter, setResponseFilter] = useState<'all' | 'answered' | 'unanswered'>('all');
   const [isResponsesExpanded, setIsResponsesExpanded] = useState(false);
 
+  // Ticket tier transfer state
+  const [targetTicketTypeId, setTargetTicketTypeId] = useState('');
+  const [isTransferringTicket, setIsTransferringTicket] = useState(false);
+
   // Reset filter & expand state when registration changes
   useEffect(() => {
     setResponseSearchQuery('');
     setResponseFilter('all');
     setIsResponsesExpanded(false);
-  }, [registration?.id]);
+    setTargetTicketTypeId(registration?.ticketTypeId || '');
+  }, [registration?.id, registration?.ticketTypeId]);
 
   const currentEvent = events.find((e) => e.id === registration?.event.id);
 
@@ -901,6 +907,48 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
       toast.error(error?.message || 'Failed to delete registration. Please try again.');
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  const handleTransferTicketTier = async () => {
+    if (!canUpdate) {
+      toast.error('You do not have permission to update registrations.');
+      return;
+    }
+    if (!targetTicketTypeId || targetTicketTypeId === registration.ticketTypeId) {
+      return;
+    }
+    try {
+      setIsTransferringTicket(true);
+      const result = await RegistrationService.transferTicketType({
+        registrationId: registration.id,
+        targetTicketTypeId,
+        forceCapacity: isAdmin,
+      });
+
+      if (result.alreadyOnTarget) {
+        toast('Attendee is already on that ticket tier.');
+        return;
+      }
+
+      onUpdateRegistration({
+        ...registration,
+        ticketTypeId: result.targetTicketTypeId,
+        originalAmount: result.originalAmount,
+        discountAmount: result.discountAmount,
+        totalAmount: result.totalAmount,
+        pricing: {
+          ...registration.pricing,
+          ...result.pricing,
+          ticketTypeName: result.targetTicketTypeName,
+        },
+      });
+      toast.success(`Transferred to ${result.targetTicketTypeName}`);
+    } catch (error: any) {
+      logger.error('Error transferring ticket tier:', error);
+      toast.error(error?.message || 'Failed to transfer ticket tier. Please try again.');
+    } finally {
+      setIsTransferringTicket(false);
     }
   };
 
@@ -1535,6 +1583,48 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
                       </p>
                     </div>
                   </div>
+
+                  {canUpdate && (currentEvent?.ticketTypes?.length ?? 0) > 1 && (
+                    <div className="rounded-lg border border-outline-variant/80 bg-surface-container-lowest p-sm space-y-2">
+                      <label
+                        htmlFor="transfer-ticket-tier-select"
+                        className="block text-xs font-medium text-on-surface-variant"
+                      >
+                        Transfer Ticket Tier
+                      </label>
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                        <div className="flex-1 min-w-0">
+                          <Select
+                            id="transfer-ticket-tier-select"
+                            size="sm"
+                            value={targetTicketTypeId || registration.ticketTypeId || ''}
+                            onChange={(e) => setTargetTicketTypeId(e.target.value)}
+                            disabled={isTransferringTicket}
+                            aria-label="Select target ticket tier"
+                          >
+                            {currentEvent?.ticketTypes?.map((tt) => (
+                              <option key={tt.id} value={tt.id}>
+                                {tt.name} (₱{(tt.price || 0).toLocaleString()})
+                              </option>
+                            ))}
+                          </Select>
+                        </div>
+                        <Button
+                          variant="tonal"
+                          size="sm"
+                          onClick={handleTransferTicketTier}
+                          loading={isTransferringTicket}
+                          disabled={
+                            !targetTicketTypeId ||
+                            targetTicketTypeId === registration.ticketTypeId
+                          }
+                          icon={<ArrowPathIcon className="h-4 w-4" />}
+                        >
+                          Transfer
+                        </Button>
+                      </div>
+                    </div>
+                  )}
 
                   {ticketType?.description && (
                     <p className="text-xs text-on-surface-variant px-1">

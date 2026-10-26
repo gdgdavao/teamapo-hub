@@ -1588,4 +1588,274 @@ export class RegistrationService {
       throw error;
     }
   }
+
+  /**
+   * Atomically transfer a registration from its current ticket tier to a target ticket tier,
+   * recalculating the pricing snapshot (including promo code discounts) and shifting
+   * `currentSold` counters on the parent event document.
+   */
+  static async transferTicketType(params: {
+    registrationId: string;
+    targetTicketTypeId: string;
+    forceCapacity?: boolean;
+  }): Promise<{
+    alreadyOnTarget: boolean;
+    previousTicketTypeId: string;
+    targetTicketTypeId: string;
+    targetTicketTypeName: string;
+    originalAmount: number;
+    discountAmount: number;
+    totalAmount: number;
+    pricing: Record<string, any>;
+  }> {
+    const { registrationId, targetTicketTypeId, forceCapacity = false } = params;
+    if (!registrationId || !targetTicketTypeId) {
+      throw new Error('Registration ID and target ticket type ID are required');
+    }
+
+    const registrationRef = doc(db, this.REGISTRATIONS_COLLECTION, registrationId);
+
+    try {
+      let eventIdForCache = '';
+      let attendeeLabel: string | undefined;
+
+      const result = await runTransaction(db, async (transaction) => {
+        const regSnap = await transaction.get(registrationRef);
+        if (!regSnap.exists()) {
+          throw new Error('Registration not found');
+        }
+
+        const regData = regSnap.data() as Record<string, any>;
+        const eventId = String(regData.eventId || '');
+        if (!eventId) {
+          throw new Error('Registration is missing eventId');
+        }
+        eventIdForCache = eventId;
+        attendeeLabel = regData.userDetails?.name || regData.name || undefined;
+
+        const previousTicketTypeId = String(regData.ticketTypeId || '');
+        const eventRef = doc(db, this.EVENTS_COLLECTION, eventId);
+        const promoConfigRef = doc(db, this.EVENTS_COLLECTION, eventId, 'config', 'promoCodes');
+
+        const [eventSnap, promoConfigSnap] = await Promise.all([
+          transaction.get(eventRef),
+          transaction.get(promoConfigRef),
+        ]);
+
+        if (!eventSnap.exists()) {
+          throw new Error('Event not found');
+        }
+
+        const eventData = eventSnap.data() as Event;
+        const ticketTypes = Array.isArray(eventData.ticketTypes)
+          ? eventData.ticketTypes.map((t) => ({ ...t }))
+          : [];
+
+        const targetIndex = ticketTypes.findIndex((t) => t.id === targetTicketTypeId);
+        if (targetIndex < 0) {
+          throw new Error('Target ticket type not found on event');
+        }
+
+        const targetTicket = ticketTypes[targetIndex];
+        const quantity =
+          typeof regData.quantity === 'number' && regData.quantity > 0 ? regData.quantity : 1;
+
+        // Idempotent no-op if already assigned to the target ticket tier
+        if (previousTicketTypeId === targetTicketTypeId) {
+          const existingPricing =
+            regData.pricing && typeof regData.pricing === 'object' ? { ...regData.pricing } : {};
+          return {
+            alreadyOnTarget: true,
+            previousTicketTypeId,
+            targetTicketTypeId,
+            targetTicketTypeName: targetTicket.name,
+            originalAmount: Number(regData.originalAmount ?? targetTicket.price * quantity),
+            discountAmount: Number(regData.discountAmount ?? 0),
+            totalAmount: Number(regData.totalAmount ?? 0),
+            pricing: existingPricing,
+          };
+        }
+
+        const isCancelled =
+          regData.attendanceStatus === 'cancelled' || regData.paymentStatus === 'cancelled';
+
+        if (!isCancelled) {
+          // 1. Check capacity on target ticket type
+          const targetSold = Number.isFinite(targetTicket.currentSold)
+            ? targetTicket.currentSold
+            : 0;
+          const targetMax = Number.isFinite(targetTicket.maxQuantity)
+            ? targetTicket.maxQuantity
+            : undefined;
+
+          if (!forceCapacity && targetMax !== undefined && targetMax > 0 && targetSold + quantity > targetMax) {
+            throw new Error(`Ticket tier "${targetTicket.name}" has reached its maximum capacity`);
+          }
+
+          // 2. Decrement previous ticket type currentSold
+          const prevIndex = ticketTypes.findIndex((t) => t.id === previousTicketTypeId);
+          if (prevIndex >= 0) {
+            const prevTicket = ticketTypes[prevIndex];
+            const prevSold = Number.isFinite(prevTicket.currentSold) ? prevTicket.currentSold : 0;
+            ticketTypes[prevIndex] = {
+              ...prevTicket,
+              currentSold: Math.max(0, prevSold - quantity),
+            };
+          }
+
+          // 3. Increment target ticket type currentSold
+          const refreshedTarget = ticketTypes[targetIndex];
+          const refreshedTargetSold = Number.isFinite(refreshedTarget.currentSold)
+            ? refreshedTarget.currentSold
+            : 0;
+          ticketTypes[targetIndex] = {
+            ...refreshedTarget,
+            currentSold: refreshedTargetSold + quantity,
+          };
+        }
+
+        // 4. Recalculate pricing snapshot (respecting promo code discounts)
+        const unitPrice = Number.isFinite(targetTicket.price) ? Number(targetTicket.price) : 0;
+        const originalAmount = unitPrice * quantity;
+
+        const rawPromoCode =
+          typeof regData.promoCode === 'string' && regData.promoCode.trim()
+            ? regData.promoCode.trim()
+            : typeof regData.pricing?.promoCode === 'string' && regData.pricing.promoCode.trim()
+            ? regData.pricing.promoCode.trim()
+            : typeof regData.pricing?.promoCode?.code === 'string' &&
+              regData.pricing.promoCode.code.trim()
+            ? regData.pricing.promoCode.code.trim()
+            : '';
+
+        let unitDiscount = 0;
+
+        if (rawPromoCode) {
+          const configPromos = promoConfigSnap.exists()
+            ? promoConfigSnap.data()?.promoCodes
+            : null;
+          const promoList: any[] = Array.isArray(configPromos)
+            ? configPromos
+            : Array.isArray((eventData as any).promoCodes)
+            ? (eventData as any).promoCodes
+            : [];
+
+          const normalizedCode = rawPromoCode.toUpperCase();
+          const matchedPromo = promoList.find(
+            (pc) =>
+              pc &&
+              typeof pc.code === 'string' &&
+              pc.code.trim().toUpperCase() === normalizedCode
+          );
+
+          if (matchedPromo) {
+            const discountType =
+              matchedPromo.discountType === 'fixed' ? 'fixed' : 'percentage';
+            const discountValue = Number(matchedPromo.discountValue || 0);
+            const maxDiscount =
+              typeof matchedPromo.maxDiscountAmount === 'number' &&
+              matchedPromo.maxDiscountAmount > 0
+                ? matchedPromo.maxDiscountAmount
+                : null;
+
+            if (discountType === 'percentage') {
+              const rawDisc = (unitPrice * discountValue) / 100;
+              const cappedDisc = maxDiscount !== null ? Math.min(rawDisc, maxDiscount) : rawDisc;
+              unitDiscount = Math.min(cappedDisc, unitPrice);
+            } else {
+              unitDiscount = Math.min(discountValue, unitPrice);
+            }
+          } else {
+            // Fallback: if registration previously had a 100% complimentary promo discount, preserve 100%
+            const prevOrig = Number(regData.originalAmount ?? regData.pricing?.originalPrice ?? 0);
+            const prevDisc = Number(regData.discountAmount ?? regData.pricing?.discountAmount ?? 0);
+            const prevTotal = Number(regData.totalAmount ?? regData.pricing?.currentPrice ?? 0);
+            if (prevTotal === 0 && (prevOrig === 0 || prevDisc >= prevOrig)) {
+              unitDiscount = unitPrice;
+            } else if (prevOrig > 0 && prevDisc > 0) {
+              const ratio = Math.min(1, prevDisc / prevOrig);
+              unitDiscount = Math.min(unitPrice, unitPrice * ratio);
+            }
+          }
+        }
+
+        const unitFinalPrice = Math.max(0, unitPrice - unitDiscount);
+        const discountAmount = unitDiscount * quantity;
+        const totalAmount = unitFinalPrice * quantity;
+
+        const existingPricing =
+          regData.pricing && typeof regData.pricing === 'object' ? regData.pricing : {};
+        const updatedPricing: Record<string, any> = {
+          ticketTypeId: targetTicketTypeId,
+          ticketTypeName: targetTicket.name,
+          originalPrice: unitPrice,
+          currentPrice: unitFinalPrice,
+          discountAmount: unitDiscount,
+        };
+
+        if (rawPromoCode) {
+          updatedPricing.discountType = existingPricing.discountType || 'promo_code';
+          updatedPricing.promoCode = existingPricing.promoCode ?? rawPromoCode;
+        }
+        const promoCodeIdVal = regData.promoCodeId ?? existingPricing.promoCodeId;
+        if (typeof promoCodeIdVal === 'string' && promoCodeIdVal) {
+          updatedPricing.promoCodeId = promoCodeIdVal;
+        }
+
+        transaction.update(registrationRef, {
+          ticketTypeId: targetTicketTypeId,
+          originalAmount,
+          discountAmount,
+          totalAmount,
+          pricing: updatedPricing,
+          updatedAt: serverTimestamp(),
+        });
+
+        if (!isCancelled) {
+          transaction.update(eventRef, {
+            ticketTypes,
+            updatedAt: serverTimestamp(),
+          });
+        }
+
+        return {
+          alreadyOnTarget: false,
+          previousTicketTypeId,
+          targetTicketTypeId,
+          targetTicketTypeName: targetTicket.name,
+          originalAmount,
+          discountAmount,
+          totalAmount,
+          pricing: updatedPricing,
+        };
+      });
+
+      this.invalidateCache(eventIdForCache || undefined);
+      EventService.invalidateCache(eventIdForCache || undefined);
+
+      if (!result.alreadyOnTarget) {
+        void AuditLogService.recordAuditLog({
+          category: 'event_operations',
+          action: 'registration_ticket_transferred',
+          target: {
+            type: 'registration',
+            id: registrationId,
+            ...(attendeeLabel ? { label: attendeeLabel } : {}),
+          },
+          details: {
+            eventId: eventIdForCache,
+            previousTicketTypeId: result.previousTicketTypeId,
+            targetTicketTypeId: result.targetTicketTypeId,
+            targetTicketTypeName: result.targetTicketTypeName,
+            totalAmount: result.totalAmount,
+          },
+        });
+      }
+
+      return result;
+    } catch (error) {
+      logger.error('Error transferring registration ticket type:', error);
+      throw error instanceof Error ? error : new Error('Failed to transfer ticket type');
+    }
+  }
 }

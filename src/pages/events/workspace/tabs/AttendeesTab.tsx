@@ -97,6 +97,8 @@ const AttendeesTab: React.FC<AttendeesTabProps> = ({ eventId }) => {
   const [selectedRegistrations, setSelectedRegistrations] = useState<Set<string>>(new Set());
   const [isSelectAllChecked, setIsSelectAllChecked] = useState(false);
   const [isBulkProcessing, setIsBulkProcessing] = useState(false);
+  const [isBulkTransferModalOpen, setIsBulkTransferModalOpen] = useState(false);
+  const [bulkTargetTicketTypeId, setBulkTargetTicketTypeId] = useState('');
 
   // Re-sync when the URL changes underneath us. Without this, arriving from a
   // dashboard CTA while already on /attendees would keep the old filter and
@@ -534,10 +536,12 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
   };
 
   const filteredRegistrations = registrations.filter(registration => {
+    const promoCodeVal = getRegistrationPromoCode(registration);
     const matchesSearch = 
       registration.attendee.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       registration.attendee.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      registration.attendee.organization?.toLowerCase().includes(searchTerm.toLowerCase());
+      registration.attendee.organization?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (promoCodeVal ? promoCodeVal.toLowerCase().includes(searchTerm.toLowerCase()) : false);
     
 
     const matchesStatus =
@@ -1154,6 +1158,103 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
     );
   };
 
+  const handleBulkTransferTicketTier = async () => {
+    if (!canUpdateRegistrations) {
+      toast.error('You do not have permission to update registrations');
+      return;
+    }
+    if (!bulkTargetTicketTypeId) {
+      toast.error('Please select a target ticket tier');
+      return;
+    }
+
+    const selectedRegs = registrations.filter((r) => selectedRegistrations.has(r.id));
+    if (selectedRegs.length === 0) return;
+
+    const isAdmin = ability.can('manage', 'all');
+    setIsBulkTransferModalOpen(false);
+    setIsBulkProcessing(true);
+
+    let transferredCount = 0;
+    let skippedCount = 0;
+    let failedCount = 0;
+    const updatedById = new Map<
+      string,
+      {
+        ticketTypeId: string;
+        targetTicketTypeName: string;
+        originalAmount: number;
+        discountAmount: number;
+        totalAmount: number;
+        pricing: Record<string, any>;
+      }
+    >();
+
+    for (const reg of selectedRegs) {
+      try {
+        const res = await RegistrationService.transferTicketType({
+          registrationId: reg.id,
+          targetTicketTypeId: bulkTargetTicketTypeId,
+          forceCapacity: isAdmin,
+        });
+        if (res.alreadyOnTarget) {
+          skippedCount += 1;
+        } else {
+          transferredCount += 1;
+          updatedById.set(reg.id, {
+            ticketTypeId: res.targetTicketTypeId,
+            targetTicketTypeName: res.targetTicketTypeName,
+            originalAmount: res.originalAmount,
+            discountAmount: res.discountAmount,
+            totalAmount: res.totalAmount,
+            pricing: res.pricing,
+          });
+        }
+      } catch (err) {
+        logger.error(`Failed to transfer ticket tier for registration ${reg.id}:`, err);
+        failedCount += 1;
+      }
+    }
+
+    if (updatedById.size > 0) {
+      setRegistrations((prev) =>
+        prev.map((reg) => {
+          const patch = updatedById.get(reg.id);
+          if (!patch) return reg;
+          return {
+            ...reg,
+            ticketTypeId: patch.ticketTypeId,
+            originalAmount: patch.originalAmount,
+            discountAmount: patch.discountAmount,
+            totalAmount: patch.totalAmount,
+            pricing: {
+              ...reg.pricing,
+              ...patch.pricing,
+              ticketTypeName: patch.targetTicketTypeName,
+            },
+          };
+        })
+      );
+    }
+
+    setIsBulkProcessing(false);
+    setSelectedRegistrations(new Set());
+
+    if (failedCount > 0) {
+      toast.error(
+        `Transferred ${transferredCount} registration(s), ${failedCount} failed${
+          skippedCount > 0 ? `, ${skippedCount} already on tier` : ''
+        }.`
+      );
+    } else {
+      toast.success(
+        `Transferred ${transferredCount} registration(s)${
+          skippedCount > 0 ? ` (${skippedCount} already on tier)` : ''
+        }.`
+      );
+    }
+  };
+
   const getStatusBadge = (status: DisplayStatus | string) => {
     switch (status) {
       case 'attended':
@@ -1258,6 +1359,25 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
         <EnvelopeIcon className="w-4 h-4 mr-2" />
         {isBulkProcessing ? 'Processing...' : `Resend Emails (${selectedRegistrations.size})`}
       </button>
+      {availableTicketTypes.length > 1 && (
+        <button
+          type="button"
+          onClick={() => {
+            setBulkTargetTicketTypeId(availableTicketTypes[0]?.id || '');
+            setIsBulkTransferModalOpen(true);
+          }}
+          disabled={isBulkProcessing || !canUpdateRegistrations}
+          className="inline-flex items-center px-4 py-2 bg-surface-container-highest text-on-surface border border-outline-variant rounded-lg hover:bg-surface-container-high transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          title={
+            !canUpdateRegistrations
+              ? 'Update permission required'
+              : 'Transfer selected registrations to another ticket tier'
+          }
+        >
+          <TicketIcon className="w-4 h-4 mr-2 text-primary" />
+          {isBulkProcessing ? 'Processing...' : `Transfer Ticket (${selectedRegistrations.size})`}
+        </button>
+      )}
     </div>
   ) : null;
 
@@ -1284,6 +1404,61 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
           <p className="text-sm text-on-surface-variant">
             Please wait while we process your request...
           </p>
+        </div>
+      </Modal>
+
+      {/* Bulk Ticket Tier Transfer Modal */}
+      <Modal
+        open={isBulkTransferModalOpen}
+        onClose={() => setIsBulkTransferModalOpen(false)}
+        title="Transfer Ticket Tier"
+        size="sm"
+        footer={
+          <div className="flex w-full items-center justify-end gap-2">
+            <Button
+              variant="outlined"
+              size="sm"
+              onClick={() => setIsBulkTransferModalOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="filled"
+              size="sm"
+              onClick={handleBulkTransferTicketTier}
+              disabled={!bulkTargetTicketTypeId}
+            >
+              Transfer {selectedRegistrations.size} Attendee{selectedRegistrations.size === 1 ? '' : 's'}
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-on-surface-variant">
+            Move <strong>{selectedRegistrations.size}</strong> selected registration
+            {selectedRegistrations.size === 1 ? '' : 's'} to a different ticket tier. Ticket inventory counters and promo discount snapshots will update automatically.
+          </p>
+          <div>
+            <label
+              htmlFor="bulk-transfer-ticket-select"
+              className="block text-xs font-semibold text-on-surface-variant mb-1.5"
+            >
+              Target Ticket Tier
+            </label>
+            <Select
+              id="bulk-transfer-ticket-select"
+              value={bulkTargetTicketTypeId}
+              onChange={(e) => setBulkTargetTicketTypeId(e.target.value)}
+              size="md"
+              aria-label="Target ticket tier"
+            >
+              {availableTicketTypes.map((tt) => (
+                <option key={tt.id} value={tt.id}>
+                  {tt.name} (₱{tt.price.toLocaleString()})
+                </option>
+              ))}
+            </Select>
+          </div>
         </div>
       </Modal>
 
