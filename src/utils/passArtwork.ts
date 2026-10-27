@@ -126,8 +126,7 @@ export interface AttendeeNameInput {
 }
 
 /**
- * Splits attendee name into display (first line) and secondary (second line) strings
- * per docs/PassUI.md §1.2.
+ * Splits attendee name into display (first line) and secondary (second line) strings.
  * Respects explicit firstName/lastName when available, or splits composite full names.
  */
 export function splitAttendeeName(

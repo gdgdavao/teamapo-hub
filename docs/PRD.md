@@ -89,6 +89,20 @@ A modern, QR-code-based system to accurately track attendance.
 - Real-time Analytics: The admin dashboard will show a live count of checked-in attendees during the event.
 - Automated Triggers: A successful check-in changes the attendee's status from "Registered" to "Checked-in," which in turn enables the post-event feedback and certificate workflow for that user.
 
+### 4.6 Digital Pass & Google Wallet Credentials (`/ticket`)
+
+Approved attendees receive a private, token-gated ticket page URL allowing them to manage their event credential without requiring account creation:
+
+- **Token-Gated Self-Service**: Attendees access `/ticket?reg={regId}&token={walletPassToken}`. Access is fail-closed, verifying approval status before exposing QR codes or event actions.
+- **Google Wallet Passes**: Android and Desktop users can save their branded digital pass directly into Google Wallet with a single tap, receiving venue directions and lock-screen check-in reminders.
+- **Offline Ticket Card Download**: Universal 1:1 pixel-accurate PNG export via HTML5 canvas, prioritized for iOS devices where native Google Wallet passes are unsupported.
+
+### 4.7 Self-Check-in Kiosk Mode & Advanced Organizer Operations
+
+- **Kiosk Station Mode**: A dedicated, full-screen self-check-in route (`/events/:eventId/kiosk`) enabling attendees to scan their QR badges at registration tables with audio-visual confirmations and zero organizer interaction needed.
+- **Transactional Ticket Tier Transfers**: Administrators can reallocate registered attendees between different ticket tiers transactionally while enforcing real-time capacity and sold counts.
+- **Admin Form Response Corrections**: Administrators can edit custom form survey answers directly within the registration modal to resolve attendee submission mistakes without losing data history.
+
 ## 5. Technical Stack & Architecture
 
 - Styling: TailwindCSS (for rapid, utility-first UI development that can easily adhere to a design system). See [DESIGN.md](../DESIGN.md) and [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md).

@@ -12,7 +12,7 @@ This guide details the Model Context Protocol (MCP) servers configured for the T
 | `apohub-dev` | `bun run scripts/mcp/server.ts` | **Local Apohub Stack & Emulators**: Check Firebase emulator statuses (Firestore :8080, Auth :9099, Functions :5001, Storage :9199, UI :4000), execute local Python Cloud Functions, inspect Firestore collections with automatic PII sanitization (DPA 2012 compliance), seed data, and run quality gates. |
 | `firebase` | `bunx firebase-tools mcp` | **Firebase Platform Integration**: Official Firebase CLI MCP server for managing security rules, projects, remote config, Firestore indexes, and authentication. |
 | `memory-map` | `bun run scripts/mcp/memory-server.ts` | **Interconnected Markdown Memory Map**: Create, update, link, and search Markdown memory nodes with automatic bidirectional backlinks, category clustering, and dynamic Mermaid graph rendering in `.memory/MEMORY_MAP.md`. |
-| `google-pay-wallet-dev` | `https://paydeveloper.googleapis.com/mcp` (remote, OAuth 2.0) | **Official Google Pay & Wallet Developer MCP**: Search official Google Pay/Wallet docs, list pass issuers (`list_pass_issuers`) and pass classes, inspect Google Pay integration status/error metrics, and manage merchant accounts — the console-side companion to the Wallet passes integration (see [docs/GoogleWalletPasses.md](./GoogleWalletPasses.md)). |
+| `google-pay-wallet-dev` | `https://paydeveloper.googleapis.com/mcp` (remote, OAuth 2.0) | **Official Google Pay & Wallet Developer MCP**: Search official Google Pay/Wallet docs, list pass issuers (`list_pass_issuers`) and pass classes, inspect Google Pay integration status/error metrics, and manage merchant accounts — the console-side companion to the Wallet passes integration. |
 
 > [!IMPORTANT]
 > **Strict Bun Invariant**: All MCP servers in this repository execute using `bun` or `bunx`. Never invoke with `npx` or `npm`.
@@ -184,7 +184,7 @@ Any MCP-compliant tool can use the project-root [`.mcp.json`](file:///Users/gab/
 
 ### 2.6 Google Pay & Wallet Developer MCP (`google-pay-wallet-dev`)
 
-Official Google remote MCP server (`https://paydeveloper.googleapis.com/mcp`, HTTP transport, **OAuth 2.0 — no API keys**). Tools: doc search, pass issuer/class listing, Google Pay integration status & error metrics, merchant account management. Console-side companion to [docs/GoogleWalletPasses.md](./GoogleWalletPasses.md).
+Official Google remote MCP server (`https://paydeveloper.googleapis.com/mcp`, HTTP transport, **OAuth 2.0 — no API keys**). Tools: doc search, pass issuer/class listing, Google Pay integration status & error metrics, merchant account management. Console-side companion to the Google Wallet passes integration.
 
 **One-time Google Cloud prerequisites (per contributor):**
 

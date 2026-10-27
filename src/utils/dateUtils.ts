@@ -215,7 +215,7 @@ export function formatEventDateTime(
 }
 
 /**
- * Formats event date and time for the TeamApo Ticket Card footer bar per docs/PassUI.md §1.4.
+ * Formats event date and time for the TeamApo Ticket Card footer bar.
  * Produces format: MM/DD/YYYY h:mmA in the specified timezone (default: Asia/Manila).
  * Example: "09/21/2025 10:00AM".
  */

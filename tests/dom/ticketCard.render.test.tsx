@@ -100,7 +100,7 @@ describe('TicketCard Component (src/components/TicketCard.tsx)', () => {
         />
       );
 
-      const banner = document.querySelector('img[loading="lazy"]');
+      const banner = document.querySelector('[data-testid="ticket-banner"]');
       expect(banner).not.toBeNull();
       expect(banner).toHaveAttribute('src', 'https://example.com/banner.jpg');
     });
@@ -108,7 +108,7 @@ describe('TicketCard Component (src/components/TicketCard.tsx)', () => {
     it('renders an empty surface when the event has no banner', () => {
       render(<TicketCard registration={sampleRegistration} event={sampleEvent} />);
 
-      expect(document.querySelector('img[loading="lazy"]')).toBeNull();
+      expect(document.querySelector('[data-testid="ticket-banner"]')).toBeNull();
       expect(screen.queryByTestId('artwork-fallback')).toBeNull();
       // QR tile still overlays the empty surface
       expect(screen.getByTestId('qr-tile')).toBeInTheDocument();
@@ -122,11 +122,11 @@ describe('TicketCard Component (src/components/TicketCard.tsx)', () => {
         />
       );
 
-      const imageEl = document.querySelector('img[loading="lazy"]');
+      const imageEl = document.querySelector('[data-testid="ticket-banner"]');
       expect(imageEl).not.toBeNull();
       fireEvent.error(imageEl!);
 
-      expect(document.querySelector('img[loading="lazy"]')).toBeNull();
+      expect(document.querySelector('[data-testid="ticket-banner"]')).toBeNull();
       expect(screen.getByTestId('qr-tile')).toBeInTheDocument();
     });
 

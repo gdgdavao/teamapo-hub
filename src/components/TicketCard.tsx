@@ -1,4 +1,4 @@
-import React, { useState, useId } from 'react';
+import React, { useState, useEffect, useId } from 'react';
 import { Skeleton } from './UI';
 import { GDG_LOGO_URL, GDG_LOGO_LIGHT_DATA_URL } from '../config/app';
 import { splitAttendeeName } from '../utils/passArtwork';
@@ -114,7 +114,7 @@ function resolveVenueLine(event?: TicketCardEvent | null): string {
 
 /**
  * Canonical In-App Ticket Card Credential Component (TeamApo Hub)
- * Implements the approved Davao painting mock specified in docs/PassUI.md.
+ * Implements the approved Davao painting mock credential layout.
  */
 export const TicketCard: React.FC<TicketCardProps> = ({
   registration,
@@ -126,7 +126,7 @@ export const TicketCard: React.FC<TicketCardProps> = ({
   const reactId = useId().replace(/[:]/g, '_');
   const gradientId = `qr-ticket-grad-${reactId}`;
 
-  // Loading skeleton state per docs/PassUI.md §4
+  // Loading skeleton state
   if (loading || (!registration && !event)) {
     return (
       <div
@@ -161,6 +161,10 @@ export const TicketCard: React.FC<TicketCardProps> = ({
   const regId = registration?.id || '';
   // ponytail: event banner instead of deterministic R2 pass artwork; kiosk uses the same order
   const bannerUrl = event?.bannerUrl || event?.imageUrl || '';
+
+  useEffect(() => {
+    setImageError(false);
+  }, [bannerUrl]);
   const { display: firstNameDisplay, secondary: lastNameSecondary } = splitAttendeeName(
     registration?.userDetails || registration?.attendeeName
   );
@@ -222,12 +226,12 @@ export const TicketCard: React.FC<TicketCardProps> = ({
         {!imageError && bannerUrl ? (
           <img
             src={bannerUrl}
-            crossOrigin="anonymous"
             alt=""
-            loading="lazy"
-            decoding="async"
+            loading="eager"
+            decoding="auto"
+            data-testid="ticket-banner"
             onError={() => setImageError(true)}
-            className="w-full h-full object-cover transition-opacity duration-300"
+            className="absolute inset-0 w-full h-full object-cover transition-opacity duration-300"
           />
         ) : null}
 
@@ -259,7 +263,6 @@ export const TicketCard: React.FC<TicketCardProps> = ({
         <div className="flex items-center gap-2 min-w-0">
           <img
             src={GDG_LOGO_URL}
-            crossOrigin="anonymous"
             alt="GDG Davao"
             className="h-6 w-auto max-w-[140px] sm:max-w-[180px] object-contain shrink-0"
             onError={(e) => {
