@@ -89,15 +89,23 @@ service cloud.firestore {
     match /registrations/{registrationId} {
       allow read: if canManageDocByEventId(resource.data) && (isAdmin() || hasPerm('attendees', 'canRead'));
       allow create: if canManageEvent(request.resource.data.eventId) &&
-        (isAdmin() || hasPerm('attendees', 'canUpdate')) &&
         request.resource.data.eventId is string &&
+        (isAdmin() || (
+          hasPerm('attendees', 'canUpdate') &&
+          exists(/databases/$(database)/documents/events/$(request.resource.data.eventId)) &&
+          !(get(/databases/$(database)/documents/events/$(request.resource.data.eventId)).data.status in ['completed', 'cancelled'])
+        )) &&
         ('userDetails' in request.resource.data) &&
         isValidEmail(request.resource.data.userDetails.email);
       allow update: if isAdmin() || (
         isOrganizer() &&
         hasPerm('attendees', 'canUpdate') &&
         request.resource.data.eventId == resource.data.eventId &&
-        request.resource.data.get('ticketTypeId', null) == resource.data.get('ticketTypeId', null)
+        request.resource.data.get('ticketTypeId', null) == resource.data.get('ticketTypeId', null) &&
+        // Form responses are attendee-authored answers. Editing them is an
+        // admin-only correction (CASL 'editResponses'): organizers may still
+        // update status/payment/check-in fields, never the answers themselves.
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['customResponses'])
       );
       allow delete: if isAdmin() || (isOrganizer() && hasPerm('attendees', 'canDelete'));
     }

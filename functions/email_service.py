@@ -111,6 +111,7 @@ class EmailService:
         )
         self.mailpit_host = os.getenv('MAILPIT_SMTP_HOST', 'localhost')
         self.mailpit_port = int(os.getenv('MAILPIT_SMTP_PORT', '1025'))
+        self.app_url = os.getenv('APP_URL', 'https://apohub.gdgdavao.org').rstrip('/')
         
         if self.use_mailpit:
             logger.info(f"Mailpit dev mode active. Routing emails to SMTP {self.mailpit_host}:{self.mailpit_port}")
@@ -371,7 +372,8 @@ class EmailService:
         status: str,  # 'approved', 'rejected', 'pending'
         payment_instructions: Optional[str] = None,
         qr_code_data: Optional[str] = None,
-        is_free_registration: bool = False
+        is_free_registration: bool = False,
+        wallet_pass_token: Optional[str] = None
     ) -> Dict[str, Any]:
         """Send payment status notification email (or registration-focused copy for free events)."""
         
@@ -409,9 +411,8 @@ class EmailService:
             registration_id=registration_id,
             status=status,
             payment_instructions=payment_instructions,
-            qr_code_data=qr_code_data,
-            use_cid=bool(qr_code_data),  # Use CID for attachment if QR code exists
-            is_free_registration=is_free_registration
+            is_free_registration=is_free_registration,
+            wallet_pass_token=wallet_pass_token
         )
         
         text_content = self._create_payment_notification_text(
@@ -420,7 +421,8 @@ class EmailService:
             registration_id=registration_id,
             status=status,
             payment_instructions=payment_instructions,
-            is_free_registration=is_free_registration
+            is_free_registration=is_free_registration,
+            wallet_pass_token=wallet_pass_token
         )
         
         tags = [
@@ -431,22 +433,12 @@ class EmailService:
             {"name": "free_registration", "value": "true" if is_free_registration else "false"}
         ]
         
-        # Prepare attachments if QR code exists
-        attachments = []
-        if qr_code_data and status == 'approved':
-            attachments = [{
-                "filename": "qr_code.png",
-                "content": qr_code_data,
-                "content_id": "qr_code_cid"
-            }]
-        
         return self.send_email(
             to=user_email,
             subject=subject,
             html_content=html_content,
             text_content=text_content,
-            tags=tags,
-            attachments=attachments if attachments else None
+            tags=tags
         )
     
     def send_certificate_notification(
@@ -675,9 +667,8 @@ class EmailService:
         registration_id: str,
         status: str,
         payment_instructions: Optional[str] = None,
-        qr_code_data: Optional[str] = None,
-        use_cid: bool = False,
-        is_free_registration: bool = False
+        is_free_registration: bool = False,
+        wallet_pass_token: Optional[str] = None
     ) -> str:
         """Create HTML content for payment notification email."""
         
@@ -741,19 +732,25 @@ class EmailService:
             </div>
             """
         
-        # Handle QR code section for approved payments
-        qr_code_section = ""
-        if qr_code_data and status == 'approved':
-            # Use CID reference for attachment or base64 inline
-            img_src = "cid:qr_code_cid" if use_cid else f"data:image/png;base64,{qr_code_data}"
-            
-            qr_code_section = f"""
-            <div style="background-color: #f8fafd; border: 1px solid #dadce0; border-radius: 12px; padding: 24px; margin: 20px 0; text-align: center;">
-                <h3 style="color: #1f1f1f; font-family: 'Google Sans', Roboto, -apple-system, BlinkMacSystemFont, Arial, sans-serif; font-size: 16px; font-weight: 600; margin: 0 0 6px 0;">Your Check-In QR Code</h3>
-                <p style="color: #5f6368; font-size: 14px; margin: 0 0 16px 0;">Present this QR code at the venue door for instant check-in</p>
-                <img src="{img_src}" alt="Check-in QR Code" width="220" height="220" style="display: block; margin: 0 auto; max-width: 220px; width: 220px; height: auto; border: 1px solid #dadce0; border-radius: 8px; background-color: #ffffff; padding: 8px;" />
-                <p style="color: #1a73e8; font-size: 13px; font-weight: 500; margin: 14px 0 0 0;">
-                    Registration ID: <span style="font-family: monospace; font-size: 13px; font-weight: 600; background-color: #e8f0fe; color: #174ea6; padding: 3px 10px; border-radius: 12px;">{registration_id}</span>
+        # Handle Ticket section for approved registrations
+        ticket_section = ""
+        if wallet_pass_token and status == 'approved':
+            ticket_url = f"{self.app_url}/ticket?reg={registration_id}&token={wallet_pass_token}"
+            ticket_section = f"""
+            <div style="background-color: #f8fafd; border: 1px solid #dadce0; border-radius: 12px; padding: 24px 20px; margin: 20px 0; text-align: center;">
+                <h3 style="color: #1f1f1f; font-family: 'Google Sans', Roboto, -apple-system, BlinkMacSystemFont, Arial, sans-serif; font-size: 16px; font-weight: 600; margin: 0 0 6px 0;">Your Ticket</h3>
+                <p style="color: #5f6368; font-size: 14px; margin: 0 0 18px 0; line-height: 1.5;">Open your ticket to save it to Google Wallet or download it as an image on your phone.</p>
+                <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin: 0 auto 14px auto; border-collapse: separate;">
+                    <tr>
+                        <td align="center" style="border-radius: 24px; background-color: #0b57d0;">
+                            <a href="{ticket_url}" target="_blank" rel="noopener noreferrer" style="display: inline-block; padding: 12px 28px; font-family: 'Google Sans', Roboto, -apple-system, BlinkMacSystemFont, Arial, sans-serif; font-size: 14px; font-weight: 500; color: #ffffff; text-decoration: none; border-radius: 24px; min-height: 48px; box-sizing: border-box; line-height: 24px;">
+                                Open My Ticket
+                            </a>
+                        </td>
+                    </tr>
+                </table>
+                <p style="color: #747775; font-size: 12px; margin: 0; line-height: 1.4;">
+                    You&#39;ll find your door check-in QR on the ticket.
                 </p>
             </div>
             """
@@ -769,7 +766,9 @@ class EmailService:
             'intro_paragraph': intro_paragraph,
             'contact_prompt': contact_prompt,
             'payment_instructions_section': payment_instructions_section,
-            'qr_code_section': qr_code_section,
+            'qr_code_section': "",
+            'ticket_section': ticket_section,
+            'wallet_pass_section': ticket_section,
             'next_steps': next_steps,
             'is_free_registration': is_free_registration
         }
@@ -948,7 +947,8 @@ This email was sent to {user_name} for their registration to {event_title}.
         registration_id: str,
         status: str,
         payment_instructions: Optional[str] = None,
-        is_free_registration: bool = False
+        is_free_registration: bool = False,
+        wallet_pass_token: Optional[str] = None
     ) -> str:
         """Create plain text content for payment notification email."""
         
@@ -997,6 +997,10 @@ This email was sent to {user_name} for their registration to {event_title}.
             subject_label = "Registration approved" if status == 'approved' else "Payment update"
         
         instructions_text = f"\nPAYMENT INSTRUCTIONS:\n{payment_instructions}\n" if payment_instructions and status == 'pending' else ""
+        wallet_pass_text = ""
+        if wallet_pass_token and status == 'approved':
+            pass_url = f"{self.app_url}/ticket?reg={registration_id}&token={wallet_pass_token}"
+            wallet_pass_text = f"\nYOUR TICKET:\nOpen My Ticket: {pass_url}\n"
         
         return f"""
 {subject_label} - {event_title}
@@ -1007,7 +1011,7 @@ Hello {user_name}!
 
 {message}
 Registration ID: {registration_id}
-{instructions_text}
+{instructions_text}{wallet_pass_text}
 NEXT STEPS:
 - {next_steps.get(status, 'Please contact us for assistance.')}
 - Keep this email for your records

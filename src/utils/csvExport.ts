@@ -3,9 +3,17 @@
  * Pure functions with zero direct Firebase dependency.
  */
 
-export const escapeCSVCell = (value: string | number | null | undefined): string => {
+const FORMULA_TRIGGER_PATTERN = /^[\t\r\n ]*[=+\-@]|^[\t\r]/;
+
+export const escapeCSVCell = (value: string | number | boolean | null | undefined): string => {
   const normalized = value === null || value === undefined ? '' : String(value);
-  const sanitized = normalized.replace(/"/g, '""');
+  const formulaSafe =
+    typeof value === 'number'
+      ? normalized
+      : FORMULA_TRIGGER_PATTERN.test(normalized)
+        ? `'${normalized}`
+        : normalized;
+  const sanitized = formulaSafe.replace(/"/g, '""');
   return `"${sanitized}"`;
 };
 
@@ -154,7 +162,8 @@ export function generateAttendeesCSV(
 }
 
 export function downloadCSV(csvContent: string, filename: string): void {
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const bomContent = csvContent.startsWith('\uFEFF') ? csvContent : `\uFEFF${csvContent}`;
+  const blob = new Blob([bomContent], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.setAttribute('href', url);
@@ -163,5 +172,6 @@ export function downloadCSV(csvContent: string, filename: string): void {
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  // Defer revoking the Blob URL so WebKit (Safari) and Firefox can initiate the download asynchronously
+  setTimeout(() => URL.revokeObjectURL(url), 100);
 }

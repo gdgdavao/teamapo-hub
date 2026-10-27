@@ -20,6 +20,9 @@
     "memory-map": {
       "command": "bun",
       "args": ["run", "scripts/mcp/memory-server.ts"]
+    },
+    "google-pay-wallet-dev": {
+      "url": "https://paydeveloper.googleapis.com/mcp"
     }
   }
 }

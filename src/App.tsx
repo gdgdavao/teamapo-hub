@@ -29,7 +29,8 @@ import AuditLogsPage from './pages/audit/AuditLogsPage';
 // Attendee-facing
 import RegistrationPage from './pages/registration/RegistrationPage';
 import PaymentPage from './pages/payment/PaymentPage';
-import PaymentSuccessPage from './pages/payment/PaymentSuccessPage';
+import TicketPage from './pages/ticket/TicketPage';
+import LegacyTicketRedirect from './pages/ticket/LegacyTicketRedirect';
 import FeedbackPage from './pages/feedback/FeedbackPage';
 import CertificateVerificationPage from './pages/verification/CertificateVerificationPage';
 import LegalPage from './pages/legal/LegalPage';
@@ -103,8 +104,9 @@ const AppContent: React.FC = () => {
         <Route path="/e/:slug" element={<RegistrationPage />} />
         <Route path="/events/:eventId/register" element={<LegacyRegisterRedirect />} />
         <Route path="/payment/:registrationId" element={<PaymentPage />} />
-        <Route path="/payment/success" element={<PaymentSuccessPage />} />
-        <Route path="/registration/success" element={<PaymentSuccessPage />} />
+        <Route path="/ticket" element={<TicketPage />} />
+        <Route path="/payment/success" element={<LegacyTicketRedirect />} />
+        <Route path="/registration/success" element={<LegacyTicketRedirect mode="free" />} />
         <Route path="/feedback/:eventId" element={<FeedbackPage />} />
         <Route path="/verify" element={<CertificateVerificationPage />} />
         <Route path="/verify/:code" element={<CertificateVerificationPage />} />

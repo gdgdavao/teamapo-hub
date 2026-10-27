@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import secrets
+import unicodedata
 import base64
 import requests
 from datetime import datetime, timedelta, timezone
@@ -19,6 +20,7 @@ from firebase_admin.exceptions import FirebaseError
 from google.cloud.firestore_v1 import FieldFilter
 from google.auth.credentials import AnonymousCredentials
 from email_service import email_service
+import wallet_service
 
 # Global variables for Firebase Admin services (lazy initialization)
 _app = None
@@ -1169,8 +1171,8 @@ def deleteEventData(req: https_fn.CallableRequest) -> Dict[str, Any]:
         event_data = event_doc.to_dict()
         organizer_uid = event_data.get('organizer', {}).get('uid')
         
-        # Fails closed: unprovisioned and suspended callers are rejected here.
-        require_elevated(req, organizer_uid)
+        # Event deletion is strictly reserved for platform administrators (mirrors firestore.rules & CASL)
+        require_admin(req)
 
         # Check if event has registrations
         registrations = get_db().collection('registrations').where(
@@ -1582,7 +1584,7 @@ def createAnonymousRegistration(req: https_fn.CallableRequest) -> Dict[str, Any]
             not isinstance(details.get('email'), str) or '@' not in details['email']):
         raise https_fn.HttpsError(https_fn.FunctionsErrorCode.INVALID_ARGUMENT, 'Invalid registration data. Only 1 ticket per person is allowed.')
 
-    raw_email = details.get('email', '').strip()
+    raw_email = unicodedata.normalize('NFKC', details.get('email', '')).strip()
     normalized_email = raw_email.lower()
     details['email'] = normalized_email
 
@@ -1612,6 +1614,19 @@ def createAnonymousRegistration(req: https_fn.CallableRequest) -> Dict[str, Any]
 
     @firestore.transactional
     def reserve(tx):
+        for q_email in query_emails:
+            tx_existing = db.collection('registrations') \
+                .where('eventId', '==', event_id) \
+                .where('userDetails.email', '==', q_email) \
+                .limit(5) \
+                .get(transaction=tx)
+            for doc in tx_existing:
+                reg_data = doc.to_dict() or {}
+                if reg_data.get('attendanceStatus') != 'cancelled' and reg_data.get('paymentStatus') != 'cancelled':
+                    raise https_fn.HttpsError(
+                        https_fn.FunctionsErrorCode.ALREADY_EXISTS,
+                        'You are already registered for this event with this email address.'
+                    )
         snapshot = event_ref.get(transaction=tx)
         if not snapshot.exists:
             raise https_fn.HttpsError(https_fn.FunctionsErrorCode.NOT_FOUND, 'Event not found')
@@ -1823,6 +1838,7 @@ def registerForEvent(req: https_fn.CallableRequest) -> Dict[str, Any]:
             )
         
         event_data = event_doc.to_dict()
+        require_elevated(req, (event_data.get('organizer') or {}).get('uid'))
         
         if not event_data.get('isPublished', False):
             raise https_fn.HttpsError(
@@ -1964,6 +1980,8 @@ def processPaymentVerification(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 'paymentVerifiedAt': firestore.SERVER_TIMESTAMP,
                 'verifiedBy': req.auth.uid
             })
+            if not registration_data.get('walletPassToken'):
+                update_data['walletPassToken'] = secrets.token_urlsafe(32)
             
             if payment_data:
                 update_data['paymentData'] = payment_data
@@ -2763,6 +2781,13 @@ def sendConfirmationEmail(req: https_fn.CallableRequest) -> Dict[str, Any]:
                         code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
                         message="Registration details do not match"
                     )
+                if reg_data.get('confirmationEmailSent'):
+                    return {
+                        'success': True,
+                        'message': 'Confirmation email already sent',
+                        'registrationId': registration_id,
+                        'eventId': event_id,
+                    }
                 user_name = reg_user.get('name') or user_name
                 user_email = reg_user.get('email') or user_email
             else:
@@ -2930,6 +2955,14 @@ def sendConfirmationEmail(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 logger.warning(f"Failed to write activity log for confirmation email: {str(log_err)}")
 
             if email_result.get('success'):
+                if registration_id:
+                    try:
+                        get_db().collection('registrations').document(registration_id).update({
+                            'confirmationEmailSent': True,
+                            'confirmationEmailSentAt': firestore.SERVER_TIMESTAMP,
+                        })
+                    except Exception as mark_err:
+                        logger.warning(f"Failed to mark confirmationEmailSent on {registration_id}: {str(mark_err)}")
                 logger.info(f"Registration confirmation email sent to {user_email} (registration {registration_id})")
                 return {
                     'success': True,
@@ -3009,39 +3042,19 @@ def sendPaymentNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 message="attendeeEmail is required"
             )
 
-        # Generate QR code for approved payments (for event check-in)
-        qr_code_data = None
-        if status == 'approved' and registration_id:
+        # Resolve or mint walletPassToken for approved registrations
+        wallet_pass_token = reg_data.get('walletPassToken')
+        if status == 'approved' and not wallet_pass_token:
+            wallet_pass_token = secrets.token_urlsafe(32)
             try:
-                import qrcode
-                from io import BytesIO
-                import base64
-                from PIL import Image
-                
-                # Create QR code with optimized settings for email
-                qr = qrcode.QRCode(
-                    version=1,
-                    error_correction=qrcode.constants.ERROR_CORRECT_L,
-                    box_size=6,  # Reduced from 10 for smaller file size
-                    border=2     # Reduced from 5 for smaller file size
-                )
-                qr.add_data(f"registration:{registration_id}")
-                qr.make(fit=True)
-                
-                # Generate image with optimization
-                img: Image.Image = qr.make_image(fill_color="black", back_color="white").convert('RGB')
-                
-                # Save with optimization for email clients
-                buffer = BytesIO()
-                img.save(buffer, format='PNG', optimize=True)
-                buffer.seek(0)
-                qr_code_data = base64.b64encode(buffer.getvalue()).decode()
-                
-                logger.info(f"QR code generated successfully. Size: {len(qr_code_data)} bytes")
-            except Exception as qr_err:
-                logger.warning(f"Failed to generate QR code for payment notification: {str(qr_err)}")
+                get_db().collection('registrations').document(registration_id).update({
+                    'walletPassToken': wallet_pass_token,
+                    'updatedAt': firestore.SERVER_TIMESTAMP
+                })
+            except Exception as token_err:
+                logger.warning(f"Could not persist walletPassToken in sendPaymentNotification: {token_err}")
 
-        # Send email using Resend
+        # Send email using Resend (Ticket-first: single CTA to /ticket with no inline QR/attachments)
         email_result = email_service.send_payment_notification(
             user_email=attendee_email,
             user_name=attendee_name,
@@ -3049,8 +3062,8 @@ def sendPaymentNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
             registration_id=registration_id,
             status=status,
             payment_instructions=payment_instructions,
-            qr_code_data=qr_code_data,
-            is_free_registration=is_free_registration
+            is_free_registration=is_free_registration,
+            wallet_pass_token=wallet_pass_token
         )
 
         # Log activity for traceability
@@ -4222,7 +4235,7 @@ def on_event_created(event: firestore_fn.Event[Optional[firestore_fn.DocumentSna
         logger.error(f"Error in event created trigger: {str(e)}")
 
 
-@firestore_fn.on_document_updated(document="events/{eventId}")
+@firestore_fn.on_document_updated(document="events/{eventId}", secrets=["WALLET_ISSUER_KEY"])
 def on_event_updated(event: firestore_fn.Event[firestore_fn.Change[Optional[firestore_fn.DocumentSnapshot]]]) -> None:
     """
     Triggered when an event is updated
@@ -4291,6 +4304,56 @@ def on_event_updated(event: firestore_fn.Event[firestore_fn.Change[Optional[fire
         
         if before_attendees != after_attendees:
             _update_event_analytics(event_id, 'registrationCount', after_attendees - before_attendees)
+
+        # Check if event was cancelled -> inactivate Wallet passes
+        if before_status != 'cancelled' and after_status == 'cancelled':
+            logger.info(f"Event {event_id} status changed to cancelled; syncing wallet passes")
+            try:
+                issuer_id, sa_info = wallet_service.get_wallet_credentials_and_issuer()
+                if issuer_id and sa_info:
+                    regs = get_db().collection('registrations').where(
+                        filter=FieldFilter('eventId', '==', event_id)
+                    ).stream()
+                    for reg in regs:
+                        wallet_service.patch_wallet_object_state(
+                            issuer_id=issuer_id,
+                            registration_id=reg.id,
+                            state='INACTIVE',
+                            service_account_info=sa_info
+                        )
+            except Exception as w_err:
+                logger.warning(f"Failed to batch inactivate wallet passes for event {event_id}: {w_err}")
+
+        # Check if title, dates, venue, or banner changed -> patch Wallet class
+        details_changed = (
+            before_data.get('title') != after_data.get('title') or
+            before_data.get('startDate') != after_data.get('startDate') or
+            before_data.get('endDate') != after_data.get('endDate') or
+            before_data.get('venue') != after_data.get('venue') or
+            before_data.get('bannerUrl') != after_data.get('bannerUrl') or
+            before_data.get('imageUrl') != after_data.get('imageUrl') or
+            before_data.get('locationTba') != after_data.get('locationTba') or
+            before_data.get('timezone') != after_data.get('timezone')
+        )
+        if details_changed:
+            try:
+                issuer_id, sa_info = wallet_service.get_wallet_credentials_and_issuer()
+                if issuer_id and sa_info:
+                    app_url = os.getenv('APP_URL', 'https://apohub.gdgdavao.org')
+                    updated_class = wallet_service.build_event_ticket_class(
+                        issuer_id=issuer_id,
+                        event_id=event_id,
+                        event_data=after_data,
+                        app_url=app_url
+                    )
+                    wallet_service.patch_wallet_class(
+                        issuer_id=issuer_id,
+                        event_id=event_id,
+                        patch_data=updated_class,
+                        service_account_info=sa_info
+                    )
+            except Exception as w_class_err:
+                logger.warning(f"Failed to patch wallet class for event {event_id}: {w_class_err}")
         
     except ValueError as e:
         # Handle timestamp parsing errors specifically
@@ -4300,6 +4363,330 @@ def on_event_updated(event: firestore_fn.Event[firestore_fn.Change[Optional[fire
             logger.error(f"Timestamp parsing error in event updated trigger: {str(e)}")
     except Exception as e:
         logger.error(f"Error in event updated trigger: {str(e)}")
+
+
+def _is_registration_inactive(reg_data: Dict[str, Any]) -> bool:
+    """Return True if registration is cancelled, rejected, or refunded across any status field."""
+    return (
+        reg_data.get('attendanceStatus') == 'cancelled' or
+        reg_data.get('registrationStatus') in ['cancelled', 'rejected'] or
+        reg_data.get('paymentStatus') in ['cancelled', 'rejected', 'refunded']
+    )
+
+
+def _is_registration_approved(reg_data: Dict[str, Any]) -> bool:
+    """Return True if registration is approved/confirmed/paid and not inactive."""
+    return (
+        not _is_registration_inactive(reg_data) and (
+            reg_data.get('registrationStatus') in ['approved', 'confirmed'] or
+            reg_data.get('paymentStatus') == 'paid'
+        )
+    )
+
+
+@firestore_fn.on_document_updated(document="registrations/{registrationId}", secrets=["WALLET_ISSUER_KEY"])
+def on_registration_updated(event: firestore_fn.Event[firestore_fn.Change[Optional[firestore_fn.DocumentSnapshot]]]) -> None:
+    """
+    Triggered when a registration is updated.
+    Syncs pass state to INACTIVE in Google Wallet if registration is cancelled/rejected/refunded,
+    or restores to ACTIVE if re-approved.
+    """
+    try:
+        if not event.data or not event.data.after or not event.data.after.exists:
+            return
+
+        registration_id = event.params['registrationId']
+        before_data = event.data.before.to_dict() if event.data.before else {}
+        after_data = event.data.after.to_dict() if event.data.after else {}
+
+        was_inactive = _is_registration_inactive(before_data)
+        is_inactive = _is_registration_inactive(after_data)
+        is_approved = _is_registration_approved(after_data)
+
+        if is_inactive and not was_inactive:
+            issuer_id, sa_info = wallet_service.get_wallet_credentials_and_issuer()
+            if issuer_id and sa_info:
+                wallet_service.patch_wallet_object_state(
+                    issuer_id=issuer_id,
+                    registration_id=registration_id,
+                    state='INACTIVE',
+                    service_account_info=sa_info
+                )
+        elif was_inactive and is_approved:
+            issuer_id, sa_info = wallet_service.get_wallet_credentials_and_issuer()
+            if issuer_id and sa_info:
+                wallet_service.patch_wallet_object_state(
+                    issuer_id=issuer_id,
+                    registration_id=registration_id,
+                    state='ACTIVE',
+                    service_account_info=sa_info
+                )
+    except Exception as e:
+        logger.error(f"Error in on_registration_updated: {str(e)}")
+
+
+
+@https_fn.on_call()
+def getTicketPass(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Fetch attendee ticket details for an approved attendee using their walletPassToken.
+    Returns safe, non-sensitive ticket card payload (registration & event info).
+    """
+    data = req.data or {}
+    registration_id = data.get('registrationId')
+    token = data.get('token') or data.get('walletPassToken')
+
+    if (
+        not isinstance(registration_id, str) or
+        not isinstance(token, str) or
+        not (1 <= len(registration_id.strip()) <= 128) or
+        not (8 <= len(token.strip()) <= 256)
+    ):
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+            message="registrationId and token are required"
+        )
+
+    clean_reg_id = registration_id.strip()
+    clean_token = token.strip()
+
+    # 1. Look up registration by walletPassToken to avoid user enumeration
+    query = get_db().collection('registrations').where(
+        filter=FieldFilter('walletPassToken', '==', clean_token)
+    ).limit(1).stream()
+
+    reg_doc = next(query, None)
+    reg_data = reg_doc.to_dict() or {} if reg_doc else {}
+    stored_token = str(reg_data.get('walletPassToken') or '')
+    if (
+        not reg_doc or
+        not secrets.compare_digest(reg_doc.id, clean_reg_id) or
+        not secrets.compare_digest(stored_token, clean_token)
+    ):
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.NOT_FOUND,
+            message="Ticket not found or token invalid"
+        )
+
+    # 2. Check approval gate and reject cancelled/rejected registrations
+    is_cancelled_or_rejected = (
+        reg_data.get('attendanceStatus') == 'cancelled' or
+        reg_data.get('registrationStatus') in ['cancelled', 'rejected'] or
+        reg_data.get('paymentStatus') in ['cancelled', 'rejected', 'refunded']
+    )
+    is_approved = (
+        not is_cancelled_or_rejected and (
+            reg_data.get('registrationStatus') in ['approved', 'confirmed'] or
+            reg_data.get('paymentStatus') == 'paid'
+        )
+    )
+    if not is_approved:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
+            message="Registration has not been approved"
+        )
+
+    # 3. Fetch event doc
+    event_id = reg_data.get('eventId')
+    event_data: Dict[str, Any] = {}
+    if event_id:
+        event_doc = get_db().collection('events').document(event_id).get()
+        if event_doc.exists:
+            event_data = event_doc.to_dict() or {}
+            event_data['id'] = event_id
+
+    user_details = reg_data.get('userDetails') or {}
+    sanitized_registration = {
+        'id': reg_doc.id,
+        'eventId': event_id,
+        'ticketTypeId': reg_data.get('ticketTypeId', ''),
+        'qrCode': reg_data.get('qrCode', f"registration:{reg_doc.id}"),
+        'registrationStatus': reg_data.get('registrationStatus', 'confirmed'),
+        'paymentStatus': reg_data.get('paymentStatus', 'paid'),
+        'userDetails': {
+            'name': user_details.get('name', 'Attendee'),
+            'firstName': user_details.get('firstName', ''),
+            'lastName': user_details.get('lastName', ''),
+        },
+        'walletPassToken': clean_token
+    }
+
+    start_date = event_data.get('startDate') or event_data.get('startAt')
+    start_date_str = wallet_service.format_datetime_iso(
+        start_date,
+        event_data.get('timezone', 'Asia/Manila')
+    ) or (str(start_date) if start_date else None)
+
+    sanitized_event = {
+        'id': event_id,
+        'title': event_data.get('title', 'GDG Event'),
+        'startDate': start_date_str,
+        'timezone': event_data.get('timezone', 'Asia/Manila'),
+        'venue': event_data.get('venue'),
+        'locationTba': event_data.get('locationTba', False),
+        'ticketTypes': event_data.get('ticketTypes', []),
+        'imageUrl': event_data.get('imageUrl'),
+        'bannerUrl': event_data.get('bannerUrl')
+    }
+
+    return {
+        'registration': sanitized_registration,
+        'event': sanitized_event
+    }
+
+
+@https_fn.on_call(secrets=["WALLET_ISSUER_KEY"])
+def createWalletPassUrl(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Generate a signed Google Wallet Save-link URL for an approved attendee.
+    Input: { registrationId: str, walletPassToken: str }
+    Returns: { saveUrl: str, expiryAt: str }
+    """
+    data = req.data or {}
+    registration_id = data.get('registrationId')
+    token = data.get('walletPassToken')
+
+    if (
+        not isinstance(registration_id, str) or
+        not isinstance(token, str) or
+        not (1 <= len(registration_id.strip()) <= 128) or
+        not (8 <= len(token.strip()) <= 256)
+    ):
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+            message="registrationId and walletPassToken are required"
+        )
+
+    clean_reg_id = registration_id.strip()
+    clean_token = token.strip()
+
+    # 1. Look up registration by walletPassToken to avoid user enumeration
+    query = get_db().collection('registrations').where(
+        filter=FieldFilter('walletPassToken', '==', clean_token)
+    ).limit(1).stream()
+
+    reg_doc = next(query, None)
+    reg_data = reg_doc.to_dict() or {} if reg_doc else {}
+    stored_token = str(reg_data.get('walletPassToken') or '')
+    if (
+        not reg_doc or
+        not secrets.compare_digest(reg_doc.id, clean_reg_id) or
+        not secrets.compare_digest(stored_token, clean_token)
+    ):
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.NOT_FOUND,
+            message="Registration not found or token invalid"
+        )
+
+    # 2. Re-check approval gate and reject cancelled/rejected registrations
+    is_cancelled_or_rejected = (
+        reg_data.get('attendanceStatus') == 'cancelled' or
+        reg_data.get('registrationStatus') in ['cancelled', 'rejected'] or
+        reg_data.get('paymentStatus') in ['cancelled', 'rejected', 'refunded']
+    )
+    is_approved = (
+        not is_cancelled_or_rejected and (
+            reg_data.get('registrationStatus') in ['approved', 'confirmed'] or
+            reg_data.get('paymentStatus') == 'paid'
+        )
+    )
+    if not is_approved:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
+            message="Registration has not been approved"
+        )
+
+    # 3. Check Wallet Issuer credentials
+    issuer_id, sa_info = wallet_service.get_wallet_credentials_and_issuer()
+    if not issuer_id or not sa_info:
+        return {
+            'error': 'wallet-not-configured',
+            'message': 'Google Wallet integration is not configured on this instance'
+        }
+
+    # Fetch event doc
+    event_id = reg_data.get('eventId')
+    if not event_id:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+            message="Registration missing event association"
+        )
+
+    event_doc = get_db().collection('events').document(event_id).get()
+    event_data = event_doc.to_dict() if event_doc.exists else {}
+
+    app_url = os.getenv('APP_URL', 'https://apohub.gdgdavao.org')
+
+    # Build class and object payloads
+    class_payload = wallet_service.build_event_ticket_class(
+        issuer_id=issuer_id,
+        event_id=event_id,
+        event_data=event_data,
+        app_url=app_url,
+        registration_id=reg_doc.id
+    )
+    object_payload = wallet_service.build_event_ticket_object(
+        issuer_id=issuer_id,
+        class_id=class_payload['id'],
+        registration_id=reg_doc.id,
+        registration_data=reg_data,
+        event_data=event_data
+    )
+
+    # Ensure Google Wallet Class and Object are patched with latest metadata & ACTIVE state
+    try:
+        wallet_service.patch_wallet_class(
+            issuer_id=issuer_id,
+            event_id=event_id,
+            patch_data=class_payload,
+            service_account_info=sa_info
+        )
+        wallet_service.patch_wallet_object(
+            issuer_id=issuer_id,
+            registration_id=reg_doc.id,
+            patch_data=object_payload,
+            service_account_info=sa_info
+        )
+    except Exception as patch_err:
+        logger.warning(f"Could not patch wallet class/object {class_payload['id']}: {patch_err}")
+
+    try:
+        # Generate Save JWT (15-min expiry)
+        jwt_token = wallet_service.generate_save_jwt(
+            service_account_info=sa_info,
+            class_payload=class_payload,
+            object_payload=object_payload,
+            expiry_seconds=900
+        )
+        save_url = f"https://pay.google.com/gp/v/save/{jwt_token}"
+        expiry_iso = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
+
+        # Audit log entry (NEVER log the secret token)
+        log_audit_entry(
+            db=get_db(),
+            category='event_operations',
+            action='wallet_pass_generated',
+            actor_uid='anonymous',
+            actor_email=(reg_data.get('userDetails') or {}).get('email', ''),
+            actor_name=(reg_data.get('userDetails') or {}).get('name', 'Attendee'),
+            actor_role='attendee',
+            target_type='registration',
+            target_id=reg_doc.id,
+            target_label=event_data.get('title', 'Event'),
+            details={'eventId': event_id, 'classId': class_payload['id']},
+            status='success'
+        )
+
+        return {
+            'saveUrl': save_url,
+            'expiryAt': expiry_iso
+        }
+    except Exception as e:
+        logger.error(f"Error generating wallet pass JWT: {str(e)}")
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message="Failed to generate Google Wallet pass"
+        )
 
 
 # Health check endpoint

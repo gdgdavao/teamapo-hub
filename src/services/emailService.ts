@@ -90,13 +90,16 @@ export class EmailService {
   }
 
   /**
-   * One attendee's email history. Both equality filters are required: `eventId`
-   * is what makes the query provable under firestore.rules:118, and `userEmail`
-   * is what keeps the result exact rather than truncated to the newest N.
+   * One attendee's email history, keyed by their registration — not their
+   * email address. Both equality filters are required: `eventId` is what makes
+   * the query provable under firestore.rules:123, and `registrationId` is what
+   * keeps the history aligned with the attendee when their email is corrected
+   * (every email-sent log write carries `registrationId`, so a correction no
+   * longer orphans the logs sent to the old address).
    */
   static async getAttendeeEmails(
     eventId: string,
-    userEmail: string,
+    registrationId: string,
     limitCount: number = 50
   ): Promise<EmailLog[]> {
     try {
@@ -104,7 +107,7 @@ export class EmailService {
         query(
           collection(db, this.ACTIVITY_LOGS_COLLECTION),
           where('eventId', '==', eventId),
-          where('userEmail', '==', userEmail),
+          where('registrationId', '==', registrationId),
           orderBy('timestamp', 'desc'),
           firestoreLimit(limitCount)
         )

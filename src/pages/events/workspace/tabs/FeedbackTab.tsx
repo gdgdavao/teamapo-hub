@@ -26,6 +26,7 @@ import { logger } from '../../../../utils/logger';
 import toast from 'react-hot-toast';
 import FormBuilder from '../../components/FormBuilder';
 import { toDateSafe } from '../../../../utils/dateUtils';
+import { escapeCSVCell, downloadCSV } from '../../../../utils/csvExport';
 
 const STARTER_FEEDBACK_FIELDS: FormField[] = [
   { id: '1', type: 'rating', label: 'Overall Event Rating', required: true, gridSize: 'full' },
@@ -336,27 +337,19 @@ const FeedbackTab: React.FC<FeedbackTabProps> = ({ eventId }) => {
     ];
 
     const csvContent = [
-      headers.join(','),
+      headers.map((h) => escapeCSVCell(h)).join(','),
       ...feedbackList.map((feedback, index) => [
-        index + 1,
-        formatDate(feedback.submittedAt),
-        `"${(feedback as any).userName || 'Anonymous'}"`,
-        feedback.overallRating,
-        feedback.wouldRecommend ? 'Yes' : 'No',
-        `"${feedback.comments || ''}"`,
-        `"${feedback.suggestions || ''}"`
+        escapeCSVCell(index + 1),
+        escapeCSVCell(formatDate(feedback.submittedAt)),
+        escapeCSVCell((feedback as any).userName || 'Anonymous'),
+        escapeCSVCell(feedback.overallRating),
+        escapeCSVCell(feedback.wouldRecommend ? 'Yes' : 'No'),
+        escapeCSVCell(feedback.comments || ''),
+        escapeCSVCell(feedback.suggestions || '')
       ].join(','))
     ].join('\n');
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `${event?.title || 'event'}_feedback_responses.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadCSV(csvContent, `${event?.title || 'event'}_feedback_responses.csv`);
     
     toast.success('Feedback responses exported successfully');
   };

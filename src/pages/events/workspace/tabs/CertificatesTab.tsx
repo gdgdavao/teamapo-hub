@@ -31,6 +31,7 @@ import { CertificateService, IssuedCertificate } from '../../../../services/cert
 import { EventService } from '../../../../services/eventService';
 import { RegistrationService } from '../../../../services/registrationService';
 import { logger } from '../../../../utils/logger';
+import { escapeCSVCell, downloadCSV } from '../../../../utils/csvExport';
 import toast from 'react-hot-toast';
 import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -1111,20 +1112,11 @@ const CertificatesTab: React.FC<CertificatesTabProps> = ({ eventId }) => {
     ]);
 
     const csvContent = [
-      headers.join(','),
-      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+      headers.map((h) => escapeCSVCell(h)).join(','),
+      ...rows.map(row => row.map(cell => escapeCSVCell(cell)).join(','))
     ].join('\n');
 
-    // Download CSV
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = window.URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `certificates-export-${new Date().toISOString().split('T')[0]}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    window.URL.revokeObjectURL(url);
+    downloadCSV(csvContent, `certificates-export-${new Date().toISOString().split('T')[0]}.csv`);
 
     toast.success(`Exported ${selectedCerts.length} certificate(s) to CSV`);
   };

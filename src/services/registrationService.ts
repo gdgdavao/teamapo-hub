@@ -21,11 +21,17 @@ import type { FirebaseError } from 'firebase/app';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '../config/firebase';
 import { logger } from '../utils/logger';
-import { Registration, Event, TicketPricing } from '../types';
+import { Registration, Event, TicketPricing, FormField } from '../types';
+import {
+  extractContactDetailsFromResponses,
+  validateFormResponses,
+  type ResponseValue,
+} from '../utils/formResponses';
 import { EmailService } from './emailService';
 import { EventService } from './eventService';
 import { resolveDisplayStatus, StatusBearingRegistration } from '../utils/registrationStatus';
 import { toDateSafe, toISOStringSafe } from '../utils/dateUtils';
+import { generateWalletPassToken } from '../utils/passArtwork';
 import { AuditLogService } from './auditLogService';
 import { swrCache } from '../utils/swrCache';
 
@@ -378,11 +384,16 @@ export class RegistrationService {
 
       const registrationData = registrationSnapshot.data() as Registration;
 
-      await updateDoc(registrationRef, {
+      const completionUpdate: Record<string, any> = {
         attendanceStatus: 'registered',
         paymentStatus: 'paid',
         updatedAt: serverTimestamp()
-      });
+      };
+      if (!registrationData.walletPassToken) {
+        completionUpdate.walletPassToken = generateWalletPassToken();
+      }
+
+      await updateDoc(registrationRef, completionUpdate);
       this.invalidateCache(registrationData.eventId);
 
       // Note: We don't update ticket sales or attendee count here anymore
@@ -460,6 +471,79 @@ export class RegistrationService {
       logger.warn('Payment registration token could not be resolved:', error);
       return null;
     }
+  }
+
+  /**
+   * Resolve an approved attendee's ticket details using their walletPassToken.
+   * Returns sanitized registration and event data for rendering the TicketCard,
+   * or a structured error reason ('not-approved' | 'not-found' | 'error').
+   */
+  static async getTicketPass(registrationId: string, token: string): Promise<{
+    registration?: Partial<Registration> & { id: string; qrCode: string };
+    event?: { id: string; title: string; startDate?: string | Date; timezone?: string; venue?: any; ticketTypes?: any[]; bannerUrl?: string; imageUrl?: string };
+    error?: 'not-approved' | 'not-found' | 'error';
+  } | null> {
+    try {
+      const resolve = httpsCallable(functions, 'getTicketPass');
+      const result = await resolve({ registrationId, token });
+      const data = result.data as {
+        registration?: Partial<Registration> & { id: string; qrCode: string };
+        event?: any;
+      };
+      if (data?.registration && data?.event) {
+        return {
+          registration: data.registration,
+          event: data.event,
+        };
+      }
+      return { error: 'not-found' };
+    } catch (error: any) {
+      logger.warn('Ticket pass could not be resolved by token:', error);
+      const code = String(error?.code || '');
+      const message = String(error?.message || '').toLowerCase();
+
+      if (code.includes('failed-precondition') || message.includes('not been approved')) {
+        return { error: 'not-approved' };
+      }
+      if (
+        code.includes('not-found') ||
+        code.includes('invalid-argument') ||
+        message.includes('not found') ||
+        message.includes('invalid')
+      ) {
+        return { error: 'not-found' };
+      }
+      return { error: 'error' };
+    }
+  }
+
+  /**
+   * Lazily ensures a confirmed registration has a CSPRNG walletPassToken.
+   * Idempotent: returns existing token if present on caller or Firestore document.
+   */
+  static async ensureWalletPassToken(
+    registrationId: string,
+    existingToken?: string
+  ): Promise<string> {
+    if (existingToken && existingToken.trim().length > 0) {
+      return existingToken.trim();
+    }
+    const registrationRef = doc(db, this.REGISTRATIONS_COLLECTION, registrationId);
+    const snap = await getDoc(registrationRef);
+    if (!snap.exists()) {
+      throw new Error('Registration not found');
+    }
+    const data = snap.data();
+    if (typeof data.walletPassToken === 'string' && data.walletPassToken.trim().length > 0) {
+      return data.walletPassToken.trim();
+    }
+    const minted = generateWalletPassToken();
+    await updateDoc(registrationRef, {
+      walletPassToken: minted,
+      updatedAt: serverTimestamp(),
+    });
+    this.invalidateCache(data.eventId);
+    return minted;
   }
 
   /**
@@ -799,6 +883,9 @@ export class RegistrationService {
           const isFree = data.totalAmount === 0 || !data.totalAmount;
           if (isFree) {
             updateData.paymentStatus = 'paid';
+          }
+          if (!data.walletPassToken) {
+            updateData.walletPassToken = generateWalletPassToken();
           }
           const email = (data.userDetails?.email || data.attendeeEmail || data.email || '').trim();
           const name = (data.userDetails?.name || data.attendeeName || data.name || 'Attendee').trim();
@@ -1493,13 +1580,17 @@ export class RegistrationService {
         registeredBy: data.registeredBy
       };
       
-      // Add payment details if paid
-      if (data.paymentStatus === 'paid' && data.paymentMethod) {
-        (registration as any).paymentDetails = {
-          paymentMethod: data.paymentMethod,
-          paymentReference: data.paymentReference,
-          paidAt: serverTimestamp()
-        };
+      // Add payment details and walletPassToken if paid
+      if (data.paymentStatus === 'paid') {
+        (registration as any).registrationStatus = 'confirmed';
+        (registration as any).walletPassToken = generateWalletPassToken();
+        if (data.paymentMethod) {
+          (registration as any).paymentDetails = {
+            paymentMethod: data.paymentMethod,
+            paymentReference: data.paymentReference,
+            paidAt: serverTimestamp()
+          };
+        }
       }
       
       // Add notes if provided
@@ -1857,5 +1948,91 @@ export class RegistrationService {
       logger.error('Error transferring registration ticket type:', error);
       throw error instanceof Error ? error : new Error('Failed to transfer ticket type');
     }
+  }
+
+  /**
+   * Updates an attendee's form responses (customResponses). Admin-only per
+   * CASL 'editResponses' and the matching firestore.rules clause — the caller
+   * gates the UI; the rules are the security boundary.
+   *
+   * Enforces the event form's own validation rules (required fields, email /
+   * phone formats) before writing, and keeps `userDetails` contact fields in
+   * sync with the corrected answers so every consumer reads one truth.
+   *
+   * Idempotent: re-submitting the same responses rewrites the same values.
+   *
+   * @throws Error with a user-facing message when validation fails or the
+   *   registration does not belong to `eventId`.
+   */
+  static async updateRegistrationFormResponses(
+    registrationId: string,
+    eventId: string,
+    responses: Record<string, ResponseValue | undefined>,
+    formFields: FormField[]
+  ): Promise<void> {
+    // Validate against the form definition first — required fields and
+    // per-field type constraints (email/phone format, lengths, options).
+    const errors = validateFormResponses(responses, formFields);
+    const firstError = Object.values(errors)[0];
+    if (firstError) {
+      throw new Error(firstError);
+    }
+
+    // Zero `undefined` in Firestore writes (AGENTS.md §5.1): drop unset keys,
+    // keep explicit empty strings so an admin can clear an optional answer.
+    const sanitized: Record<string, ResponseValue> = {};
+    for (const [key, value] of Object.entries(responses)) {
+      if (value !== undefined) {
+        sanitized[key] = value;
+      }
+    }
+
+    const registrationRef = doc(db, this.REGISTRATIONS_COLLECTION, registrationId);
+    const snapshot = await getDoc(registrationRef);
+    if (!snapshot.exists()) {
+      throw new Error('Registration not found');
+    }
+    const data = snapshot.data();
+    // Scoped-write guard (AGENTS.md §5.2): never touch a registration that
+    // does not belong to the event the editor is working in.
+    if (data.eventId !== eventId) {
+      throw new Error('Registration does not belong to this event');
+    }
+
+    const updateData: Record<string, unknown> = {
+      customResponses: sanitized,
+      updatedAt: serverTimestamp(),
+    };
+
+    // Sync the contact fields the form collects so `userDetails` never
+    // contradicts the corrected responses. Dot paths update only these keys;
+    // cleared values are written as null rather than left stale.
+    const details = extractContactDetailsFromResponses(sanitized, formFields);
+    if ('name' in details) updateData['userDetails.name'] = details.name || null;
+    if ('email' in details) updateData['userDetails.email'] = details.email || null;
+    if ('phone' in details) updateData['userDetails.phoneNumber'] = details.phone || null;
+
+    await updateDoc(registrationRef, updateData);
+
+    void AuditLogService.recordAuditLog({
+      category: 'event_operations',
+      action: 'registration_responses_updated',
+      target: {
+        type: 'registration',
+        id: registrationId,
+        ...(data.userDetails?.name ? { label: data.userDetails.name } : {}),
+      },
+      details: {
+        eventId,
+        changedFields: Object.keys(sanitized),
+      },
+    });
+
+    // The attendees list and the registration document cache are stale now.
+    swrCache.delete('regs:all');
+    swrCache.delete(`regs:${eventId}`);
+    swrCache.deletePrefix('regs:organizer:');
+    swrCache.delete('stats:dashboard');
+    swrCache.delete(`stats:event:${eventId}`);
   }
 }

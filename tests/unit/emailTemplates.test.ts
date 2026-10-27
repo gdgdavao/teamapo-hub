@@ -123,12 +123,16 @@ describe('Email Templates Design System & Architecture', () => {
     expect(loaderContent).toContain('#feefc3');
   });
 
-  it('email_service.py renders QR code and payment instructions using Google M3 tokens', () => {
+  it('email_service.py renders ticket pass call-to-action button and instructions using Google M3 tokens', () => {
     const serviceContent = readFileSync(EMAIL_SERVICE_FILE, 'utf8');
     expect(serviceContent).toContain('#f8fafd');
     expect(serviceContent).toContain('#dadce0');
-    expect(serviceContent).toContain('#e8f0fe');
-    expect(serviceContent).toContain('#1a73e8');
+    expect(serviceContent).toContain('#0b57d0');
+    expect(serviceContent).toContain('Open My Ticket');
+    expect(serviceContent).toContain('YOUR TICKET:');
+    expect(serviceContent).toContain('Open My Ticket: {pass_url}');
+    expect(serviceContent).toContain('/ticket?reg=');
+    expect(serviceContent).not.toContain('Your Check-In QR Code');
   });
 
   it('email_service.py supports Mailpit SMTP dev mode dispatch', () => {

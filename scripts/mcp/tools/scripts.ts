@@ -5,7 +5,7 @@
 import { spawn } from 'child_process';
 import path from 'path';
 
-const PROJECT_ROOT = path.resolve(__dirname, '../../');
+const PROJECT_ROOT = path.resolve(__dirname, '../../../');
 
 export interface CommandResult {
   command: string;

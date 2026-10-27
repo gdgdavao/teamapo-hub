@@ -328,6 +328,8 @@ export interface Registration {
   paymentLinkToken?: string;
   paymentLinkExpiresAt?: Timestamp; // Expiry timestamp
   paymentLinkStatus?: 'active' | 'consumed' | 'expired';
+  // Google Wallet pass token (server-minted on first transition to approved/paid)
+  walletPassToken?: string;
   attendanceStatus: AttendanceStatus;
   checkInTime?: Timestamp;
   // NOTE: two field names are written for the same concept across the codebase
@@ -805,6 +807,7 @@ export type AuditLogAction =
   | 'registration_rejected'
   | 'registration_deleted'
   | 'registration_ticket_transferred'
+  | 'registration_responses_updated'
   | 'payment_approved'
   | 'payment_rejected'
   | 'certificate_generated'
@@ -849,3 +852,14 @@ export interface AuditLogFilterParams {
   startAfterTimestamp?: number;
   searchTerm?: string;
 }
+
+export interface WalletPassUrlResult {
+  saveUrl: string;
+  expiryAt?: string;
+}
+
+export type WalletPassErrorCode =
+  | 'not-found'
+  | 'not-approved'
+  | 'wallet-not-configured'
+  | 'upstream';

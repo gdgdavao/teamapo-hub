@@ -146,7 +146,7 @@ const PaymentPage: React.FC = () => {
           toast('This payment link has already been used.', {
             icon: <InformationCircleIcon className="h-5 w-5 text-primary" aria-hidden="true" />
           });
-          window.location.replace('/payment/success');
+          window.location.replace('/ticket');
           return;
         }
         setErrorMessage('This payment link is no longer available.');
@@ -162,7 +162,7 @@ const PaymentPage: React.FC = () => {
           toast('Payment already submitted for this registration.', {
             icon: <InformationCircleIcon className="h-5 w-5 text-primary" aria-hidden="true" />
           });
-          window.location.replace('/payment/success');
+          window.location.replace('/ticket');
           return;
         }
       } catch (_e) {
@@ -186,7 +186,7 @@ const PaymentPage: React.FC = () => {
           toast('This payment link has already been used.', {
             icon: <InformationCircleIcon className="h-5 w-5 text-primary" aria-hidden="true" />
           });
-          window.location.replace('/payment/success');
+          window.location.replace('/ticket');
           return;
         }
         if (!token || token !== regToken || !notExpired) {
@@ -404,7 +404,7 @@ const PaymentPage: React.FC = () => {
       
       // Hard redirect to prevent back button access
       setTimeout(() => {
-        window.location.replace('/payment/success');
+        window.location.replace('/ticket');
       }, 1500);
       
     } catch (error: any) {

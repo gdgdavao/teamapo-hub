@@ -43,6 +43,21 @@ describe('Cloud Functions Callable Security Gates', () => {
     const fnBody = getFunctionBody('deleteEventData');
     expect(fnBody).toContain('has_registrations:');
     expect(fnBody).toContain('require_admin(req)');
+    expect(fnBody).not.toContain('require_elevated(req, organizer_uid)');
+  });
+
+  it('normalizes email with NFKC and checks duplicates inside transaction in createAnonymousRegistration', () => {
+    const fnBody = getFunctionBody('createAnonymousRegistration');
+    expect(fnBody).toContain("unicodedata.normalize('NFKC'");
+    expect(fnBody).toContain('.get(transaction=tx)');
+  });
+
+  it('rejects cancelled or rejected registrations in getTicketPass and createWalletPassUrl', () => {
+    const getTicketBody = getFunctionBody('getTicketPass');
+    const createWalletBody = getFunctionBody('createWalletPassUrl');
+    expect(getTicketBody).toContain('is_cancelled_or_rejected');
+    expect(createWalletBody).toContain('is_cancelled_or_rejected');
+    expect(createWalletBody).not.toContain('message=f"Failed to generate Google Wallet pass: {str(e)}"');
   });
 
   it('enforces authorization and registration verification on sendConfirmationEmail', () => {

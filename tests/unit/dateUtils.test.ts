@@ -6,6 +6,7 @@ import {
   formatEventDate,
   formatEventTime,
   formatEventDateTime,
+  formatTicketDate,
 } from '../../src/utils/dateUtils';
 
 describe('dateUtils', () => {
@@ -144,6 +145,28 @@ describe('dateUtils', () => {
       expect(formatEventDateTime(null)).toBe('Date TBD');
       expect(formatEventDateTime(undefined)).toBe('Date TBD');
       expect(formatEventDateTime('invalid')).toBe('Date TBD');
+    });
+  });
+
+  describe('formatTicketDate', () => {
+    it('formats a date to MM/DD/YYYY h:mmA in Asia/Manila timezone per docs/PassUI.md', () => {
+      // 2025-09-21T02:00:00Z is 2025-09-21 10:00:00 in Asia/Manila (UTC+8)
+      const targetDate = new Date('2025-09-21T02:00:00.000Z');
+      const formatted = formatTicketDate(targetDate, 'Asia/Manila');
+      expect(formatted).toBe('09/21/2025 10:00AM');
+    });
+
+    it('handles afternoon times correctly with PM suffix', () => {
+      // 2025-09-21T06:30:00Z is 2025-09-21 14:30:00 in Asia/Manila -> 2:30PM
+      const targetDate = new Date('2025-09-21T06:30:00.000Z');
+      const formatted = formatTicketDate(targetDate, 'Asia/Manila');
+      expect(formatted).toBe('09/21/2025 2:30PM');
+    });
+
+    it('returns custom fallback when input is invalid or missing', () => {
+      expect(formatTicketDate(null)).toBe('Date TBD');
+      expect(formatTicketDate(undefined, 'Asia/Manila', 'TBD')).toBe('TBD');
+      expect(formatTicketDate('invalid-date')).toBe('Date TBD');
     });
   });
 });
