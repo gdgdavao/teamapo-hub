@@ -30,24 +30,25 @@ it is shared.
 | Folder | Contents |
 |---|---|
 | `pages/home/` | `/` (canonical Home). `HomePage` dispatches by permission to `platform/` (unscoped reads) or `scoped/` (owner-scoped reads), plus the shared `StatStrip`, `TrendPanel` |
-| `pages/events/` | `EventListPage` (`/events`), `EventEditorPage` (`/events/create`, `/events/edit/:id`), `components/` (PhotoUpload, FormBuilder, PromoCodeManager), and `workspace/` — `EventWorkspacePage`, `LegacyRedirect`, and `tabs/*Tab` |
+| `pages/events/` | `EventListPage` (`/events`), `EventEditorPage` (`/events/create`, `/events/edit/:id`), `components/` (PhotoUpload, FormBuilder, PromoCodeManager), `kiosk/` (`EventKioskPage` at `/events/:id/kiosk`), and `workspace/` — `EventWorkspacePage`, `LegacyRedirect`, and `tabs/*Tab` |
 | `pages/users/` | `/users` user administration |
 | `pages/auth/` | Sign in and password reset (self-signup is intentionally absent) |
 | `pages/registration/` | Public event registration (`/e/:slug`, `/events/:id/register`) and its modal, form, ticket selector, `Reveal` |
 | `pages/payment/` | Proof upload portal and transaction status screens |
+| `pages/ticket/` | `/ticket?reg=...&token=...` token-gated attendee digital pass (`TicketPage`), Google Wallet save link, offline PNG export, and `LegacyTicketRedirect` forwarder |
 | `pages/feedback/` | Attendee feedback portal and the `FormRenderer` it renders through |
 | `pages/verification/` | Public certificate authenticity validator |
 | `pages/errors/` | `/forbidden` and the 404 catch-all |
 | `layout/` | `AppShell`, `AppNavbar`, `SkipLink` — the chrome every workspace page wraps itself in |
 | `components/UI/` | The primitive layer: Button, Input, Select, Textarea, Field, Badge, Card, Modal, ConfirmationModal, Tabs, DataTable, EmptyState, ProgressBar, SimpleBarChart, Skeleton, LoadingSpinner, SegmentedControl. **Import from the barrel, never by file path** |
-| `components/` | `ErrorBoundary` (mounted once by `App.tsx`) and `FormattedLabelText` |
-| `services/` | One file per domain talking to Firebase (`eventService`, `registrationService`, `paymentService`, `certificateService`, `emailService`, `feedbackService`, `analyticsService`, `userService`). Pages call services; they do not call Firebase directly |
+| `components/` | `TicketCard.tsx` (canonical Material 3 digital credential card), `ErrorBoundary` (mounted once by `App.tsx`), and `FormattedLabelText` |
+| `services/` | One file per domain talking to Firebase (`eventService`, `registrationService`, `paymentService`, `certificateService`, `emailService`, `feedbackService`, `analyticsService`, `userService`, `walletPassService`). Pages call services; they do not call Firebase directly |
 | `auth/` | Authorization. `ability.ts` (pure CASL rule table + entity tagging), `AbilityProvider.tsx`, `RequireAbility.tsx` (route gate) |
 | `contexts/` | `AuthContext` (Firebase session and the live users-document profile) |
 | `hooks/` | Shared hooks (`usePageTitle`, `useSEO`, `useMediaQuery`, `useReducedMotion`) |
-| `config/` | `firebase.ts` (SDK init, emulator wiring), `app.ts` (canonical hosts) |
+| `config/` | `firebase.ts` (SDK init, emulator wiring), `app.ts` (canonical hosts), `brandAssets.ts` |
 | `types/` | Shared TypeScript types |
-| `utils/` | Pure helpers (pricing, slugs, analytics rollups, certificate generation, logger) |
+| `utils/` | Pure helpers (pricing, slugs, analytics rollups, certificate generation, `ticketCanvas`, `passArtwork`, `qrCode`, `formResponses`, logger) |
 | `App.tsx`, `main.tsx` | Router and app entry point |
 
 ### Naming
@@ -74,7 +75,8 @@ Three rules the structure depends on, all three enforced by
 
 ## `functions/`
 
-- `main.py`: callable endpoints and Firestore triggers
+- `main.py`: callable endpoints, background triggers, and token-gated ticket APIs
+- `wallet_service.py`: Google Wallet Pass API, JWT Save-link signing, class & object provisioning
 - `email_service.py`, `email_template_loader.py`, `email_templates/`: Resend email delivery with Jinja2 templates
 - `requirements.txt`: Python dependencies
 - `EMAIL_SETUP.md`: Resend setup guide

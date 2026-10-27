@@ -149,7 +149,7 @@ describe('dateUtils', () => {
   });
 
   describe('formatTicketDate', () => {
-    it('formats a date to MM/DD/YYYY h:mmA in Asia/Manila timezone per docs/PassUI.md', () => {
+    it('formats a date to MM/DD/YYYY h:mmA in Asia/Manila timezone', () => {
       // 2025-09-21T02:00:00Z is 2025-09-21 10:00:00 in Asia/Manila (UTC+8)
       const targetDate = new Date('2025-09-21T02:00:00.000Z');
       const formatted = formatTicketDate(targetDate, 'Asia/Manila');

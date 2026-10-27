@@ -80,7 +80,8 @@ flowchart TB
 
 ### 2.3 External Integrations
 * **Payment Gateway**: None. Payment methods (bank transfer, GCash) are configured per event by the organizer and settled offline; release of a ticket is gated on manual proof review.
-* **Email Service**: [Resend](https://resend.com) API (DKIM/SPF-verified domain sending with delivery webhook tracking)
+* **Email Service**: [Resend](https://resend.com) API (DKIM/SPF-verified domain sending with delivery webhook tracking).
+* **Google Wallet API**: Signed JWT Save links for digital event passes (`GenericPass` / `GenericObject`) signed via Google Cloud Service Account credentials (`WALLET_ISSUER_KEY`).
 
 Attendee feedback sentiment is summarised locally in `services/feedbackService.ts`
 (a keyword-counting heuristic), not by a third-party model: attendee free-text
@@ -122,8 +123,9 @@ src/
 │   ├── eventService.ts          # Event CRUD, slug resolution, and capacity tracking
 │   ├── feedbackService.ts       # Survey validation, token exchange, and analytics
 │   ├── paymentService.ts        # Manual proof upload & verification workflow
-│   ├── registrationService.ts   # Atomic ticket checkout, reservation, and check-in
-│   └── userService.ts           # User and role administration
+│   ├── registrationService.ts   # Atomic ticket checkout, reservation, check-in, and tier transfer
+│   ├── userService.ts           # User and role administration
+│   └── walletPassService.ts     # Google Wallet pass signed URL invocation
 ├── layout/                      # The chrome every workspace page wraps itself in
 │   ├── AppShell.tsx             # Page frame: emits <h1>, hosts the navbar and skip link
 │   ├── AppNavbar.tsx            # Top navigation
@@ -134,8 +136,14 @@ src/
 │   │                            # Modal, ConfirmationModal, Tabs, DataTable, EmptyState,
 │   │                            # ProgressBar, SimpleBarChart, Skeleton, LoadingSpinner,
 │   │                            # SegmentedControl
+│   ├── TicketCard.tsx           # Canonical Material 3 digital ticket credential card
 │   ├── ErrorBoundary.tsx        # Mounted once by App.tsx
 │   └── FormattedLabelText.tsx   # Renders the **bold** / _italic_ subset used by form labels
+├── utils/                       # Pure utilities (no direct Firebase SDK calls)
+│   ├── ticketCanvas.ts          # 2D Canvas pixel-accurate PNG ticket exporter
+│   ├── passArtwork.ts           # Deterministic SHA-256 artwork selector and iOS detector
+│   ├── qrCode.ts                # Pure SVG vector QR generator
+│   └── formResponses.ts         # Custom form response formatting and validation
 └── pages/                       # One folder per route cluster
     ├── home/                    # / (canonical Home)
     │   ├── HomePage.tsx         # Dispatches by permission, not by role
@@ -146,6 +154,7 @@ src/
     │   ├── EventListPage.tsx    # Platform-wide event list
     │   ├── EventEditorPage.tsx  # Create and edit; isEditMode keys off the route
     │   ├── components/          # PhotoUpload, FormBuilder, PromoCodeManager
+    │   ├── kiosk/               # /events/:id/kiosk self-check-in station
     │   └── workspace/
     │       ├── EventWorkspacePage.tsx  # Loads the event, checks `manage`, renders tabs
     │       ├── LegacyRedirect.tsx      # /attendees, /check-in, ... forwarders
@@ -153,14 +162,17 @@ src/
     │           ├── OverviewTab.tsx, AttendeesTab.tsx, CheckInTab.tsx,
     │           │   PromoCodesTab.tsx, CertificatesTab.tsx, FeedbackTab.tsx,
     │           │   SettingsTab.tsx
-    │           ├── RegistrationDetailsModal.tsx  # Attendee view: payment proof, email history
+    │           ├── RegistrationDetailsModal.tsx  # Attendee view: payment proof, email history, tier transfer
     │           ├── WalkInRegistrationModal.tsx, ForceCheckInModal.tsx
     │           └── FeedbackEmailStatus.tsx
     ├── users/                   # /users
     ├── auth/                    # /auth/login, /auth/forgot-password (no self-signup)
     ├── registration/            # /e/:slug and /events/:id/register
     │   └── components/          # RegistrationModal, RegistrationForm, TicketSelector, Reveal
-    ├── payment/                 # /payment/:registrationId, /payment/success
+    ├── payment/                 # /payment/:registrationId
+    ├── ticket/                  # /ticket?reg=...&token=... (and /payment/success legacy redirect)
+    │   ├── TicketPage.tsx       # Gated attendee ticket with Google Wallet + Image Save
+    │   └── LegacyTicketRedirect.tsx
     ├── feedback/                # /feedback/:eventId
     │   └── components/          # FormRenderer (renders the survey a submitter sees)
     ├── verification/            # /verify, /verify/:code
@@ -206,10 +218,14 @@ destination.
 | `/` | `RequireAbility read Event` | `HomePage` picks the platform or scoped home (`/dashboard` redirects to `/`) |
 | `/events`, `/events/create`, `/events/edit/:eventId` | `RequireAbility read all` | Platform-wide event list and editor (admin only) |
 | `/events/:eventId`, `/events/:eventId/:tab` | `RequireAbility read Event`, then `EventWorkspacePage` checks `manage` against the loaded event | Per-event workspace |
+| `/events/:eventId/kiosk` | `RequireAbility checkin Event` | On-site attendee self-check-in kiosk mode |
 | `/attendees`, `/check-in`, `/payments`, `/emails`, `/analytics`, `/certificates` | `RequireAbility read Event` | Legacy forwarders into the workspace tab of the same name |
 | `/users` | `RequireAbility read User` | User administration (admin only) |
 | `/forbidden` | open | Signed in but not permitted; says which role was needed |
-| `/e/:slug`, `/events/:eventId/register`, `/payment/*`, `/feedback/:eventId`, `/verify/:code` | open | Attendee-facing |
+| `/e/:slug`, `/events/:eventId/register`, `/payment/:registrationId` | open | Attendee discovery, registration, and payment |
+| `/ticket` | open (token-gated) | Attendee digital ticket with Google Wallet save and offline PNG download |
+| `/payment/success` | open | Legacy payment redirect forwarder to `/ticket` |
+| `/feedback/:eventId`, `/verify`, `/verify/:code` | open | Attendee feedback and certificate verification |
 | `*` | — | 404 |
 
 Two distinctions the gate depends on:
@@ -257,10 +273,16 @@ The serverless backend in `functions/main.py` is implemented using **Python 3.13
 * `get_event_statistics` / `getEventStatistics` / `getEventAnalytics`: Real-time calculation of ticket velocity, gross volume, and check-in rates.
 
 #### Registration & Payments
+* `createAnonymousRegistration`: Transactionally creates an attendee registration, verifies capacity and ticket tier availability, validates promo codes, and generates a CSPRNG `walletPassToken`.
 * `validateRegistration`: Verifies ticket availability, promo code validity, and order limits.
+* `validatePromoCode`: Validates a promo code against `events/{eventId}/config/promoCodes` server-side without leaking secret codes or usage quotas.
 * `registerForEvent`: Atomically records the registration, updates ticket sales counts, and dispatches confirmation emails.
 * `processPaymentVerification`: Admin approval/rejection of manual payment proofs; transitions registration status to `'paid'` and sends ticket email.
 * `bulkProcessPayments`: Batch approval for high-volume registration queues.
+
+#### Digital Passes & Google Wallet
+* `getTicketPass`: Public token-gated endpoint resolving ticket details for approved attendees using their `walletPassToken` with zero PII exposure.
+* `createWalletPassUrl`: Generates signed Google Wallet Save URLs via JWT using service account credentials (`WALLET_ISSUER_KEY`).
 
 #### Attendance & Feedback
 * `checkInAttendee`: Validates scanned QR payload, updates `attendanceStatus = 'checked-in'`, records `checkInTime`, and creates an activity log.
@@ -272,6 +294,9 @@ The serverless backend in `functions/main.py` is implemented using **Python 3.13
 #### Digital Credentials & Verification
 * `generateCertificate`: Server-side fallback rendering and indexing of digital certificates.
 * `sendCertificateNotification`: Dispatches the completed certificate notification with direct verification and download links.
+
+#### User Administration & Security
+* `deleteUser`: Admin-only callable for deleting Auth user identities and Firestore profile documents with last-admin, superuser, and self-delete protections.
 
 #### Communications & Monitoring
 * `sendConfirmationEmail`: Dispatches registration confirmation with embedded QR check-in ticket.

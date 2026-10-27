@@ -112,6 +112,12 @@ git commit -m "feat: add amazing feature"
 git push origin feature/amazing-feature
 ```
 
+## Contributors
+
+<a href="https://github.com/gdgdavao/teamapo-hub/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=gdgdavao/teamapo-hub" alt="Contributors" />
+</a>
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

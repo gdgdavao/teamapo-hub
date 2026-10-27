@@ -22,7 +22,7 @@ export interface QrVectorData {
 
 /**
  * Synchronously computes QR module matrix and builds a compact SVG path string.
- * Uses Error Correction Level 'M' and a default 2-module quiet zone per docs/PassUI.md.
+ * Uses Error Correction Level 'M' and a default 2-module quiet zone.
  */
 export function generateQrVector(
   value: string,

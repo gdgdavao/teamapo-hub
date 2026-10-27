@@ -88,6 +88,7 @@ Primary entity representing GDG Davao events, workshops, meetups, and conference
 | `endDate` | `timestamp` | Yes | - | Event conclusion time (`endDate >= startDate`). |
 | `timezone` | `string` | Yes | `'Asia/Manila'`| IANA timezone string. |
 | `venue` | `map` | Yes | - | Embedded `Venue` object (see [Embedded Types](#4-embedded-data-structures)). |
+| `locationTba` | `boolean` | No | `false` | When true, marks event venue location as "To Be Announced" across registration UI, confirmation emails, and calendar attachments. |
 | `ticketTypes` | `array<map>`| Yes | `[]` | Array of `TicketType` objects. |
 | `hasPromoCodes` | `boolean` | No | `false` | Public boolean indicator showing whether the event has active promo codes configured, without exposing secret codes on `/events/{eventId}`. |
 | `promoCodes` | `array<map>`| No | - | [Deprecated / Forbidden on public doc] Promo codes are isolated in `events/{eventId}/config/promoCodes` (`hasNoPublicPromoCodes` enforced in `firestore.rules`). |
@@ -155,7 +156,10 @@ Captures attendee registrations for specific events.
 | `qrCode` | `string` | Yes | - | Base64 or string payload encoded into check-in badge. |
 | `registrationType` | `string` | Yes | `'online'` | Enum: `'online'` \| `'walk-in'`. |
 | `registeredBy` | `string` | No | - | UID of admin/organizer who registered walk-in. |
-| `customResponses` | `map` | No | `{}` | Dynamic responses keyed by `FormField.id`. |
+| `customResponses` | `map` | No | `{}` | Dynamic responses keyed by `FormField.id`. Editable exclusively by admins (`can('editResponses', 'Registration')`). |
+| `walletPassToken` | `string` | No | - | High-entropy CSPRNG secret token allowing attendees self-service access to `/ticket`, Google Wallet passes, and offline pass downloads without logging in. |
+| `ticketTransferHistory` | `array<map>` | No | `[]` | Transactional audit log of ticket tier transfers: `[{ fromTierId, toTierId, transferredAt, transferredBy, reason }]`. Admin only. |
+| `emailsSent` | `array<map>` | No | `[]` | History log of transactional emails sent to this attendee: `[{ type, sentAt, emailId, status }]`. |
 | `registrationDate` | `timestamp` | Yes | `serverTimestamp()` | Registration submission timestamp. |
 | `updatedAt` | `timestamp` | Yes | `serverTimestamp()` | Last update timestamp. |
 
