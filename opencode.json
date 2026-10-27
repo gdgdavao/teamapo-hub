@@ -33,6 +33,12 @@
       "enabled": true,
       "cwd": ".",
       "timeout": 30000
+    },
+    "google-pay-wallet-dev": {
+      "type": "remote",
+      "url": "https://paydeveloper.googleapis.com/mcp",
+      "enabled": true,
+      "timeout": 60000
     }
   }
 }

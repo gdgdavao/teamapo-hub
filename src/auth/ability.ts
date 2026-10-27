@@ -62,7 +62,15 @@ export type AppAction =
   | 'manage'
   | 'export'
   | 'checkin'
-  | 'transfer';
+  | 'transfer'
+  /**
+   * Editing an attendee's form responses (customResponses). Granted only to
+   * admins — admins reach it through the existing `manage` rule on
+   * Registration, organizers never receive it. Mirrors the firestore.rules
+   * clause that rejects `customResponses` changes on the organizer update
+   * path. See docs/Rules.md §2.0.
+   */
+  | 'editResponses';
 
 export type AppAbility = MongoAbility<[AppAction, AppSubject]>;
 

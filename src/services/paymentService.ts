@@ -22,6 +22,7 @@ import {
 import { httpsCallable } from 'firebase/functions';
 import { db, storage, functions } from '../config/firebase';
 import { logger } from '../utils/logger';
+import { generateWalletPassToken } from '../utils/passArtwork';
 import { PaymentProof, PaymentDetails } from '../types';
 import { AuditLogService } from './auditLogService';
 
@@ -228,10 +229,23 @@ export class PaymentService {
         
         // Update registration payment status
         const newPaymentStatus = status === 'approved' ? 'paid' : 'failed';
-        await updateDoc(registrationRef, {
+        const regUpdate: Record<string, any> = {
           paymentStatus: newPaymentStatus,
           updatedAt: serverTimestamp()
-        });
+        };
+
+        // Mint walletPassToken if approving and token is absent
+        if (status === 'approved') {
+          const regSnap = await getDoc(registrationRef);
+          if (regSnap.exists()) {
+            const regData = regSnap.data();
+            if (!regData.walletPassToken) {
+              regUpdate.walletPassToken = generateWalletPassToken();
+            }
+          }
+        }
+
+        await updateDoc(registrationRef, regUpdate);
 
         // If approved, update payment details
         if (status === 'approved') {

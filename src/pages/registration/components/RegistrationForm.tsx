@@ -426,8 +426,8 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({
         
         toast.success('Registration completed. A confirmation email has been sent.');
         
-        // Navigate to dedicated success page for free events
-        navigate('/registration/success');
+        // Navigate to dedicated ticket page for free events
+        navigate('/ticket?mode=free');
       }
     } catch (err: any) {
       logger.error('Registration error:', err);

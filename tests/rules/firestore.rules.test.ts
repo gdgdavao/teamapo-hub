@@ -370,9 +370,19 @@ describe('Firestore authorization rules', () => {
       });
     });
 
-    // Organizers cannot mutate completed or cancelled events
+    // Organizers cannot mutate completed or cancelled events or create walk-in registrations on them
     await assertFails(updateDoc(doc(owner, 'events/completed-event'), { title: 'Tampered' }));
     await assertFails(updateDoc(doc(owner, 'events/cancelled-event'), { title: 'Tampered' }));
+    await assertFails(setDoc(doc(owner, 'registrations/walkin-completed'), {
+      eventId: 'completed-event',
+      organizerUid: 'organizer-1',
+      userDetails: { name: 'Late Walk-in', email: 'late@example.com' },
+    }));
+    await assertFails(setDoc(doc(owner, 'registrations/walkin-cancelled'), {
+      eventId: 'cancelled-event',
+      organizerUid: 'organizer-1',
+      userDetails: { name: 'Cancelled Walk-in', email: 'cancelled@example.com' },
+    }));
 
     // Admins can update completed and cancelled events
     await assertSucceeds(updateDoc(doc(admin, 'events/completed-event'), { title: 'Admin Fixed' }));
@@ -450,10 +460,6 @@ describe('Firestore authorization rules', () => {
     await assertFails(updateDoc(doc(admin, 'event_analytics/published-event'), { revenue: 999999 }));
     await assertFails(deleteDoc(doc(owner, 'event_analytics/published-event')));
 
-    // Organizers cannot delete events (strictly admin-only)
-    await assertFails(deleteDoc(doc(owner, 'events/published-event')));
-    await assertSucceeds(deleteDoc(doc(admin, 'events/published-event')));
-
     // Organizers cannot tamper with registration eventId or ticketTypeId during updates
     await assertFails(updateDoc(doc(owner, 'registrations/reg-1'), {
       eventId: 'different-event',
@@ -467,13 +473,25 @@ describe('Firestore authorization rules', () => {
       ticketTypeId: 'sponsors-tier',
     }));
 
+    // Form responses (customResponses) are admin-only to edit. Organizers may
+    // still update status/payment/check-in fields, never the attendee's answers.
+    await assertFails(updateDoc(doc(owner, 'registrations/reg-1'), {
+      customResponses: { '1': 'Tampered Name', '2': 'tampered@example.com' },
+    }));
+    await assertSucceeds(updateDoc(doc(owner, 'registrations/reg-1'), {
+      paymentStatus: 'paid',
+    }));
+    await assertSucceeds(updateDoc(doc(admin, 'registrations/reg-1'), {
+      customResponses: { '1': 'Corrected Name', '2': 'corrected@example.com' },
+    }));
+
     // Organizers cannot create malformed walk-in registrations with invalid emails
     await assertFails(setDoc(doc(owner, 'registrations/bad-walk-in'), {
       eventId: 'published-event',
       userDetails: { name: 'Bad', email: 'not-an-email' },
     }));
 
-    // Organizers can create valid walk-in registrations
+    // Organizers can create valid walk-in registrations on active events
     await assertSucceeds(setDoc(doc(owner, 'registrations/valid-walk-in'), {
       eventId: 'published-event',
       organizerUid: 'organizer-1',
@@ -482,6 +500,10 @@ describe('Firestore authorization rules', () => {
       paymentStatus: 'paid',
       attendanceStatus: 'confirmed',
     }));
+
+    // Organizers cannot delete events (strictly admin-only)
+    await assertFails(deleteDoc(doc(owner, 'events/published-event')));
+    await assertSucceeds(deleteDoc(doc(admin, 'events/published-event')));
   });
 
   it('isolates promo codes in events/{eventId}/config/promoCodes and blocks public promoCodes on /events/{eventId}', async () => {

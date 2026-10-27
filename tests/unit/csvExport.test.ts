@@ -13,6 +13,20 @@ describe('csvExport utilities', () => {
     expect(escapeCSVCell(null)).toBe('""');
     expect(escapeCSVCell(undefined)).toBe('""');
     expect(escapeCSVCell(123)).toBe('"123"');
+    expect(escapeCSVCell(-50)).toBe('"-50"');
+  });
+
+  it('neutralizes spreadsheet formula injection triggers (=, +, -, @, tab, CR)', () => {
+    expect(escapeCSVCell('=CMD|\' /C calc\'!A0')).toBe('"\'=CMD|\' /C calc\'!A0"');
+    expect(escapeCSVCell('+1+1')).toBe('"\'+1+1"');
+    expect(escapeCSVCell('+639171234567')).toBe('"\'+639171234567"');
+    expect(escapeCSVCell('-2+3')).toBe('"\'-2+3"');
+    expect(escapeCSVCell('@SUM(A1:A10)')).toBe('"\'@SUM(A1:A10)"');
+    expect(escapeCSVCell('\t=1+1')).toBe('"\'\t=1+1"');
+    expect(escapeCSVCell('\r=1+1')).toBe('"\'\r=1+1"');
+    expect(escapeCSVCell('   =HYPERLINK("https://evil.test","Click")')).toBe(
+      '"\'   =HYPERLINK(""https://evil.test"",""Click"")"'
+    );
   });
 
   it('humanizes field labels correctly', () => {

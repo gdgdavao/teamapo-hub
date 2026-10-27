@@ -324,7 +324,7 @@ export const formatBucketLabel = (
   granularity: BucketGranularity = 'day'
 ): string =>
   granularity === 'month'
-    ? monthLabelFormatter.format(keyToUtcNoon(key))
+    ? monthLabelFormatter.format(keyToUtcNoon(key)).replace(/[\u2019']/g, '')
     : labelFormatter.format(keyToUtcNoon(key));
 
 /** Human label for a bucket's span, used in tooltips and the aria summary. */

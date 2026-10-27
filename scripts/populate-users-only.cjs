@@ -5,9 +5,9 @@
  * This script creates realistic test users for development
  * 
  * Usage:
- *   node scripts/populate-users-only.cjs
- *   npm run sample-users
- *   npm run emulator:with-users
+ *   bun run scripts/populate-users-only.cjs
+ *   bun run sample-users
+ *   bun run emulator:with-users
  * 
  * What it creates:
  *   - 8 test users with different roles (admin, organizer, attendee, speaker, volunteer, sponsor)

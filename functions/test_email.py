@@ -31,34 +31,8 @@ def test_registration_confirmation():
     return result['success']
 
 def test_payment_notification_approved():
-    """Test registration approval notification email (approved with QR code)."""
-    print(f"Testing registration approval notification (approved + QR) to {TEST_USER_EMAIL}...")
-    
-    qr_code_data = None
-    try:
-        import qrcode
-        from io import BytesIO
-        import base64
-        from PIL import Image
-        
-        qr = qrcode.QRCode(
-            version=1,
-            error_correction=qrcode.constants.ERROR_CORRECT_L,
-            box_size=6,
-            border=2
-        )
-        qr.add_data("registration:REG-DVO-2026-001")
-        qr.make(fit=True)
-        
-        img: Image.Image = qr.make_image(fill_color="black", back_color="white").convert('RGB')
-        
-        buffer = BytesIO()
-        img.save(buffer, format='PNG', optimize=True)
-        buffer.seek(0)
-        qr_code_data = base64.b64encode(buffer.getvalue()).decode()
-        print(f"✅ Check-in QR code generated ({len(qr_code_data)} bytes base64)")
-    except Exception as qr_err:
-        print(f"⚠️  Could not generate QR code: {str(qr_err)}")
+    """Test registration approval notification email (approved ticket pass)."""
+    print(f"Testing registration approval notification (approved ticket pass) to {TEST_USER_EMAIL}...")
     
     result = email_service.send_payment_notification(
         user_email=TEST_USER_EMAIL,
@@ -67,8 +41,8 @@ def test_payment_notification_approved():
         registration_id="REG-DVO-2026-001",
         status="approved",
         payment_instructions=None,
-        qr_code_data=qr_code_data,
-        is_free_registration=False
+        is_free_registration=False,
+        wallet_pass_token="test_wallet_pass_token_xyz"
     )
     
     print(f"Result: {result}")
@@ -144,7 +118,7 @@ def main():
     
     tests = [
         ("Registration Confirmation", test_registration_confirmation),
-        ("Registration Approved (with QR)", test_payment_notification_approved),
+        ("Registration Approved (Ticket Pass)", test_payment_notification_approved),
         ("Certificate Ready", test_certificate_notification),
         ("Event Reminder (24h)", test_event_reminder),
         ("Feedback Request", test_feedback_request),

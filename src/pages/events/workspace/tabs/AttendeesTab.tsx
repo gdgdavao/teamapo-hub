@@ -305,7 +305,8 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
             currency: (reg as any).currency,
             ticketTypeId: (reg as any).ticketTypeId || undefined,
             pricing: (reg as any).pricing,
-            registrationType: (reg as any).registrationType || 'online'
+            registrationType: (reg as any).registrationType || 'online',
+            walletPassToken: reg.walletPassToken || undefined
           };
           
           transformedRegistrations.push(transformedReg);

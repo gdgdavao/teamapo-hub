@@ -276,7 +276,9 @@ describe('Event-centric workspace navigation and routes', () => {
       emailServiceSource.indexOf('static async getAttendeeEmails')
     );
     expect(attendeeEmails).toContain("where('eventId', '==', eventId)");
-    expect(attendeeEmails).toContain("where('userEmail', '==', userEmail)");
+    // History is keyed by the registration, not the email address, so it stays
+    // aligned with the attendee when an admin corrects their email.
+    expect(attendeeEmails).toContain("where('registrationId', '==', registrationId)");
 
     const settingsSource = readFileSync(
       join(process.cwd(), 'src/pages/events/workspace/tabs/SettingsTab.tsx'),
