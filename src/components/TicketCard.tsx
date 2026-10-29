@@ -83,9 +83,10 @@ function resolveRoleLine(
 }
 
 /**
- * Formats venue string for the ticket card meta rows.
+ * Formats venue string for the ticket card meta rows without repeating
+ * the venue name when geocoded addresses start with or contain the venue name.
  */
-function resolveVenueLine(event?: TicketCardEvent | null): string {
+export function resolveVenueLine(event?: TicketCardEvent | null): string {
   if (!event) return 'Davao City, Philippines';
   if (event.locationTba) return 'Location TBA';
 
@@ -93,20 +94,47 @@ function resolveVenueLine(event?: TicketCardEvent | null): string {
   if (!venue) return 'Davao City, Philippines';
 
   if (typeof venue === 'string') {
-    return venue;
+    const segments = venue
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .filter((seg, idx, arr) => idx === 0 || seg.toLowerCase() !== arr[idx - 1].toLowerCase());
+    return segments.join(', ') || 'Davao City, Philippines';
   }
 
   if (venue.type === 'online') {
     return 'Online Event';
   }
 
-  const parts: string[] = [];
-  if (venue.name?.trim()) parts.push(venue.name.trim());
-  if (venue.address?.trim() && venue.address.trim() !== venue.name?.trim()) {
-    parts.push(venue.address.trim());
+  const name = venue.name?.trim() || '';
+  let address = venue.address?.trim() || '';
+  const city = venue.city?.trim() || '';
+
+  if (name && address) {
+    const nameLower = name.toLowerCase();
+    while (address.toLowerCase().startsWith(nameLower)) {
+      address = address.slice(name.length).replace(/^[\s,;-]+/, '').trim();
+    }
   }
-  if (venue.city?.trim() && !parts.some((p) => p.includes(venue.city!.trim()))) {
-    parts.push(venue.city.trim());
+
+  const parts: string[] = [];
+  if (name) parts.push(name);
+  if (address && address.toLowerCase() !== name.toLowerCase()) {
+    const addressSegments = address
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .filter((seg, idx, arr) => {
+        if (name && seg.toLowerCase() === name.toLowerCase()) return false;
+        if (idx > 0 && seg.toLowerCase() === arr[idx - 1].toLowerCase()) return false;
+        return true;
+      });
+    if (addressSegments.length > 0) {
+      parts.push(addressSegments.join(', '));
+    }
+  }
+  if (city && !parts.some((p) => p.toLowerCase().includes(city.toLowerCase()))) {
+    parts.push(city);
   }
 
   return parts.length > 0 ? parts.join(', ') : 'Davao City, Philippines';

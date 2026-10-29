@@ -191,8 +191,13 @@ def _resolve_wallet_venue(event_data: Dict[str, Any]) -> Tuple[str, str]:
         address = (raw_venue.get('address') or '').strip()
         city = (raw_venue.get('city') or '').strip()
 
+        if name and address:
+            name_lower = name.lower()
+            while address.lower().startswith(name_lower):
+                address = re.sub(r'^[\s,;-]+', '', address[len(name):]).strip()
+
         resolved_name = name or address or city or default_name
-        addr_parts = [p for p in (address, city) if p]
+        addr_parts = [p for p in (address, city) if p and (not address or p == address or p.lower() not in address.lower())]
         resolved_address = ', '.join(dict.fromkeys(addr_parts)) if addr_parts else (name or default_address)
         return resolved_name, resolved_address
 
@@ -358,18 +363,28 @@ def patch_wallet_object(
     issuer_id: str,
     registration_id: str,
     patch_data: Dict[str, Any],
-    service_account_info: Dict[str, Any]
+    service_account_info: Dict[str, Any],
+    upsert: bool = False,
+    session: Optional[requests.Session] = None
 ) -> bool:
-    """Patch full eventTicketObject payload in the Wallet API (syncs state, holder name, tier, barcode)."""
+    """Patch (or insert on 404 when upsert=True) eventTicketObject payload in the Wallet API."""
     object_id = get_object_id(issuer_id, registration_id)
     url = f"{WALLET_API_BASE}/eventTicketObject/{object_id}"
     try:
-        session = get_authorized_session(service_account_info)
-        res = session.patch(url, json=patch_data, timeout=10)
+        active_session = session or get_authorized_session(service_account_info)
+        res = active_session.patch(url, json=patch_data, timeout=10)
         if res.status_code in (200, 204):
             logger.info(f"Patched object {object_id}")
             return True
         elif res.status_code == 404:
+            if upsert:
+                insert_url = f"{WALLET_API_BASE}/eventTicketObject"
+                ins_res = active_session.post(insert_url, json=patch_data, timeout=10)
+                if ins_res.status_code in (200, 201, 409):
+                    logger.info(f"Inserted object {object_id} (status {ins_res.status_code})")
+                    return True
+                logger.warning(f"Wallet API insert object failed: {ins_res.status_code} {ins_res.text}")
+                return False
             logger.info(f"Object {object_id} not found in Wallet API (upsert will happen on next Save)")
             return False
         else:
@@ -399,18 +414,28 @@ def patch_wallet_class(
     issuer_id: str,
     event_id: str,
     patch_data: Dict[str, Any],
-    service_account_info: Dict[str, Any]
+    service_account_info: Dict[str, Any],
+    upsert: bool = False,
+    session: Optional[requests.Session] = None
 ) -> bool:
-    """Patch event class in the Wallet API when title, dates, or venue change."""
+    """Patch (or insert on 404 when upsert=True) event class in the Wallet API."""
     class_id = get_class_id(issuer_id, event_id)
     url = f"{WALLET_API_BASE}/eventTicketClass/{class_id}"
     try:
-        session = get_authorized_session(service_account_info)
-        res = session.patch(url, json=patch_data, timeout=10)
+        active_session = session or get_authorized_session(service_account_info)
+        res = active_session.patch(url, json=patch_data, timeout=10)
         if res.status_code in (200, 204):
             logger.info(f"Patched class {class_id}")
             return True
         elif res.status_code == 404:
+            if upsert:
+                insert_url = f"{WALLET_API_BASE}/eventTicketClass"
+                ins_res = active_session.post(insert_url, json=patch_data, timeout=10)
+                if ins_res.status_code in (200, 201, 409):
+                    logger.info(f"Inserted class {class_id} (status {ins_res.status_code})")
+                    return True
+                logger.warning(f"Wallet API insert class failed: {ins_res.status_code} {ins_res.text}")
+                return False
             logger.info(f"Class {class_id} not found in Wallet API (upsert will happen on next Save)")
             return False
         else:

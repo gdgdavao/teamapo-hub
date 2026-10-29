@@ -15,7 +15,7 @@ import toast from 'react-hot-toast';
 import { Badge, Button, Card } from '../../components/UI';
 import { WalletPassService } from '../../services/walletPassService';
 import { RegistrationService } from '../../services/registrationService';
-import TicketCard from '../../components/TicketCard';
+import TicketCard, { resolveVenueLine } from '../../components/TicketCard';
 import { downloadTicketAsPng } from '../../utils/ticketCanvas';
 import { isIOSDevice } from '../../utils/passArtwork';
 import usePageTitle from '../../hooks/usePageTitle';
@@ -23,11 +23,22 @@ import addToGoogleWalletSvg from '@assets/add-to-google-wallet.svg';
 
 /**
  * Opens the Google Wallet Save URL in a new tab, falling back to same-tab navigation
- * if WebKit (Safari) or Firefox blocks window.open after an async await.
+ * only when WebKit (Safari) or Firefox actually blocks window.open after an async await.
+ * Note: Do NOT pass 'noopener,noreferrer' in windowFeatures because the WHATWG HTML spec
+ * forces window.open() to return null when noopener is set, which would falsely trigger
+ * window.location.assign(url) and fire two concurrent Save intents into Google Wallet.
  */
 function openWalletSaveUrl(url: string): void {
-  const win = window.open(url, '_blank', 'noopener,noreferrer');
-  if (!win && typeof window !== 'undefined') {
+  const win = window.open(url, '_blank');
+  if (win) {
+    try {
+      win.opener = null;
+    } catch {
+      // Ignore cross-origin opener assignment errors
+    }
+    return;
+  }
+  if (typeof window !== 'undefined') {
     const isJsdom = typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent || '');
     const isAssignMocked = typeof (window.location?.assign as any)?.mock === 'object';
     if (!isJsdom || isAssignMocked) {
@@ -208,20 +219,7 @@ const TicketPage: React.FC = () => {
           ? `${reg.userDetails.firstName} ${reg.userDetails.lastName || ''}`.trim()
           : undefined);
 
-      let venueStr = 'Davao City, Philippines';
-      if (evt?.venue) {
-        if (typeof evt.venue === 'string') {
-          venueStr = evt.venue;
-        } else if (evt.venue.type === 'online') {
-          venueStr = 'Online Event';
-        } else {
-          const parts: string[] = [];
-          if (evt.venue.name?.trim()) parts.push(evt.venue.name.trim());
-          if (evt.venue.address?.trim()) parts.push(evt.venue.address.trim());
-          if (evt.venue.city?.trim()) parts.push(evt.venue.city.trim());
-          if (parts.length > 0) venueStr = parts.join(', ');
-        }
-      }
+      const venueStr = resolveVenueLine(evt);
 
       let roleStr = 'Participant';
       if (reg?.ticketType) {
@@ -392,15 +390,24 @@ const TicketPage: React.FC = () => {
                 <button
                   type="button"
                   disabled={isSavingWallet}
+                  aria-busy={isSavingWallet || undefined}
                   onClick={handleSaveToWallet}
                   aria-label="Save to Google Wallet"
-                  className="inline-flex min-h-[48px] items-center justify-center rounded-full transition-[transform,opacity,box-shadow] duration-fast ease-quart hover:opacity-95 active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+                  className="relative inline-grid grid-cols-1 grid-rows-1 place-items-center min-h-[50px] rounded-full bg-[#1F1F1F] text-white transition-[transform,opacity,box-shadow] duration-fast ease-quart hover:opacity-95 active:scale-[0.98] disabled:opacity-75 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
                 >
                   <img
                     src={addToGoogleWalletSvg}
                     alt="Add to Google Wallet"
-                    className="h-[50px] w-auto select-none"
+                    className={`col-start-1 row-start-1 h-[50px] w-auto select-none transition-opacity duration-short2 ease-emphasized-standard ${
+                      isSavingWallet ? 'opacity-0 pointer-events-none' : 'opacity-100'
+                    }`}
                   />
+                  {isSavingWallet && (
+                    <span
+                      className="spinner motion-essential col-start-1 row-start-1 !w-5 !h-5 border-2"
+                      aria-hidden="true"
+                    />
+                  )}
                 </button>
               </div>
             )}

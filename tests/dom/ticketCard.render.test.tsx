@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, it, expect } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import TicketCard from '../../src/components/TicketCard';
+import TicketCard, { resolveVenueLine } from '../../src/components/TicketCard';
 import { splitAttendeeName } from '../../src/utils/passArtwork';
 
 describe('TicketCard Component (src/components/TicketCard.tsx)', () => {
@@ -70,6 +70,29 @@ describe('TicketCard Component (src/components/TicketCard.tsx)', () => {
       expect(screen.getByText('Dela Cruz')).toBeInTheDocument();
       expect(screen.getByText('Participant • DevFest 2025')).toBeInTheDocument();
       expect(screen.getByText(/SMX Convention Center, SM Lanang/)).toBeInTheDocument();
+    });
+
+    it('deduplicates venue name when geocoded address starts with or repeats venue name', () => {
+      const uicEvent = {
+        ...sampleEvent,
+        venue: {
+          name: 'University of the Immaculate Conception - Bajada',
+          address:
+            'University of the Immaculate Conception - Bajada, J.P. Laurel Ave, Davao City, 8000 Davao del Sur, Philippines',
+          city: 'Davao City',
+        },
+      };
+
+      expect(resolveVenueLine(uicEvent)).toBe(
+        'University of the Immaculate Conception - Bajada, J.P. Laurel Ave, Davao City, 8000 Davao del Sur, Philippines'
+      );
+
+      render(<TicketCard registration={sampleRegistration} event={uicEvent} />);
+      expect(
+        screen.getByText(
+          'University of the Immaculate Conception - Bajada, J.P. Laurel Ave, Davao City, 8000 Davao del Sur, Philippines'
+        )
+      ).toBeInTheDocument();
     });
 
     it('renders event local date/time in black footer in Asia/Manila format', () => {

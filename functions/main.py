@@ -4641,22 +4641,27 @@ def createWalletPassUrl(req: https_fn.CallableRequest) -> Dict[str, Any]:
         event_data=event_data
     )
 
-    # Ensure Google Wallet Class and Object are patched with latest metadata & ACTIVE state
+    # Ensure Google Wallet Class and Object are upserted (PATCH, or POST on 404) before returning Save URL
     try:
+        wallet_session = wallet_service.get_authorized_session(sa_info)
         wallet_service.patch_wallet_class(
             issuer_id=issuer_id,
             event_id=event_id,
             patch_data=class_payload,
-            service_account_info=sa_info
+            service_account_info=sa_info,
+            upsert=True,
+            session=wallet_session
         )
         wallet_service.patch_wallet_object(
             issuer_id=issuer_id,
             registration_id=reg_doc.id,
             patch_data=object_payload,
-            service_account_info=sa_info
+            service_account_info=sa_info,
+            upsert=True,
+            session=wallet_session
         )
     except Exception as patch_err:
-        logger.warning(f"Could not patch wallet class/object {class_payload['id']}: {patch_err}")
+        logger.warning(f"Could not upsert wallet class/object {class_payload['id']}: {patch_err}")
 
     try:
         # Generate Save JWT (15-min expiry)
