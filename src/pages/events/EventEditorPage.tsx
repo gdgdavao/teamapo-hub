@@ -34,6 +34,7 @@ import { TicketType, EventStatus, RegistrationStatus, FormField } from '../../ty
 import { logger } from '../../utils/logger';
 import AppShell from '../../layout/AppShell';
 import { toDateSafe } from '../../utils/dateUtils';
+import usePageTitle from '../../hooks/usePageTitle';
 
 interface PaymentConfig {
   id: string;
@@ -180,6 +181,11 @@ const EventEditorPage: React.FC = () => {
     paymentConfigs: [],
     registrationStatus: 'open',
     status: 'draft'
+  });
+
+  usePageTitle({
+    title: isEditMode ? 'Edit Event' : 'Create Event',
+    contextTitle: formData.title?.trim() || undefined,
   });
 
   // Helper function to create a default payment configuration

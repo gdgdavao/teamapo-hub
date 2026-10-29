@@ -47,8 +47,12 @@ const EventRegistrationPage: React.FC<EventRegistrationPageProps> = ({ isPreview
   const hasLoadedFormRef = useRef(false);
   const hasInitialDataRef = useRef(false);
 
-  // Set page title
-  usePageTitle();
+  // Set page title with event context
+  usePageTitle({
+    title: event
+      ? `${effectiveIsPreview ? 'Preview: ' : ''}${event.title}`
+      : 'Event Registration',
+  });
 
   // Resolve public URL for social sharing image when event changes
   useEffect(() => {

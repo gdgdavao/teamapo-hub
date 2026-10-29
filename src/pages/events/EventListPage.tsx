@@ -22,9 +22,11 @@ import { toDateSafe, formatEventDate } from '../../utils/dateUtils';
 import { formatEventLocation } from '../../utils/venueUtils';
 import { usePrefetchEvent } from '../../hooks/usePrefetchEvent';
 import { useAuth } from '../../contexts/AuthContext';
+import usePageTitle from '../../hooks/usePageTitle';
 
 // Dedicated events workspace supporting both admin (RBAC) and organizer (ABPAC)
 const EventsWorkspace: React.FC = () => {
+  usePageTitle({ title: 'Events' });
   const ability = useAbility();
   const { userProfile, currentUser } = useAuth();
   const currentUid = userProfile?.uid || currentUser?.uid;

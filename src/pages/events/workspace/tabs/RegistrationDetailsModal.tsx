@@ -430,11 +430,49 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
           ) {
             val = registration.attendee.email;
           } else if (
-            rawId.includes('name') ||
-            rawId === '1' ||
-            rawLabel.includes('name')
+            !rawLabel.includes('company') &&
+            !rawLabel.includes('organization') &&
+            !rawLabel.includes('venue') &&
+            !rawLabel.includes('business') &&
+            !rawLabel.includes('emergency') &&
+            !rawLabel.includes('middle') &&
+            !rawId.includes('middle') &&
+            (rawId.includes('name') || rawId === '1' || rawLabel.includes('name'))
           ) {
-            val = registration.attendee.name;
+            const hasSplitLastName = formFields.some((f) => {
+              const l = stripFormattedLabelSyntax(f.label).toLowerCase();
+              const i = f.id.toLowerCase();
+              return (
+                l.includes('last name') ||
+                l.includes('family name') ||
+                l.includes('surname') ||
+                i === 'lastname' ||
+                i === 'last_name' ||
+                i === '1762143123275'
+              );
+            });
+            const isLast =
+              rawLabel.includes('last name') ||
+              rawLabel.includes('family name') ||
+              rawLabel.includes('surname') ||
+              rawId === 'lastname' ||
+              rawId === 'last_name' ||
+              rawId === '1762143123275';
+            const isFirst =
+              rawLabel.includes('first name') ||
+              rawLabel.includes('given name') ||
+              rawId === 'firstname' ||
+              rawId === 'first_name' ||
+              (rawId === '1' && hasSplitLastName);
+
+            const fullParts = (registration.attendee.name || '').trim().split(/\s+/);
+            if (isFirst && hasSplitLastName) {
+              val = fullParts.length > 1 ? fullParts.slice(0, -1).join(' ') : fullParts[0] || '';
+            } else if (isLast && hasSplitLastName) {
+              val = fullParts.length > 1 ? fullParts[fullParts.length - 1] : '';
+            } else {
+              val = registration.attendee.name;
+            }
           } else if (
             field.type === 'phone' ||
             rawId === '3' ||

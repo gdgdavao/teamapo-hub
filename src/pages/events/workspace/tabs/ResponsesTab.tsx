@@ -259,10 +259,10 @@ const ResponsesTab: React.FC<ResponsesTabProps> = ({ eventId }) => {
         setRegistrations(regsData);
 
         const resolvedFields =
-          eventData?.registrationForm && eventData.registrationForm.length > 0
-            ? eventData.registrationForm
-            : subcollectionForm.length > 0
+          subcollectionForm.length > 0
             ? subcollectionForm
+            : eventData?.registrationForm && eventData.registrationForm.length > 0
+            ? eventData.registrationForm
             : FALLBACK_DEFAULT_FIELDS;
 
         setFormFields(resolvedFields);

@@ -22,6 +22,7 @@ import {
 import { CertificateService } from '../../services/certificateService';
 import { Button, Card, Input } from '../../components/UI';
 import { logger } from '../../utils/logger';
+import usePageTitle from '../../hooks/usePageTitle';
 
 interface CertificateVerificationData {
   isValid: boolean;
@@ -88,6 +89,10 @@ const CertificateVerificationPage: React.FC = () => {
   const { code } = useParams<{ code: string }>();
   const [verificationCode, setVerificationCode] = useState(code || '');
   const [verificationData, setVerificationData] = useState<CertificateVerificationData | null>(null);
+  usePageTitle({
+    title: 'Certificate Verification',
+    contextTitle: verificationData?.isValid ? verificationData.recipientName : code || undefined,
+  });
   const [loading, setLoading] = useState(false);
   const [searchAttempted, setSearchAttempted] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);

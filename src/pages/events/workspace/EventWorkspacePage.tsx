@@ -30,6 +30,7 @@ import { logger } from '../../../utils/logger';
 import { useAuth } from '../../../contexts/AuthContext';
 import { formatEventDate } from '../../../utils/dateUtils';
 import { formatEventLocation } from '../../../utils/venueUtils';
+import usePageTitle from '../../../hooks/usePageTitle';
 
 // One panel per tab. Each takes the eventId this page already resolved, so
 // none of them reads the route or asks whether it is "embedded".
@@ -132,6 +133,16 @@ const EventWorkspacePage: React.FC = () => {
     if (REMOVED_TAB_REDIRECTS[requested]) return REMOVED_TAB_REDIRECTS[requested];
     return visibleTabs.some((t) => t.id === requested) ? (requested as EventWorkspaceTab) : (visibleTabs[0]?.id ?? 'overview');
   }, [tab, visibleTabs]);
+
+  const activeTabLabel = useMemo(
+    () => TABS.find((t) => t.id === activeTab)?.label || 'Event Workspace',
+    [activeTab]
+  );
+
+  usePageTitle({
+    title: activeTabLabel,
+    contextTitle: event?.title || 'Event Workspace',
+  });
 
   // Cache visited tabs so switching between tabs doesn't destroy state, refetch data,
   // or flash loading skeletons/spinners.

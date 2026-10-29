@@ -25,12 +25,22 @@ import { logger } from '../../utils/logger';
 type ActionStatus = 'loading' | 'ready' | 'submitting' | 'success' | 'error';
 
 const AuthActionPage: React.FC = () => {
-  usePageTitle();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
   const mode = searchParams.get('mode');
   const oobCode = searchParams.get('oobCode');
+
+  usePageTitle({
+    title:
+      mode === 'resetPassword'
+        ? 'Reset Password'
+        : mode === 'verifyEmail'
+        ? 'Verify Email'
+        : mode === 'recoverEmail'
+        ? 'Recover Email'
+        : 'Account Security',
+  });
 
   const [status, setStatus] = useState<ActionStatus>('loading');
   const [accountEmail, setAccountEmail] = useState<string>('');

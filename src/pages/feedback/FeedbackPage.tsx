@@ -190,7 +190,10 @@ const FeedbackPage: React.FC = () => {
   }, [eventId]);
 
   // Set page title and SEO
-  usePageTitle({ title: `Event Feedback${event ? ` - ${event.title}` : ''}` });
+  usePageTitle({
+    title: 'Event Feedback',
+    contextTitle: event?.title,
+  });
   useSEO({
     title: `Event Feedback${event ? ` - ${event.title}` : ''}`,
     description: event ? `Share your feedback for ${event.title}` : 'Share your event feedback',

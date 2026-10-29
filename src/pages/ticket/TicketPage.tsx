@@ -19,6 +19,7 @@ import TicketCard from '../../components/TicketCard';
 import { downloadTicketAsPng } from '../../utils/ticketCanvas';
 import { isIOSDevice } from '../../utils/passArtwork';
 import usePageTitle from '../../hooks/usePageTitle';
+import addToGoogleWalletSvg from '@assets/add-to-google-wallet.svg';
 
 /**
  * Opens the Google Wallet Save URL in a new tab, falling back to same-tab navigation
@@ -34,24 +35,6 @@ function openWalletSaveUrl(url: string): void {
     }
   }
 }
-
-/** SVG icon representing Google Wallet pass */
-const GoogleWalletIcon: React.FC<{ className?: string }> = ({ className = 'h-5 w-5' }) => (
-  <svg
-    className={className}
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    aria-hidden="true"
-  >
-    <rect x="2" y="5" width="20" height="14" rx="2" />
-    <line x1="2" y1="10" x2="22" y2="10" />
-    <circle cx="16" cy="14" r="1" fill="currentColor" />
-  </svg>
-);
 
 /** The three numbered steps, so the same copy is not written out three times. */
 const STEPS = [
@@ -91,8 +74,6 @@ const TicketPage: React.FC = () => {
   const token = searchParams.get('token') || searchParams.get('walletPassToken');
   const isFreeMode = searchParams.get('mode') === 'free' || location.pathname === '/registration/success';
 
-  usePageTitle({ title: 'Your Ticket | TeamApo Hub' });
-
   useEffect(() => {
     // Attendees access tickets via private secret tokens. Protect against indexing.
     let meta = document.querySelector('meta[name="robots"]');
@@ -119,6 +100,10 @@ const TicketPage: React.FC = () => {
       ? { registration: locationState.registration, event: locationState.event }
       : null
   );
+  usePageTitle({
+    title: 'Your Ticket',
+    contextTitle: ticketData?.event?.title,
+  });
   const [isLoadingTicket, setIsLoadingTicket] = useState<boolean>(
     Boolean(!locationState?.registration && regId && token)
   );
@@ -403,16 +388,21 @@ const TicketPage: React.FC = () => {
           {/* Action Area Below the Card */}
           <div className="max-w-[26.25rem] mx-auto text-center space-y-3">
             {canOfferGoogleWallet && (
-              <Button
-                variant="filled"
-                size="md"
-                loading={isSavingWallet}
-                onClick={handleSaveToWallet}
-                className="w-full min-h-[48px] px-6 text-base font-semibold shadow-sm hover:shadow"
-                icon={<GoogleWalletIcon className="h-5 w-5" />}
-              >
-                Save to Google Wallet
-              </Button>
+              <div className="flex justify-center">
+                <button
+                  type="button"
+                  disabled={isSavingWallet}
+                  onClick={handleSaveToWallet}
+                  aria-label="Save to Google Wallet"
+                  className="inline-flex min-h-[48px] items-center justify-center rounded-full transition-[transform,opacity,box-shadow] duration-fast ease-quart hover:opacity-95 active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+                >
+                  <img
+                    src={addToGoogleWalletSvg}
+                    alt="Add to Google Wallet"
+                    className="h-[50px] w-auto select-none"
+                  />
+                </button>
+              </div>
             )}
 
             {canOfferGoogleWallet && cachedWalletPass?.saveUrl && (
