@@ -720,34 +720,32 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
     let failCount = 0;
     let paymentSuccessCount = 0;
     let paymentFailCount = 0;
+    let notificationsSentCount = 0;
     const verifierUid = userProfile?.uid || 'system';
     const verifierName = (userProfile as any)?.displayName || (userProfile as any)?.email || 'Admin';
-
-    // Track registrations that need payment notification emails
-    const registrationsToNotify: Registration[] = [];
 
     // Process pending registrations
     for (const reg of pendingRegs) {
       try {
-        // Approve the registration
-        await RegistrationService.updateRegistrationStatus(reg.id, 'approved');
-        successCount++;
+        const isFree = getRegistrationTotalAmount(reg) === 0;
 
-        let paymentApproved = false;
-
-        // FORCE APPROVE PAYMENT - either approve payment proof or force mark as paid
         if (reg.paymentProof && reg.paymentProof.verificationStatus === 'pending') {
-          // If there's a payment proof, approve it
+          // Has pending payment proof:
+          // 1. Approve registration without sending email yet (payment pending)
+          await RegistrationService.updateRegistrationStatus(reg.id, 'approved');
+          successCount++;
+
+          // 2. Verify payment proof (which verifies payment and sends the single approval notification)
           try {
             await PaymentService.verifyPaymentProof(reg.paymentProof.id, 'approved', verifierUid, verifierName);
             paymentSuccessCount++;
-            paymentApproved = true;
+            notificationsSentCount++;
           } catch (paymentError) {
             logger.error(`Failed to approve payment for registration ${reg.id}:`, paymentError);
             paymentFailCount++;
           }
-        } else if (reg.paymentStatus !== 'paid') {
-          // If no payment proof or payment not paid, FORCE mark as paid
+        } else if (reg.paymentStatus !== 'paid' && !isFree) {
+          // Paid registration without payment proof: force mark paid, then approve and notify
           try {
             const registrationRef = doc(db, 'registrations', reg.id);
             await updateDoc(registrationRef, {
@@ -758,16 +756,23 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
               updatedAt: serverTimestamp()
             });
             paymentSuccessCount++;
-            paymentApproved = true;
+
+            // updateRegistrationStatus will see paymentStatus === 'paid' and send 1 notification
+            await RegistrationService.updateRegistrationStatus(reg.id, 'approved');
+            successCount++;
+            notificationsSentCount++;
           } catch (paymentError) {
             logger.error(`Failed to force approve payment for registration ${reg.id}:`, paymentError);
             paymentFailCount++;
           }
-        }
-
-        // Add to notification list if payment was approved
-        if (paymentApproved) {
-          registrationsToNotify.push(reg);
+        } else {
+          // Free registration (or already paid): updateRegistrationStatus will mark paid and send 1 notification
+          await RegistrationService.updateRegistrationStatus(reg.id, 'approved');
+          successCount++;
+          notificationsSentCount++;
+          if (isFree) {
+            paymentSuccessCount++;
+          }
         }
       } catch (error) {
         logger.error(`Failed to approve registration ${reg.id}:`, error);
@@ -777,13 +782,11 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
 
     // Process already-approved registrations with pending payments
     for (const reg of approvedRegsWithPendingPayment) {
-      let paymentApproved = false;
-
       if (reg.paymentProof && reg.paymentProof.verificationStatus === 'pending') {
         try {
           await PaymentService.verifyPaymentProof(reg.paymentProof.id, 'approved', verifierUid, verifierName);
           paymentSuccessCount++;
-          paymentApproved = true;
+          notificationsSentCount++;
         } catch (paymentError) {
           logger.error(`Failed to approve payment for registration ${reg.id}:`, paymentError);
           paymentFailCount++;
@@ -800,16 +803,26 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
             updatedAt: serverTimestamp()
           });
           paymentSuccessCount++;
-          paymentApproved = true;
+
+          if (currentEvent && reg.attendee?.email) {
+            try {
+              await EmailService.sendPaymentNotification({
+                registrationId: reg.id,
+                status: 'approved',
+                eventTitle: currentEvent.title,
+                attendeeEmail: reg.attendee.email,
+                attendeeName: reg.attendee.name,
+                isFreeRegistration: false
+              });
+              notificationsSentCount++;
+            } catch (notifyErr) {
+              logger.warn('Failed to send notification for force-approved payment:', notifyErr);
+            }
+          }
         } catch (paymentError) {
           logger.error(`Failed to force approve payment for registration ${reg.id}:`, paymentError);
           paymentFailCount++;
         }
-      }
-
-      // Add to notification list if payment was approved
-      if (paymentApproved) {
-        registrationsToNotify.push(reg);
       }
     }
 
@@ -853,31 +866,12 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
     setIsBulkProcessing(false);
     setSelectedRegistrations(new Set());
     
-    // Send registration approval notification emails
-    if (registrationsToNotify.length > 0 && currentEvent) {
-      for (const reg of registrationsToNotify) {
-        try {
-          await EmailService.sendPaymentNotification({
-            registrationId: reg.id,
-            status: 'approved',
-            eventTitle: currentEvent.title,
-            attendeeEmail: reg.attendee.email,
-            attendeeName: reg.attendee.name,
-            isFreeRegistration: getRegistrationTotalAmount(reg) === 0
-          });
-        } catch (emailError) {
-          logger.error(`Failed to send registration approval notification to ${reg.attendee.email}:`, emailError);
-          // Don't fail the whole operation if email fails
-        }
-      }
-    }
-    
     const message = `Bulk Approve Complete!\n\n` +
       `• Registrations approved: ${successCount}\n` +
       (failCount > 0 ? `• Registrations failed: ${failCount}\n` : '') +
       (paymentSuccessCount > 0 ? `\n• Payments approved: ${paymentSuccessCount}\n` : '') +
       (paymentFailCount > 0 ? `• Payments failed: ${paymentFailCount}\n` : '') +
-      (registrationsToNotify.length > 0 ? `\n• Email notifications sent: ${registrationsToNotify.length}` : '');
+      (notificationsSentCount > 0 ? `\n• Email notifications sent: ${notificationsSentCount}` : '');
     
     alert(message);
   };
@@ -919,6 +913,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
     setIsBulkProcessing(true);
     let successCount = 0;
     let failCount = 0;
+    let notificationsSentCount = 0;
     const verifierUid = userProfile?.uid || 'system';
     const verifierName = (userProfile as any)?.displayName || (userProfile as any)?.email || 'Admin';
 
@@ -927,9 +922,10 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
         const regRef = doc(db, 'registrations', reg.id);
         
         if (reg.paymentProof && reg.paymentProof.verificationStatus === 'pending') {
-          // If there's a payment proof, verify it through the service
+          // If there's a payment proof, verify it through the service (dispatches single notification)
           await PaymentService.verifyPaymentProof(reg.paymentProof.id, 'approved', verifierUid, verifierName);
           successCount++;
+          notificationsSentCount++;
         } else if (reg.paymentStatus === 'pending') {
           // If no payment proof but status is pending, force approve the payment
           await updateDoc(regRef, {
@@ -940,6 +936,22 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
             updatedAt: serverTimestamp()
           });
           successCount++;
+
+          if (currentEvent && reg.attendee?.email) {
+            try {
+              await EmailService.sendPaymentNotification({
+                registrationId: reg.id,
+                status: 'approved',
+                eventTitle: currentEvent.title,
+                attendeeEmail: reg.attendee.email,
+                attendeeName: reg.attendee.name,
+                isFreeRegistration: getRegistrationTotalAmount(reg) === 0
+              });
+              notificationsSentCount++;
+            } catch (notifyErr) {
+              logger.warn('Failed to send notification for approved payment:', notifyErr);
+            }
+          }
         }
       } catch (error) {
         logger.error(`Failed to approve payment for registration ${reg.id}:`, error);
@@ -969,30 +981,11 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
     setIsBulkProcessing(false);
     setSelectedRegistrations(new Set());
     
-    // Send registration approval notification emails
-    if (successCount > 0 && currentEvent) {
-      for (const reg of pendingPayments) {
-        try {
-          await EmailService.sendPaymentNotification({
-            registrationId: reg.id,
-            status: 'approved',
-            eventTitle: currentEvent.title,
-            attendeeEmail: reg.attendee.email,
-            attendeeName: reg.attendee.name,
-            isFreeRegistration: getRegistrationTotalAmount(reg) === 0
-          });
-        } catch (emailError) {
-          logger.error(`Failed to send registration approval notification to ${reg.attendee.email}:`, emailError);
-          // Don't fail the whole operation if email fails
-        }
-      }
-    }
-    
     alert(
       `Bulk Payment Approve Complete!\n\n` +
       `• Successfully approved: ${successCount}\n` +
       (failCount > 0 ? `• Failed: ${failCount}\n` : '') +
-      (successCount > 0 ? `• Email notifications sent: ${successCount}` : '')
+      (notificationsSentCount > 0 ? `• Email notifications sent: ${notificationsSentCount}` : '')
     );
   };
 
@@ -1025,14 +1018,12 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
     setIsBulkProcessing(true);
     let successCount = 0;
     let failCount = 0;
+    let notificationsSentCount = 0;
     const verifierUid = userProfile?.uid || 'system';
 
     for (const reg of notApproved) {
       try {
-        // Approve the registration
-        await RegistrationService.updateRegistrationStatus(reg.id, 'approved');
-        
-        // Force mark payment as paid in Firestore
+        // Force mark payment as paid in Firestore first
         const registrationRef = doc(db, 'registrations', reg.id);
         await updateDoc(registrationRef, {
           paymentStatus: 'paid',
@@ -1041,8 +1032,12 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
           'paymentDetails.forceApprovedAt': serverTimestamp(),
           updatedAt: serverTimestamp()
         });
+
+        // Approve the registration (which will now see paymentStatus === 'paid' and send exactly 1 notification)
+        await RegistrationService.updateRegistrationStatus(reg.id, 'approved');
         
         successCount++;
+        notificationsSentCount++;
       } catch (error) {
         logger.error(`Failed to force approve registration ${reg.id}:`, error);
         failCount++;
@@ -1067,30 +1062,11 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
     setIsBulkProcessing(false);
     setSelectedRegistrations(new Set());
     
-    // Send payment approval notification emails
-    if (successCount > 0 && currentEvent) {
-      for (const reg of notApproved) {
-        try {
-          await EmailService.sendPaymentNotification({
-            registrationId: reg.id,
-            status: 'approved',
-            eventTitle: currentEvent.title,
-            attendeeEmail: reg.attendee.email,
-            attendeeName: reg.attendee.name,
-            isFreeRegistration: getRegistrationTotalAmount(reg) === 0
-          });
-        } catch (emailError) {
-          logger.error(`Failed to send payment notification to ${reg.attendee.email}:`, emailError);
-          // Don't fail the whole operation if email fails
-        }
-      }
-    }
-    
     alert(
       `Force Approve Complete!\n\n` +
       `• Successfully force approved: ${successCount}\n` +
       (failCount > 0 ? `• Failed: ${failCount}\n` : '') +
-      (successCount > 0 ? `• Email notifications sent: ${successCount}\n` : '') +
+      (notificationsSentCount > 0 ? `• Email notifications sent: ${notificationsSentCount}\n` : '') +
       `\nNotice: These registrations are marked as paid without payment verification.`
     );
   };
