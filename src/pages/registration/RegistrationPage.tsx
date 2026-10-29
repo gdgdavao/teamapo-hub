@@ -690,7 +690,7 @@ const EventRegistrationPage: React.FC<EventRegistrationPageProps> = ({ isPreview
             <section className="rounded-xl border border-outline-variant bg-surface p-6 sm:p-8">
               <p className="text-xs font-semibold uppercase tracking-[0.14em] text-primary">Details</p>
               <h2 className="mt-2 text-2xl sm:text-3xl font-bold tracking-tight text-on-surface">About this event</h2>
-              <p className="mt-4 text-on-surface leading-relaxed whitespace-pre-wrap max-w-[70ch]">
+              <p className="mt-4 w-full text-on-surface leading-relaxed whitespace-pre-wrap break-words">
                 {event.description}
               </p>
             </section>
