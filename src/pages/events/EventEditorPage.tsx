@@ -5,7 +5,7 @@ import { asEvent } from '../../auth/ability';
 import { httpsCallable } from 'firebase/functions';
 import toast from 'react-hot-toast';
 import { useAuth } from '../../contexts/AuthContext';
-import { Button, LoadingSpinner, ProgressBar, Select, Badge } from '../../components/UI';
+import { Button, Input, LoadingSpinner, ProgressBar, Select, Badge } from '../../components/UI';
 import { functions } from '../../config/firebase';
 import EventService from '../../services/eventService';
 import {
@@ -271,6 +271,17 @@ const EventEditorPage: React.FC = () => {
     return toDateSafe(timestamp) ?? new Date();
   };
 
+  const toLocalDateTimeInput = (value: unknown): string => {
+    if (!value) return '';
+    if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) {
+      return value;
+    }
+    const date = toDateSafe(value);
+    if (!date) return '';
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  };
+
   const loadEventData = async (eventId: string) => {
     try {
       setLoading(true);
@@ -452,6 +463,18 @@ const EventEditorPage: React.FC = () => {
         toast.error('Event end date must be after the start date.');
         setIsSubmitting(false);
         return;
+      }
+
+      // Validate ticket sales windows (validFrom <= validUntil)
+      for (let i = 0; i < formData.ticketTypes.length; i++) {
+        const t = formData.ticketTypes[i];
+        const vf = toDateSafe((t as any).validFrom);
+        const vu = toDateSafe((t as any).validUntil);
+        if (vf && vu && vf.getTime() > vu.getTime()) {
+          toast.error(`Ticket "${t.name || `#${i + 1}`}": Sales start must be before sales deadline.`);
+          setIsSubmitting(false);
+          return;
+        }
       }
 
       // Centralized notifications
@@ -1355,6 +1378,34 @@ const EventEditorPage: React.FC = () => {
                       Active (available for purchase)
                     </label>
                   </div>
+
+                  <div>
+                    <Input
+                      type="datetime-local"
+                      label="Sales Start (Optional)"
+                      value={toLocalDateTimeInput(ticket.validFrom)}
+                      onChange={(e) =>
+                        updateTicketType(index, {
+                          validFrom: e.target.value ? (new Date(e.target.value) as any) : undefined,
+                        })
+                      }
+                      hint="Leave empty to start sales immediately"
+                    />
+                  </div>
+
+                  <div>
+                    <Input
+                      type="datetime-local"
+                      label="Sales Deadline (Optional)"
+                      value={toLocalDateTimeInput(ticket.validUntil)}
+                      onChange={(e) =>
+                        updateTicketType(index, {
+                          validUntil: e.target.value ? (new Date(e.target.value) as any) : undefined,
+                        })
+                      }
+                      hint="Leave empty for no ticket-specific deadline"
+                    />
+                  </div>
                 </div>
 
                 {/* Benefits */}
@@ -1803,9 +1854,20 @@ const EventEditorPage: React.FC = () => {
                 {ticket.description && (
                   <p className="text-on-surface-variant text-sm mb-2">{ticket.description}</p>
                 )}
-                <div className="flex items-center space-x-4 text-sm text-on-surface-variant">
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-on-surface-variant">
                   <span>Max: {ticket.maxQuantity || 'Unlimited'}</span>
                   <span>{ticket.isActive ? 'Active' : 'Inactive'}</span>
+                  {ticket.validUntil && toDateSafe(ticket.validUntil) && (
+                    <span>
+                      Deadline: {toDateSafe(ticket.validUntil)!.toLocaleDateString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </span>
+                  )}
                   {ticket.benefits && ticket.benefits.length > 0 && (
                     <span>{ticket.benefits.length} benefit{ticket.benefits.length > 1 ? 's' : ''}</span>
                   )}

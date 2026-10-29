@@ -139,20 +139,26 @@ const OverviewTab: React.FC<OverviewTabProps> = ({ eventId }) => {
       try {
         setLoading(true);
 
-        const eventData = await EventService.getEvent(eventId);
-        if (!eventData) throw new Error('Event not found');
-        setEvent(eventData);
-
-        const [statsResult, registrationsResult] = await Promise.allSettled([
+        const [eventResult, statsResult, registrationsResult] = await Promise.allSettled([
+          EventService.getEvent(eventId),
           AnalyticsService.getEventStats(eventId),
           RegistrationService.getEventRegistrations(eventId),
         ]);
 
+        if (eventResult.status !== 'fulfilled' || !eventResult.value) {
+          throw new Error('Event not found');
+        }
+        setEvent(eventResult.value);
+
         if (statsResult.status === 'fulfilled') {
           setStats(statsResult.value);
+        } else {
+          toast('Some analytics metrics could not be loaded.', { id: `stats-warn-${eventId}` });
         }
         if (registrationsResult.status === 'fulfilled') {
           setRegistrations(registrationsResult.value);
+        } else {
+          toast('Recent registrations could not be loaded.', { id: `regs-warn-${eventId}` });
         }
       } catch (error) {
         logger.error('Error loading analytics:', error);
@@ -243,9 +249,17 @@ const OverviewTab: React.FC<OverviewTabProps> = ({ eventId }) => {
     ? event.maxAttendees
     : (normalizedTicketCapacity ?? venueCapacity ?? null);
 
-  const ticketsSold = typeof stats?.registrations === 'number'
-    ? stats.registrations
-    : (typeof event?.currentAttendees === 'number' ? event.currentAttendees : 0);
+  // Single source of truth for active registrations (excludes cancelled, includes no-shows)
+  const activeRegistrationsCount =
+    typeof stats?.activeRegistrations === 'number'
+      ? stats.activeRegistrations
+      : typeof stats?.registrations === 'number'
+      ? stats.registrations
+      : typeof event?.currentAttendees === 'number'
+      ? event.currentAttendees
+      : 0;
+
+  const ticketsSold = activeRegistrationsCount;
 
   const ticketsRemaining = totalCapacity !== null
     ? Math.max(totalCapacity - ticketsSold, 0)
@@ -259,16 +273,41 @@ const OverviewTab: React.FC<OverviewTabProps> = ({ eventId }) => {
   const activePromoCodes = promoStats?.allCodes?.filter(code => code.isActive && !code.isExpired) ?? [];
   const topPromoCodes = promoStats?.allCodes?.slice(0, 3) ?? [];
 
-  const ticketBreakdown = event?.ticketTypes?.map(ticket => {
+  const activeRegistrationDocs = registrations.filter(
+    (reg) => reg.attendanceStatus !== 'cancelled'
+  );
+  const ticketTypeIdSet = new Set(event?.ticketTypes?.map((t) => t.id) ?? []);
+  const unmatchedActiveSold = activeRegistrationDocs.reduce((sum, reg) => {
+    if (!reg.ticketTypeId || !ticketTypeIdSet.has(reg.ticketTypeId)) {
+      return sum + (reg.quantity || 1);
+    }
+    return sum;
+  }, 0);
+
+  const ticketBreakdown = event?.ticketTypes?.map((ticket, index) => {
     const capacity = typeof ticket.maxQuantity === 'number' ? ticket.maxQuantity : null;
-    const sold = typeof ticket.currentSold === 'number' ? ticket.currentSold : 0;
+    let sold: number;
+    if (activeRegistrationDocs.length > 0) {
+      const matchedSold = activeRegistrationDocs.reduce((sum, reg) => {
+        if (reg.ticketTypeId === ticket.id) {
+          return sum + (reg.quantity || 1);
+        }
+        return sum;
+      }, 0);
+      sold = matchedSold + (index === 0 ? unmatchedActiveSold : 0);
+    } else if ((event?.ticketTypes?.length ?? 0) === 1 && activeRegistrationsCount > 0) {
+      sold = activeRegistrationsCount;
+    } else {
+      sold = typeof ticket.currentSold === 'number' ? ticket.currentSold : 0;
+    }
     const percent = capacity ? Math.min(100, Math.round((sold / capacity) * 100)) : null;
     return {
       id: ticket.id,
       name: ticket.name,
       sold,
       capacity,
-      percent
+      percent,
+      validUntil: ticket.validUntil,
     };
   }) ?? [];
 
@@ -506,17 +545,17 @@ const OverviewTab: React.FC<OverviewTabProps> = ({ eventId }) => {
                 Checked In
               </span>
               <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-success-container text-success">
-                {stats?.registrations ? `${Math.round(((stats?.checkedIn || 0) / stats.registrations) * 100)}%` : '0%'}
+                {activeRegistrationsCount ? `${Math.round(((stats?.checkedIn || 0) / activeRegistrationsCount) * 100)}%` : '0%'}
               </span>
             </div>
             <div className="flex items-baseline gap-2">
               <span className="text-2xl font-bold text-on-surface">{stats?.checkedIn || 0}</span>
               <span className="text-sm text-on-surface-variant">
-                / {stats?.registrations || 0} registered
+                / {activeRegistrationsCount} registered
               </span>
             </div>
             <ProgressBar
-              value={stats?.registrations ? Math.min(100, Math.round(((stats?.checkedIn || 0) / stats.registrations) * 100)) : 0}
+              value={activeRegistrationsCount ? Math.min(100, Math.round(((stats?.checkedIn || 0) / activeRegistrationsCount) * 100)) : 0}
               size="sm"
               color="bg-emerald-600"
               label="Check-in conversion"
@@ -632,6 +671,11 @@ const OverviewTab: React.FC<OverviewTabProps> = ({ eventId }) => {
                             ? `${ticket.sold}/${ticket.capacity} sold`
                             : `${ticket.sold} sold`}
                         </p>
+                        {ticket.validUntil && (
+                          <p className="text-xs text-on-surface-variant mt-0.5">
+                            Deadline: {formatDate(ticket.validUntil)}
+                          </p>
+                        )}
                       </div>
                       {ticket.percent !== null && (
                         <span className="text-sm font-semibold text-on-surface-variant">{ticket.percent}%</span>
@@ -685,8 +729,8 @@ const OverviewTab: React.FC<OverviewTabProps> = ({ eventId }) => {
           </div>
         </div>
 
-        {/* Promo Code Usage */}
-        {promoStats && (
+        {/* Promo Code Usage — collapsed when no promo codes are configured and none were redeemed */}
+        {promoStats && (promoStats.allCodes.length > 0 || promoStats.totalUsed > 0) && (
           <div className="bg-white rounded-lg shadow mb-8">
             <div className="px-6 py-4 border-b border-outline-variant">
               <h3 className="text-lg font-semibold text-on-surface">Promo Code Usage</h3>

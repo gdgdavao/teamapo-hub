@@ -30,6 +30,7 @@ import {
 import { EmailService } from './emailService';
 import { EventService } from './eventService';
 import { resolveDisplayStatus, StatusBearingRegistration } from '../utils/registrationStatus';
+import { getTicketSalesWindowStatus } from '../utils/pricing';
 import { toDateSafe, toISOStringSafe } from '../utils/dateUtils';
 import { generateWalletPassToken } from '../utils/passArtwork';
 import { AuditLogService } from './auditLogService';
@@ -1262,6 +1263,35 @@ export class RegistrationService {
           isValid: false,
           pricing: {} as TicketPricing,
           message: 'Only 1 ticket per person is allowed'
+        };
+      }
+
+      const windowStatus = getTicketSalesWindowStatus(ticketType);
+      if (!windowStatus.isOpen) {
+        if (windowStatus.reason === 'not_started' && windowStatus.validFromDate) {
+          return {
+            isValid: false,
+            pricing: {} as TicketPricing,
+            message: `Ticket sales for "${ticketType.name}" open on ${windowStatus.validFromDate.toLocaleDateString('en-US', {
+              month: 'short',
+              day: 'numeric',
+              year: 'numeric',
+            })}`
+          };
+        }
+        const endedDateStr = windowStatus.validUntilDate
+          ? windowStatus.validUntilDate.toLocaleDateString('en-US', {
+              month: 'short',
+              day: 'numeric',
+              year: 'numeric',
+            })
+          : '';
+        return {
+          isValid: false,
+          pricing: {} as TicketPricing,
+          message: endedDateStr
+            ? `Ticket sales for "${ticketType.name}" ended on ${endedDateStr}`
+            : `Ticket sales for "${ticketType.name}" have ended`
         };
       }
 

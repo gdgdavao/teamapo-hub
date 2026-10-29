@@ -150,7 +150,9 @@ const PlatformHome: React.FC = () => {
   const registrationCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const reg of registrations) {
-      counts[reg.eventId] = (counts[reg.eventId] ?? 0) + 1;
+      if (reg.attendanceStatus !== 'cancelled') {
+        counts[reg.eventId] = (counts[reg.eventId] ?? 0) + (reg.quantity || 1);
+      }
     }
     return counts;
   }, [registrations]);

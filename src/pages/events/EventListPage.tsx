@@ -77,22 +77,31 @@ const EventsWorkspace: React.FC = () => {
           }))
         );
 
-        if (canReadAll) {
-          // Fetch attendee counts in background to update real approved counts without delaying initial paint
-          RegistrationService.getAllRegistrations() // firestore:unscoped-ok - admin event list attendee aggregation
-            .then((allRegistrations) => {
-              const approvedCountByEventId = new Map<string, number>();
-              for (const reg of allRegistrations) {
-                if ((reg as any).registrationStatus === 'approved') {
+        const registrationsPromise = canReadAll
+          ? RegistrationService.getAllRegistrations() // firestore:unscoped-ok - admin event list attendee aggregation
+          : currentUid
+          ? RegistrationService.getRegistrationsByOrganizer(currentUid)
+          : null;
+
+        if (registrationsPromise) {
+          // Fetch attendee counts in background to update real active (non-cancelled) counts
+          registrationsPromise
+            .then((scopedRegistrations) => {
+              const activeCountByEventId = new Map<string, number>();
+              for (const reg of scopedRegistrations) {
+                if (reg.attendanceStatus !== 'cancelled') {
                   const count = reg.quantity || 1;
-                  approvedCountByEventId.set(reg.eventId, (approvedCountByEventId.get(reg.eventId) || 0) + count);
+                  activeCountByEventId.set(
+                    reg.eventId,
+                    (activeCountByEventId.get(reg.eventId) || 0) + count
+                  );
                 }
               }
 
               setEvents(prev =>
                 prev.map(event => ({
                   ...event,
-                  currentAttendees: approvedCountByEventId.get(event.id) ?? event.currentAttendees ?? 0,
+                  currentAttendees: activeCountByEventId.get(event.id) ?? event.currentAttendees ?? 0,
                 }))
               );
             })
@@ -110,7 +119,7 @@ const EventsWorkspace: React.FC = () => {
     };
 
     fetchEvents();
-  }, [canReadAll]);
+  }, [canReadAll, currentUid, logDiagnostics]);
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -368,6 +377,8 @@ const getPageSubtitle = () => {
                     </div>
                     <div className="flex items-center text-sm text-on-surface-variant">
                       <UsersIcon className="h-4 w-4 mr-2 text-outline-variant" />
+                      {/* List tiles read the denormalized counter to avoid N+1 per-card queries;
+                          EventWorkspacePage & OverviewTab read live activeRegistrations from EventStats. */}
                       <span>
                         {event.currentAttendees} attendees
                         {event.maxAttendees && ` / ${event.maxAttendees} max`}

@@ -125,6 +125,12 @@ export const TicketCard: React.FC<TicketCardProps> = ({
   const [imageError, setImageError] = useState(false);
   const reactId = useId().replace(/[:]/g, '_');
   const gradientId = `qr-ticket-grad-${reactId}`;
+  // ponytail: event banner instead of deterministic R2 pass artwork; kiosk uses the same order
+  const bannerUrl = event?.bannerUrl || event?.imageUrl || '';
+
+  useEffect(() => {
+    setImageError(false);
+  }, [bannerUrl]);
 
   // Loading skeleton state
   if (loading || (!registration && !event)) {
@@ -159,12 +165,6 @@ export const TicketCard: React.FC<TicketCardProps> = ({
   }
 
   const regId = registration?.id || '';
-  // ponytail: event banner instead of deterministic R2 pass artwork; kiosk uses the same order
-  const bannerUrl = event?.bannerUrl || event?.imageUrl || '';
-
-  useEffect(() => {
-    setImageError(false);
-  }, [bannerUrl]);
   const { display: firstNameDisplay, secondary: lastNameSecondary } = splitAttendeeName(
     registration?.userDetails || registration?.attendeeName
   );

@@ -23,6 +23,60 @@ export interface PricingCalculationResult {
   errors: string[];
 }
 
+export interface TicketWindowStatus {
+  isOpen: boolean;
+  reason?: 'not_started' | 'ended';
+  validFromDate: Date | null;
+  validUntilDate: Date | null;
+}
+
+/**
+ * Evaluate whether a ticket type's sales window (`validFrom` .. `validUntil`) is open at `now`.
+ * Boundary invariant: when `now >= validUntilDate`, the window is closed (`ended`).
+ */
+export function getTicketSalesWindowStatus(
+  ticket: Pick<TicketType, 'validFrom' | 'validUntil'>,
+  now: Date = new Date()
+): TicketWindowStatus {
+  const validFromDate = toDateSafe(ticket.validFrom);
+  const validUntilDate = toDateSafe(ticket.validUntil);
+  const nowMs = now.getTime();
+
+  if (validFromDate && nowMs < validFromDate.getTime()) {
+    return {
+      isOpen: false,
+      reason: 'not_started',
+      validFromDate,
+      validUntilDate,
+    };
+  }
+
+  if (validUntilDate && nowMs >= validUntilDate.getTime()) {
+    return {
+      isOpen: false,
+      reason: 'ended',
+      validFromDate,
+      validUntilDate,
+    };
+  }
+
+  return {
+    isOpen: true,
+    validFromDate,
+    validUntilDate,
+  };
+}
+
+/**
+ * Pure boolean helper checking if a ticket type's sales window is currently open.
+ */
+export function isTicketWindowOpen(
+  ticket: Pick<TicketType, 'validFrom' | 'validUntil'>,
+  now: Date = new Date()
+): boolean {
+  return getTicketSalesWindowStatus(ticket, now).isOpen;
+}
+
 /**
  * Calculate the pricing for a ticket including promo code discounts
  */

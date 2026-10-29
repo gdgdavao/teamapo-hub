@@ -4,6 +4,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   ChartBarIcon,
   UserGroupIcon,
+  ClipboardDocumentListIcon,
   QrCodeIcon,
   TagIcon,
   AcademicCapIcon,
@@ -34,6 +35,7 @@ import { formatEventLocation } from '../../../utils/venueUtils';
 // none of them reads the route or asks whether it is "embedded".
 import OverviewTab from './tabs/OverviewTab';
 import AttendeesTab from './tabs/AttendeesTab';
+import ResponsesTab from './tabs/ResponsesTab';
 import CheckInTab from './tabs/CheckInTab';
 import PromoCodesTab from './tabs/PromoCodesTab';
 import CertificatesTab from './tabs/CertificatesTab';
@@ -43,6 +45,7 @@ import SettingsTab from './tabs/SettingsTab';
 export type EventWorkspaceTab =
   | 'overview'
   | 'attendees'
+  | 'responses'
   | 'check-in'
   | 'promo-codes'
   | 'certificates'
@@ -69,6 +72,7 @@ interface TabConfig {
 const TABS: TabConfig[] = [
   { id: 'overview', label: 'Overview', icon: ChartBarIcon },
   { id: 'attendees', label: 'Attendees', icon: UserGroupIcon },
+  { id: 'responses', label: 'Responses', icon: ClipboardDocumentListIcon },
   { id: 'check-in', label: 'Check-In', icon: QrCodeIcon },
   { id: 'promo-codes', label: 'Promo Codes', icon: TagIcon },
   { id: 'certificates', label: 'Certificates', icon: AcademicCapIcon },
@@ -83,13 +87,14 @@ const EventWorkspacePage: React.FC = () => {
   const ability = useAbility();
 
   const [event, setEvent] = useState<Event | null>(null);
+  const [activeRegistrations, setActiveRegistrations] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
   // Dynamically filter tabs based on user permissions and capabilities
   const visibleTabs = useMemo(() => {
     return TABS.filter((t) => {
       if (t.id === 'certificates' && !ability.can('read', 'Certificate')) return false;
-      if (t.id === 'attendees' && !ability.can('read', 'Registration')) return false;
+      if ((t.id === 'attendees' || t.id === 'responses') && !ability.can('read', 'Registration')) return false;
       if (t.id === 'check-in') {
         if (!ability.can('read', 'Registration')) return false;
         if (userProfile?.role === 'organizer' && userProfile?.permissions?.checkin?.canCheckIn === false) return false;
@@ -168,17 +173,30 @@ const EventWorkspacePage: React.FC = () => {
       if (!eventId) return;
       try {
         setLoading(true);
-        const data = await EventService.getEvent(eventId);
+        const [eventResult, statsResult] = await Promise.allSettled([
+          EventService.getEvent(eventId),
+          AnalyticsService.getEventStats(eventId),
+        ]);
+
+        if (eventResult.status === 'rejected') {
+          throw eventResult.reason;
+        }
+
+        const data = eventResult.value;
         if (isMounted) {
           setEvent(data);
-          if (data) {
-            // Proactively warm up stats & registrations only if authorized
-            void AnalyticsService.getEventStats(eventId).catch((err) => {
-              logger.warn('[EventWorkspace] Prewarm stats skipped/failed:', err);
-            });
-            if (ability.can('read', 'Registration')) {
-              void RegistrationService.prefetchEventRegistrations(eventId);
-            }
+          if (statsResult.status === 'fulfilled') {
+            const stats = statsResult.value;
+            setActiveRegistrations(
+              typeof stats.activeRegistrations === 'number'
+                ? stats.activeRegistrations
+                : stats.registrations
+            );
+          } else {
+            logger.warn('[EventWorkspace] Prewarm stats skipped/failed:', statsResult.reason);
+          }
+          if (data && ability.can('read', 'Registration')) {
+            void RegistrationService.prefetchEventRegistrations(eventId);
           }
         }
       } catch (error) {
@@ -337,8 +355,8 @@ const EventWorkspacePage: React.FC = () => {
             <div className="flex items-center gap-1.5">
               <UserGroupIcon className="h-4 w-4 text-outline-variant" />
               <span>
-                {event.currentAttendees || 0}
-                {event.maxAttendees ? ` / ${event.maxAttendees}` : ''} attendees
+                Attendees {activeRegistrations ?? (event.currentAttendees || 0)}
+                {event.maxAttendees ? ` / ${event.maxAttendees}` : ''}
               </span>
             </div>
           </div>
@@ -365,6 +383,9 @@ const EventWorkspacePage: React.FC = () => {
           </div>
           <div className={activeTab === 'attendees' ? 'block' : 'hidden'}>
             {visitedTabs.has('attendees') && <AttendeesTab eventId={eventId} />}
+          </div>
+          <div className={activeTab === 'responses' ? 'block' : 'hidden'}>
+            {visitedTabs.has('responses') && <ResponsesTab eventId={eventId} />}
           </div>
           <div className={activeTab === 'check-in' ? 'block' : 'hidden'}>
             {visitedTabs.has('check-in') && <CheckInTab eventId={eventId} />}
