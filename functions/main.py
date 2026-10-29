@@ -2757,6 +2757,13 @@ def sendConfirmationEmail(req: https_fn.CallableRequest) -> Dict[str, Any]:
             event_title = event_data.get('title', 'Event')
             organizer_uid = (event_data.get('organizer') or {}).get('uid')
 
+            # Fetch registration if provided
+            reg_data = {}
+            if registration_id:
+                reg_doc = get_db().collection('registrations').document(registration_id).get()
+                if reg_doc.exists:
+                    reg_data = reg_doc.to_dict() or {}
+
             # Authorization & Authenticity Verification:
             # 1. 'approved' confirmation emails include check-in QR codes and must be triggered by an active organizer or admin.
             # 2. 'submitted' confirmation emails from unauthenticated callers must strictly correspond to an existing pending registration document matching eventId and email.
@@ -2768,30 +2775,42 @@ def sendConfirmationEmail(req: https_fn.CallableRequest) -> Dict[str, Any]:
                         code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
                         message="registrationId is required"
                     )
-                reg_doc = get_db().collection('registrations').document(registration_id).get()
-                if not reg_doc.exists:
+                if not reg_data:
                     raise https_fn.HttpsError(
                         code=https_fn.FunctionsErrorCode.NOT_FOUND,
                         message="Registration not found"
                     )
-                reg_data = reg_doc.to_dict() or {}
                 reg_user = reg_data.get('userDetails') or {}
                 if reg_data.get('eventId') != event_id or (reg_user.get('email') or '').strip().lower() != user_email.strip().lower():
                     raise https_fn.HttpsError(
                         code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
                         message="Registration details do not match"
                     )
-                if reg_data.get('confirmationEmailSent'):
+                user_name = reg_user.get('name') or user_name
+                user_email = reg_user.get('email') or user_email
+            else:
+                require_elevated(req, organizer_uid)
+
+            # Idempotency Guard (AGENTS.md §3.4): prevent double dispatch unless explicitly resending
+            if not is_resend and registration_id and reg_data:
+                if email_type == 'submitted' and reg_data.get('confirmationEmailSent'):
+                    logger.info(f"Confirmation email (submitted) already sent for {registration_id}; skipping duplicate dispatch.")
                     return {
                         'success': True,
                         'message': 'Confirmation email already sent',
                         'registrationId': registration_id,
                         'eventId': event_id,
+                        'alreadySent': True
                     }
-                user_name = reg_user.get('name') or user_name
-                user_email = reg_user.get('email') or user_email
-            else:
-                require_elevated(req, organizer_uid)
+                elif email_type == 'approved' and reg_data.get('approvalEmailSent'):
+                    logger.info(f"Confirmation email (approved) already sent for {registration_id}; skipping duplicate dispatch.")
+                    return {
+                        'success': True,
+                        'message': 'Approval confirmation email already sent',
+                        'registrationId': registration_id,
+                        'eventId': event_id,
+                        'alreadySent': True
+                    }
             
             # Debug: Log event data structure
             logger.info(f"Event data keys: {list(event_data.keys())}")
@@ -2961,10 +2980,14 @@ def sendConfirmationEmail(req: https_fn.CallableRequest) -> Dict[str, Any]:
             if email_result.get('success'):
                 if registration_id:
                     try:
-                        get_db().collection('registrations').document(registration_id).update({
+                        update_payload = {
                             'confirmationEmailSent': True,
                             'confirmationEmailSentAt': firestore.SERVER_TIMESTAMP,
-                        })
+                        }
+                        if email_type == 'approved':
+                            update_payload['approvalEmailSent'] = True
+                            update_payload['approvalEmailSentAt'] = firestore.SERVER_TIMESTAMP
+                        get_db().collection('registrations').document(registration_id).update(update_payload)
                     except Exception as mark_err:
                         logger.warning(f"Failed to mark confirmationEmailSent on {registration_id}: {str(mark_err)}")
                 logger.info(f"Registration confirmation email sent to {user_email} (registration {registration_id})")
@@ -3046,6 +3069,17 @@ def sendPaymentNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 message="attendeeEmail is required"
             )
 
+        # Idempotency Guard (AGENTS.md §3.4): prevent double dispatch unless explicitly resending
+        if not is_resend and status == 'approved' and (reg_data.get('approvalEmailSent') or reg_data.get('paymentNotificationSent')):
+            logger.info(f"Payment notification already sent for registration {registration_id}; skipping duplicate dispatch.")
+            return {
+                'success': True,
+                'message': 'Payment notification already sent',
+                'registrationId': registration_id,
+                'status': status,
+                'alreadySent': True
+            }
+
         # Resolve or mint walletPassToken for approved registrations
         wallet_pass_token = reg_data.get('walletPassToken')
         if status == 'approved' and not wallet_pass_token:
@@ -3102,6 +3136,15 @@ def sendPaymentNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
             logger.warning(f"Failed to write activity log for payment notification: {str(log_err)}")
 
         if email_result.get('success'):
+            if registration_id and status == 'approved':
+                try:
+                    get_db().collection('registrations').document(registration_id).update({
+                        'paymentNotificationSent': True,
+                        'approvalEmailSent': True,
+                        'paymentNotificationSentAt': firestore.SERVER_TIMESTAMP
+                    })
+                except Exception as mark_err:
+                    logger.warning(f"Failed to mark paymentNotificationSent on {registration_id}: {str(mark_err)}")
             logger.info(f"Payment notification email sent to {attendee_email} for registration {registration_id} with status {status}")
             return {
                 'success': True,
@@ -3151,6 +3194,7 @@ def sendCertificateNotification(req: https_fn.CallableRequest) -> Dict[str, Any]
 
         # Gate to elevated organizer or admin
         organizer_uid = None
+        reg_data = {}
         if registration_id and registration_id != 'unknown':
             reg_doc = get_db().collection('registrations').document(registration_id).get()
             if reg_doc.exists:
@@ -3161,6 +3205,16 @@ def sendCertificateNotification(req: https_fn.CallableRequest) -> Dict[str, Any]
                     if ev_doc.exists:
                         organizer_uid = (ev_doc.to_dict() or {}).get('organizer', {}).get('uid')
         require_elevated(req, organizer_uid)
+
+        # Idempotency Guard (AGENTS.md §3.4): prevent double dispatch unless explicitly resending
+        if not is_resend and registration_id and reg_data.get('certificateNotificationSent'):
+            logger.info(f"Certificate notification already sent for {registration_id}; skipping duplicate dispatch.")
+            return {
+                'success': True,
+                'message': 'Certificate notification already sent',
+                'emailId': None,
+                'alreadySent': True
+            }
 
         # Send email using Resend
         email_result = email_service.send_certificate_notification(
@@ -3203,6 +3257,14 @@ def sendCertificateNotification(req: https_fn.CallableRequest) -> Dict[str, Any]
             logger.warning(f"Failed to write activity log for certificate notification: {str(log_err)}")
 
         if email_result.get('success'):
+            if registration_id and registration_id != 'unknown':
+                try:
+                    get_db().collection('registrations').document(registration_id).update({
+                        'certificateNotificationSent': True,
+                        'certificateNotificationSentAt': firestore.SERVER_TIMESTAMP
+                    })
+                except Exception as mark_err:
+                    logger.warning(f"Failed to mark certificateNotificationSent on {registration_id}: {str(mark_err)}")
             logger.info(f"Certificate notification email sent to {user_email} for {event_title}")
             return {
                 'success': True,
@@ -3250,6 +3312,7 @@ def sendEventReminder(req: https_fn.CallableRequest) -> Dict[str, Any]:
 
         # Gate to elevated organizer or admin
         organizer_uid = None
+        reg_data = {}
         location_tba = bool(data.get('locationTba', False))
         speakers_tba = bool(data.get('speakersTba', False))
         if registration_id and registration_id != 'unknown':
@@ -3268,6 +3331,17 @@ def sendEventReminder(req: https_fn.CallableRequest) -> Dict[str, Any]:
                         if 'speakersTba' not in data and 'speakersTba' in ev_data:
                             speakers_tba = bool(ev_data.get('speakersTba', False))
         require_elevated(req, organizer_uid)
+
+        # Idempotency Guard (AGENTS.md §3.4): prevent duplicate reminder notifications unless explicitly resending
+        reminder_key = f"reminderSent_{reminder_type}"
+        if not is_resend and registration_id and reg_data and reg_data.get(reminder_key):
+            logger.info(f"Event reminder ({reminder_type}) already sent for {registration_id}; skipping duplicate dispatch.")
+            return {
+                'success': True,
+                'message': f"Event reminder ({reminder_type}) already sent",
+                'emailId': None,
+                'alreadySent': True
+            }
 
         if location_tba:
             event_location = 'To Be Announced'
@@ -3326,6 +3400,14 @@ def sendEventReminder(req: https_fn.CallableRequest) -> Dict[str, Any]:
             logger.warning(f"Failed to write activity log for event reminder: {str(log_err)}")
 
         if email_result.get('success'):
+            if registration_id and registration_id != 'unknown':
+                try:
+                    get_db().collection('registrations').document(registration_id).update({
+                        reminder_key: True,
+                        f"{reminder_key}At": firestore.SERVER_TIMESTAMP
+                    })
+                except Exception as mark_err:
+                    logger.warning(f"Failed to mark {reminder_key} on {registration_id}: {str(mark_err)}")
             logger.info(f"Event reminder email sent to {user_email} for {event_title} ({reminder_type})")
             return {
                 'success': True,
@@ -3706,7 +3788,7 @@ def sendFeedbackRequest(req: https_fn.CallableRequest) -> Dict[str, Any]:
         
         # Try to get full name from registration if available
         reg_data = None
-        if registration_id and event_id:
+        if registration_id:
             try:
                 db = get_db()
                 reg_ref = db.collection('registrations').document(registration_id)
@@ -3717,6 +3799,16 @@ def sendFeedbackRequest(req: https_fn.CallableRequest) -> Dict[str, Any]:
                     user_name = get_full_name_from_registration(reg_data)
             except Exception as reg_err:
                 logger.warning(f"Could not fetch registration for full name: {str(reg_err)}")
+
+        # Idempotency Guard (AGENTS.md §3.4): prevent double dispatch unless explicitly resending
+        if not is_resend and registration_id and reg_data and reg_data.get('feedbackRequestSent'):
+            logger.info(f"Feedback request already sent for {registration_id}; skipping duplicate dispatch.")
+            return {
+                'success': True,
+                'message': 'Feedback request already sent',
+                'emailId': None,
+                'alreadySent': True
+            }
         
         # Support both old and new API - feedbackUrl or generate from eventId
         feedback_url = data.get('feedbackUrl')
@@ -3786,6 +3878,14 @@ def sendFeedbackRequest(req: https_fn.CallableRequest) -> Dict[str, Any]:
             logger.warning(f"Failed to write activity log for feedback request: {str(log_err)}")
 
         if email_result.get('success'):
+            if registration_id and registration_id != 'unknown':
+                try:
+                    get_db().collection('registrations').document(registration_id).update({
+                        'feedbackRequestSent': True,
+                        'feedbackRequestSentAt': firestore.SERVER_TIMESTAMP
+                    })
+                except Exception as mark_err:
+                    logger.warning(f"Failed to mark feedbackRequestSent on {registration_id}: {str(mark_err)}")
             logger.info(f"Feedback request email sent to {user_email} for {event_title}")
             return {
                 'success': True,
@@ -4090,6 +4190,24 @@ def sendCheckInNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
             organizer_uid = (event_data.get('organizer') or {}).get('uid')
             require_elevated(req, organizer_uid)
 
+            # Get registration data if available
+            reg_data = {}
+            if registration_id and registration_id != 'unknown':
+                reg_doc = get_db().collection('registrations').document(registration_id).get()
+                if reg_doc.exists:
+                    reg_data = reg_doc.to_dict() or {}
+
+            # Idempotency Guard (AGENTS.md §3.4): prevent double dispatch unless explicitly resending
+            if not is_resend and registration_id and reg_data.get('checkInNotificationSent'):
+                logger.info(f"Check-in notification already sent for {registration_id}; skipping duplicate dispatch.")
+                return {
+                    'success': True,
+                    'message': 'Check-in notification already sent',
+                    'registrationId': registration_id,
+                    'eventId': event_id,
+                    'alreadySent': True
+                }
+
             event_title = event_data.get('title', 'Event')
             event_date = event_data.get('date', 'TBD')
             location_tba = bool(event_data.get('locationTba', False))
@@ -4142,6 +4260,14 @@ def sendCheckInNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 logger.warning(f"Failed to write activity log for check-in notification: {str(log_err)}")
 
             if email_result.get('success'):
+                if registration_id and registration_id != 'unknown':
+                    try:
+                        get_db().collection('registrations').document(registration_id).update({
+                            'checkInNotificationSent': True,
+                            'checkInNotificationSentAt': firestore.SERVER_TIMESTAMP
+                        })
+                    except Exception as mark_err:
+                        logger.warning(f"Failed to mark checkInNotificationSent on {registration_id}: {str(mark_err)}")
                 logger.info(f"Check-in notification email sent to {user_email} (registration {registration_id})")
                 return {
                     'success': True,

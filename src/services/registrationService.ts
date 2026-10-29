@@ -355,8 +355,7 @@ export class RegistrationService {
     requiresPayment: boolean = false
   ): Promise<void> {
     try {
-      const sendConfirmationEmail = httpsCallable(functions, 'sendConfirmationEmail');
-      await sendConfirmationEmail({
+      const result = await EmailService.sendConfirmationEmail({
         registrationId,
         eventId,
         userEmail,
@@ -364,6 +363,9 @@ export class RegistrationService {
         requiresPayment,
         emailType: 'submitted' // This is the immediate confirmation without QR code or registration ID
       });
+      if (!result.success) {
+        throw new Error(result.message || 'Failed to send confirmation email');
+      }
       logger.log('Registration submission confirmation email sent successfully');
     } catch (error) {
       logger.error('Error sending registration confirmation email:', error);
@@ -403,8 +405,7 @@ export class RegistrationService {
 
       // Send approval confirmation email with QR code and registration ID
       try {
-        const sendConfirmationEmail = httpsCallable(functions, 'sendConfirmationEmail');
-        await sendConfirmationEmail({
+        await EmailService.sendConfirmationEmail({
           registrationId,
           eventId: registrationData.eventId,
           userEmail: registrationData.userDetails.email,
@@ -784,8 +785,7 @@ export class RegistrationService {
 
       // Send check-in notification
       try {
-        const sendCheckInNotification = httpsCallable(functions, 'sendCheckInNotification');
-        await sendCheckInNotification({
+        await EmailService.sendCheckInNotification({
           registrationId,
           eventId: data.eventId,
           userEmail: data.userDetails.email,
@@ -835,8 +835,7 @@ export class RegistrationService {
 
       // Send check-in notification
       try {
-        const sendCheckInNotification = httpsCallable(functions, 'sendCheckInNotification');
-        await sendCheckInNotification({
+        await EmailService.sendCheckInNotification({
           registrationId,
           eventId: data.eventId,
           userEmail: data.userDetails.email,
@@ -857,7 +856,8 @@ export class RegistrationService {
   static async updateRegistrationStatus(
     registrationId: string, 
     status: 'pending' | 'approved' | 'rejected',
-    notes?: string
+    notes?: string,
+    options?: { sendNotification?: boolean }
   ): Promise<void> {
     try {
       const registrationRef = doc(db, this.REGISTRATIONS_COLLECTION, registrationId);
@@ -876,21 +876,40 @@ export class RegistrationService {
         updateData.adminNotes = notes;
       }
 
+      const shouldSendNotification = options?.sendNotification ?? true;
+
       // If approving, also update payment status if needed and prepare approval email details
       if (status === 'approved') {
         const registration = await getDoc(registrationRef);
         if (registration.exists()) {
           const data = registration.data();
           const isFree = data.totalAmount === 0 || !data.totalAmount;
+          const isAlreadyPaid = data.paymentStatus === 'paid';
+          const wasAlreadyApproved = data.registrationStatus === 'approved' || data.status === 'approved';
+
           if (isFree) {
             updateData.paymentStatus = 'paid';
           }
           if (!data.walletPassToken) {
             updateData.walletPassToken = generateWalletPassToken();
           }
+
+          // Idempotency & Lifecycle Guard (AGENTS.md §3.4):
+          // Only send the approval notification if:
+          // 1. sendNotification is not explicitly false
+          // 2. The registration was not already approved (prevent duplicate emails on re-submission).
+          // 3. The registration is free OR payment is already confirmed paid.
+          // (If totalAmount > 0 and payment is still pending, PaymentService.verifyPaymentProof
+          // will notify the attendee once their payment proof is actually verified).
           const email = (data.userDetails?.email || data.attendeeEmail || data.email || '').trim();
           const name = (data.userDetails?.name || data.attendeeName || data.name || 'Attendee').trim();
-          if (email && data.eventId) {
+          if (
+            shouldSendNotification &&
+            !wasAlreadyApproved &&
+            (isFree || isAlreadyPaid) &&
+            email &&
+            data.eventId
+          ) {
             approvalNotificationDetails = {
               eventId: data.eventId,
               attendeeEmail: email,

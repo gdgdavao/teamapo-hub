@@ -120,6 +120,38 @@ export class EmailService {
     }
   }
 
+  private static readonly inFlightDispatches = new Map<
+    string,
+    Promise<{ success: boolean; message: string; emailId?: string }>
+  >();
+
+  /**
+   * Coalesce concurrent in-flight email dispatches for the same target and action.
+   * If an identical dispatch is already active in-flight, returns the active Promise.
+   */
+  private static async deduplicateDispatch(
+    key: string,
+    dispatchFn: () => Promise<{ success: boolean; message: string; emailId?: string }>,
+    isResend?: boolean
+  ): Promise<{ success: boolean; message: string; emailId?: string }> {
+    if (isResend) {
+      return dispatchFn();
+    }
+
+    const existing = this.inFlightDispatches.get(key);
+    if (existing) {
+      logger.log(`[EmailService] Deduplicating in-flight email dispatch for: ${key}`);
+      return existing;
+    }
+
+    const promise = dispatchFn().finally(() => {
+      this.inFlightDispatches.delete(key);
+    });
+
+    this.inFlightDispatches.set(key, promise);
+    return promise;
+  }
+
   /**
    * Send confirmation email
    */
@@ -134,22 +166,29 @@ export class EmailService {
     locationTba?: boolean;
     speakersTba?: boolean;
   }): Promise<{ success: boolean; message: string; emailId?: string }> {
-    try {
-      const sendConfirmationEmail = httpsCallable(functions, 'sendConfirmationEmail');
-      const result = await sendConfirmationEmail(params) as any;
-      
-      return {
-        success: result.data.success,
-        message: result.data.message,
-        emailId: result.data.emailId
-      };
-    } catch (error: any) {
-      logger.error('Error sending confirmation email:', error);
-      return {
-        success: false,
-        message: error.message || 'Failed to send confirmation email'
-      };
-    }
+    const key = `confirm:${params.registrationId || params.eventId + ':' + params.userEmail}:${params.emailType || 'submitted'}`;
+    return this.deduplicateDispatch(
+      key,
+      async () => {
+        try {
+          const sendConfirmationEmail = httpsCallable(functions, 'sendConfirmationEmail');
+          const result = (await sendConfirmationEmail(params)) as any;
+
+          return {
+            success: result.data.success,
+            message: result.data.message,
+            emailId: result.data.emailId
+          };
+        } catch (error: any) {
+          logger.error('Error sending confirmation email:', error);
+          return {
+            success: false,
+            message: error.message || 'Failed to send confirmation email'
+          };
+        }
+      },
+      params.isResend
+    );
   }
 
   /**
@@ -165,22 +204,29 @@ export class EmailService {
     isResend?: boolean;
     isFreeRegistration?: boolean;
   }): Promise<{ success: boolean; message: string; emailId?: string }> {
-    try {
-      const sendPaymentNotification = httpsCallable(functions, 'sendPaymentNotification');
-      const result = await sendPaymentNotification(params) as any;
-      
-      return {
-        success: result.data.success,
-        message: result.data.message,
-        emailId: result.data.emailId
-      };
-    } catch (error: any) {
-      logger.error('Error sending payment notification:', error);
-      return {
-        success: false,
-        message: error.message || 'Failed to send payment notification'
-      };
-    }
+    const key = `payment:${params.registrationId || params.attendeeEmail}:${params.status}`;
+    return this.deduplicateDispatch(
+      key,
+      async () => {
+        try {
+          const sendPaymentNotification = httpsCallable(functions, 'sendPaymentNotification');
+          const result = (await sendPaymentNotification(params)) as any;
+
+          return {
+            success: result.data.success,
+            message: result.data.message,
+            emailId: result.data.emailId
+          };
+        } catch (error: any) {
+          logger.error('Error sending payment notification:', error);
+          return {
+            success: false,
+            message: error.message || 'Failed to send payment notification'
+          };
+        }
+      },
+      params.isResend
+    );
   }
 
   /**
@@ -199,22 +245,29 @@ export class EmailService {
     speakersTba?: boolean;
     mapsUrl?: string;
   }): Promise<{ success: boolean; message: string; emailId?: string }> {
-    try {
-      const sendEventReminder = httpsCallable(functions, 'sendEventReminder');
-      const result = await sendEventReminder(params) as any;
-      
-      return {
-        success: result.data.success,
-        message: result.data.message,
-        emailId: result.data.emailId
-      };
-    } catch (error: any) {
-      logger.error('Error sending event reminder:', error);
-      return {
-        success: false,
-        message: error.message || 'Failed to send event reminder'
-      };
-    }
+    const key = `reminder:${params.registrationId || params.userEmail}:${params.reminderType || '24h'}`;
+    return this.deduplicateDispatch(
+      key,
+      async () => {
+        try {
+          const sendEventReminder = httpsCallable(functions, 'sendEventReminder');
+          const result = (await sendEventReminder(params)) as any;
+
+          return {
+            success: result.data.success,
+            message: result.data.message,
+            emailId: result.data.emailId
+          };
+        } catch (error: any) {
+          logger.error('Error sending event reminder:', error);
+          return {
+            success: false,
+            message: error.message || 'Failed to send event reminder'
+          };
+        }
+      },
+      params.isResend
+    );
   }
 
   /**
@@ -229,22 +282,29 @@ export class EmailService {
     feedbackUrl?: string;
     isResend?: boolean;
   }): Promise<{ success: boolean; message: string; emailId?: string }> {
-    try {
-      const sendFeedbackRequest = httpsCallable(functions, 'sendFeedbackRequest');
-      const result = await sendFeedbackRequest(params) as any;
-      
-      return {
-        success: result.data.success,
-        message: result.data.message,
-        emailId: result.data.emailId
-      };
-    } catch (error: any) {
-      logger.error('Error sending feedback request:', error);
-      return {
-        success: false,
-        message: error.message || 'Failed to send feedback request'
-      };
-    }
+    const key = `feedback:${params.registrationId || params.eventId + ':' + params.userEmail}`;
+    return this.deduplicateDispatch(
+      key,
+      async () => {
+        try {
+          const sendFeedbackRequest = httpsCallable(functions, 'sendFeedbackRequest');
+          const result = (await sendFeedbackRequest(params)) as any;
+
+          return {
+            success: result.data.success,
+            message: result.data.message,
+            emailId: result.data.emailId
+          };
+        } catch (error: any) {
+          logger.error('Error sending feedback request:', error);
+          return {
+            success: false,
+            message: error.message || 'Failed to send feedback request'
+          };
+        }
+      },
+      params.isResend
+    );
   }
 
   /**
@@ -258,22 +318,29 @@ export class EmailService {
     registrationId?: string;
     isResend?: boolean;
   }): Promise<{ success: boolean; message: string; emailId?: string }> {
-    try {
-      const sendCertificateNotification = httpsCallable(functions, 'sendCertificateNotification');
-      const result = await sendCertificateNotification(params) as any;
-      
-      return {
-        success: result.data.success,
-        message: result.data.message,
-        emailId: result.data.emailId
-      };
-    } catch (error: any) {
-      logger.error('Error sending certificate notification:', error);
-      return {
-        success: false,
-        message: error.message || 'Failed to send certificate notification'
-      };
-    }
+    const key = `cert:${params.registrationId || params.userEmail}`;
+    return this.deduplicateDispatch(
+      key,
+      async () => {
+        try {
+          const sendCertificateNotification = httpsCallable(functions, 'sendCertificateNotification');
+          const result = (await sendCertificateNotification(params)) as any;
+
+          return {
+            success: result.data.success,
+            message: result.data.message,
+            emailId: result.data.emailId
+          };
+        } catch (error: any) {
+          logger.error('Error sending certificate notification:', error);
+          return {
+            success: false,
+            message: error.message || 'Failed to send certificate notification'
+          };
+        }
+      },
+      params.isResend
+    );
   }
 
   /**
@@ -286,22 +353,29 @@ export class EmailService {
     userName: string;
     isResend?: boolean;
   }): Promise<{ success: boolean; message: string; emailId?: string }> {
-    try {
-      const sendCheckInNotification = httpsCallable(functions, 'sendCheckInNotification');
-      const result = await sendCheckInNotification(params) as any;
-      
-      return {
-        success: result.data.success,
-        message: result.data.message,
-        emailId: result.data.emailId
-      };
-    } catch (error: any) {
-      logger.error('Error sending check-in notification:', error);
-      return {
-        success: false,
-        message: error.message || 'Failed to send check-in notification'
-      };
-    }
+    const key = `checkin:${params.registrationId || params.eventId + ':' + params.userEmail}`;
+    return this.deduplicateDispatch(
+      key,
+      async () => {
+        try {
+          const sendCheckInNotification = httpsCallable(functions, 'sendCheckInNotification');
+          const result = (await sendCheckInNotification(params)) as any;
+
+          return {
+            success: result.data.success,
+            message: result.data.message,
+            emailId: result.data.emailId
+          };
+        } catch (error: any) {
+          logger.error('Error sending check-in notification:', error);
+          return {
+            success: false,
+            message: error.message || 'Failed to send check-in notification'
+          };
+        }
+      },
+      params.isResend
+    );
   }
 
   /**

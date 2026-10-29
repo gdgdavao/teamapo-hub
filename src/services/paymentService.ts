@@ -25,6 +25,7 @@ import { logger } from '../utils/logger';
 import { generateWalletPassToken } from '../utils/passArtwork';
 import { PaymentProof, PaymentDetails } from '../types';
 import { AuditLogService } from './auditLogService';
+import { EmailService } from './emailService';
 
 export interface PaymentVerificationData {
   id: string;
@@ -209,11 +210,19 @@ export class PaymentService {
     proofId: string,
     status: 'approved' | 'rejected',
     verifierUid: string,
-    verifierName: string
+    verifierName: string,
+    options?: { sendNotification?: boolean }
   ): Promise<void> {
     try {
-      // Update payment proof status
       const proofRef = doc(db, this.PAYMENT_PROOFS_COLLECTION, proofId);
+      const proofSnap = await getDoc(proofRef);
+      if (!proofSnap.exists()) {
+        throw new Error('Payment proof not found');
+      }
+      const proofData = proofSnap.data();
+      const wasAlreadyInStatus = proofData.verificationStatus === status;
+
+      // Update payment proof status
       await updateDoc(proofRef, {
         verificationStatus: status,
         verifiedAt: serverTimestamp(),
@@ -221,47 +230,44 @@ export class PaymentService {
         verifierUid: verifierUid
       });
 
-      // Get the payment proof data to update registration
-      const proofSnap = await getDoc(proofRef);
-      if (proofSnap.exists()) {
-        const proofData = proofSnap.data();
-        const registrationRef = doc(db, this.REGISTRATIONS_COLLECTION, proofData.registrationId);
-        
-        // Update registration payment status
-        const newPaymentStatus = status === 'approved' ? 'paid' : 'failed';
-        const regUpdate: Record<string, any> = {
-          paymentStatus: newPaymentStatus,
-          updatedAt: serverTimestamp()
-        };
+      // Update registration payment status
+      const registrationRef = doc(db, this.REGISTRATIONS_COLLECTION, proofData.registrationId);
+      const newPaymentStatus = status === 'approved' ? 'paid' : 'failed';
+      const regUpdate: Record<string, any> = {
+        paymentStatus: newPaymentStatus,
+        updatedAt: serverTimestamp()
+      };
 
-        // Mint walletPassToken if approving and token is absent
-        if (status === 'approved') {
-          const regSnap = await getDoc(registrationRef);
-          if (regSnap.exists()) {
-            const regData = regSnap.data();
-            if (!regData.walletPassToken) {
-              regUpdate.walletPassToken = generateWalletPassToken();
-            }
+      // Mint walletPassToken if approving and token is absent
+      if (status === 'approved') {
+        const regSnap = await getDoc(registrationRef);
+        if (regSnap.exists()) {
+          const regData = regSnap.data();
+          if (!regData.walletPassToken) {
+            regUpdate.walletPassToken = generateWalletPassToken();
           }
         }
+      }
 
-        await updateDoc(registrationRef, regUpdate);
+      await updateDoc(registrationRef, regUpdate);
 
-        // If approved, update payment details
-        if (status === 'approved') {
-          const paymentDetails: Partial<PaymentDetails> = {
-            paymentId: proofId,
-            paymentMethod: proofData.paymentMethod || 'bank_transfer',
-            transactionId: proofData.transactionId || 'manual_verification',
-            paidAt: serverTimestamp() as any
-          };
+      // If approved, update payment details
+      if (status === 'approved') {
+        const paymentDetails: Partial<PaymentDetails> = {
+          paymentId: proofId,
+          paymentMethod: proofData.paymentMethod || 'bank_transfer',
+          transactionId: proofData.transactionId || 'manual_verification',
+          paidAt: serverTimestamp() as any
+        };
 
-          await updateDoc(registrationRef, {
-            paymentDetails: paymentDetails
-          });
-        }
+        await updateDoc(registrationRef, {
+          paymentDetails: paymentDetails
+        });
+      }
 
-        // Send notification to attendee via Firebase Function
+      // Send notification to attendee via Firebase Function (Idempotent: skip if already in target state)
+      const shouldSendNotification = (options?.sendNotification ?? true) && !wasAlreadyInStatus;
+      if (shouldSendNotification) {
         try {
           let resolvedEventTitle = proofData.eventTitle;
           if (!resolvedEventTitle && proofData.eventId) {
@@ -275,8 +281,7 @@ export class PaymentService {
             }
           }
 
-          const sendPaymentNotification = httpsCallable(functions, 'sendPaymentNotification');
-          await sendPaymentNotification({
+          await EmailService.sendPaymentNotification({
             registrationId: proofData.registrationId,
             status: status,
             eventTitle: resolvedEventTitle || 'Event',
@@ -287,24 +292,24 @@ export class PaymentService {
           logger.warn('Failed to send payment notification:', notificationError);
           // Don't throw error for notification failure
         }
-
-        void AuditLogService.recordAuditLog({
-          category: 'financial',
-          action: status === 'approved' ? 'payment_approved' : 'payment_rejected',
-          target: {
-            type: 'payment_proof',
-            id: proofId,
-            label: proofData.attendeeName,
-          },
-          details: {
-            status,
-            verifierName,
-            verifierUid,
-            registrationId: proofData.registrationId,
-            eventTitle: proofData.eventTitle,
-          },
-        });
       }
+
+      void AuditLogService.recordAuditLog({
+        category: 'financial',
+        action: status === 'approved' ? 'payment_approved' : 'payment_rejected',
+        target: {
+          type: 'payment_proof',
+          id: proofId,
+          label: proofData.attendeeName,
+        },
+        details: {
+          status,
+          verifierName,
+          verifierUid,
+          registrationId: proofData.registrationId,
+          eventTitle: proofData.eventTitle,
+        },
+      });
     } catch (error) {
       logger.error('Error verifying payment proof:', error);
       throw new Error('Failed to verify payment proof');

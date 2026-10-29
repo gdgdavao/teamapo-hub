@@ -17,6 +17,7 @@ import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '../config/firebase';
 import { logger } from '../utils/logger';
 import { Feedback, FormField } from '../types';
+import { EmailService } from './emailService';
 
 export interface FeedbackSubmission {
   eventId: string;
@@ -115,18 +116,19 @@ export class FeedbackService {
     registrationId?: string;
   }): Promise<void> {
     try {
-      const sendFeedbackRequest = httpsCallable(functions, 'sendFeedbackRequest');
-
       // No feedbackUrl is sent: the backend generates a single-use token URL via
       // generate_feedback_url(). Passing one from here put the attendee's email in
       // the query string of the emailed link (Data Privacy Act 2012).
-      await sendFeedbackRequest({
+      const result = await EmailService.sendFeedbackRequest({
         eventId: data.eventId,
         userEmail: data.userEmail,
         userName: data.userName,
         eventTitle: data.eventTitle,
         registrationId: data.registrationId
       });
+      if (!result.success) {
+        throw new Error(result.message || 'Failed to send feedback request');
+      }
     } catch (error) {
       logger.error('Error sending feedback request:', error);
       throw new Error('Failed to send feedback request');
