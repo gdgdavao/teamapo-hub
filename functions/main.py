@@ -2876,9 +2876,13 @@ def sendConfirmationEmail(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 event_location = ', '.join(location_parts) if location_parts else 'To Be Announced'
                 logger.info(f"Built location: {event_location} from parts: {location_parts}")
                 maps_url = venue.get('mapsUrl') or ''
-                if not maps_url and event_location != 'To Be Announced':
+                if (not maps_url or 'openstreetmap.org' in maps_url.lower()) and event_location != 'To Be Announced':
                     import urllib.parse
-                    maps_url = f"https://www.openstreetmap.org/search?query={urllib.parse.quote(event_location)}"
+                    coords = venue.get('coordinates') or {}
+                    if isinstance(coords, dict) and coords.get('lat') is not None and coords.get('lng') is not None:
+                        maps_url = f"https://www.google.com/maps/search/?api=1&query={coords['lat']},{coords['lng']}"
+                    else:
+                        maps_url = f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote(event_location)}"
             else:
                 logger.info(f"Unknown venue type: {venue_type}, using To Be Announced")
                 event_location = 'To Be Announced'
@@ -3270,9 +3274,9 @@ def sendEventReminder(req: https_fn.CallableRequest) -> Dict[str, Any]:
             maps_url = ''
         else:
             maps_url = data.get('mapsUrl') or ''
-            if not maps_url and event_location and event_location not in ('TBD', 'To Be Announced'):
+            if (not maps_url or 'openstreetmap.org' in maps_url.lower()) and event_location and event_location not in ('TBD', 'To Be Announced'):
                 import urllib.parse
-                maps_url = f"https://www.openstreetmap.org/search?query={urllib.parse.quote(event_location)}"
+                maps_url = f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote(event_location)}"
 
         # Send email using Resend
         email_result = email_service.send_event_reminder(
@@ -4097,9 +4101,13 @@ def sendCheckInNotification(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 event_location = event_data.get('location') or 'To Be Announced'
                 venue = event_data.get('venue', {})
                 maps_url = venue.get('mapsUrl') or ''
-                if not maps_url and event_location not in ('TBD', 'To Be Announced'):
+                if (not maps_url or 'openstreetmap.org' in maps_url.lower()) and event_location not in ('TBD', 'To Be Announced'):
                     import urllib.parse
-                    maps_url = f"https://www.openstreetmap.org/search?query={urllib.parse.quote(event_location)}"
+                    coords = venue.get('coordinates') or {}
+                    if isinstance(coords, dict) and coords.get('lat') is not None and coords.get('lng') is not None:
+                        maps_url = f"https://www.google.com/maps/search/?api=1&query={coords['lat']},{coords['lng']}"
+                    else:
+                        maps_url = f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote(event_location)}"
 
             # Send email using Resend (using event reminder template as base)
             email_result = email_service.send_event_reminder(

@@ -80,13 +80,14 @@ describe('Event Editor Navigation, Venue Google Maps, and Review CTAs', () => {
       expect(venuePickerSource).toContain('rounded-lg');
     });
 
-    it('Registration Page reflects Leaflet map preview and OpenStreetMap link', () => {
-      expect(registrationSource).toContain('View on OpenStreetMap');
-      expect(registrationSource).toContain('<LeafletMap');
+    it('Registration Page reflects keyless Google Maps embed preview and Google Maps link', () => {
+      expect(registrationSource).toContain('View on Google Maps');
+      expect(registrationSource).toContain('getGoogleMapsEmbedUrl');
+      expect(registrationSource).toContain('resolvePublicGoogleMapsUrl');
+      expect(registrationSource).toContain('<iframe');
       expect(registrationSource).toContain('min-h-[48px]');
       expect(registrationSource).toMatch(/event\.venue\.coordinates \|\| event\.venue\.address/);
-      // No Google Maps iframe embed
-      expect(registrationSource).not.toContain('https://www.google.com/maps/embed');
+      expect(registrationSource).not.toContain('View on OpenStreetMap');
     });
   });
 

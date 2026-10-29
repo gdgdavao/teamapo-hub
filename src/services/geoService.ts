@@ -29,6 +29,50 @@ export function getOpenStreetMapUrl(coords?: GeoCoordinates, addressOrQuery?: st
 }
 
 /**
+ * Builds a canonical Google Maps search/directions URL for coordinates or address query.
+ * ponytail: keyless universal Google Maps URL — works across iOS/Android native apps and all desktop browsers.
+ */
+export function getGoogleMapsUrl(coords?: GeoCoordinates, addressOrQuery?: string): string {
+  if (coords && typeof coords.lat === 'number' && typeof coords.lng === 'number') {
+    return `https://www.google.com/maps/search/?api=1&query=${coords.lat},${coords.lng}`;
+  }
+  if (addressOrQuery && addressOrQuery.trim()) {
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addressOrQuery.trim())}`;
+  }
+  return `https://www.google.com/maps/search/?api=1&query=${DEFAULT_COORDINATES.lat},${DEFAULT_COORDINATES.lng}`;
+}
+
+/**
+ * Builds a keyless Google Maps iframe embed URL for public venue previews.
+ * ponytail: output=embed requires zero API key for open-source clones.
+ */
+export function getGoogleMapsEmbedUrl(coords?: GeoCoordinates, addressOrQuery?: string): string {
+  if (coords && typeof coords.lat === 'number' && typeof coords.lng === 'number') {
+    return `https://www.google.com/maps?q=${coords.lat},${coords.lng}&z=16&output=embed`;
+  }
+  if (addressOrQuery && addressOrQuery.trim()) {
+    return `https://www.google.com/maps?q=${encodeURIComponent(addressOrQuery.trim())}&z=16&output=embed`;
+  }
+  return `https://www.google.com/maps?q=${DEFAULT_COORDINATES.lat},${DEFAULT_COORDINATES.lng}&z=14&output=embed`;
+}
+
+/**
+ * Resolves a public-facing Google Maps URL, automatically upgrading legacy OpenStreetMap URLs
+ * while preserving custom non-OSM links if explicitly set.
+ */
+export function resolvePublicGoogleMapsUrl(
+  existingMapsUrl?: string,
+  coords?: GeoCoordinates,
+  addressOrQuery?: string
+): string {
+  const trimmed = existingMapsUrl?.trim();
+  if (trimmed && !trimmed.toLowerCase().includes('openstreetmap.org')) {
+    return trimmed;
+  }
+  return getGoogleMapsUrl(coords, addressOrQuery);
+}
+
+/**
  * Searches venues/places using Geoapify Autocomplete API, with graceful
  * fallback to OpenStreetMap Nominatim and manual entry.
  */
@@ -61,7 +105,7 @@ export async function searchPlaces(query: string): Promise<GeoPlaceResult[]> {
               formattedAddress: formatted,
               city,
               coordinates: { lat, lng },
-              mapsUrl: getOpenStreetMapUrl({ lat, lng }),
+              mapsUrl: getGoogleMapsUrl({ lat, lng }),
             };
           });
         }
@@ -101,7 +145,7 @@ export async function searchPlaces(query: string): Promise<GeoPlaceResult[]> {
             formattedAddress: formatted,
             city,
             coordinates: { lat, lng },
-            mapsUrl: getOpenStreetMapUrl({ lat, lng }),
+            mapsUrl: getGoogleMapsUrl({ lat, lng }),
           };
         });
       }
@@ -138,7 +182,7 @@ export async function reverseGeocode(lat: number, lng: number): Promise<GeoPlace
             formattedAddress: formatted,
             city,
             coordinates: { lat, lng },
-            mapsUrl: getOpenStreetMapUrl({ lat, lng }),
+            mapsUrl: getGoogleMapsUrl({ lat, lng }),
           };
         }
       }
@@ -174,7 +218,7 @@ export async function reverseGeocode(lat: number, lng: number): Promise<GeoPlace
           formattedAddress: formatted,
           city,
           coordinates: { lat, lng },
-          mapsUrl: getOpenStreetMapUrl({ lat, lng }),
+          mapsUrl: getGoogleMapsUrl({ lat, lng }),
         };
       }
     }
