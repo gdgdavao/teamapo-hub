@@ -182,6 +182,50 @@ class TestWalletService(unittest.TestCase):
         self.assertEqual(decoded['payload']['eventTicketClasses'][0]['id'], 'ISSUER.class1')
         self.assertEqual(decoded['payload']['eventTicketObjects'][0]['id'], 'ISSUER.obj1')
 
+    def test_upsert_class_and_object_on_404(self):
+        class DummyResponse:
+            def __init__(self, status_code, text=''):
+                self.status_code = status_code
+                self.text = text
+
+        class DummySession:
+            def __init__(self):
+                self.patch_calls = []
+                self.post_calls = []
+
+            def patch(self, url, json=None, timeout=10):
+                self.patch_calls.append((url, json))
+                return DummyResponse(404, 'Not Found')
+
+            def post(self, url, json=None, timeout=10):
+                self.post_calls.append((url, json))
+                return DummyResponse(200, 'Created')
+
+        session = DummySession()
+        cls_ok = wallet_service.patch_wallet_class(
+            issuer_id='ISSUER123',
+            event_id='evt-1',
+            patch_data={'id': 'ISSUER123.gdgDavaoEvent_evt-1'},
+            service_account_info={},
+            upsert=True,
+            session=session
+        )
+        obj_ok = wallet_service.patch_wallet_object(
+            issuer_id='ISSUER123',
+            registration_id='reg-1',
+            patch_data={'id': 'ISSUER123.reg_reg-1'},
+            service_account_info={},
+            upsert=True,
+            session=session
+        )
+
+        self.assertTrue(cls_ok)
+        self.assertTrue(obj_ok)
+        self.assertEqual(len(session.patch_calls), 2)
+        self.assertEqual(len(session.post_calls), 2)
+        self.assertTrue(session.post_calls[0][0].endswith('/eventTicketClass'))
+        self.assertTrue(session.post_calls[1][0].endswith('/eventTicketObject'))
+
 
 if __name__ == '__main__':
     unittest.main()

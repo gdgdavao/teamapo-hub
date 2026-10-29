@@ -76,12 +76,17 @@ describe('TicketPage with TicketCard, Google Wallet & Save as Image Integration'
     expect(screen.getByRole('button', { name: /Save your ticket as an image/i })).toBeInTheDocument();
   });
 
-  it('invokes WalletPassService.createWalletPassUrl on clicking Save to Google Wallet', async () => {
+  it('invokes WalletPassService.createWalletPassUrl and shows spinner on clicking Save to Google Wallet', async () => {
     vi.spyOn(RegistrationService, 'getTicketPass').mockResolvedValue(sampleTicketData);
-    const createWalletSpy = vi.spyOn(WalletPassService, 'createWalletPassUrl').mockResolvedValue({
-      saveUrl: 'https://pay.google.com/gp/v/save/mock-jwt-url',
-    });
-    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+    let resolvePass!: (val: { saveUrl: string }) => void;
+    const createWalletSpy = vi.spyOn(WalletPassService, 'createWalletPassUrl').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePass = resolve;
+        })
+    );
+    const mockWin = { opener: window } as unknown as Window;
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => mockWin);
 
     render(
       <MemoryRouter initialEntries={['/ticket?reg=reg_xyz789&token=pass_tok_123']}>
@@ -98,6 +103,12 @@ describe('TicketPage with TicketCard, Google Wallet & Save as Image Integration'
     const saveBtn = screen.getByRole('button', { name: /Save to Google Wallet/i });
     fireEvent.click(saveBtn);
 
+    // Spinner is shown and button is busy while request is in flight
+    expect(saveBtn).toHaveAttribute('aria-busy', 'true');
+    expect(saveBtn.querySelector('.spinner')).not.toBeNull();
+
+    resolvePass({ saveUrl: 'https://pay.google.com/gp/v/save/mock-jwt-url' });
+
     await waitFor(() => {
       expect(createWalletSpy).toHaveBeenCalledWith({
         registrationId: 'reg_xyz789',
@@ -105,9 +116,10 @@ describe('TicketPage with TicketCard, Google Wallet & Save as Image Integration'
       });
       expect(openSpy).toHaveBeenCalledWith(
         'https://pay.google.com/gp/v/save/mock-jwt-url',
-        '_blank',
-        'noopener,noreferrer'
+        '_blank'
       );
+      expect(mockWin.opener).toBeNull();
+      expect(saveBtn).not.toHaveAttribute('aria-busy');
     });
   });
 
