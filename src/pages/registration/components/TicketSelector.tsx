@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { CheckCircleIcon } from '@heroicons/react/24/outline';
+import { CheckCircleIcon, LockClosedIcon, ClockIcon } from '@heroicons/react/24/outline';
 import { Button, Input } from '../../../components/UI';
 import { EventService } from '../../../services/eventService';
 import { TicketType, PromoCode, TicketPricing } from '../../../types';
@@ -8,8 +8,11 @@ import {
   calculateTicketPricing,
   getCurrentTicketPricing,
   calculateSavingsPercentage,
-  validatePromoCode
+  validatePromoCode,
+  getTicketSalesWindowStatus,
+  isTicketWindowOpen,
 } from '../../../utils/pricing';
+import { formatDate } from '../../../utils/dateUtils';
 
 interface TicketSelectorProps {
   ticketTypes: TicketType[];
@@ -222,6 +225,7 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
   };
 
   const getAvailableQuantity = (ticketType: TicketType): number | null => {
+    if (!isTicketWindowOpen(ticketType)) return 0;
     if (!ticketType.maxQuantity) return null; // Unlimited
     return Math.max(0, ticketType.maxQuantity - ticketType.currentSold);
   };
@@ -234,9 +238,22 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
   const renderTicketCard = (ticketType: TicketType) => {
     const pricing = ticketPricings[ticketType.id];
     const isSelected = selectedTicketType === ticketType.id;
+    const windowStatus = getTicketSalesWindowStatus(ticketType);
     const availableQty = getAvailableQuantity(ticketType);
-    const isAvailable = availableQty === null || availableQty > 0; // null means unlimited
+    const isAvailable = windowStatus.isOpen && (availableQty === null || availableQty > 0); // null means unlimited
     const savingsPercentage = calculateSavingsPercentage(pricing?.originalPrice || 0, pricing?.currentPrice || 0);
+    const rawRemaining =
+      typeof ticketType.maxQuantity === 'number'
+        ? Math.max(0, ticketType.maxQuantity - (ticketType.currentSold || 0))
+        : null;
+
+    const unavailableAriaNote = !windowStatus.isOpen
+      ? windowStatus.reason === 'not_started'
+        ? `, not yet on sale${windowStatus.validFromDate ? ` (${formatDate(windowStatus.validFromDate)})` : ''}`
+        : `, sales ended${windowStatus.validUntilDate ? ` (${formatDate(windowStatus.validUntilDate)})` : ''}`
+      : !isAvailable
+      ? ', sold out'
+      : '';
 
     // A real `<input type="radio">` inside the label, hidden rather than
     // replaced. The previous markup put `role="radio"` on the card `<div>` and
@@ -265,9 +282,7 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
           checked={isSelected}
           disabled={!isAvailable}
           onChange={() => void handleTicketTypeChange(ticketType.id)}
-          aria-label={`${ticketType.name}, ${formatAmount(pricing?.currentPrice ?? ticketType.price)}${
-            isAvailable ? '' : ', sold out'
-          }`}
+          aria-label={`${ticketType.name}, ${formatAmount(pricing?.currentPrice ?? ticketType.price)}${unavailableAriaNote}`}
         />
 
         {/* Ticket Type Header */}
@@ -316,12 +331,33 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
           </div>
         )}
 
-        {/* Availability */}
-        {!isAvailable && (
+        {/* Availability & Sales Window Meta */}
+        {!windowStatus.isOpen ? (
+          <div className="flex items-center gap-1.5 text-sm font-medium text-error">
+            <LockClosedIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
+            <span>
+              {windowStatus.reason === 'not_started'
+                ? `Not yet on sale${windowStatus.validFromDate ? ` (${formatDate(windowStatus.validFromDate)})` : ''}`
+                : `Sales ended${windowStatus.validUntilDate ? ` ${formatDate(windowStatus.validUntilDate)}` : ''}`}
+            </span>
+          </div>
+        ) : !isAvailable ? (
           <div className="text-base text-on-surface-variant">
             <span className="font-medium text-error">Sold Out</span>
           </div>
-        )}
+        ) : (rawRemaining !== null || windowStatus.validUntilDate) ? (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-medium text-on-surface-variant">
+            {rawRemaining !== null && (
+              <span>({rawRemaining} left)</span>
+            )}
+            {windowStatus.validUntilDate && (
+              <span className="inline-flex items-center gap-1">
+                <ClockIcon className="w-3.5 h-3.5 shrink-0 text-outline-variant" aria-hidden="true" />
+                <span>Sales end {formatDate(windowStatus.validUntilDate)}</span>
+              </span>
+            )}
+          </div>
+        ) : null}
 
         {/* The visible card carries the focus ring, because the control that
             holds focus is the one hidden inside it. */}

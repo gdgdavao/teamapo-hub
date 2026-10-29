@@ -5,7 +5,6 @@ import AbilityContextProvider from './auth/AbilityProvider';
 import RequireAbility, { RequireAnonymous } from './auth/RequireAbility';
 import ErrorBoundary from './components/ErrorBoundary';
 import HomePage from './pages/home/HomePage';
-import usePageTitle from './hooks/usePageTitle';
 
 // Auth Pages
 import LoginPage from './pages/auth/LoginPage';
@@ -43,9 +42,6 @@ import AppLayout from './layout/AppLayout';
 import { Analytics } from "@vercel/analytics/react"
 
 const AppContent: React.FC = () => {
-  // Set context-aware page title for all routes
-  usePageTitle();
-
   return (
     <ErrorBoundary>
       <Routes>

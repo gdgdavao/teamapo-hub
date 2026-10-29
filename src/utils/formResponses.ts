@@ -73,20 +73,122 @@ export function extractContactDetailsFromResponses(
     return undefined;
   };
 
+  const cleanLabel = (raw: string): string =>
+    raw.replace(/[*_~`]+/g, '').toLowerCase().trim();
+
   const matches = (field: FormField, keywords: string[]): boolean => {
     const id = field.id.toLowerCase();
-    const label = field.label.toLowerCase();
+    const label = cleanLabel(field.label);
     return keywords.some((k) => id.includes(k) || label.includes(k));
   };
+
+  const isNonPersonNameField = (field: FormField): boolean =>
+    matches(field, [
+      'company',
+      'organization',
+      'venue',
+      'business',
+      'emergency',
+      'school',
+      'university',
+      'institution',
+      'affiliation',
+    ]);
+
+  const isLastNameField = (field: FormField): boolean => {
+    if (isNonPersonNameField(field)) return false;
+    const id = field.id.toLowerCase();
+    const label = cleanLabel(field.label);
+    return (
+      label.includes('last name') ||
+      label.includes('family name') ||
+      label.includes('surname') ||
+      label === 'last' ||
+      id === 'lastname' ||
+      id === 'last_name' ||
+      id === 'surname' ||
+      id === '1762143123275'
+    );
+  };
+
+  const isMiddleNameField = (field: FormField): boolean => {
+    const id = field.id.toLowerCase();
+    const label = cleanLabel(field.label);
+    return (
+      label.includes('middle name') ||
+      label.includes('middle initial') ||
+      id === 'middlename' ||
+      id === 'middle_name'
+    );
+  };
+
+  const hasSeparateLastNameField = formFields.some(
+    (f) => f.type !== 'spacer' && isLastNameField(f)
+  );
+
+  const isFirstNameField = (field: FormField): boolean => {
+    if (isNonPersonNameField(field) || isLastNameField(field) || isMiddleNameField(field)) {
+      return false;
+    }
+    const id = field.id.toLowerCase();
+    const label = cleanLabel(field.label);
+    return (
+      label.includes('first name') ||
+      label.includes('given name') ||
+      label === 'first' ||
+      id === 'firstname' ||
+      id === 'first_name' ||
+      id === 'first' ||
+      (field.id === '1' && hasSeparateLastNameField)
+    );
+  };
+
+  const isFullNameField = (field: FormField): boolean => {
+    if (
+      isNonPersonNameField(field) ||
+      isFirstNameField(field) ||
+      isLastNameField(field) ||
+      isMiddleNameField(field)
+    ) {
+      return false;
+    }
+    const id = field.id.toLowerCase();
+    const label = cleanLabel(field.label);
+    return (
+      field.id === '1' ||
+      label.includes('full name') ||
+      label.includes('your name') ||
+      label.includes('attendee name') ||
+      label.includes('participant name') ||
+      label.includes('complete name') ||
+      label === 'name' ||
+      id === 'name' ||
+      id === 'fullname' ||
+      id === 'full_name' ||
+      id === 'attendee_name' ||
+      matches(field, ['name'])
+    );
+  };
+
+  let fullNameVal: string | undefined;
+  let firstNameVal: string | undefined;
+  let lastNameVal: string | undefined;
 
   for (const field of formFields) {
     if (field.type === 'spacer') continue;
 
-    if (
-      details.name === undefined &&
-      (field.id === '1' || matches(field, ['name']))
-    ) {
-      details.name = readString(field) ?? '';
+    if (firstNameVal === undefined && isFirstNameField(field)) {
+      firstNameVal = readString(field) ?? '';
+      continue;
+    }
+
+    if (lastNameVal === undefined && isLastNameField(field)) {
+      lastNameVal = readString(field) ?? '';
+      continue;
+    }
+
+    if (fullNameVal === undefined && isFullNameField(field)) {
+      fullNameVal = readString(field) ?? '';
       continue;
     }
 
@@ -109,6 +211,36 @@ export function extractContactDetailsFromResponses(
     ) {
       details.phone = readString(field) ?? '';
     }
+  }
+
+  // Also check legacy/unmapped last-name keys in responses when lastNameVal was not in formFields
+  if (lastNameVal === undefined) {
+    const fallbackLast =
+      responses['1762143123275'] ??
+      responses['last_name'] ??
+      responses['lastName'] ??
+      responses['lastname'] ??
+      responses['surname'];
+    if (typeof fallbackLast === 'string' && fallbackLast.trim()) {
+      const trimmedLast = fallbackLast.trim();
+      if (firstNameVal !== undefined) {
+        lastNameVal = trimmedLast;
+      } else if (
+        fullNameVal !== undefined &&
+        !fullNameVal.toLowerCase().includes(trimmedLast.toLowerCase())
+      ) {
+        fullNameVal = [fullNameVal.trim(), trimmedLast].filter(Boolean).join(' ');
+      }
+    }
+  }
+
+  if (firstNameVal !== undefined || lastNameVal !== undefined) {
+    details.name = [firstNameVal, lastNameVal]
+      .map((s) => (s ?? '').trim())
+      .filter(Boolean)
+      .join(' ');
+  } else if (fullNameVal !== undefined) {
+    details.name = fullNameVal;
   }
 
   return details;

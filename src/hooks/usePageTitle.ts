@@ -1,133 +1,160 @@
 import { useEffect } from 'react';
-import { useLocation, useParams } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 
-interface UsePageTitleProps {
+export interface UsePageTitleProps {
   title?: string;
   contextTitle?: string;
 }
 
+const BASE_TITLE = 'TeamApo Hub';
+
+const EVENT_TAB_LABELS: Record<string, string> = {
+  overview: 'Event Overview',
+  attendees: 'Event Attendees',
+  responses: 'Event Responses',
+  'check-in': 'Event Check-In',
+  'promo-codes': 'Promo Codes',
+  certificates: 'Event Certificates',
+  feedback: 'Event Feedback',
+  settings: 'Event Settings',
+  analytics: 'Event Analytics',
+  kiosk: 'Check-In Kiosk',
+  preview: 'Event Preview',
+  register: 'Event Registration',
+};
+
 /**
- * Hook to automatically set page titles based on current route and user context
- * This provides a simpler interface than useSEO for just title management
+ * Pure helper that resolves a context-aware document `<title>` for any route and optional page context.
  */
-const usePageTitle = ({ title, contextTitle }: UsePageTitleProps = {}) => {
-  const location = useLocation();
-  const params = useParams();
+export function resolvePageTitle(
+  pathname: string,
+  { title, contextTitle }: UsePageTitleProps = {}
+): string {
+  const cleanTitle = title?.trim();
+  const cleanContext = contextTitle?.trim();
 
-  useEffect(() => {
-    // If explicit title is provided, use it
-    if (title) {
-      document.title = title;
-      return;
+  if (cleanTitle) {
+    const hasBrandSuffix =
+      cleanTitle.includes(BASE_TITLE) || cleanTitle.includes('Google Developer Groups');
+    if (cleanContext) {
+      const stripped = cleanTitle.replace(/\s*\|\s*TeamApo Hub.*$/i, '');
+      return `${stripped} · ${cleanContext} | ${BASE_TITLE}`;
     }
+    return hasBrandSuffix ? cleanTitle : `${cleanTitle} | ${BASE_TITLE}`;
+  }
 
-    const pathSegments = location.pathname.split('/').filter(Boolean);
-    const baseTitle = 'TeamApo Hub';
+  const pathSegments = pathname.split('/').filter(Boolean);
+  let routeLabel = '';
 
-    // Home is the root route. It carries no role in its title: the nav and the
-    // page frame already differentiate the two scopes, and "Admin Home" vs
-    // "Organizer Home" told a user nothing they could not already see.
-    if (pathSegments.length === 0) {
-      document.title = `Home | ${baseTitle}`;
-      return;
+  if (pathSegments.length === 0) {
+    routeLabel = 'Home';
+  } else if (pathSegments[0] === 'auth' || (pathSegments[0] === '__' && pathSegments[1] === 'auth')) {
+    const authPage = pathSegments[0] === '__' ? pathSegments[2] : pathSegments[1];
+    switch (authPage) {
+      case 'login':
+        routeLabel = 'Sign In';
+        break;
+      case 'forgot-password':
+        routeLabel = 'Reset Password';
+        break;
+      case 'action':
+        routeLabel = 'Account Security';
+        break;
+      default:
+        routeLabel = 'Authentication';
     }
-
-    // Handle auth routes
-    if (pathSegments[0] === 'auth') {
-      const authPage = pathSegments[1];
-      switch (authPage) {
-        case 'login':
-          document.title = `Sign In | ${baseTitle}`;
-          break;
-        case 'forgot-password':
-          document.title = `Reset Password | ${baseTitle}`;
-          break;
-        default:
-          document.title = `Authentication | ${baseTitle}`;
-      }
-      return;
-    }
-
-    // Handle shared routes
+  } else {
     switch (pathSegments[0]) {
       case 'e':
-        document.title = `Event Registration | ${baseTitle}`;
+        routeLabel = pathSegments[1] ? 'Event Registration' : 'Page Not Found';
         break;
       case 'events':
         if (pathSegments[1] === 'create') {
-          document.title = `Create Event | ${baseTitle}`;
-        } else if (pathSegments[1] === 'edit' && params.eventId) {
-          document.title = `Edit Event | ${baseTitle}`;
-        } else if (pathSegments[2] === 'register' && params.eventId) {
-          document.title = `Event Registration | ${baseTitle}`;
-        } else if (pathSegments[2] === 'attendees' && params.eventId) {
-          document.title = `Event Attendees | ${baseTitle}`;
-        } else if (pathSegments[2] === 'feedback' && params.eventId) {
-          document.title = `Event Feedback | ${baseTitle}`;
-        } else if (pathSegments[2] === 'promo-codes' && params.eventId) {
-          document.title = `Promo Codes | ${baseTitle}`;
-        } else if (pathSegments[2] === 'analytics' && params.eventId) {
-          document.title = `Event Analytics | ${baseTitle}`;
+          routeLabel = 'Create Event';
+        } else if (pathSegments[1] === 'edit') {
+          routeLabel = 'Edit Event';
+        } else if (pathSegments[1] && pathSegments[2]) {
+          routeLabel = EVENT_TAB_LABELS[pathSegments[2]] || 'Event Workspace';
+        } else if (pathSegments[1]) {
+          routeLabel = 'Event Overview';
         } else {
-          document.title = `Events | ${baseTitle}`;
+          routeLabel = 'Events';
         }
         break;
       case 'attendees':
-        document.title = `Attendees | ${baseTitle}`;
-        break;
-      case 'check-in':
-        document.title = `Check-in Management | ${baseTitle}`;
-        break;
-      // /payments and /emails now forward to the attendees list, so title them
-      // for where the organizer is actually going, not the retired screen.
       case 'payments':
       case 'emails':
-        document.title = `Attendees | ${baseTitle}`;
+        routeLabel = 'Attendees';
+        break;
+      case 'check-in':
+        routeLabel = 'Check-in Management';
         break;
       case 'analytics':
-        document.title = `Analytics | ${baseTitle}`;
+        routeLabel = 'Analytics';
         break;
       case 'certificates':
-        document.title = `Certificates | ${baseTitle}`;
+        routeLabel = 'Certificates';
         break;
       case 'users':
-        document.title = `User Management | ${baseTitle}`;
+        routeLabel = 'User Management';
+        break;
+      case 'audit-logs':
+        routeLabel = 'Audit Logs';
         break;
       case 'payment':
-        if (params.registrationId) {
-          document.title = `Payment | ${baseTitle}`;
-        } else if (pathSegments[1] === 'success') {
-          document.title = `Payment Success | ${baseTitle}`;
-        } else {
-          document.title = `Payment | ${baseTitle}`;
-        }
+        routeLabel = pathSegments[1] === 'success' ? 'Payment Success' : 'Payment';
+        break;
+      case 'registration':
+        routeLabel = pathSegments[1] === 'success' ? 'Registration Complete' : 'Event Registration';
+        break;
+      case 'ticket':
+        routeLabel = 'Your Ticket';
         break;
       case 'feedback':
-        if (params.eventId) {
-          document.title = `Event Feedback | ${baseTitle}`;
-        } else {
-          document.title = `Feedback | ${baseTitle}`;
-        }
+        routeLabel = pathSegments[1] ? 'Event Feedback' : 'Feedback';
         break;
       case 'verify':
-        document.title = `Certificate Verification | ${baseTitle}`;
+        routeLabel = 'Certificate Verification';
         break;
       case 'privacy':
-        document.title = `Privacy Policy | ${baseTitle}`;
+        routeLabel = 'Privacy Policy';
         break;
       case 'terms-of-service':
       case 'terms':
-        document.title = `Terms of Service | ${baseTitle}`;
+        routeLabel = 'Terms of Service';
+        break;
+      case 'forbidden':
+        routeLabel = 'Access Restricted';
+        break;
+      case 'login':
+        routeLabel = 'Sign In';
         break;
       default:
-        // Handle login route
-        if (pathSegments[0] === 'login') {
-          document.title = `Sign In | ${baseTitle}`;
-        } else {
-          document.title = baseTitle;
-        }
+        routeLabel = '';
     }
-  }, [title, contextTitle, location.pathname, params]);
+  }
+
+  if (cleanContext && routeLabel) {
+    return `${routeLabel} · ${cleanContext} | ${BASE_TITLE}`;
+  }
+  if (cleanContext) {
+    return `${cleanContext} | ${BASE_TITLE}`;
+  }
+  if (routeLabel) {
+    return `${routeLabel} | ${BASE_TITLE}`;
+  }
+  return BASE_TITLE;
+}
+
+/**
+ * Hook to automatically set document `<title>` based on current route and dynamic page context.
+ */
+const usePageTitle = ({ title, contextTitle }: UsePageTitleProps = {}) => {
+  const location = useLocation();
+
+  useEffect(() => {
+    document.title = resolvePageTitle(location.pathname, { title, contextTitle });
+  }, [title, contextTitle, location.pathname]);
 };
 
 export default usePageTitle;

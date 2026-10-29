@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { getOpenStreetMapUrl, searchPlaces, reverseGeocode } from '../../src/services/geoService';
+import {
+  getOpenStreetMapUrl,
+  getGoogleMapsUrl,
+  getGoogleMapsEmbedUrl,
+  resolvePublicGoogleMapsUrl,
+  searchPlaces,
+  reverseGeocode,
+} from '../../src/services/geoService';
 
 describe('geoService', () => {
   const originalFetch = global.fetch;
@@ -27,6 +34,41 @@ describe('geoService', () => {
     it('falls back to default city center when both coordinates and query are empty', () => {
       const url = getOpenStreetMapUrl();
       expect(url).toContain('https://www.openstreetmap.org/?mlat=7.0731&mlon=125.6128');
+    });
+  });
+
+  describe('getGoogleMapsUrl & getGoogleMapsEmbedUrl', () => {
+    it('generates coordinate-based Google Maps search URL when lat/lng are provided', () => {
+      const url = getGoogleMapsUrl({ lat: 7.0731, lng: 125.6128 });
+      expect(url).toBe('https://www.google.com/maps/search/?api=1&query=7.0731,125.6128');
+    });
+
+    it('generates query-based Google Maps search URL when coordinates are omitted', () => {
+      const url = getGoogleMapsUrl(undefined, 'SMX Convention Center, Lanang, Davao City');
+      expect(url).toContain('https://www.google.com/maps/search/?api=1&query=');
+      expect(url).toContain('SMX');
+    });
+
+    it('generates keyless Google Maps embed URL', () => {
+      const embedCoords = getGoogleMapsEmbedUrl({ lat: 7.0731, lng: 125.6128 });
+      expect(embedCoords).toBe('https://www.google.com/maps?q=7.0731,125.6128&z=16&output=embed');
+
+      const embedQuery = getGoogleMapsEmbedUrl(undefined, 'Ateneo de Davao University');
+      expect(embedQuery).toBe('https://www.google.com/maps?q=Ateneo%20de%20Davao%20University&z=16&output=embed');
+    });
+
+    it('upgrades legacy OpenStreetMap URLs to Google Maps while preserving custom links', () => {
+      const upgraded = resolvePublicGoogleMapsUrl(
+        'https://www.openstreetmap.org/?mlat=7.0731&mlon=125.6128#map=16/7.0731/125.6128',
+        { lat: 7.0731, lng: 125.6128 }
+      );
+      expect(upgraded).toBe('https://www.google.com/maps/search/?api=1&query=7.0731,125.6128');
+
+      const customShortLink = resolvePublicGoogleMapsUrl(
+        'https://maps.app.goo.gl/custom123',
+        { lat: 7.0731, lng: 125.6128 }
+      );
+      expect(customShortLink).toBe('https://maps.app.goo.gl/custom123');
     });
   });
 
@@ -61,7 +103,7 @@ describe('geoService', () => {
       expect(results[0].coordinates.lat).toBe(7.0712);
       expect(results[0].coordinates.lng).toBe(125.6134);
       expect(results[0].city).toBe('Davao City');
-      expect(results[0].mapsUrl).toContain('https://www.openstreetmap.org/?mlat=7.0712');
+      expect(results[0].mapsUrl).toContain('https://www.google.com/maps/search/?api=1&query=7.0712,125.6134');
     });
 
     it('handles fetch network failures gracefully by returning empty array', async () => {

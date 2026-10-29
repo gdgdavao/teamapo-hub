@@ -36,7 +36,9 @@ const useSEO = ({
   // Generate context-aware title
   const generateContextAwareTitle = (): string => {
     // If explicit title is provided, use it
-    if (title) return title;
+    if (title) {
+      return contextTitle ? `${title} · ${contextTitle}` : title;
+    }
 
     const pathSegments = location.pathname.split('/').filter(Boolean);
     const baseTitle = 'TeamApo Hub | GDG Davao';

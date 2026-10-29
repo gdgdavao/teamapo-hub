@@ -30,6 +30,7 @@ import type {
   AuditLogAction,
 } from '../../types';
 import { logger } from '../../utils/logger';
+import usePageTitle from '../../hooks/usePageTitle';
 
 const CATEGORY_OPTIONS = [
   { value: 'all', label: 'All Categories' },
@@ -77,6 +78,7 @@ const getCategoryBadgeTone = (category: AuditLogCategory): BadgeTone => {
 };
 
 const AuditLogsPage: React.FC = () => {
+  usePageTitle({ title: 'Audit Logs' });
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);

@@ -11,6 +11,7 @@ import {
   searchPlaces,
   reverseGeocode,
   getOpenStreetMapUrl,
+  getGoogleMapsUrl,
   GeoPlaceResult,
 } from '../../../services/geoService';
 
@@ -95,7 +96,7 @@ export const VenueLocationPicker: React.FC<VenueLocationPickerProps> = ({
       city: place.city || value.city || 'Davao City',
       venueCoordinates: place.coordinates,
       venuePlaceId: place.placeId,
-      venueMapsUrl: place.mapsUrl || getOpenStreetMapUrl(place.coordinates),
+      venueMapsUrl: place.mapsUrl || getGoogleMapsUrl(place.coordinates),
     });
 
     setSearchQuery(place.name || place.formattedAddress);
@@ -103,7 +104,7 @@ export const VenueLocationPicker: React.FC<VenueLocationPickerProps> = ({
   };
 
   const handleMapLocationSelect = async (coords: { lat: number; lng: number }) => {
-    const mapsUrl = getOpenStreetMapUrl(coords);
+    const mapsUrl = getGoogleMapsUrl(coords);
 
     // Immediately update coordinates
     const updated: VenueLocationData = {
@@ -147,19 +148,17 @@ export const VenueLocationPicker: React.FC<VenueLocationPickerProps> = ({
       const cty = field === 'city' ? newVal : value.city;
       const query = [name, addr, cty].filter(Boolean).join(', ');
       if (query.trim() && !value.venueCoordinates) {
-        updated.venueMapsUrl = getOpenStreetMapUrl(undefined, query);
+        updated.venueMapsUrl = getGoogleMapsUrl(undefined, query);
       }
     }
 
     onChange(updated);
   };
 
-  const resolvedMapsUrl =
-    value.venueMapsUrl ||
-    getOpenStreetMapUrl(
-      value.venueCoordinates,
-      [value.venueName, value.venueAddress, value.city].filter(Boolean).join(', ')
-    );
+  const resolvedMapsUrl = getOpenStreetMapUrl(
+    value.venueCoordinates,
+    [value.venueName, value.venueAddress, value.city].filter(Boolean).join(', ')
+  );
 
   return (
     <div className="space-y-4">

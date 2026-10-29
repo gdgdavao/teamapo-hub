@@ -29,8 +29,10 @@ import { Button, Badge, ConfirmationModal, Modal, Input, SegmentedControl, Selec
 import CreateUserModal, { CreateUserData } from './components/CreateUserModal';
 import EditUserModal from './components/EditUserModal';
 import UserRowActionsDropdown from './components/UserRowActionsDropdown';
+import usePageTitle from '../../hooks/usePageTitle';
 
 const AdminUsersPage: React.FC = () => {
+  usePageTitle({ title: 'User Management' });
   const { currentUser, createUser } = useAuth();
   const ability = useAbility();
 

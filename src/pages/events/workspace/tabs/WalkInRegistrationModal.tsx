@@ -3,6 +3,7 @@ import { UserPlusIcon } from '@heroicons/react/24/outline';
 import { StarIcon } from '@heroicons/react/24/solid';
 import { Event, TicketType, FormField } from '../../../../types';
 import { EventService } from '../../../../services/eventService';
+import { isTicketWindowOpen } from '../../../../utils/pricing';
 import { logger } from '../../../../utils/logger';
 import toast from 'react-hot-toast';
 import FormattedLabelText, { stripFormattedLabelSyntax } from '../../../../components/FormattedLabelText';
@@ -60,8 +61,8 @@ const WalkInRegistrationModal: React.FC<WalkInRegistrationModalProps> = ({
 
   useEffect(() => {
     if (isOpen && event.ticketTypes.length > 0) {
-      // Pre-select first active ticket type
-      const firstActiveTicket = event.ticketTypes.find(t => t.isActive);
+      // Pre-select first active ticket type within its sales window
+      const firstActiveTicket = event.ticketTypes.find(t => t.isActive && isTicketWindowOpen(t));
       if (firstActiveTicket) {
         setFormData(prev => ({ ...prev, ticketTypeId: firstActiveTicket.id }));
         setSelectedTicket(firstActiveTicket);
@@ -524,7 +525,7 @@ const WalkInRegistrationModal: React.FC<WalkInRegistrationModalProps> = ({
                 value={formData.ticketTypeId}
                 onChange={handleInputChange}
                 options={event.ticketTypes
-                  .filter(t => t.isActive)
+                  .filter(t => t.isActive && isTicketWindowOpen(t))
                   .map(ticket => ({
                     value: ticket.id,
                     label: `${ticket.name} - ₱${ticket.price.toFixed(2)}${

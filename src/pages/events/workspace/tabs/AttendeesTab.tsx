@@ -151,15 +151,16 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
       try {
         setLoading(true);
         
-        const [eventData, firestoreRegistrations] = await Promise.all([
+        const [eventData, firestoreRegistrations, subcollectionForm] = await Promise.all([
           EventService.getEvent(eventId),
-          RegistrationService.getEventRegistrations(eventId)
+          RegistrationService.getEventRegistrations(eventId),
+          EventService.getEventRegistrationForm(eventId).catch(() => [])
         ]);
 
-        let formFields = eventData?.registrationForm || [];
-        if (!formFields.length) {
-          formFields = await EventService.getEventRegistrationForm(eventId).catch(() => []);
-        }
+        const formFields =
+          subcollectionForm.length > 0
+            ? subcollectionForm
+            : eventData?.registrationForm || [];
         
         const enrichedEvent = eventData
           ? {

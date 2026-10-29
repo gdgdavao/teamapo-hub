@@ -914,6 +914,9 @@ const CheckInTab: React.FC<CheckInTabProps> = ({ eventId }) => {
   });
   
   const checkedIn = eventRegistrations.filter(r => r.status === 'attended' && filterBySearch(r));
+  const totalActiveRegistrations = eventRegistrations.filter(
+    r => r.status !== 'cancelled' && filterBySearch(r)
+  ).length;
 
   if (loading) {
     return (
@@ -992,14 +995,14 @@ const CheckInTab: React.FC<CheckInTabProps> = ({ eventId }) => {
               <div className="flex items-center gap-2">
                 <CheckCircleSolidIcon className="w-5 h-5 text-success" />
                 <span className="text-sm font-semibold text-on-surface">
-                  {checkedIn.length} / {readyForCheckin.length + checkedIn.length}
+                  {checkedIn.length} / {totalActiveRegistrations}
                 </span>
                 <span className="text-xs text-on-surface-variant font-medium">Checked In</span>
               </div>
               <span className="text-outline-variant">|</span>
               <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-success-container text-on-success-container">
-                {readyForCheckin.length + checkedIn.length > 0 
-                  ? `${Math.round((checkedIn.length / (readyForCheckin.length + checkedIn.length)) * 100)}%` 
+                {totalActiveRegistrations > 0 
+                  ? `${Math.round((checkedIn.length / totalActiveRegistrations) * 100)}%` 
                   : '0%'}
               </span>
             </div>

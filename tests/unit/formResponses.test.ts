@@ -136,6 +136,61 @@ describe('extractContactDetailsFromResponses', () => {
     expect(extractContactDetailsFromResponses({ q1: 'M' }, fields)).toEqual({});
   });
 
+  it('combines First Name and Last Name fields into full name without dropping last name', () => {
+    const fields = [
+      field({ id: '1', label: 'First Name' }),
+      field({ id: '1762143123275', label: 'Last Name' }),
+      field({ id: '2', type: 'email', label: 'Email Address' }),
+    ];
+    expect(
+      extractContactDetailsFromResponses(
+        { '1': 'Juan', '1762143123275': 'Dela Cruz', '2': 'juan@example.com' },
+        fields
+      )
+    ).toEqual({
+      name: 'Juan Dela Cruz',
+      email: 'juan@example.com',
+    });
+  });
+
+  it('ignores non-person name fields such as Company Name or Middle Name when resolving full name', () => {
+    const fields = [
+      field({ id: 'org_name', label: 'Company / Organization Name' }),
+      field({ id: 'first_name', label: 'First Name' }),
+      field({ id: 'middle_name', label: 'Middle Name' }),
+      field({ id: 'last_name', label: 'Last Name' }),
+    ];
+    expect(
+      extractContactDetailsFromResponses(
+        {
+          org_name: 'GDG Davao',
+          first_name: 'Maria',
+          middle_name: '',
+          last_name: 'Santos',
+        },
+        fields
+      )
+    ).toEqual({
+      name: 'Maria Santos',
+    });
+  });
+
+  it('preserves unmapped legacy last name key when formFields only defines field 1', () => {
+    const fields = [
+      field({ id: '1', label: 'Full Name' }),
+      field({ id: '2', type: 'email', label: 'Email Address' }),
+    ];
+    expect(
+      extractContactDetailsFromResponses(
+        { '1': 'Juan', '1762143123275': 'Dela Cruz', '2': 'juan@example.com' },
+        fields
+      )
+    ).toEqual({
+      name: 'Juan Dela Cruz',
+      email: 'juan@example.com',
+    });
+  });
+
   it('returns nothing without a form definition', () => {
     expect(extractContactDetailsFromResponses({ '1': 'Ada' }, [])).toEqual({});
   });

@@ -35,6 +35,7 @@ import KioskPinModal from './KioskPinModal';
 import KioskSetupModal from '../../../components/KioskSetupModal';
 import KioskWelcomeCard from './KioskWelcomeCard';
 import KioskManualCodeModal from './KioskManualCodeModal';
+import usePageTitle from '../../../hooks/usePageTitle';
 
 const log = {
   debug: (...args: unknown[]) => logger.debug('[EventKioskPage]', ...args),
@@ -74,6 +75,11 @@ export const EventKioskPage: React.FC = () => {
   const [registrations, setRegistrations] = useState<FirestoreRegistration[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [authError, setAuthError] = useState<string | null>(null);
+
+  usePageTitle({
+    title: 'Check-In Kiosk',
+    contextTitle: event?.title,
+  });
 
   // Fullscreen state
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);

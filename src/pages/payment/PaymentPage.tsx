@@ -16,6 +16,7 @@ import { Event, Registration, PaymentConfig } from '../../types';
 import { toDateSafe } from '../../utils/dateUtils';
 import { logger } from '../../utils/logger';
 import toast from 'react-hot-toast';
+import usePageTitle from '../../hooks/usePageTitle';
 
 const PaymentPage: React.FC = () => {
   const { registrationId } = useParams<{ registrationId: string }>();
@@ -23,6 +24,10 @@ const PaymentPage: React.FC = () => {
   
   const [registration, setRegistration] = useState<Registration | null>(null);
   const [event, setEvent] = useState<Event | null>(null);
+  usePageTitle({
+    title: 'Payment',
+    contextTitle: event?.title,
+  });
   const [paymentConfigs, setPaymentConfigs] = useState<PaymentConfig[]>([]);
   const [selectedPaymentConfigId, setSelectedPaymentConfigId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);

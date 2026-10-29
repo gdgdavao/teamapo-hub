@@ -1667,6 +1667,11 @@ export class EventService {
         if (ticket.maxQuantity && ticket.maxQuantity < 1) {
           errors.push(`Ticket ${index + 1}: Max quantity must be at least 1`);
         }
+        const validFromDate = toDateSafe((ticket as any).validFrom);
+        const validUntilDate = toDateSafe((ticket as any).validUntil);
+        if (validFromDate && validUntilDate && validFromDate.getTime() > validUntilDate.getTime()) {
+          errors.push(`Ticket ${index + 1} (${ticket.name || 'Unnamed'}): Sales start must be before sales deadline`);
+        }
       });
     }
 

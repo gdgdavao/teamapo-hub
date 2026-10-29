@@ -53,8 +53,17 @@ export interface PromoCodeUsage {
   isExpired: boolean;
 }
 
+/**
+ * Event-level statistics returned by AnalyticsService.getEventStats(eventId).
+ *
+ * Single source of truth for registration counts:
+ * - `registrations`: total non-placeholder registration documents for the event.
+ * - `activeRegistrations`: non-placeholder registrations excluding `attendanceStatus === 'cancelled'`
+ *   (includes `registered`, `confirmed`, `checked-in`, and `no-show` because no-shows held a seat).
+ */
 export interface EventStats {
   registrations: number;
+  activeRegistrations: number;
   checkedIn: number;
   noShows: number;
   revenue: number;
@@ -192,6 +201,96 @@ export class AnalyticsService {
   }
 
   /**
+   * Resolve whether a registration redeemed a promo code across all persisted field shapes:
+   * 1. `data.promoCode` (string, normalized to uppercase)
+   * 2. `data.promoCodeId` / `data.pricing?.promoCodeId` (resolved against `eventPromoCodes`)
+   * 3. `data.pricing?.promoCode` (string or `{ code: string }` object, normalized to uppercase)
+   * 4. `discountAmount > 0` fallback (reverse-engineered against `eventPromoCodes` or `UNKNOWN_DISCOUNT_<amount>`)
+   */
+  static resolveAppliedPromo(
+    data: Record<string, any>,
+    eventPromoCodes: any[] = []
+  ): { code: string; discount: number } | null {
+    const rawDiscount =
+      typeof data.discountAmount === 'number'
+        ? data.discountAmount
+        : typeof data.pricing?.discountAmount === 'number'
+        ? data.pricing.discountAmount
+        : 0;
+    const discount = Math.max(0, rawDiscount);
+
+    let codeKey = '';
+
+    if (typeof data.promoCode === 'string' && data.promoCode.trim()) {
+      codeKey = data.promoCode.trim().toUpperCase();
+    }
+
+    const promoId = data.promoCodeId ?? data.pricing?.promoCodeId;
+    if (!codeKey && promoId !== undefined && promoId !== null && String(promoId).trim()) {
+      const promoIdStr = String(promoId).trim();
+      const matchingPromo = eventPromoCodes.find(
+        (pc: any) =>
+          pc &&
+          (pc.id === promoIdStr ||
+            (typeof pc.code === 'string' && pc.code.trim().toUpperCase() === promoIdStr.toUpperCase()))
+      );
+      codeKey = matchingPromo && typeof matchingPromo.code === 'string'
+        ? matchingPromo.code.trim().toUpperCase()
+        : promoIdStr.toUpperCase();
+    }
+
+    if (!codeKey && data.pricing?.promoCode) {
+      if (typeof data.pricing.promoCode === 'string' && data.pricing.promoCode.trim()) {
+        codeKey = data.pricing.promoCode.trim().toUpperCase();
+      } else if (
+        typeof data.pricing.promoCode === 'object' &&
+        typeof data.pricing.promoCode.code === 'string' &&
+        data.pricing.promoCode.code.trim()
+      ) {
+        codeKey = data.pricing.promoCode.code.trim().toUpperCase();
+      }
+    }
+
+    if (!codeKey && discount > 0) {
+      const amount =
+        typeof data.totalAmount === 'number'
+          ? data.totalAmount
+          : typeof data.pricing?.currentPrice === 'number'
+          ? data.pricing.currentPrice
+          : 0;
+      const originalAmount =
+        typeof data.originalAmount === 'number' && data.originalAmount > 0
+          ? data.originalAmount
+          : amount + discount;
+
+      for (const promo of eventPromoCodes) {
+        if (!promo || typeof promo.code !== 'string') continue;
+        let expectedDiscount = 0;
+        if (promo.discountType === 'percentage') {
+          expectedDiscount = (originalAmount * Number(promo.discountValue || 0)) / 100;
+        } else if (promo.discountType === 'fixed') {
+          expectedDiscount = Number(promo.discountValue || 0);
+        }
+
+        if (Math.abs(expectedDiscount - discount) < 0.01) {
+          codeKey = promo.code.trim().toUpperCase();
+          break;
+        }
+      }
+
+      if (!codeKey) {
+        codeKey = `UNKNOWN_DISCOUNT_${discount}`;
+      }
+    }
+
+    if (!codeKey) {
+      return null;
+    }
+
+    return { code: codeKey, discount };
+  }
+
+  /**
    * Get detailed event statistics
    */
   static async getEventStats(eventId: string): Promise<EventStats> {
@@ -251,6 +350,9 @@ export class AnalyticsService {
           const certificatesDocs = certificatesResult.status === 'fulfilled' ? certificatesResult.value.docs : [];
 
           const realRegistrations = filterPlaceholderDocs(registrationsDocs);
+          const activeRegistrationsCount = realRegistrations.filter(
+            doc => doc.data().attendanceStatus !== 'cancelled'
+          ).length;
           const realCheckedInCount = realRegistrations.filter(doc => doc.data().attendanceStatus === 'checked-in').length;
           const realFeedback = filterPlaceholderDocs(feedbackDocs);
           const realCertificates = filterPlaceholderDocs(certificatesDocs);
@@ -264,66 +366,28 @@ export class AnalyticsService {
 
       realRegistrations.forEach(doc => {
         const data = doc.data();
-        
-        if (data.paymentStatus === 'paid') {
-          const amount = data.totalAmount || 0;
+        const isCancelled = data.attendanceStatus === 'cancelled';
+        const isPaid = data.paymentStatus === 'paid';
+        const amount = data.totalAmount || 0;
+
+        const appliedPromo = !isCancelled
+          ? this.resolveAppliedPromo(data, eventPromoCodes)
+          : null;
+
+        if (appliedPromo) {
+          totalDiscount += appliedPromo.discount;
+          const existing = promoCodeMap.get(appliedPromo.code) || { count: 0, discount: 0, revenue: 0 };
+          promoCodeMap.set(appliedPromo.code, {
+            count: existing.count + 1,
+            discount: existing.discount + appliedPromo.discount,
+            revenue: existing.revenue + (isPaid ? amount : 0)
+          });
+        }
+
+        if (isPaid) {
           revenue += amount;
-          
-          // Check both promoCode and promoCodeId fields
-          const hasDiscount = data.discountAmount && data.discountAmount > 0;
-          
-          if (hasDiscount) {
+          if (appliedPromo) {
             revenueWithPromo += amount;
-            const discount = data.discountAmount || 0;
-            totalDiscount += discount;
-            
-            // Try to find the actual promo code from the event's promo codes
-            let codeKey = data.promoCode; // Direct promo code string
-            let matchingPromo = null;
-            
-            // If no direct code, try to find it by promoCodeId
-            if (!codeKey && data.promoCodeId) {
-              matchingPromo = eventPromoCodes.find((pc: any) => pc.id === data.promoCodeId);
-              if (matchingPromo) {
-                codeKey = matchingPromo.code;
-              } else {
-                codeKey = String(data.promoCodeId);
-              }
-            }
-            
-            // If still no code but has discount, try to reverse-engineer from discount amount
-            if (!codeKey) {
-              // Try to find a promo code that could have produced this discount
-              const originalAmount = amount + discount; // Reverse calculate original amount
-              
-              for (const promo of eventPromoCodes) {
-                let expectedDiscount = 0;
-                if (promo.discountType === 'percentage') {
-                  expectedDiscount = (originalAmount * promo.discountValue) / 100;
-                } else if (promo.discountType === 'fixed') {
-                  expectedDiscount = promo.discountValue;
-                }
-                
-                // Check if the expected discount matches (with some tolerance for rounding)
-                if (Math.abs(expectedDiscount - discount) < 0.01) {
-                  matchingPromo = promo;
-                  codeKey = promo.code;
-                  break;
-                }
-              }
-              
-              // If still no match, use a descriptive fallback
-              if (!codeKey) {
-                codeKey = `UNKNOWN_DISCOUNT_${discount}`;
-              }
-            }
-            
-            const existing = promoCodeMap.get(codeKey) || { count: 0, discount: 0, revenue: 0 };
-            promoCodeMap.set(codeKey, {
-              count: existing.count + 1,
-              discount: existing.discount + discount,
-              revenue: existing.revenue + amount
-            });
           } else {
             revenueWithoutPromo += amount;
           }
@@ -336,26 +400,31 @@ export class AnalyticsService {
       
       // First, add all event promo codes (even if unused)
       eventPromoCodes.forEach((promoCode: any) => {
+        const rawCode = typeof promoCode.code === 'string' ? promoCode.code.trim() : '';
+        const normalizedCode = rawCode.toUpperCase();
         const validUntilDate = toDateSafe(promoCode.validUntil);
         const _validFromDate = toDateSafe(promoCode.validFrom);
         const isExpired = validUntilDate ? validUntilDate < now : false;
-        const usageStats = promoCodeMap.get(promoCode.code) || { count: 0, discount: 0, revenue: 0 };
+        const usageStats =
+          promoCodeMap.get(normalizedCode) ||
+          promoCodeMap.get(rawCode) ||
+          { count: 0, discount: 0, revenue: 0 };
         
-        promoCodeUsageMap.set(promoCode.code, {
-          code: promoCode.code,
-          name: promoCode.name || promoCode.code,
+        promoCodeUsageMap.set(normalizedCode || rawCode, {
+          code: normalizedCode || rawCode,
+          name: promoCode.name || normalizedCode || rawCode,
           description: promoCode.description,
           discountType: promoCode.discountType,
-          discountValue: promoCode.discountValue,
+          discountValue: promoCode.discountValue ?? 0,
           maxUses: promoCode.maxUses,
           currentUses: usageStats.count, // Use actual usage from registrations
           usageCount: usageStats.count,
           remainingUses: promoCode.maxUses ? Math.max(0, promoCode.maxUses - usageStats.count) : undefined,
           totalDiscount: usageStats.discount,
           revenue: usageStats.revenue,
-          isActive: promoCode.isActive,
-          validFrom: promoCode.validFrom,
-          validUntil: promoCode.validUntil,
+          isActive: Boolean(promoCode.isActive),
+          validFrom: promoCode.validFrom ?? null,
+          validUntil: promoCode.validUntil ?? null,
           isExpired
         });
       });
@@ -415,6 +484,7 @@ export class AnalyticsService {
 
       return {
         registrations: realRegistrations.length,
+        activeRegistrations: activeRegistrationsCount,
         checkedIn: realCheckedInCount,
         noShows: noShowRegistrations.length, // Only count explicit no-shows
         revenue,

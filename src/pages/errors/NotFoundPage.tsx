@@ -1,9 +1,11 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
+import usePageTitle from '../../hooks/usePageTitle';
 import dinoSvg from '@assets/dino.svg';
 
 const NotFoundPage: React.FC = () => {
+  usePageTitle({ title: 'Page Not Found' });
   const navigate = useNavigate();
   const { currentUser } = useAuth();
 

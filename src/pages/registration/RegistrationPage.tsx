@@ -13,8 +13,7 @@ import {
   ArrowTopRightOnSquareIcon
 } from '@heroicons/react/24/outline';
 import { EventService } from '../../services/eventService';
-import { LeafletMap } from '../../components/UI';
-import { getOpenStreetMapUrl } from '../../services/geoService';
+import { getGoogleMapsEmbedUrl, resolvePublicGoogleMapsUrl } from '../../services/geoService';
 import RegistrationModal from './components/RegistrationModal';
 import Reveal from './components/Reveal';
 import { Event, FormField } from '../../types';
@@ -48,8 +47,12 @@ const EventRegistrationPage: React.FC<EventRegistrationPageProps> = ({ isPreview
   const hasLoadedFormRef = useRef(false);
   const hasInitialDataRef = useRef(false);
 
-  // Set page title
-  usePageTitle();
+  // Set page title with event context
+  usePageTitle({
+    title: event
+      ? `${effectiveIsPreview ? 'Preview: ' : ''}${event.title}`
+      : 'Event Registration',
+  });
 
   // Resolve public URL for social sharing image when event changes
   useEffect(() => {
@@ -441,12 +444,19 @@ const EventRegistrationPage: React.FC<EventRegistrationPageProps> = ({ isPreview
     ? 'To Be Announced'
     : formatEventLocation(event.venue, { fallback: 'Venue to be announced' });
 
+  const venueQuery = [event.venue.name, event.venue.address, event.venue.city].filter(Boolean).join(', ');
   const resolvedMapsUrl = isVenueTba
     ? undefined
-    : event.venue.mapsUrl ||
-      getOpenStreetMapUrl(
+    : resolvePublicGoogleMapsUrl(
+        event.venue.mapsUrl,
         event.venue.coordinates,
-        [event.venue.name, event.venue.address, event.venue.city].filter(Boolean).join(', ')
+        venueQuery
+      );
+  const embedMapsUrl = isVenueTba
+    ? undefined
+    : getGoogleMapsEmbedUrl(
+        event.venue.coordinates,
+        venueQuery
       );
 
   const facts = [
@@ -657,7 +667,7 @@ const EventRegistrationPage: React.FC<EventRegistrationPageProps> = ({ isPreview
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-1 text-xs text-primary hover:text-primary-hover font-medium underline underline-offset-2 mt-1.5 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-xs"
                     >
-                      <span>View on Map</span>
+                      <span>View on Google Maps</span>
                       <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5" aria-hidden="true" />
                     </a>
                   )}
@@ -684,7 +694,7 @@ const EventRegistrationPage: React.FC<EventRegistrationPageProps> = ({ isPreview
             <section className="rounded-xl border border-outline-variant bg-surface p-6 sm:p-8">
               <p className="text-xs font-semibold uppercase tracking-[0.14em] text-primary">Details</p>
               <h2 className="mt-2 text-2xl sm:text-3xl font-bold tracking-tight text-on-surface">About this event</h2>
-              <p className="mt-4 text-on-surface leading-relaxed whitespace-pre-wrap max-w-[70ch]">
+              <p className="mt-4 w-full text-on-surface leading-relaxed whitespace-pre-wrap break-words">
                 {event.description}
               </p>
             </section>
@@ -716,21 +726,22 @@ const EventRegistrationPage: React.FC<EventRegistrationPageProps> = ({ isPreview
                       className="inline-flex min-h-[48px] items-center gap-2 rounded-xl bg-primary text-on-primary px-5 py-2.5 font-semibold transition-colors hover:bg-primary-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
                     >
                       <MapPinIcon className="h-5 w-5" aria-hidden="true" />
-                      <span>View on OpenStreetMap</span>
+                      <span>View on Google Maps</span>
                     </a>
                   </div>
                 )}
               </div>
 
-              {/* Interactive Leaflet Map Preview */}
-              {(event.venue.coordinates || event.venue.address || event.venue.name) && (
-                <div className="mt-6 overflow-hidden rounded-xl border border-outline-variant">
-                  <LeafletMap
-                    coordinates={event.venue.coordinates}
-                    venueName={event.venue.name}
-                    venueAddress={event.venue.address}
-                    interactive={false}
-                    height="260px"
+              {/* Keyless Google Maps Embed Preview */}
+              {embedMapsUrl && (event.venue.coordinates || event.venue.address || event.venue.name) && (
+                <div className="mt-6 overflow-hidden rounded-xl border border-outline-variant bg-surface-container">
+                  <iframe
+                    src={embedMapsUrl}
+                    title={event.venue.name ? `Google Map of ${event.venue.name}` : 'Event Venue Google Map'}
+                    loading="lazy"
+                    referrerPolicy="no-referrer-when-downgrade"
+                    allowFullScreen
+                    className="w-full h-[260px] sm:h-[320px] border-0 block"
                   />
                 </div>
               )}
