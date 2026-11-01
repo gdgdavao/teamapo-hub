@@ -36,6 +36,8 @@ import { resolveDisplayStatus, DisplayStatus } from '../../../../utils/registrat
 import {
   getRegistrationQuantity,
   getRegistrationTotalAmount,
+  getRegistrationPromoCode,
+  matchesPromoFilter,
 } from '../../../../utils/pricing';
 import { toISOStringSafe, formatDateTime as formatDate } from '../../../../utils/dateUtils';
 import RegistrationDetailsModal, { AttendeeRegistration } from './RegistrationDetailsModal';
@@ -80,6 +82,7 @@ const AttendeesTab: React.FC<AttendeesTabProps> = ({ eventId }) => {
   );
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
   const [ticketTypeFilter, setTicketTypeFilter] = useState<string>('all');
+  const [promoFilter, setPromoFilter] = useState<string>('all');
   const [priceRangeFilter, setPriceRangeFilter] = useState<string>('all');
   const [registrationTypeFilter, setRegistrationTypeFilter] = useState<string>('all');
   // Payment-proof state is a different axis from registration display status:
@@ -120,21 +123,6 @@ const AttendeesTab: React.FC<AttendeesTabProps> = ({ eventId }) => {
     }
     return registration.ticketTypeId || DEFAULT_TICKET_TYPE_LABEL;
   }, [events]);
-
-
-const getRegistrationPromoCode = (registration: Registration): string | undefined => {
-  if (registration.promoCode) {
-    return registration.promoCode;
-  }
-  const pricingPromo = registration.pricing?.promoCode;
-  if (!pricingPromo) {
-    return undefined;
-  }
-  if (typeof pricingPromo === 'string') {
-    return pricingPromo;
-  }
-  return pricingPromo?.code;
-};
 
 const formatCurrency = (amount?: number): string => {
   const value = typeof amount === 'number' && !isNaN(amount) ? amount : 0;
@@ -525,6 +513,22 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
     return Array.from(ticketTypesMap.values());
   }, [currentEvent, events]);
 
+  const promoFilterOptions = React.useMemo(() => {
+    const codes = new Set<string>();
+    registrations.forEach((reg) => {
+      const code = getRegistrationPromoCode(reg);
+      if (code && code.trim().length > 0) {
+        codes.add(code.trim().toUpperCase());
+      }
+    });
+    const sorted = Array.from(codes).sort();
+    return [
+      { value: 'all', label: 'All promo codes' },
+      { value: 'none', label: 'No promo code' },
+      ...sorted.map((c) => ({ value: c, label: c })),
+    ];
+  }, [registrations]);
+
   const isAwaitingVerification = (registration: Registration): boolean => {
     // Rejecting resolves the proof alongside the registration, but legacy records
     // still carry rejected registrations with a pending proof. Those are not
@@ -574,7 +578,10 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
       registrationTypeFilter === 'all' || 
       regType === registrationTypeFilter;
     
-    return matchesSearch && matchesStatus && matchesPriority && matchesTicketType && matchesPriceRange && matchesRegistrationType &&
+    // Promo code filter
+    const matchesPromo = matchesPromoFilter(registration, promoFilter);
+
+    return matchesSearch && matchesStatus && matchesPriority && matchesTicketType && matchesPromo && matchesPriceRange && matchesRegistrationType &&
       (!awaitingVerificationOnly || isAwaitingVerification(registration));
   });
 
@@ -1535,6 +1542,24 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
                 </div>
               )}
 
+              {/* Promo Code Filter */}
+              {promoFilterOptions.length > 2 && (
+                <div className="w-full sm:w-auto min-w-[150px] flex-1 sm:flex-initial">
+                  <Select
+                    value={promoFilter}
+                    onChange={(e) => setPromoFilter(e.target.value)}
+                    size="md"
+                    aria-label="Filter by promo code"
+                  >
+                    {promoFilterOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              )}
+
               {/* Price Range Filter */}
               <div className="w-full sm:w-auto min-w-[130px] flex-1 sm:flex-initial">
                 <Select
@@ -1595,13 +1620,14 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
               )}
 
               {/* Reset Filters when any filter is active */}
-              {(statusFilter !== 'all' || searchTerm.trim() !== '' || ticketTypeFilter !== 'all' || priceRangeFilter !== 'all' || registrationTypeFilter !== 'all' || awaitingVerificationOnly) && (
+              {(statusFilter !== 'all' || searchTerm.trim() !== '' || ticketTypeFilter !== 'all' || promoFilter !== 'all' || priceRangeFilter !== 'all' || registrationTypeFilter !== 'all' || awaitingVerificationOnly) && (
                 <button
                   type="button"
                   onClick={() => {
                     setStatusFilter('all');
                     setSearchTerm('');
                     setTicketTypeFilter('all');
+                    setPromoFilter('all');
                     setPriceRangeFilter('all');
                     setRegistrationTypeFilter('all');
                     setAwaitingVerificationOnly(false);
@@ -1651,7 +1677,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
               icon={<UserIcon className="h-6 w-6" />}
               title="No registrations found"
               description={
-                searchTerm || statusFilter !== 'all' || ticketTypeFilter !== 'all' || priceRangeFilter !== 'all' || registrationTypeFilter !== 'all'
+                searchTerm || statusFilter !== 'all' || ticketTypeFilter !== 'all' || promoFilter !== 'all' || priceRangeFilter !== 'all' || registrationTypeFilter !== 'all'
                   ? 'Try adjusting your search or filter criteria.'
                   : 'Attendee registrations will appear here once people start signing up for events.'
               }

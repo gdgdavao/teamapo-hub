@@ -168,4 +168,55 @@ describe('TicketSelector Single Ticket per Person Contract', () => {
 
     validateSpy.mockRestore();
   });
+
+  it('hides scarcity counters and sales end deadlines while preserving Sold Out and Not yet on sale gates', () => {
+    const handleSelectionChange = vi.fn();
+    const ticketsWithScarcityAndWindows: TicketType[] = [
+      {
+        id: 't-active',
+        name: 'Standard Ticket',
+        price: 100,
+        currency: 'PHP',
+        maxQuantity: 50,
+        currentSold: 10,
+        isActive: true,
+        sortOrder: 0,
+        validUntil: new Date(Date.now() + 86400000) as any,
+      },
+      {
+        id: 't-sold-out',
+        name: 'Sold Out Ticket',
+        price: 200,
+        currency: 'PHP',
+        maxQuantity: 10,
+        currentSold: 10,
+        isActive: true,
+        sortOrder: 1,
+      },
+      {
+        id: 't-future',
+        name: 'Early Bird Upcoming',
+        price: 50,
+        currency: 'PHP',
+        isActive: true,
+        sortOrder: 2,
+        validFrom: new Date(Date.now() + 86400000) as any,
+      },
+    ];
+
+    render(
+      <TicketSelector
+        ticketTypes={ticketsWithScarcityAndWindows}
+        onSelectionChange={handleSelectionChange}
+      />
+    );
+
+    // Invariant: Scarcity counts "(40 left)" and "Sales end" must NEVER render on the card
+    expect(screen.queryByText(/left\)/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Sales end/i)).not.toBeInTheDocument();
+
+    // Invariant: Functional status gates MUST still render
+    expect(screen.getByText('Sold Out')).toBeInTheDocument();
+    expect(screen.getByText(/Not yet on sale/i)).toBeInTheDocument();
+  });
 });

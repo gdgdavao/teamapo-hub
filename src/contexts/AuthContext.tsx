@@ -8,9 +8,9 @@ import {
   updateProfile,
   GoogleAuthProvider,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   sendPasswordResetEmail,
-  browserLocalPersistence,
-  setPersistence,
 } from 'firebase/auth';
 import { doc, setDoc, serverTimestamp, updateDoc, onSnapshot, getDoc } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
@@ -58,18 +58,7 @@ type AuthErrorLike = {
   message?: string;
 };
 
-/**
- * Firestore listener failures, split by whether a retry can possibly help.
- *
- * `firestore.rules` permits an authenticated caller to read their own users
- * document unconditionally, so `permission-denied` and `unauthenticated` are not
- * transient: they mean the rules or the token changed under us, and retrying
- * would spin forever. Everything else - offline, a dropped socket, backend
- * unavailability - is worth another attempt.
- */
-const PERMANENT_PROFILE_ERRORS = new Set(['permission-denied', 'unauthenticated']);
-
-/** Backoff before each retry of a transient failure, in ms. */
+/** Backoff before each retry of a profile listener failure, in ms (~15.5s total). */
 const PROFILE_RETRY_DELAYS_MS = [500, 1000, 2000, 4000, 8000];
 
 const PROFILE_UNVERIFIABLE =
@@ -77,9 +66,6 @@ const PROFILE_UNVERIFIABLE =
 
 const PROFILE_OFFLINE =
   'We could not reach the server to verify your account. Please check your connection and try again.';
-
-const getFriendlySignInErrorMessage = (error: AuthErrorLike) =>
-  getFriendlyAuthErrorMessage(error, 'Unable to sign in. Please try again.');
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
@@ -93,6 +79,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
   const [userProfile, setUserProfile] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const redirectHandledRef = useRef(false);
+  const popupClosedCountRef = useRef(0);
+
+  /**
+   * Consumes Google SSO redirect credentials on mount (best-effort, once per app session).
+   */
+  useEffect(() => {
+    if (redirectHandledRef.current) return;
+    redirectHandledRef.current = true;
+
+    getRedirectResult(auth)
+      .then(async (result) => {
+        if (!result?.user) return;
+
+        const userSnap = await getDoc(doc(db, 'users', result.user.uid));
+        if (!userSnap.exists()) {
+          const userEmail = result.user.email || 'your account';
+          await signOut(auth).catch(() => undefined);
+          toast.error(
+            `Your Google account (${userEmail}) has not been provisioned as an organizer or admin. Please contact an administrator to invite you.`
+          );
+          return;
+        }
+
+        toast.success(`Welcome, ${result.user.displayName || result.user.email}.`);
+      })
+      .catch((err) => {
+        logger.error('Google redirect sign-in error:', err);
+        toast.error(getFriendlyAuthErrorMessage(err, 'Sign in failed. Please try again.'));
+      });
+  }, []);
 
   /**
    * Holds the unsubscribe for the users-document listener. Kept in a ref
@@ -213,10 +230,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const signInWithGoogle = useCallback(async () => {
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+
     try {
-      const provider = new GoogleAuthProvider();
-      provider.setCustomParameters({ prompt: 'select_account' });
       const result = await signInWithPopup(auth, provider);
+      popupClosedCountRef.current = 0;
 
       // Verify the user profile document exists in Firestore
       const userSnap = await getDoc(doc(db, 'users', result.user.uid));
@@ -232,6 +251,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       toast.success(`Welcome, ${result.user.displayName || result.user.email}.`);
     } catch (error: any) {
+      const code = error?.code || '';
+      if (code === 'auth/popup-closed-by-user') {
+        popupClosedCountRef.current += 1;
+      }
+
+      const shouldFallbackToRedirect =
+        code === 'auth/popup-blocked' ||
+        code === 'auth/operation-not-supported-in-this-environment' ||
+        code === 'auth/network-request-failed' ||
+        (code === 'auth/popup-closed-by-user' && popupClosedCountRef.current > 1);
+
+      if (shouldFallbackToRedirect) {
+        logger.warn(`Google popup failed (${code || 'unknown'}); falling back to redirect flow`);
+        await signInWithRedirect(auth, provider);
+        return;
+      }
+
       setLoading(false);
       logger.error('Google sign in error:', error);
       throw error;
@@ -422,8 +458,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       setCurrentUser(user);
-      // Ensure the active session is mirrored to browserLocalPersistence so new tabs inherit authentication
-      setPersistence(auth, browserLocalPersistence).catch(() => {});
 
       // Re-arm `loading` for every sign-in that arrives through this listener,
       // not just the cold-start one.
@@ -451,6 +485,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // tab was reloaded; now the ability rebuilds the moment the document
       // changes. firestore.rules:52 permits reading your own document.
       const uid = user.uid;
+      let hasRetriedWithFreshToken = false;
 
       const watch = (attempt: number) => {
         stopProfileListener.current = onSnapshot(
@@ -478,24 +513,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
             const code = (error as AuthErrorLike | undefined)?.code ?? '';
 
-            if (PERMANENT_PROFILE_ERRORS.has(code)) {
-              // Retrying cannot fix this, and an endless spinner is worse than an
-              // honest end to the session.
-              void endSession(PROFILE_UNVERIFIABLE);
+            const delay = PROFILE_RETRY_DELAYS_MS[attempt];
+            if (delay !== undefined) {
+              logger.warn(
+                `Profile listener failed (${code || 'unknown'}); retrying in ${delay}ms (attempt ${attempt + 1})`,
+              );
+              profileRetryTimer.current = setTimeout(() => watch(attempt + 1), delay);
               return;
             }
 
-            const delay = PROFILE_RETRY_DELAYS_MS[attempt];
-            if (delay === undefined) {
+            void (async () => {
+              // Before ending the session, request a fresh token to eliminate token-restore races
+              if (!hasRetriedWithFreshToken) {
+                hasRetriedWithFreshToken = true;
+                try {
+                  logger.warn('Profile listener retries exhausted; requesting fresh token for final attempt');
+                  const freshToken = await user.getIdToken(true);
+                  if (freshToken) {
+                    watch(0);
+                    return;
+                  }
+                } catch (tokenErr) {
+                  logger.error('Failed to refresh token before profile listener failure:', tokenErr);
+                }
+              }
+
               logger.error('Profile listener retries exhausted for', uid);
               void endSession(PROFILE_OFFLINE);
-              return;
-            }
-
-            logger.warn(
-              `Profile listener failed (${code || 'unknown'}); retrying in ${delay}ms`,
-            );
-            profileRetryTimer.current = setTimeout(() => watch(attempt + 1), delay);
+            })();
           },
         );
       };

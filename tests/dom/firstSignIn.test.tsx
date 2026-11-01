@@ -83,6 +83,8 @@ vi.mock('firebase/auth', () => ({
   updateProfile: vi.fn(),
   GoogleAuthProvider: class {},
   signInWithPopup: vi.fn(),
+  signInWithRedirect: vi.fn(),
+  getRedirectResult: vi.fn(async () => null),
   sendPasswordResetEmail: vi.fn(),
   getAuth: () => auth,
   setPersistence: vi.fn(async () => {}),
@@ -344,7 +346,7 @@ describe('a failed profile read is never reported as a permission denial', () =>
     expect(authSignOut).not.toHaveBeenCalled();
   });
 
-  it('ends the session on a permanent error instead of retrying forever', async () => {
+  it('retries a permission-denied or unauthenticated error instead of immediate forced sign-out', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     await signIn();
     const before = g.__snapCount;
@@ -353,18 +355,14 @@ describe('a failed profile read is never reported as a permission denial', () =>
       g.__snapErr?.({ code: 'permission-denied', message: 'Missing or insufficient permissions' });
     });
 
-    // Reading your own users document is unconditional in firestore.rules, so
-    // this cannot resolve itself. An endless spinner would be worse than an
-    // honest end, but /forbidden would be a lie.
-    expect(authSignOut).toHaveBeenCalledTimes(1);
-    expect(toastError).toHaveBeenCalledWith(
-      expect.stringContaining('could not verify your access permissions'),
-    );
+    // Invariant (Task 2): Multi-tab cold start token races must NOT immediately force sign-out.
+    expect(authSignOut).not.toHaveBeenCalled();
+    expect(toastError).not.toHaveBeenCalled();
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(500);
     });
-    expect(g.__snapCount, 'no retry was scheduled for a permanent error').toBe(before);
+    expect(g.__snapCount, 'retry was scheduled for transient permission-denied').toBe((before ?? 0) + 1);
     expect(screen.queryByText('FORBIDDEN PAGE')).not.toBeInTheDocument();
   });
 

@@ -4,9 +4,12 @@ import toast from 'react-hot-toast';
 import { LoadingSpinner } from '../../../../components/UI';
 import { useAuth } from '../../../../contexts/AuthContext';
 import { EventService } from '../../../../services/eventService';
+import { RegistrationService } from '../../../../services/registrationService';
 import { PromoCode, TicketType } from '../../../../types';
 import { logger } from '../../../../utils/logger';
-import PromoCodeManager from '../../components/PromoCodeManager';
+import { getRegistrationPromoCode } from '../../../../utils/pricing';
+import { formatDate } from '../../../../utils/dateUtils';
+import PromoCodeManager, { PromoRedemption } from '../../components/PromoCodeManager';
 
 interface PromoCodesTabProps {
   /** Required. The tab renders inside /events/:eventId; see AttendeesTab. */
@@ -23,19 +26,45 @@ const PromoCodesTab: React.FC<PromoCodesTabProps> = ({ eventId }) => {
   const { userProfile } = useAuth();
   const [promoCodes, setPromoCodes] = useState<PromoCode[]>([]);
   const [ticketTypes, setTicketTypes] = useState<TicketType[]>([]);
+  const [usageByCode, setUsageByCode] = useState<Map<string, PromoRedemption[]>>(new Map());
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     try {
       setLoading(true);
-      const [event, loadedPromoCodes] = await Promise.all([
+      const [event, loadedPromoCodes, registrations] = await Promise.all([
         EventService.getEvent(eventId),
         typeof EventService.getEventPromoCodes === 'function'
           ? EventService.getEventPromoCodes(eventId)
-          : Promise.resolve(undefined)
+          : Promise.resolve(undefined),
+        RegistrationService.getEventRegistrations(eventId).catch((err) => {
+          logger.warn('Failed to fetch registrations for promo redemptions:', err);
+          return [];
+        }),
       ]);
       setPromoCodes(loadedPromoCodes ?? event?.promoCodes ?? []);
-      setTicketTypes(event?.ticketTypes ?? []);
+      const currentTicketTypes = event?.ticketTypes ?? [];
+      setTicketTypes(currentTicketTypes);
+
+      const usageMap = new Map<string, PromoRedemption[]>();
+      registrations.forEach((reg) => {
+        const code = getRegistrationPromoCode(reg);
+        if (!code) return;
+
+        const key = code.toLowerCase();
+        const existing = usageMap.get(key) || [];
+        const attendeeName = reg.userDetails?.name || (reg as any).attendee?.name || 'Anonymous';
+        const dateStr = formatDate(reg.registrationDate || (reg as any).createdAt);
+        const ticketName = currentTicketTypes.find((t) => t.id === reg.ticketTypeId)?.name;
+
+        existing.push({
+          name: attendeeName,
+          date: dateStr,
+          ticketName,
+        });
+        usageMap.set(key, existing);
+      });
+      setUsageByCode(usageMap);
     } catch (error) {
       logger.error('Error loading promo codes:', error);
       toast.error('Failed to load promo codes. Please refresh the page.');
@@ -136,6 +165,7 @@ const PromoCodesTab: React.FC<PromoCodesTabProps> = ({ eventId }) => {
       <PromoCodeManager
         promoCodes={promoCodes}
         ticketTypes={ticketTypes}
+        usedBy={usageByCode}
         onCreatePromoCode={handleCreatePromoCode}
         onUpdatePromoCode={handleUpdatePromoCode}
         onDeletePromoCode={handleDeletePromoCode}
