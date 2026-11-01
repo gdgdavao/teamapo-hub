@@ -1,20 +1,47 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, connectAuthEmulator } from 'firebase/auth';
+import {
+  initializeAuth,
+  getAuth,
+  connectAuthEmulator,
+  browserLocalPersistence,
+  browserSessionPersistence,
+  inMemoryPersistence,
+} from 'firebase/auth';
 import {
   initializeFirestore,
   connectFirestoreEmulator,
   persistentLocalCache,
   persistentMultipleTabManager,
+  memoryLocalCache,
 } from 'firebase/firestore';
 import { getFunctions, connectFunctionsEmulator } from 'firebase/functions';
 import { getStorage, connectStorageEmulator } from 'firebase/storage';
 import { logger } from '../utils/logger';
 import { isSafeEmulatorEnvironment } from '../utils/firebaseEnvironment';
 
+/**
+ * Resolves the authDomain for Firebase Auth.
+ * In production on custom domains (e.g. apohub.gdgdavao.org), returns the current
+ * hostname so Firebase Auth requests route to the first-party domain via Vercel's
+ * reverse proxy (/ __ / auth / *), bypassing Safari's ITP third-party storage restrictions.
+ */
+export function resolveAuthDomain(): string {
+  if (
+    typeof window !== 'undefined' &&
+    window.location.hostname &&
+    !import.meta.env.DEV &&
+    window.location.hostname !== 'localhost' &&
+    window.location.hostname !== '127.0.0.1'
+  ) {
+    return window.location.hostname;
+  }
+  return import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'project-iris-gdgdavao.firebaseapp.com';
+}
+
 // Firebase configuration
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  authDomain: resolveAuthDomain(),
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
@@ -25,10 +52,26 @@ const firebaseConfig = {
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
-// Initialize Firebase services
-export const auth = getAuth(app);
+// Initialize Firebase Auth with a resilient persistence stack.
+// Notice indexedDBLocalPersistence is intentionally omitted: on Safari (WebKit),
+// background tab suspension, Private Browsing, and ITP storage partitioning lock
+// or abort IndexedDB transactions, which Firebase surfaces as auth/network-request-failed.
+// browserLocalPersistence (localStorage) provides safe multi-tab persistence without IDB locks.
+let authInstance;
+try {
+  authInstance = initializeAuth(app, {
+    persistence: [
+      browserLocalPersistence,
+      browserSessionPersistence,
+      inMemoryPersistence,
+    ],
+  });
+} catch {
+  authInstance = getAuth(app);
+}
+export const auth = authInstance;
 
-// Multi-tab IndexedDB cache configuration across Safari/WebKit, Chrome, Firefox
+// Multi-tab cache configuration across Safari/WebKit, Chrome, Firefox with memory fallback
 let localCacheSetting;
 if (typeof window !== 'undefined' && typeof indexedDB !== 'undefined') {
   try {
@@ -36,8 +79,11 @@ if (typeof window !== 'undefined' && typeof indexedDB !== 'undefined') {
       tabManager: persistentMultipleTabManager(),
     });
   } catch (err) {
-    logger.warn('Failed to initialize persistentLocalCache, falling back to default cache:', err);
+    logger.warn('Failed to initialize persistentLocalCache, falling back to memoryLocalCache:', err);
+    localCacheSetting = memoryLocalCache();
   }
+} else {
+  localCacheSetting = memoryLocalCache();
 }
 
 export const db = initializeFirestore(app, {
