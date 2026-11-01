@@ -8,12 +8,20 @@ const {
   mockOnSnapshot,
   mockGetIdToken,
   mockToastError,
+  mockGetRedirectResult,
+  mockSignInWithEmailAndPassword,
+  mockSetPersistence,
+  mockGetDoc,
 } = vi.hoisted(() => ({
   mockSignOut: vi.fn(async () => {}),
   mockOnAuthStateChanged: vi.fn(),
   mockOnSnapshot: vi.fn(),
   mockGetIdToken: vi.fn(async () => 'fresh-token-123'),
   mockToastError: vi.fn(),
+  mockGetRedirectResult: vi.fn(async () => null),
+  mockSignInWithEmailAndPassword: vi.fn(),
+  mockSetPersistence: vi.fn(async () => {}),
+  mockGetDoc: vi.fn(async () => ({ exists: () => true, data: () => ({ role: 'organizer' }) })),
 }));
 
 vi.mock('firebase/auth', async (importOriginal) => {
@@ -22,7 +30,10 @@ vi.mock('firebase/auth', async (importOriginal) => {
     ...actual,
     signOut: mockSignOut,
     onAuthStateChanged: mockOnAuthStateChanged,
-    getRedirectResult: vi.fn(async () => null),
+    getRedirectResult: mockGetRedirectResult,
+    signInWithEmailAndPassword: mockSignInWithEmailAndPassword,
+    setPersistence: mockSetPersistence,
+    inMemoryPersistence: { type: 'NONE' },
   };
 });
 
@@ -31,6 +42,7 @@ vi.mock('firebase/firestore', async (importOriginal) => {
   return {
     ...actual,
     onSnapshot: mockOnSnapshot,
+    getDoc: mockGetDoc,
     doc: vi.fn(() => ({ id: 'mock-doc' })),
   };
 });
@@ -177,5 +189,52 @@ describe('AuthContext profile listener retry & resilience contract', () => {
     });
 
     expect(mockGetIdToken).toHaveBeenCalledWith(true);
+  });
+
+  it('does NOT proactively call getRedirectResult on mount unless pending redirect is marked in sessionStorage', () => {
+    sessionStorage.clear();
+
+    renderHook(() => useAuth(), {
+      wrapper: ({ children }: { children: React.ReactNode }) => (
+        <AuthProvider>{children}</AuthProvider>
+      ),
+    });
+
+    // Invariant: Unsolicited mount must not spawn cross-origin iframe checks on Safari
+    expect(mockGetRedirectResult).not.toHaveBeenCalled();
+  });
+
+  it('retries signIn with inMemoryPersistence when signInWithEmailAndPassword rejects with auth/network-request-failed', async () => {
+    vi.useRealTimers();
+    sessionStorage.clear();
+
+    const mockUserCredential = {
+      user: {
+        uid: 'user-safari-private-1',
+        email: 'organizer@gdgdavao.org',
+        displayName: 'GDG Organizer',
+      },
+    };
+
+    mockSignInWithEmailAndPassword
+      .mockRejectedValueOnce({
+        code: 'auth/network-request-failed',
+        message: 'Safari storage error / network-request-failed',
+      })
+      .mockResolvedValueOnce(mockUserCredential);
+
+    const { result } = renderHook(() => useAuth(), {
+      wrapper: ({ children }: { children: React.ReactNode }) => (
+        <AuthProvider>{children}</AuthProvider>
+      ),
+    });
+
+    await act(async () => {
+      await result.current.signIn('organizer@gdgdavao.org', 'validPassword123');
+    });
+
+    // Invariant: setPersistence must switch to in-memory mode, then re-attempt sign-in
+    expect(mockSetPersistence).toHaveBeenCalledWith(expect.anything(), { type: 'NONE' });
+    expect(mockSignInWithEmailAndPassword).toHaveBeenCalledTimes(2);
   });
 });

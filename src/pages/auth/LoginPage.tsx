@@ -66,9 +66,16 @@ const LoginPage: React.FC = () => {
     setError(null);
     setLoading(true);
     try {
-      await applyPersistence();
-      await signInWithGoogle();
-      navigate(destination);
+      // Must NOT await applyPersistence() before signInWithGoogle() - in Safari (WebKit),
+      // an async tick before window.open invalidates the user gesture token and causes
+      // the popup to be blocked or dropped with auth/network-request-failed.
+      const outcome = await signInWithGoogle();
+      const isRedirected = Boolean(
+        outcome && typeof outcome === 'object' && 'redirected' in outcome && outcome.redirected
+      );
+      if (!isRedirected) {
+        navigate(destination);
+      }
     } catch (err) {
       logger.error('Google sign-in error:', err);
       setError(getFriendlyAuthErrorMessage(err, 'Google sign-in failed. Please try again.'));

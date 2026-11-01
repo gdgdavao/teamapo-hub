@@ -104,7 +104,9 @@ async function runDevelopment() {
   try {
     await Promise.all([8080, 9099, 5001, 9199].map(port => waitForPort(port)));
     await run('bun', ['run', 'sample-data'], env);
-    children.push(start('bun', ['run', 'dev:emulator'], env));
+    const extraArgs = process.argv.slice(3);
+    const viteArgs = ['run', 'dev:emulator', ...(extraArgs.length > 0 ? ['--', ...extraArgs] : [])];
+    children.push(start('bun', viteArgs, env));
 
     await new Promise((resolve, reject) => {
       children.at(-1).once('exit', code => {

@@ -96,4 +96,36 @@ describe('resolveStableAuthPersistence', () => {
     await resolveStableAuthPersistence(true, mockAuth);
     expect(setPersistence).toHaveBeenCalledTimes(1);
   });
+
+  it('skips localStorage if writing throws (e.g. Safari Private Browsing quota error)', async () => {
+    vi.mocked(setPersistence).mockResolvedValueOnce();
+
+    const mockLocalStorage = {
+      setItem: vi.fn(() => {
+        throw new Error('QuotaExceededError / SecurityError: Storage blocked in private mode');
+      }),
+      removeItem: vi.fn(),
+      getItem: vi.fn(),
+    };
+    const mockSessionStorage = {
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+      getItem: vi.fn(),
+    };
+
+    // Inject temporary window object for storage probe test
+    (global as any).window = {
+      localStorage: mockLocalStorage,
+      sessionStorage: mockSessionStorage,
+    };
+
+    try {
+      const persistence = await resolveStableAuthPersistence(true, mockAuth);
+      // Local storage skipped due to throw in probe, moved straight to session
+      expect(setPersistence).toHaveBeenCalledWith(mockAuth, browserSessionPersistence);
+      expect(persistence).toBe(browserSessionPersistence);
+    } finally {
+      delete (global as any).window;
+    }
+  });
 });
