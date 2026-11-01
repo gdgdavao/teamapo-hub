@@ -251,3 +251,56 @@ export function getRegistrationTotalAmount(registration: PricedRegistration): nu
   }
   return (registration.event.ticketPrice || 0) * getRegistrationQuantity(registration);
 }
+
+/**
+ * Structural shape of a registration carrying a promo code.
+ */
+export interface PromoBearingRegistration {
+  promoCode?: string | null;
+  pricing?: {
+    promoCode?: string | { code?: string } | null;
+  } | null;
+}
+
+/**
+ * Extracts the applied promo code string from a registration, handling legacy string
+ * fields and structured pricing promo snapshots.
+ */
+export function getRegistrationPromoCode(
+  registration?: PromoBearingRegistration | null
+): string | undefined {
+  if (!registration) {
+    return undefined;
+  }
+  if (typeof registration.promoCode === 'string' && registration.promoCode.trim().length > 0) {
+    return registration.promoCode.trim();
+  }
+  const pricingPromo = registration.pricing?.promoCode;
+  if (!pricingPromo) {
+    return undefined;
+  }
+  if (typeof pricingPromo === 'string' && pricingPromo.trim().length > 0) {
+    return pricingPromo.trim();
+  }
+  if (typeof pricingPromo === 'object' && typeof pricingPromo.code === 'string' && pricingPromo.code.trim().length > 0) {
+    return pricingPromo.code.trim();
+  }
+  return undefined;
+}
+
+/**
+ * Evaluates whether a registration satisfies an active promo filter ('all', 'none', or specific code).
+ */
+export function matchesPromoFilter(
+  registration: PromoBearingRegistration | null | undefined,
+  promoFilter: string
+): boolean {
+  if (!promoFilter || promoFilter === 'all') {
+    return true;
+  }
+  const code = getRegistrationPromoCode(registration);
+  if (promoFilter === 'none') {
+    return !code;
+  }
+  return Boolean(code && code.toLowerCase() === promoFilter.toLowerCase());
+}

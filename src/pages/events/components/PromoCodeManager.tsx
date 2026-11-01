@@ -5,7 +5,9 @@ import {
   PencilIcon,
   TrashIcon,
   TagIcon,
-  ClipboardDocumentIcon
+  ClipboardDocumentIcon,
+  ChevronDownIcon,
+  UserGroupIcon
 } from '@heroicons/react/24/outline';
 import {
   ProgressBar,
@@ -22,9 +24,16 @@ import {
 import { PromoCode, TicketType } from '../../../types';
 import { toDateSafe } from '../../../utils/dateUtils';
 
+export interface PromoRedemption {
+  name: string;
+  date: string;
+  ticketName?: string;
+}
+
 interface PromoCodeManagerProps {
   promoCodes: PromoCode[];
   ticketTypes: TicketType[];
+  usedBy?: Map<string, PromoRedemption[]>;
   onCreatePromoCode: (promoCode: Omit<PromoCode, 'id' | 'currentUses' | 'createdAt' | 'updatedAt'>) => void;
   onUpdatePromoCode: (id: string, promoCode: Partial<PromoCode>) => void;
   onDeletePromoCode: (id: string) => void;
@@ -50,6 +59,7 @@ interface PromoCodeFormData {
 const PromoCodeManager: React.FC<PromoCodeManagerProps> = ({
   promoCodes,
   ticketTypes,
+  usedBy,
   onCreatePromoCode,
   onUpdatePromoCode,
   onDeletePromoCode,
@@ -57,6 +67,19 @@ const PromoCodeManager: React.FC<PromoCodeManagerProps> = ({
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingPromoCode, setEditingPromoCode] = useState<PromoCode | null>(null);
+  const [expandedPromoIds, setExpandedPromoIds] = useState<Set<string>>(new Set());
+
+  const toggleRedemptions = (promoId: string) => {
+    setExpandedPromoIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(promoId)) {
+        next.delete(promoId);
+      } else {
+        next.add(promoId);
+      }
+      return next;
+    });
+  };
 
   const toLocalDateTimeInput = (date: Date): string => {
     const pad = (n: number) => n.toString().padStart(2, '0');
@@ -258,9 +281,9 @@ const PromoCodeManager: React.FC<PromoCodeManagerProps> = ({
               : 'Active';
 
             return (
-              <Card key={promoCode.id} padding="none" className="p-4 sm:p-5 relative transition-[border-color,background-color] duration-fast ease-quart">
+              <Card key={promoCode.id} padding="none" className="p-4 sm:p-5 w-full relative transition-[border-color,background-color] duration-fast ease-quart">
                 <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-                  <div className="flex-1 space-y-3">
+                  <div className="flex-1 space-y-3 min-w-0">
                     <div className="flex flex-wrap items-center gap-2.5">
                       <div className="inline-flex items-center gap-1.5 bg-secondary-container text-primary font-mono text-base sm:text-lg font-bold px-3 py-1 rounded-lg">
                         <span>{promoCode.code}</span>
@@ -344,7 +367,7 @@ const PromoCodeManager: React.FC<PromoCodeManagerProps> = ({
                     )}
                   </div>
 
-                  <div className="flex items-center gap-1.5 sm:self-start border-t sm:border-t-0 pt-3 sm:pt-0 border-outline-variant/60">
+                  <div className="flex items-center gap-1.5 sm:self-start border-t sm:border-t-0 pt-3 sm:pt-0 border-outline-variant/60 shrink-0">
                     <button
                       type="button"
                       onClick={() => openEditModal(promoCode)}
@@ -357,7 +380,7 @@ const PromoCodeManager: React.FC<PromoCodeManagerProps> = ({
                     <button
                       type="button"
                       onClick={() => onDeletePromoCode(promoCode.id)}
-                      className="p-2.5 rounded-lg text-on-surface-variant hover:text-error hover:bg-error-container/30 transition-colors min-h-[48px] min-w-[48px] flex items-center justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-error"
+                      className="p-2.5 rounded-lg text-error hover:bg-error-container/20 transition-colors min-h-[48px] min-w-[48px] flex items-center justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-error"
                       title="Delete promo code"
                       aria-label={`Delete ${promoCode.name}`}
                     >
@@ -365,6 +388,73 @@ const PromoCodeManager: React.FC<PromoCodeManagerProps> = ({
                     </button>
                   </div>
                 </div>
+
+                {/* Full-width Redemptions Section */}
+                {usedBy && (
+                  <div className="mt-4 pt-3 border-t border-outline-variant/60 w-full">
+                    {(() => {
+                      const redemptions = usedBy.get(promoCode.code.toLowerCase()) || [];
+                      const isExpanded = expandedPromoIds.has(promoCode.id);
+                      return (
+                        <div className="rounded-lg border border-outline-variant/60 bg-surface-container-low/40 overflow-hidden w-full">
+                          <button
+                            type="button"
+                            onClick={() => toggleRedemptions(promoCode.id)}
+                            className="flex items-center justify-between w-full px-3.5 py-2.5 text-left text-xs font-medium text-on-surface hover:bg-surface-container-high/40 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                            aria-expanded={isExpanded}
+                          >
+                            <span className="flex items-center gap-2 font-semibold text-on-surface-variant uppercase tracking-wider text-[11px]">
+                              <UserGroupIcon className="w-4 h-4 text-outline" aria-hidden="true" />
+                              <span>Used by ({redemptions.length})</span>
+                            </span>
+                            <span className="flex items-center gap-1.5 text-xs text-primary font-medium">
+                              <span>{isExpanded ? 'Hide' : 'Show list'}</span>
+                              <ChevronDownIcon
+                                className={`w-4 h-4 transition-transform duration-200 ${
+                                  isExpanded ? 'rotate-180' : ''
+                                }`}
+                                aria-hidden="true"
+                              />
+                            </span>
+                          </button>
+
+                          {isExpanded && (
+                            <div className="border-t border-outline-variant/60 p-3 sm:p-4 w-full">
+                              {redemptions.length === 0 ? (
+                                <p className="text-xs text-on-surface-variant/70 italic py-1">
+                                  No redemptions yet
+                                </p>
+                              ) : (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2.5 max-h-72 overflow-y-auto pr-1">
+                                  {redemptions.map((r, i) => (
+                                    <div
+                                      key={i}
+                                      className="py-2 px-3 flex items-center justify-between gap-2 text-xs border border-outline-variant/50 bg-surface rounded-lg hover:bg-surface-container-low transition-colors shadow-2xs"
+                                    >
+                                      <div className="min-w-0 pr-1">
+                                        <span className="font-semibold text-on-surface truncate block">
+                                          {r.name}
+                                        </span>
+                                        {r.ticketName && (
+                                          <span className="text-[11px] text-on-surface-variant truncate block">
+                                            {r.ticketName}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <span className="text-on-surface-variant/80 shrink-0 text-[11px] font-medium bg-surface-container-high/50 px-2 py-0.5 rounded">
+                                        {r.date}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
               </Card>
             );
           })

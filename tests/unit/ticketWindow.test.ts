@@ -143,9 +143,9 @@ describe('Ticket Sales Window (`validFrom` / `validUntil`) (R4)', () => {
     expect(radios[1]).toBeDisabled();
     expect(screen.getByText(/Not yet on sale/i)).toBeInTheDocument();
 
-    // General Admission -> enabled + shows remaining & Sales end date
+    // General Admission -> enabled without artificial scarcity pressure or deadline banners
     expect(radios[2]).not.toBeDisabled();
-    expect(screen.getByText('(45 left)')).toBeInTheDocument();
-    expect(screen.getByText(/^Sales end\s/i)).toBeInTheDocument();
+    expect(screen.queryByText('(45 left)')).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Sales end\s/i)).not.toBeInTheDocument();
   });
 });

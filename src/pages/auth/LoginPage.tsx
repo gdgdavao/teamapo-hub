@@ -2,11 +2,7 @@ import React, { useId, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { auth } from '../../config/firebase';
-import {
-  browserLocalPersistence,
-  browserSessionPersistence,
-  setPersistence,
-} from 'firebase/auth';
+import { resolveStableAuthPersistence } from '../../services/authPersistence';
 import { CheckCircleIcon, EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline';
 import { Input, Button } from '../../components/UI';
 import AuthShell from './AuthShell';
@@ -43,10 +39,11 @@ const LoginPage: React.FC = () => {
   const destination = resolveLoginDestination(searchParams.get('from'));
 
   const applyPersistence = async () => {
-    await setPersistence(
-      auth,
-      rememberMe ? browserLocalPersistence : browserSessionPersistence
-    );
+    try {
+      await resolveStableAuthPersistence(rememberMe);
+    } catch (err) {
+      logger.warn('Failed to resolve auth persistence; continuing with session:', err);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {

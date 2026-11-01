@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { CheckCircleIcon, LockClosedIcon, ClockIcon } from '@heroicons/react/24/outline';
+import { CheckCircleIcon, LockClosedIcon } from '@heroicons/react/24/outline';
 import { Button, Input } from '../../../components/UI';
 import { EventService } from '../../../services/eventService';
 import { TicketType, PromoCode, TicketPricing } from '../../../types';
@@ -242,10 +242,6 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
     const availableQty = getAvailableQuantity(ticketType);
     const isAvailable = windowStatus.isOpen && (availableQty === null || availableQty > 0); // null means unlimited
     const savingsPercentage = calculateSavingsPercentage(pricing?.originalPrice || 0, pricing?.currentPrice || 0);
-    const rawRemaining =
-      typeof ticketType.maxQuantity === 'number'
-        ? Math.max(0, ticketType.maxQuantity - (ticketType.currentSold || 0))
-        : null;
 
     const unavailableAriaNote = !windowStatus.isOpen
       ? windowStatus.reason === 'not_started'
@@ -344,18 +340,6 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
         ) : !isAvailable ? (
           <div className="text-base text-on-surface-variant">
             <span className="font-medium text-error">Sold Out</span>
-          </div>
-        ) : (rawRemaining !== null || windowStatus.validUntilDate) ? (
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-medium text-on-surface-variant">
-            {rawRemaining !== null && (
-              <span>({rawRemaining} left)</span>
-            )}
-            {windowStatus.validUntilDate && (
-              <span className="inline-flex items-center gap-1">
-                <ClockIcon className="w-3.5 h-3.5 shrink-0 text-outline-variant" aria-hidden="true" />
-                <span>Sales end {formatDate(windowStatus.validUntilDate)}</span>
-              </span>
-            )}
           </div>
         ) : null}
 

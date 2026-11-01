@@ -8,6 +8,7 @@ const EVENT_ID = 'evt_promo_test';
 const getEvent = vi.fn();
 const getEventPromoCodes = vi.fn();
 const updatePromoCodes = vi.fn();
+const getEventRegistrations = vi.fn();
 
 vi.mock('@/config/firebase', () => ({
   auth: { currentUser: null },
@@ -21,6 +22,12 @@ vi.mock('@/services/eventService', () => ({
     getEvent: (...args: unknown[]) => getEvent(...args),
     getEventPromoCodes: (...args: unknown[]) => getEventPromoCodes(...args),
     updatePromoCodes: (...args: unknown[]) => updatePromoCodes(...args),
+  },
+}));
+
+vi.mock('@/services/registrationService', () => ({
+  RegistrationService: {
+    getEventRegistrations: (...args: unknown[]) => getEventRegistrations(...args),
   },
 }));
 
@@ -69,6 +76,7 @@ describe('PromoCodesTab', () => {
       ticketTypes: [{ id: 'tt_1', name: 'General', price: 500 }],
     });
     getEventPromoCodes.mockResolvedValue([EXISTING_CODE]);
+    getEventRegistrations.mockResolvedValue([]);
   });
 
   it('renders the event promo codes', async () => {
@@ -156,5 +164,44 @@ describe('PromoCodesTab', () => {
     // Optimistic update rolled back: the failed save must not leave the code
     // looking deleted.
     expect(await screen.findByText('EARLYBIRD')).toBeInTheDocument();
+  });
+
+  it('expands and collapses attendee redemptions list when toggled', async () => {
+    getEventRegistrations.mockResolvedValue([
+      {
+        id: 'reg-1',
+        promoCode: 'EARLYBIRD',
+        userDetails: { name: 'Juan Dela Cruz', email: 'juan@example.com' },
+        createdAt: { toDate: () => new Date('2026-10-15') },
+        ticketTypeId: 'tt_1',
+      },
+      {
+        id: 'reg-2',
+        promoCode: 'EARLYBIRD',
+        userDetails: { name: 'Maria Santos', email: 'maria@example.com' },
+        createdAt: { toDate: () => new Date('2026-10-16') },
+        ticketTypeId: 'tt_1',
+      },
+    ]);
+
+    render(<PromoCodesTab eventId={EVENT_ID} />);
+    await screen.findByText('EARLYBIRD');
+
+    // Initially collapsed: toggle button indicates "Used by (2)"
+    const toggleButton = await screen.findByRole('button', { name: /Used by \(2\)/i });
+    expect(toggleButton).toBeInTheDocument();
+    expect(toggleButton).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('Juan Dela Cruz')).not.toBeInTheDocument();
+
+    // Expand
+    await userEvent.click(toggleButton);
+    expect(toggleButton).toHaveAttribute('aria-expanded', 'true');
+    expect(await screen.findByText('Juan Dela Cruz')).toBeInTheDocument();
+    expect(screen.getByText('Maria Santos')).toBeInTheDocument();
+
+    // Collapse
+    await userEvent.click(toggleButton);
+    expect(toggleButton).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('Juan Dela Cruz')).not.toBeInTheDocument();
   });
 });
