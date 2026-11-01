@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, connectAuthEmulator, browserLocalPersistence, setPersistence } from 'firebase/auth';
+import { getAuth, connectAuthEmulator } from 'firebase/auth';
 import {
   initializeFirestore,
   connectFirestoreEmulator,
@@ -27,13 +27,6 @@ const app = initializeApp(firebaseConfig);
 
 // Initialize Firebase services
 export const auth = getAuth(app);
-
-// Explicitly ensure browserLocalPersistence so authentication state persists across tabs and windows
-if (typeof window !== 'undefined') {
-  setPersistence(auth, browserLocalPersistence).catch((err) => {
-    logger.warn('Failed to set browserLocalPersistence:', err);
-  });
-}
 
 // Multi-tab IndexedDB cache configuration across Safari/WebKit, Chrome, Firefox
 let localCacheSetting;

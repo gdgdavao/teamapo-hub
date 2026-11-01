@@ -11,6 +11,8 @@ import {
   signInWithRedirect,
   getRedirectResult,
   sendPasswordResetEmail,
+  setPersistence,
+  inMemoryPersistence,
 } from 'firebase/auth';
 import { doc, setDoc, serverTimestamp, updateDoc, onSnapshot, getDoc } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
@@ -28,7 +30,7 @@ interface AuthContextType {
   userProfile: User | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
-  signInWithGoogle: () => Promise<void>;
+  signInWithGoogle: () => Promise<{ redirected?: boolean } | void>;
   logout: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   updateUserProfile: (data: Partial<User>) => Promise<void>;
@@ -83,11 +85,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const popupClosedCountRef = useRef(0);
 
   /**
-   * Consumes Google SSO redirect credentials on mount (best-effort, once per app session).
+   * Consumes Google SSO redirect credentials on mount (best-effort, only when a redirect was actually initiated).
+   *
+   * Safari ITP and cross-origin iframe security policies block proactive getRedirectResult calls
+   * if no redirect occurred, surfacing spurious 'auth/network-request-failed' toasts on regular page loads.
    */
   useEffect(() => {
+    if (typeof window === 'undefined') return;
     if (redirectHandledRef.current) return;
     redirectHandledRef.current = true;
+
+    let hasPendingRedirect = false;
+    try {
+      hasPendingRedirect = sessionStorage.getItem('teamapo:pendingGoogleRedirect') === 'true';
+      sessionStorage.removeItem('teamapo:pendingGoogleRedirect');
+    } catch {
+      // storage unavailable / blocked
+    }
+
+    if (!hasPendingRedirect) return;
 
     getRedirectResult(auth)
       .then(async (result) => {
@@ -204,7 +220,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signIn = useCallback(async (email: string, password: string) => {
     try {
-      const result = await signInWithEmailAndPassword(auth, email, password);
+      let result;
+      try {
+        result = await signInWithEmailAndPassword(auth, email, password);
+      } catch (signInErr: any) {
+        // If Safari Private Browsing / storage restriction caused a token persistence failure
+        // wrapped as auth/network-request-failed, fallback to in-memory persistence and retry once.
+        if (signInErr?.code === 'auth/network-request-failed') {
+          logger.warn('Sign-in encountered network-request-failed; attempting in-memory persistence retry');
+          try {
+            await setPersistence(auth, inMemoryPersistence);
+            result = await signInWithEmailAndPassword(auth, email, password);
+          } catch {
+            throw signInErr;
+          }
+        } else {
+          throw signInErr;
+        }
+      }
 
       // Verify the user profile document exists in Firestore
       const userSnap = await getDoc(doc(db, 'users', result.user.uid));
@@ -229,13 +262,42 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
-  const signInWithGoogle = useCallback(async () => {
+  const signInWithGoogle = useCallback(async (): Promise<{ redirected?: boolean } | void> => {
     const provider = new GoogleAuthProvider();
     provider.setCustomParameters({ prompt: 'select_account' });
 
     try {
-      const result = await signInWithPopup(auth, provider);
-      popupClosedCountRef.current = 0;
+      let result;
+      try {
+        result = await signInWithPopup(auth, provider);
+        popupClosedCountRef.current = 0;
+      } catch (popupErr: any) {
+        const code = popupErr?.code || '';
+        if (code === 'auth/popup-closed-by-user') {
+          popupClosedCountRef.current += 1;
+        }
+
+        const shouldFallbackToRedirect =
+          code === 'auth/popup-blocked' ||
+          code === 'auth/operation-not-supported-in-this-environment' ||
+          code === 'auth/network-request-failed' ||
+          (code === 'auth/popup-closed-by-user' && popupClosedCountRef.current > 1);
+
+        if (shouldFallbackToRedirect) {
+          logger.warn(`Google popup failed (${code || 'unknown'}); falling back to redirect flow`);
+          if (typeof window !== 'undefined') {
+            try {
+              sessionStorage.setItem('teamapo:pendingGoogleRedirect', 'true');
+            } catch {
+              // ignore
+            }
+          }
+          await signInWithRedirect(auth, provider);
+          return { redirected: true };
+        }
+
+        throw popupErr;
+      }
 
       // Verify the user profile document exists in Firestore
       const userSnap = await getDoc(doc(db, 'users', result.user.uid));
@@ -250,24 +312,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       toast.success(`Welcome, ${result.user.displayName || result.user.email}.`);
+      return { redirected: false };
     } catch (error: any) {
-      const code = error?.code || '';
-      if (code === 'auth/popup-closed-by-user') {
-        popupClosedCountRef.current += 1;
-      }
-
-      const shouldFallbackToRedirect =
-        code === 'auth/popup-blocked' ||
-        code === 'auth/operation-not-supported-in-this-environment' ||
-        code === 'auth/network-request-failed' ||
-        (code === 'auth/popup-closed-by-user' && popupClosedCountRef.current > 1);
-
-      if (shouldFallbackToRedirect) {
-        logger.warn(`Google popup failed (${code || 'unknown'}); falling back to redirect flow`);
-        await signInWithRedirect(auth, provider);
-        return;
-      }
-
       setLoading(false);
       logger.error('Google sign in error:', error);
       throw error;
