@@ -19,6 +19,14 @@ export const AUTH_ERROR_MESSAGES: Record<string, string> = {
   'auth/unauthorized-domain': 'This domain is not authorized for sign-in. Please contact an administrator to verify the domain settings.',
   'auth/expired-action-code': 'This link has expired. Please request a new one.',
   'auth/invalid-action-code': 'This link is invalid or has already been used. Please request a new one.',
+  'auth/operation-not-allowed': 'Google sign-in is not enabled for this project. Please contact an administrator.',
+  'auth/operation-not-supported-in-this-environment': 'Sign-in is not supported in this browser environment. Please try standard Safari or sign in with email and password.',
+  'auth/account-exists-with-different-credential': 'An account already exists with this email address using a different sign-in method.',
+  'auth/credential-already-in-use': 'This credential is already linked to another account.',
+  'auth/web-storage-unsupported': 'Browser storage is disabled. Please disable Private Browsing or allow cookies to sign in.',
+  'auth/missing-or-invalid-nonce': 'Authentication session expired. Please try again.',
+  'auth/timeout': 'Authentication timed out. Please check your connection and try again.',
+  'auth/internal-error': 'An internal authentication error occurred. Please try again.',
 };
 
 const DEFAULT_FALLBACK = 'Unable to sign in. Please try again.';

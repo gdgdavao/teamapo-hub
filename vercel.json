@@ -31,6 +31,10 @@
       ],
       "dest": "/api/event-meta?id=$1"
     },
+    {
+      "src": "^/__/auth/(.*)$",
+      "dest": "https://project-iris-gdgdavao.firebaseapp.com/__/auth/$1"
+    },
     { "src": "/(.*)", "dest": "/index.html" }
   ]
 }

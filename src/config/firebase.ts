@@ -63,21 +63,31 @@ if (shouldUseEmulator && !emulatorsConnected) {
   logger.log('🔧 Connecting to Firebase Emulators...');
   
   try {
-    // Connect to Auth emulator (bind directly to 127.0.0.1 to prevent IPv6 loopback flakiness)
-    connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
-    logger.log('✅ Connected to Auth Emulator');
+    // When accessing dev server from a physical device on the same LAN (e.g. via --host),
+    // connect to the emulator using the current LAN hostname rather than loopback 127.0.0.1.
+    const emulatorHost =
+      typeof window !== 'undefined' &&
+      window.location.hostname &&
+      window.location.hostname !== 'localhost' &&
+      window.location.hostname !== '127.0.0.1'
+        ? window.location.hostname
+        : '127.0.0.1';
+
+    // Connect to Auth emulator
+    connectAuthEmulator(auth, `http://${emulatorHost}:9099`, { disableWarnings: true });
+    logger.log(`✅ Connected to Auth Emulator on ${emulatorHost}:9099`);
     
     // Connect to Firestore emulator
-    connectFirestoreEmulator(db, '127.0.0.1', 8080);
-    logger.log('✅ Connected to Firestore Emulator');
+    connectFirestoreEmulator(db, emulatorHost, 8080);
+    logger.log(`✅ Connected to Firestore Emulator on ${emulatorHost}:8080`);
     
     // Connect to Functions emulator
-    connectFunctionsEmulator(functions, '127.0.0.1', 5001);
-    logger.log('✅ Connected to Functions Emulator');
+    connectFunctionsEmulator(functions, emulatorHost, 5001);
+    logger.log(`✅ Connected to Functions Emulator on ${emulatorHost}:5001`);
     
     // Connect to Storage emulator
-    connectStorageEmulator(storage, '127.0.0.1', 9199);
-    logger.log('✅ Connected to Storage Emulator');
+    connectStorageEmulator(storage, emulatorHost, 9199);
+    logger.log(`✅ Connected to Storage Emulator on ${emulatorHost}:9199`);
     
     emulatorsConnected = true;
     logger.log('🚀 All Firebase services connected to emulators');
