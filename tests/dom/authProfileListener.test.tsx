@@ -33,7 +33,6 @@ vi.mock('firebase/auth', async (importOriginal) => {
     getRedirectResult: mockGetRedirectResult,
     signInWithEmailAndPassword: mockSignInWithEmailAndPassword,
     setPersistence: mockSetPersistence,
-    inMemoryPersistence: { type: 'NONE' },
   };
 });
 
@@ -234,7 +233,10 @@ describe('AuthContext profile listener retry & resilience contract', () => {
     });
 
     // Invariant: setPersistence must switch to in-memory mode, then re-attempt sign-in
-    expect(mockSetPersistence).toHaveBeenCalledWith(expect.anything(), { type: 'NONE' });
+    expect(mockSetPersistence).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ type: 'NONE' })
+    );
     expect(mockSignInWithEmailAndPassword).toHaveBeenCalledTimes(2);
   });
 });
