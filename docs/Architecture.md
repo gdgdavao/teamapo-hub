@@ -273,7 +273,8 @@ The serverless backend in `functions/main.py` is implemented using **Python 3.13
 * `get_event_statistics` / `getEventStatistics` / `getEventAnalytics`: Real-time calculation of ticket velocity, gross volume, and check-in rates.
 
 #### Registration & Payments
-* `createAnonymousRegistration`: Transactionally creates an attendee registration, verifies capacity and ticket tier availability, validates promo codes, and generates a CSPRNG `walletPassToken`.
+* `submitPaidRegistration`: Atomically reserves ticket tier inventory, stores proof image in Storage, creates `/registrations` (status: `'processing'`) and `/paymentProofs` (status: `'pending'`) documents with `clientRequestId` idempotency and automatic compensation rollback if the transaction fails.
+* `createAnonymousRegistration`: Transactionally creates an attendee registration for free tickets, verifies capacity and ticket tier availability, validates promo codes, and generates a CSPRNG `walletPassToken`. Rejects paid tiers without proof.
 * `validateRegistration`: Verifies ticket availability, promo code validity, and order limits.
 * `validatePromoCode`: Validates a promo code against `events/{eventId}/config/promoCodes` server-side without leaking secret codes or usage quotas.
 * `registerForEvent`: Atomically records the registration, updates ticket sales counts, and dispatches confirmation emails.
@@ -336,15 +337,14 @@ sequenceDiagram
         PyFn->>Email: Send ticket email with QR badge
         Email-->>Attendee: Delivers Confirmation Email
     else Paid Event - Manual Proof Upload
-        Web->>PyFn: createAnonymousRegistration(orderData)
-        PyFn->>FS: Create /registrations doc (paymentStatus: 'pending'), reserve ticket
-        PyFn-->>Web: paymentLinkToken (single use, 24h expiry)
-        Web-->>Attendee: Redirect to /payment/:registrationId?t=token
-        Attendee->>Web: Transfers via bank/GCash offline
-        Web->>Storage: Uploads proof screenshot
-        Web->>PyFn: submitAnonymousPaymentProof(token, image, reference)
-        PyFn->>FS: Create /paymentProofs doc (status: 'pending')
-        PyFn->>FS: Set paymentStatus: 'processing', consume payment link token
+        Web-->>Attendee: Redirect to /payment/:tempRegistrationId
+        Attendee->>Web: Transfers via bank/GCash offline & uploads screenshot
+        Web->>PyFn: submitPaidRegistration(orderData + proofImageBase64 + clientRequestId)
+        PyFn->>Storage: Uploads proof screenshot
+        PyFn->>FS: Atomically creates /registrations (processing) + /paymentProofs (pending), decrements capacity
+        PyFn-->>Web: Success (registrationId, proofId)
+        Web->>PyFn: sendConfirmationEmail(registrationId, requiresPayment: true)
+        PyFn->>Email: Delivers submission confirmation email
         Note over Web,FS: Awaits Organizer Approval (see 5.2)
     end
 ```

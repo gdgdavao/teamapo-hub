@@ -6,6 +6,7 @@ import {
   browserLocalPersistence,
   browserSessionPersistence,
   inMemoryPersistence,
+  browserPopupRedirectResolver,
 } from 'firebase/auth';
 import {
   initializeFirestore,
@@ -65,6 +66,7 @@ try {
       browserSessionPersistence,
       inMemoryPersistence,
     ],
+    popupRedirectResolver: browserPopupRedirectResolver,
   });
 } catch {
   authInstance = getAuth(app);

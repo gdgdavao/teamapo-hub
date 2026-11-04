@@ -910,10 +910,15 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
       return;
     }
 
-    if (!window.confirm(
-      `Are you sure you want to approve ${pendingPayments.length} payment(s)?\n\n` +
-      `This will mark their payment status as "paid" and verification as "approved".`
-    )) {
+    const withoutProof = pendingPayments.filter(r => !r.paymentProof && (r.totalAmount || 0) > 0);
+    const confirmMessage = withoutProof.length > 0
+      ? `Are you sure you want to approve ${pendingPayments.length} payment(s)?\n\n` +
+        `⚠️ WARNING: ${withoutProof.length} registration(s) have NO payment proof on file and will be force-approved without verification.\n\n` +
+        `This will mark their payment status as "paid".`
+      : `Are you sure you want to approve ${pendingPayments.length} payment(s)?\n\n` +
+        `This will mark their payment status as "paid" and verification as "approved".`;
+
+    if (!window.confirm(confirmMessage)) {
       return;
     }
 
@@ -1240,7 +1245,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
     }
   };
 
-  const getStatusBadge = (status: DisplayStatus | string) => {
+  const getStatusBadge = (status: DisplayStatus | string, reg?: AttendeeRegistration) => {
     switch (status) {
       case 'attended':
         return (
@@ -1273,13 +1278,24 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
           </Badge>
         );
       case 'pending':
-      default:
+      default: {
+        const isPaid = (reg?.totalAmount ?? 0) > 0 || (reg?.pricing?.currentPrice ?? 0) > 0 || (reg?.event?.ticketPrice ?? 0) > 0;
+        const hasProof = !!reg?.paymentProof;
+        if (isPaid && !hasProof) {
+          return (
+            <Badge tone="neutral">
+              <ClockIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              <span>Awaiting Proof</span>
+            </Badge>
+          );
+        }
         return (
           <Badge tone="warning">
             <ClockIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
             <span>Needs Review</span>
           </Badge>
         );
+      }
     }
   };
 
@@ -1727,7 +1743,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
                         </h3>
                         <div className="flex items-center space-x-1.5 flex-wrap gap-1">
                           {/* Primary Lifecycle Status Badge */}
-                          {getStatusBadge(registration.status)}
+                          {getStatusBadge(registration.status, registration)}
 
                           {/* Actionable or contextual badges only */}
                           {registration.paymentStatus === 'failed' && (

@@ -40,9 +40,10 @@ describe('Firebase Configuration & Safari Resilience', () => {
   });
 
   describe('Firebase Auth & Firestore Services', () => {
-    it('exports a valid auth instance', () => {
+    it('exports a valid auth instance with popup redirect resolver configured', () => {
       expect(auth).toBeDefined();
       expect(typeof auth.app).toBe('object');
+      expect((auth as any)._popupRedirectResolver).toBeDefined();
     });
 
     it('exports a valid firestore instance', () => {

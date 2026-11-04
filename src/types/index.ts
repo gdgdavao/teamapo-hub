@@ -328,6 +328,8 @@ export interface Registration {
   paymentLinkToken?: string;
   paymentLinkExpiresAt?: Timestamp; // Expiry timestamp
   paymentLinkStatus?: 'active' | 'consumed' | 'expired';
+  /** Client-generated idempotency key to prevent duplicate submissions on retry */
+  clientRequestId?: string;
   // Google Wallet pass token (server-minted on first transition to approved/paid)
   walletPassToken?: string;
   attendanceStatus: AttendanceStatus;

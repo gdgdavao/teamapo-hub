@@ -200,20 +200,21 @@ describe('Home states and interactions', () => {
 
   it('switches between Registrations and Revenue series and changes time ranges in TrendPanel', async () => {
     const user = userEvent.setup();
+    const now = Date.now();
 
     const registrations = [
       {
-        registrationDate: new Date('2026-10-03T02:00:00Z'),
+        registrationDate: new Date(now - 2 * 24 * 60 * 60 * 1000),
         paymentStatus: 'paid',
         totalAmount: 500,
       },
       {
-        registrationDate: new Date('2026-10-04T05:00:00Z'),
+        registrationDate: new Date(now - 1 * 24 * 60 * 60 * 1000),
         paymentStatus: 'paid',
         totalAmount: 250,
       },
       {
-        registrationDate: new Date('2026-10-04T06:00:00Z'),
+        registrationDate: new Date(now - 1 * 24 * 60 * 60 * 1000),
         paymentStatus: 'pending',
         totalAmount: 999,
       },

@@ -183,7 +183,7 @@ export const buildBuckets = (
   const firstWeek = startOfWeekKey(startKey);
   const lastWeek = startOfWeekKey(endKey);
   const keys: string[] = [];
-  for (let offset = 0; offset <= days; offset += 7) {
+  for (let offset = 0; offset <= days + 7; offset += 7) {
     const key = shiftKey(firstWeek, offset);
     if (key > lastWeek) break;
     keys.push(key);

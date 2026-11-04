@@ -23,7 +23,7 @@ import { httpsCallable } from 'firebase/functions';
 import { db, storage, functions } from '../config/firebase';
 import { logger } from '../utils/logger';
 import { generateWalletPassToken } from '../utils/passArtwork';
-import { PaymentProof, PaymentDetails } from '../types';
+import { PaymentProof, PaymentDetails, TicketPricing } from '../types';
 import { AuditLogService } from './auditLogService';
 import { EmailService } from './emailService';
 
@@ -49,6 +49,28 @@ export class PaymentService {
   private static readonly REGISTRATIONS_COLLECTION = 'registrations';
   private static readonly EVENTS_COLLECTION = 'events';
   private static readonly PAYMENT_PROOFS_PATH = 'payment-proofs';
+  public static readonly PAYMENT_PROOF_MAX_BYTES = 5 * 1024 * 1024; // 5MB limit
+
+  /**
+   * Cross-browser File to base64 conversion using native FileReader (WebKit/Safari, Firefox, Chromium).
+   * Safe for files up to 5MB, avoids call stack overflow and memory crashes on mobile browsers.
+   */
+  static async fileToBase64(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        const base64Index = result.indexOf(';base64,');
+        if (base64Index !== -1) {
+          resolve(result.substring(base64Index + 8));
+        } else {
+          resolve(result);
+        }
+      };
+      reader.onerror = () => reject(new Error('Failed to read image file'));
+      reader.readAsDataURL(file);
+    });
+  }
 
   /**
    * Upload payment proof image to Firebase Storage
@@ -120,7 +142,7 @@ export class PaymentService {
   }
 
   /**
-   * Submit payment proof for verification
+   * Submit payment proof for verification (legacy flow with paymentToken)
    */
   static async submitPaymentProof(data: {
     registrationId: string;
@@ -138,10 +160,10 @@ export class PaymentService {
   }): Promise<string> {
     try {
       if (!data.paymentToken || !data.proofImageFile) throw new Error('Payment token and image are required');
-      const bytes = new Uint8Array(await data.proofImageFile.arrayBuffer());
-      if (bytes.byteLength > 4 * 1024 * 1024) throw new Error('Payment proof image must be smaller than 4MB');
-      let binary = '';
-      bytes.forEach(byte => { binary += String.fromCharCode(byte); });
+      if (data.proofImageFile.size > this.PAYMENT_PROOF_MAX_BYTES) {
+        throw new Error('Payment proof image must be smaller than 5MB');
+      }
+      const imageBase64 = await this.fileToBase64(data.proofImageFile);
       const submit = httpsCallable(functions, 'submitAnonymousPaymentProof');
       const result = await submit({
         registrationId: data.registrationId,
@@ -149,14 +171,65 @@ export class PaymentService {
         transactionId: data.transactionId,
         paymentMethod: data.paymentMethod,
         notes: data.notes,
-        imageBase64: btoa(binary),
+        imageBase64,
         contentType: data.proofImageFile.type || 'image/jpeg',
         fileName: data.proofImageFile.name,
       });
       return (result.data as { proofId: string }).proofId;
-    } catch (error) {
+    } catch (error: any) {
       logger.error('Error submitting payment proof:', error);
-      throw new Error('Failed to submit payment proof');
+      throw error instanceof Error ? error : new Error(error?.message || 'Failed to submit payment proof');
+    }
+  }
+
+  /**
+   * Atomically submit a paid registration with payment proof in a single trusted operation.
+   * If any step fails, nothing is committed to Firestore or ticket capacity.
+   */
+  static async submitPaidRegistration(data: {
+    eventId: string;
+    registrationData: Record<string, any>;
+    proofImageFile: File;
+    transactionId?: string;
+    paymentMethod?: string;
+    notes?: string;
+    clientRequestId?: string;
+  }): Promise<{
+    registrationId: string;
+    proofId: string;
+    pricing: TicketPricing;
+  }> {
+    try {
+      if (!data.proofImageFile) {
+        throw new Error('Payment proof image is required');
+      }
+      if (data.proofImageFile.size > this.PAYMENT_PROOF_MAX_BYTES) {
+        throw new Error('Payment proof image must be smaller than 5MB');
+      }
+
+      const imageBase64 = await this.fileToBase64(data.proofImageFile);
+      const submit = httpsCallable(functions, 'submitPaidRegistration');
+      const result = await submit({
+        eventId: data.eventId,
+        registrationData: data.registrationData,
+        proof: {
+          imageBase64,
+          contentType: data.proofImageFile.type || 'image/jpeg',
+          transactionId: data.transactionId?.trim() || undefined,
+          paymentMethod: data.paymentMethod,
+          notes: data.notes?.trim() || undefined,
+        },
+        clientRequestId: data.clientRequestId,
+      });
+
+      return result.data as {
+        registrationId: string;
+        proofId: string;
+        pricing: TicketPricing;
+      };
+    } catch (error: any) {
+      logger.error('Error submitting paid registration:', error);
+      throw error instanceof Error ? error : new Error(error?.message || 'Failed to submit paid registration');
     }
   }
 

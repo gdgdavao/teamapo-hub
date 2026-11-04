@@ -27,6 +27,7 @@ export const AUTH_ERROR_MESSAGES: Record<string, string> = {
   'auth/missing-or-invalid-nonce': 'Authentication session expired. Please try again.',
   'auth/timeout': 'Authentication timed out. Please check your connection and try again.',
   'auth/internal-error': 'An internal authentication error occurred. Please try again.',
+  'auth/argument-error': 'Authentication setup error. Please refresh and try again.',
 };
 
 const DEFAULT_FALLBACK = 'Unable to sign in. Please try again.';
