@@ -76,5 +76,9 @@ describe('Atomic Paid Registration and Ghost Prevention Invariants', () => {
     expect(attendeesTab).toContain('Needs Review');
     expect(attendeesTab).toContain('WARNING:');
     expect(attendeesTab).toContain('have NO payment proof on file and will be force-approved without verification');
+    // Ensure paymentProofId and rawPaymentStatus are preserved and checked
+    expect(attendeesTab).toContain('rawPaymentStatus: reg.paymentStatus');
+    expect(attendeesTab).toContain('(reg as any).paymentProofId || reg.paymentProof?.id');
+    expect(attendeesTab).toContain('const hasProof = !!reg?.paymentProof || !!reg?.paymentProofId || reg?.rawPaymentStatus === \'processing\'');
   });
 });

@@ -271,6 +271,8 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
             status: resolveDisplayStatus(reg),
             registrationDate: toISOStringSafe(reg.registrationDate),
             paymentStatus: mapPaymentStatus(reg.paymentStatus),
+            rawPaymentStatus: reg.paymentStatus,
+            paymentProofId: (reg as any).paymentProofId || reg.paymentProof?.id || undefined,
             paymentProof: reg.paymentProof ? {
               id: reg.paymentProof.id,
               registrationId: reg.paymentProof.registrationId,
@@ -320,11 +322,17 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
     const fetchLatestProof = async () => {
       if (!viewingRegistration || viewingRegistration.paymentProof) return;
       try {
-        const eventIdToQuery = viewingRegistration.event?.id || eventId;
-        const proof = await PaymentService.getLatestPaymentProofByRegistrationId(
-          viewingRegistration.id,
-          eventIdToQuery
-        );
+        let proof = null;
+        if (viewingRegistration.paymentProofId) {
+          proof = await PaymentService.getPaymentProofById(viewingRegistration.paymentProofId);
+        }
+        if (!proof) {
+          const eventIdToQuery = viewingRegistration.event?.id || eventId;
+          proof = await PaymentService.getLatestPaymentProofByRegistrationId(
+            viewingRegistration.id,
+            eventIdToQuery
+          );
+        }
         if (proof) {
           setViewingRegistration(prev => prev ? {
             ...prev,
@@ -430,8 +438,8 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
       // Find the registration
       const registration = registrations.find(r => r.id === registrationId);
 
-      // Ensure we have a payment proof; if missing, try to fetch the latest
-      let proofId: string | null = registration?.paymentProof?.id || null;
+      // Ensure we have a payment proof; if missing, check paymentProofId, then try to fetch the latest
+      let proofId: string | null = registration?.paymentProof?.id || registration?.paymentProofId || null;
       if (!proofId) {
         const eventIdToQuery = registration?.event?.id || eventId;
         const latestProof = await PaymentService.getLatestPaymentProofByRegistrationId(registrationId, eventIdToQuery);
@@ -461,6 +469,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
         return {
           ...reg,
           paymentStatus: updatedPaymentStatus,
+          rawPaymentStatus: updatedPaymentStatus,
           paymentProof: updatedProof
         };
       }));
@@ -478,6 +487,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
         return {
           ...prev,
           paymentStatus: updatedPaymentStatus,
+          rawPaymentStatus: updatedPaymentStatus,
           paymentProof: updatedProof
         };
       });
@@ -536,6 +546,8 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
     if (resolveDisplayStatus(registration) === 'rejected') return false;
     return (
       registration.paymentStatus === 'pending' ||
+      registration.rawPaymentStatus === 'processing' ||
+      !!registration.paymentProofId ||
       (!!registration.paymentProof &&
         registration.paymentProof.verificationStatus === 'pending')
     );
@@ -669,8 +681,10 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
     // Also find already-approved registrations with pending payments
     const approvedRegsWithPendingPayment = selectedRegs.filter(r => 
       r.status === 'approved' && 
-      r.paymentProof && 
-      r.paymentProof.verificationStatus === 'pending'
+      ((r.paymentProof && r.paymentProof.verificationStatus === 'pending') ||
+        !!r.paymentProofId ||
+        r.rawPaymentStatus === 'processing' ||
+        r.paymentStatus === 'pending')
     );
     
     // Combine both for processing
@@ -691,15 +705,18 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
       return;
     }
 
+    const hasProofAttached = (r: Registration) =>
+      (!!r.paymentProof && r.paymentProof.verificationStatus === 'pending') ||
+      !!r.paymentProofId ||
+      r.rawPaymentStatus === 'processing';
+
     // Count registrations with and without payment proof
-    const pendingRegsWithPaymentProof = pendingRegs.filter(r => 
-      r.paymentProof && r.paymentProof.verificationStatus === 'pending'
-    );
+    const pendingRegsWithPaymentProof = pendingRegs.filter(r => hasProofAttached(r));
     const pendingRegsWithoutPaymentProof = pendingRegs.filter(r => 
-      !r.paymentProof && r.paymentStatus !== 'paid'
+      !hasProofAttached(r) && r.paymentStatus !== 'paid'
     );
     const approvedRegsWithoutPaymentProof = approvedRegsWithPendingPayment.filter(r =>
-      !r.paymentProof && r.paymentStatus !== 'paid'
+      !hasProofAttached(r) && r.paymentStatus !== 'paid'
     );
 
     const totalWithoutProof = pendingRegsWithoutPaymentProof.length + approvedRegsWithoutPaymentProof.length;
@@ -711,8 +728,8 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
       (pendingRegsWithPaymentProof.length > 0 
         ? `• Approve ${pendingRegsWithPaymentProof.length} payment(s) with proof\n`
         : '') +
-      (approvedRegsWithPendingPayment.length > 0 && approvedRegsWithPendingPayment.filter(r => r.paymentProof).length > 0
-        ? `• Approve ${approvedRegsWithPendingPayment.filter(r => r.paymentProof).length} payment(s) for already-approved registrations\n`
+      (approvedRegsWithPendingPayment.length > 0 && approvedRegsWithPendingPayment.filter(r => hasProofAttached(r)).length > 0
+        ? `• Approve ${approvedRegsWithPendingPayment.filter(r => hasProofAttached(r)).length} payment(s) for already-approved registrations\n`
         : '') +
       (totalWithoutProof > 0
         ? `• [FORCE] Approve ${totalWithoutProof} payment(s) WITHOUT proof\n`
@@ -735,8 +752,9 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
     for (const reg of pendingRegs) {
       try {
         const isFree = getRegistrationTotalAmount(reg) === 0;
+        const proofId = reg.paymentProof?.id || reg.paymentProofId;
 
-        if (reg.paymentProof && reg.paymentProof.verificationStatus === 'pending') {
+        if (proofId && hasProofAttached(reg)) {
           // Has pending payment proof:
           // 1. Approve registration without sending email yet (payment pending)
           await RegistrationService.updateRegistrationStatus(reg.id, 'approved');
@@ -744,7 +762,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
 
           // 2. Verify payment proof (which verifies payment and sends the single approval notification)
           try {
-            await PaymentService.verifyPaymentProof(reg.paymentProof.id, 'approved', verifierUid, verifierName);
+            await PaymentService.verifyPaymentProof(proofId, 'approved', verifierUid, verifierName);
             paymentSuccessCount++;
             notificationsSentCount++;
           } catch (paymentError) {
@@ -789,9 +807,10 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
 
     // Process already-approved registrations with pending payments
     for (const reg of approvedRegsWithPendingPayment) {
-      if (reg.paymentProof && reg.paymentProof.verificationStatus === 'pending') {
+      const proofId = reg.paymentProof?.id || reg.paymentProofId;
+      if (proofId && hasProofAttached(reg)) {
         try {
-          await PaymentService.verifyPaymentProof(reg.paymentProof.id, 'approved', verifierUid, verifierName);
+          await PaymentService.verifyPaymentProof(proofId, 'approved', verifierUid, verifierName);
           paymentSuccessCount++;
           notificationsSentCount++;
         } catch (paymentError) {
@@ -856,14 +875,17 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
 
         // Update payment status if payment was approved
         const originalReg = pendingReg || approvedRegWithPendingPayment;
-        if (originalReg && originalReg.paymentProof && originalReg.paymentProof.verificationStatus === 'pending') {
+        if (originalReg && hasProofAttached(originalReg)) {
           updated.paymentStatus = 'paid';
-          updated.paymentProof = {
-            ...originalReg.paymentProof,
-            verificationStatus: 'approved' as const,
-            verifiedAt: new Date().toISOString(),
-            verifiedBy: verifierName
-          };
+          updated.rawPaymentStatus = 'paid';
+          if (originalReg.paymentProof) {
+            updated.paymentProof = {
+              ...originalReg.paymentProof,
+              verificationStatus: 'approved' as const,
+              verifiedAt: new Date().toISOString(),
+              verifiedBy: verifierName
+            };
+          }
         }
 
         return updated;
@@ -886,16 +908,21 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
   // Bulk approve payments
   const handleBulkApprovePayments = async () => {
     const selectedRegs = registrations.filter(r => selectedRegistrations.has(r.id));
-    // Filter by paymentStatus instead of paymentProof.verificationStatus
+    const hasProofAttached = (r: Registration) =>
+      (!!r.paymentProof && r.paymentProof.verificationStatus === 'pending') ||
+      !!r.paymentProofId ||
+      r.rawPaymentStatus === 'processing';
+
     const pendingPayments = selectedRegs.filter(r => 
       r.paymentStatus === 'pending' || 
-      (r.paymentProof && r.paymentProof.verificationStatus === 'pending')
+      r.rawPaymentStatus === 'processing' ||
+      hasProofAttached(r)
     );
     
     if (pendingPayments.length === 0) {
       // Provide more detailed feedback
       const alreadyPaid = selectedRegs.filter(r => r.paymentStatus === 'paid');
-      const withPaymentProof = selectedRegs.filter(r => r.paymentProof);
+      const withPaymentProof = selectedRegs.filter(r => hasProofAttached(r) || !!r.paymentProof);
       const alreadyApproved = withPaymentProof.filter(r => r.paymentProof?.verificationStatus === 'approved');
       
       let message = 'No pending payments found in selected registrations.\n\n';
@@ -910,7 +937,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
       return;
     }
 
-    const withoutProof = pendingPayments.filter(r => !r.paymentProof && (r.totalAmount || 0) > 0);
+    const withoutProof = pendingPayments.filter(r => !hasProofAttached(r) && (r.totalAmount || 0) > 0);
     const confirmMessage = withoutProof.length > 0
       ? `Are you sure you want to approve ${pendingPayments.length} payment(s)?\n\n` +
         `⚠️ WARNING: ${withoutProof.length} registration(s) have NO payment proof on file and will be force-approved without verification.\n\n` +
@@ -932,13 +959,14 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
     for (const reg of pendingPayments) {
       try {
         const regRef = doc(db, 'registrations', reg.id);
+        const proofId = reg.paymentProof?.id || reg.paymentProofId;
         
-        if (reg.paymentProof && reg.paymentProof.verificationStatus === 'pending') {
+        if (proofId && hasProofAttached(reg)) {
           // If there's a payment proof, verify it through the service (dispatches single notification)
-          await PaymentService.verifyPaymentProof(reg.paymentProof.id, 'approved', verifierUid, verifierName);
+          await PaymentService.verifyPaymentProof(proofId, 'approved', verifierUid, verifierName);
           successCount++;
           notificationsSentCount++;
-        } else if (reg.paymentStatus === 'pending') {
+        } else if (reg.paymentStatus === 'pending' || reg.rawPaymentStatus === 'processing') {
           // If no payment proof but status is pending, force approve the payment
           await updateDoc(regRef, {
             paymentStatus: 'paid',
@@ -978,6 +1006,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
           return {
             ...reg,
             paymentStatus: 'paid' as const,
+            rawPaymentStatus: 'paid',
             paymentProof: reg.paymentProof ? {
               ...reg.paymentProof,
               verificationStatus: 'approved' as const,
@@ -1012,7 +1041,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
     }
 
     // Count registrations without payment proof
-    const withoutPaymentProof = notApproved.filter(r => !r.paymentProof);
+    const withoutPaymentProof = notApproved.filter(r => !r.paymentProof && !r.paymentProofId && r.rawPaymentStatus !== 'processing');
     
     if (!window.confirm(
       `FORCE APPROVE ${notApproved.length} REGISTRATION(S)\n\n` +
@@ -1280,7 +1309,7 @@ const DEFAULT_TICKET_TYPE_LABEL = 'General Admission';
       case 'pending':
       default: {
         const isPaid = (reg?.totalAmount ?? 0) > 0 || (reg?.pricing?.currentPrice ?? 0) > 0 || (reg?.event?.ticketPrice ?? 0) > 0;
-        const hasProof = !!reg?.paymentProof;
+        const hasProof = !!reg?.paymentProof || !!reg?.paymentProofId || reg?.rawPaymentStatus === 'processing';
         if (isPaid && !hasProof) {
           return (
             <Badge tone="neutral">

@@ -75,6 +75,8 @@ export interface AttendeeRegistration {
   registrationStatus?: string;
   registrationDate: string;
   paymentStatus?: 'pending' | 'paid' | 'failed' | 'refunded';
+  rawPaymentStatus?: string;
+  paymentProofId?: string;
   paymentProof?: {
     id: string;
     registrationId: string;
@@ -200,7 +202,7 @@ const derivePaymentView = (
   if (registration.paymentStatus === 'paid') {
     return { kind: 'paid', label: 'PAID', tone: 'success' };
   }
-  if (proofStatus === 'pending') {
+  if (proofStatus === 'pending' || registration.paymentProofId || registration.rawPaymentStatus === 'processing') {
     return { kind: 'pending', label: 'AWAITING VERIFICATION', tone: 'warning' };
   }
   return { kind: 'pending', label: 'AWAITING PROOF', tone: 'neutral' };
@@ -1137,8 +1139,10 @@ export const RegistrationDetailsModal: React.FC<RegistrationDetailsModalProps> =
   // registration always has a proof: payment is a prerequisite for registration.
   const isFree = getRegistrationTotalAmount(registration) === 0;
   const hasPendingProof =
-    !!registration.paymentProof &&
-    registration.paymentProof.verificationStatus === 'pending';
+    (!!registration.paymentProof &&
+      registration.paymentProof.verificationStatus === 'pending') ||
+    !!registration.paymentProofId ||
+    registration.rawPaymentStatus === 'processing';
   const paymentView = derivePaymentView(registration, isFree);
 
   const isAlreadyAccepted =
