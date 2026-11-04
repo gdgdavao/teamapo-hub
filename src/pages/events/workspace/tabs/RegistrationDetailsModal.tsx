@@ -203,7 +203,7 @@ const derivePaymentView = (
   if (proofStatus === 'pending') {
     return { kind: 'pending', label: 'AWAITING VERIFICATION', tone: 'warning' };
   }
-  return { kind: 'pending', label: 'PENDING', tone: 'warning' };
+  return { kind: 'pending', label: 'AWAITING PROOF', tone: 'neutral' };
 };
 
 export interface ResolvedResponseField {

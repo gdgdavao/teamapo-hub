@@ -219,4 +219,112 @@ describe('TicketSelector Single Ticket per Person Contract', () => {
     expect(screen.getByText('Sold Out')).toBeInTheDocument();
     expect(screen.getByText(/Not yet on sale/i)).toBeInTheDocument();
   });
+
+  it('strictly locks sold-out tickets (30/30) with pointer-events-none, cursor-not-allowed, and refuses selection', async () => {
+    const user = userEvent.setup();
+    const handleSelectionChange = vi.fn();
+
+    const mixedTickets: TicketType[] = [
+      {
+        id: 't-sold-out-30',
+        name: 'Sold Out Tier',
+        price: 150,
+        currency: 'PHP',
+        maxQuantity: 30,
+        currentSold: 30,
+        isActive: true,
+        sortOrder: 0,
+      },
+      {
+        id: 't-available-50',
+        name: 'Available Tier',
+        price: 250,
+        currency: 'PHP',
+        maxQuantity: 50,
+        currentSold: 10,
+        isActive: true,
+        sortOrder: 1,
+      },
+    ];
+
+    render(
+      <TicketSelector
+        ticketTypes={mixedTickets}
+        onSelectionChange={handleSelectionChange}
+      />
+    );
+
+    const soldOutRadio = screen.getByRole('radio', { name: /Sold Out Tier.*sold out/i });
+    expect(soldOutRadio).toBeDisabled();
+
+    // Verify card wrapper label attributes
+    const soldOutCard = soldOutRadio.closest('label');
+    expect(soldOutCard).not.toBeNull();
+    expect(soldOutCard).toHaveClass('pointer-events-none');
+    expect(soldOutCard).toHaveClass('cursor-not-allowed');
+    expect(soldOutCard).not.toHaveClass('cursor-pointer');
+    expect(soldOutCard).toHaveAttribute('aria-disabled', 'true');
+
+    // Attempting to click sold-out card must NOT select it
+    await user.click(soldOutCard!);
+    expect(handleSelectionChange).not.toHaveBeenCalled();
+
+    // Available ticket card is active and selectable
+    const availableRadio = screen.getByRole('radio', { name: /Available Tier/i });
+    expect(availableRadio).not.toBeDisabled();
+    const availableCard = availableRadio.closest('label');
+    expect(availableCard).toHaveClass('cursor-pointer');
+    expect(availableCard).not.toHaveClass('pointer-events-none');
+
+    await user.click(availableRadio);
+    expect(handleSelectionChange).toHaveBeenCalledTimes(1);
+    expect(handleSelectionChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ticketTypeId: 't-available-50',
+        totalAmount: 250,
+      })
+    );
+  });
+
+  it('marks all tickets as unavailable when overall event capacity is reached', () => {
+    const handleSelectionChange = vi.fn();
+    const tickets: TicketType[] = [
+      {
+        id: 't-general',
+        name: 'General Admission',
+        price: 0,
+        currency: 'PHP',
+        isActive: true,
+        sortOrder: 0,
+        currentSold: 15,
+      },
+      {
+        id: 't-vip',
+        name: 'VIP',
+        price: 500,
+        currency: 'PHP',
+        isActive: true,
+        sortOrder: 1,
+        currentSold: 15,
+      },
+    ];
+
+    render(
+      <TicketSelector
+        ticketTypes={tickets}
+        eventMaxAttendees={30}
+        eventCurrentAttendees={30}
+        onSelectionChange={handleSelectionChange}
+      />
+    );
+
+    const radios = screen.getAllByRole('radio');
+    expect(radios).toHaveLength(2);
+    for (const radio of radios) {
+      expect(radio).toBeDisabled();
+      const card = radio.closest('label');
+      expect(card).toHaveClass('pointer-events-none');
+      expect(card).toHaveClass('cursor-not-allowed');
+    }
+  });
 });

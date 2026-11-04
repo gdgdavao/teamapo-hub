@@ -13,6 +13,7 @@ import {
   sendPasswordResetEmail,
   setPersistence,
   inMemoryPersistence,
+  browserPopupRedirectResolver,
 } from 'firebase/auth';
 import { doc, setDoc, serverTimestamp, updateDoc, onSnapshot, getDoc } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
@@ -269,7 +270,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       let result;
       try {
-        result = await signInWithPopup(auth, provider);
+        result = await signInWithPopup(auth, provider, browserPopupRedirectResolver);
         popupClosedCountRef.current = 0;
       } catch (popupErr: any) {
         const code = popupErr?.code || '';
@@ -292,7 +293,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               // ignore
             }
           }
-          await signInWithRedirect(auth, provider);
+          await signInWithRedirect(auth, provider, browserPopupRedirectResolver);
           return { redirected: true };
         }
 

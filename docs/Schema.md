@@ -139,6 +139,8 @@ Captures attendee registrations for specific events.
 | `paymentStatus` | `string` | Yes | `'pending'` | Enum: `'pending'`, `'processing'`, `'paid'`, `'failed'`, `'refunded'`, `'cancelled'`. |
 | `paymentDetails` | `map` | No | - | Manual payment verification summary (method, reference, paid timestamp). |
 | `paymentProof` | `map` | No | - | Manual payment verification summary snapshot. |
+| `paymentProofId` | `string` | No | - | Reference to `paymentProofs/{proofId}` document. |
+| `clientRequestId` | `string` | No | - | Client-generated idempotency key preventing duplicate submissions on retry. |
 | `paymentLinkToken` | `string` | No | - | Cryptographic token for one-time payment portal. |
 | `paymentLinkExpiresAt` | `timestamp`| No | - | Expiration timestamp for payment session. |
 | `paymentLinkStatus` | `string` | No | `'active'` | Enum: `'active'`, `'consumed'`, `'expired'`. |

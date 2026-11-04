@@ -43,6 +43,7 @@ const PaymentPage: React.FC = () => {
     proofImageFile: null as File | null,
     proofImagePreview: null as string | null
   });
+  const [clientRequestId] = useState(() => `req_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`);
 
   // Prevent navigation away after form submission
   useEffect(() => {
@@ -299,9 +300,6 @@ const PaymentPage: React.FC = () => {
       setSubmitting(true);
       setFormDisabled(true); // Disable the entire form
       
-      // Create the registration before uploading proof through the trusted function.
-      uploadToast = toast.loading('Creating registration...');
-      
       // Check if this is a temporary registration that needs to be created in Firestore
       if (registrationId!.startsWith('temp_')) {
         // Get temporary registration data from session storage
@@ -312,45 +310,42 @@ const PaymentPage: React.FC = () => {
         
         const tempRegistration = JSON.parse(tempData);
         
-        // Create the actual registration in Firestore
-        const actualRegistration = await RegistrationService.createPendingRegistration({
+        if (!paymentProof.proofImageFile) {
+          throw new Error('Please upload a payment proof image');
+        }
+
+        uploadToast = toast.loading('Submitting registration and payment proof...');
+        
+        // Atomically create registration and submit payment proof together in Cloud Functions
+        const actualRegistration = await PaymentService.submitPaidRegistration({
           eventId: tempRegistration.eventId,
-          ticketTypeId: tempRegistration.ticketTypeId,
-          quantity: tempRegistration.quantity,
-          promoCode: tempRegistration.promoCode,
-          userDetails: tempRegistration.userDetails,
-          customResponses: tempRegistration.customResponses,
-          agreeToTerms: tempRegistration.agreeToTerms,
-          subscribeToUpdates: tempRegistration.subscribeToUpdates
+          registrationData: {
+            eventId: tempRegistration.eventId,
+            ticketTypeId: tempRegistration.ticketTypeId,
+            quantity: tempRegistration.quantity,
+            promoCode: tempRegistration.promoCode,
+            userDetails: tempRegistration.userDetails,
+            customResponses: tempRegistration.customResponses,
+            agreeToTerms: tempRegistration.agreeToTerms,
+            subscribeToUpdates: tempRegistration.subscribeToUpdates
+          },
+          proofImageFile: paymentProof.proofImageFile,
+          transactionId: paymentProof.transactionId?.trim() || undefined,
+          paymentMethod: selectedConfig.name || paymentProof.paymentMethod,
+          notes: paymentProof.notes?.trim() || undefined,
+          clientRequestId,
         });
         
-        // Clean up session storage
-        sessionStorage.removeItem(`temp_registration_${registrationId}`);
-        
-        // Update registration ID for payment proof submission
+        // Update local registration ID and status
         const updatedRegistration = {
           ...registration,
-          id: actualRegistration.registrationId
+          id: actualRegistration.registrationId,
+          paymentStatus: 'processing' as const,
         };
         setRegistration(updatedRegistration as any);
-        
-        toast.dismiss(uploadToast);
-        uploadToast = toast.loading('Submitting payment proof...');
-        
-        // STEP 3: Submit payment proof with the actual registration ID
-        await PaymentService.submitPaymentProof({
-          registrationId: actualRegistration.registrationId,
-          attendeeName: tempRegistration.userDetails.name,
-          attendeeEmail: tempRegistration.userDetails.email,
-          eventTitle: event.title,
-          eventId: event.id,
-          ticketPrice: tempRegistration.totalAmount,
-           proofImageFile: paymentProof.proofImageFile,
-           paymentToken: actualRegistration.paymentLinkToken,
-          transactionId: paymentProof.transactionId || undefined,
-          paymentMethod: selectedConfig.name || paymentProof.paymentMethod,
-          notes: paymentProof.notes
-        });
+
+        // ONLY clean up session storage on SUCCESS to allow retry on error
+        sessionStorage.removeItem(`temp_registration_${registrationId}`);
 
         // Send confirmation email after successful submission
         try {

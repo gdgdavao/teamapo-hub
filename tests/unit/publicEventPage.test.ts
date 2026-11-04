@@ -131,4 +131,16 @@ describe('public event page', () => {
     // LegacyRegisterRedirect forwards /events/:eventId/register directly to /e/:eventId
     expect(legacyRedirect).toMatch(/\/e\/\$\{eventId\}/);
   });
+
+  it('evaluates event capacity and ticket availability dynamically for the hero button and status banner', () => {
+    // Capacity & availability variables are derived
+    expect(page).toContain('isEventAtCapacity');
+    expect(page).toContain('areAllTicketsSoldOut');
+    expect(page).toContain('areAllTicketsEnded');
+    expect(page).toContain('closedButtonLabel');
+
+    // Dynamic button label handles Sold Out vs Registration closed
+    expect(page).toMatch(/closedButtonLabel\s*=\s*areAllTicketsSoldOut\s*\?\s*['"]Sold Out['"]\s*:\s*['"]Registration closed['"]/);
+    expect(page).toContain('{closedButtonLabel}');
+  });
 });

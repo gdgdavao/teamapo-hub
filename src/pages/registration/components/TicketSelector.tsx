@@ -21,6 +21,8 @@ interface TicketSelectorProps {
   promoCodes?: PromoCode[];
   onSelectionChange: (selection: TicketSelection) => void;
   className?: string;
+  eventMaxAttendees?: number;
+  eventCurrentAttendees?: number;
 }
 
 export interface TicketSelection {
@@ -39,7 +41,9 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
   hasPromoCodes = false,
   promoCodes = [],
   onSelectionChange,
-  className = ''
+  className = '',
+  eventMaxAttendees,
+  eventCurrentAttendees,
 }) => {
   const [selectedTicketType, setSelectedTicketType] = useState<string>('');
   const [promoCode, setPromoCode] = useState<string>('');
@@ -112,6 +116,14 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
   }, [selectedTicketType, appliedPromoCode, ticketTypeIds]); // Use stable ticketTypeIds
 
   const handleTicketTypeChange = async (newTicketTypeId: string) => {
+    const target = ticketTypes.find(t => t.id === newTicketTypeId);
+    if (!target) return;
+    const available = getAvailableQuantity(target);
+    const windowStatus = getTicketSalesWindowStatus(target);
+    if (!windowStatus.isOpen || (available !== null && available <= 0)) {
+      return; // Strictly reject selection of sold-out or closed tickets
+    }
+
     setSelectedTicketType(newTicketTypeId);
     if (appliedPromoCode && eventId) {
       setIsValidatingPromo(true);
@@ -226,8 +238,20 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
 
   const getAvailableQuantity = (ticketType: TicketType): number | null => {
     if (!isTicketWindowOpen(ticketType)) return 0;
+
+    // If total event capacity has been reached, all tickets are unavailable
+    if (typeof eventMaxAttendees === 'number' && eventMaxAttendees > 0) {
+      const eventRemaining = Math.max(0, eventMaxAttendees - (eventCurrentAttendees || 0));
+      if (eventRemaining <= 0) return 0;
+      if (typeof ticketType.maxQuantity === 'number' && ticketType.maxQuantity > 0) {
+        const ticketRemaining = Math.max(0, ticketType.maxQuantity - (ticketType.currentSold || 0));
+        return Math.min(ticketRemaining, eventRemaining);
+      }
+      return eventRemaining;
+    }
+
     if (!ticketType.maxQuantity) return null; // Unlimited
-    return Math.max(0, ticketType.maxQuantity - ticketType.currentSold);
+    return Math.max(0, ticketType.maxQuantity - (ticketType.currentSold || 0));
   };
 
   const formatAmount = (amount: number): string => {
@@ -262,12 +286,13 @@ const TicketSelector: React.FC<TicketSelectorProps> = ({
     return (
       <label
         key={ticketType.id}
-        className={`relative block cursor-pointer rounded-lg border-2 p-6 transition-[border-color,background-color,box-shadow] duration-fast ease-quart ${
+        aria-disabled={!isAvailable}
+        className={`relative block rounded-lg border-2 p-6 transition-[border-color,background-color,box-shadow] duration-fast ease-quart ${
           isSelected
-            ? 'border-primary bg-primary-container'
+            ? 'border-primary bg-primary-container cursor-pointer'
             : isAvailable
-            ? 'border-outline-variant bg-surface hover:border-outline'
-            : 'cursor-not-allowed border-outline-variant bg-surface-container opacity-60'
+            ? 'cursor-pointer border-outline-variant bg-surface hover:border-outline'
+            : 'cursor-not-allowed pointer-events-none border-outline-variant bg-surface-container opacity-60 select-none'
         }`}
       >
         <input

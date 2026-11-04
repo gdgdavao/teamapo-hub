@@ -25,6 +25,7 @@ import { logger } from '../../utils/logger';
 import { toDateSafe } from '../../utils/dateUtils';
 import { formatEventLocation } from '../../utils/venueUtils';
 import { useAuth } from '../../contexts/AuthContext';
+import { isTicketWindowOpen } from '../../utils/pricing';
 
 interface EventRegistrationPageProps {
   isPreview?: boolean;
@@ -430,10 +431,36 @@ const EventRegistrationPage: React.FC<EventRegistrationPageProps> = ({ isPreview
     );
   }
 
-  // Check if registration is closed
-  const isRegistrationClosed = event.registrationStatus === 'closed';
+  // Check if registration is closed or tickets are unavailable
   const activeTicketTypes = event.ticketTypes?.filter(ticket => ticket.isActive !== false) || [];
   const hasPaidTicketOptions = activeTicketTypes.some(ticket => ticket.price > 0);
+
+  const isEventAtCapacity = Boolean(
+    typeof event.maxAttendees === 'number' &&
+    event.maxAttendees > 0 &&
+    (event.currentAttendees || 0) >= event.maxAttendees
+  );
+
+  const areAllTicketsSoldOut =
+    isEventAtCapacity ||
+    (activeTicketTypes.length > 0 &&
+      activeTicketTypes.every((t) => {
+        const isSoldOut = typeof t.maxQuantity === 'number' && t.maxQuantity > 0 && (t.currentSold || 0) >= t.maxQuantity;
+        return isSoldOut || !isTicketWindowOpen(t);
+      }) &&
+      activeTicketTypes.some((t) => typeof t.maxQuantity === 'number' && t.maxQuantity > 0 && (t.currentSold || 0) >= t.maxQuantity));
+
+  const areAllTicketsEnded =
+    activeTicketTypes.length > 0 &&
+    activeTicketTypes.every((t) => !isTicketWindowOpen(t));
+
+  const isRegistrationClosed =
+    event.registrationStatus === 'closed' ||
+    isEventAtCapacity ||
+    areAllTicketsSoldOut ||
+    areAllTicketsEnded;
+
+  const closedButtonLabel = areAllTicketsSoldOut ? 'Sold Out' : 'Registration closed';
 
   // The SEO block above already falls back to bannerUrl; the visible hero has to
   // agree with it. Previously a banner-only event rendered with no image at all,
@@ -566,11 +593,11 @@ const EventRegistrationPage: React.FC<EventRegistrationPageProps> = ({ isPreview
                   <button
                     type="button"
                     disabled
-                    aria-label="Registration closed"
+                    aria-label={closedButtonLabel}
                     className="inline-flex items-center justify-center gap-2 min-h-[48px] px-8 rounded-xl bg-inverse-on-surface/10 text-inverse-on-surface font-semibold ring-1 ring-inset ring-inverse-on-surface/20 cursor-not-allowed"
                   >
                     <ExclamationTriangleIcon className="w-5 h-5" aria-hidden="true" />
-                    Registration closed
+                    {closedButtonLabel}
                   </button>
                   {effectiveIsPreview && (
                     <button
@@ -680,10 +707,13 @@ const EventRegistrationPage: React.FC<EventRegistrationPageProps> = ({ isPreview
         {isRegistrationClosed && (
           <Reveal className="mt-6">
             <div className="rounded-xl bg-warning-container border border-outline-variant p-6" role="status">
-              <h2 className="text-lg font-bold text-on-surface">Registration is closed</h2>
+              <h2 className="text-lg font-bold text-on-surface">
+                {areAllTicketsSoldOut ? 'Event is sold out' : 'Registration is closed'}
+              </h2>
               <p className="mt-2 text-on-surface leading-relaxed max-w-2xl">
-                This event has reached capacity or passed its registration deadline. The details below are still
-                here if you would like to know what you missed.
+                {areAllTicketsSoldOut
+                  ? 'All ticket tiers for this event have reached maximum capacity. The details below are still here if you would like to know what you missed.'
+                  : 'This event has reached capacity or passed its registration deadline. The details below are still here if you would like to know what you missed.'}
               </p>
             </div>
           </Reveal>

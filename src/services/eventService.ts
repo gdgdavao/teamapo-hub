@@ -675,7 +675,13 @@ export class EventService {
 
       // Normalize nested arrays if provided
       if (eventData.ticketTypes) {
-        updateData.ticketTypes = this.sanitizeTicketTypes(eventData.ticketTypes as TicketType[]);
+        // ponytail: preserve live currentSold from existingEvent so editor saves never clobber sold counts
+        const existingMap = new Map((existingEvent?.ticketTypes || []).map(t => [t.id, t.currentSold]));
+        const mergedTicketTypes = (eventData.ticketTypes as TicketType[]).map(t => ({
+          ...t,
+          currentSold: existingMap.has(t.id) ? (existingMap.get(t.id) ?? t.currentSold) : t.currentSold,
+        }));
+        updateData.ticketTypes = this.sanitizeTicketTypes(mergedTicketTypes);
       }
       if (eventData.promoCodes) {
         const sanitizedPromos = this.sanitizePromoCodes(eventData.promoCodes as PromoCode[]);

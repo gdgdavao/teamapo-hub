@@ -12,7 +12,7 @@
  * this file can be converted to JSX for free.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import React from 'react';
 import { MemoryRouter } from 'react-router-dom';
@@ -111,6 +111,15 @@ describe('StatStrip', () => {
 });
 
 describe('TrendPanel', () => {
+  beforeAll(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-05T00:00:00Z'));
+  });
+
+  afterAll(() => {
+    vi.useRealTimers();
+  });
+
   // Series and range are panel state now, reached through the header controls
   // rather than props, so the interactions that change them are asserted in
   // tests/dom/homeStates.test.tsx with a real click.

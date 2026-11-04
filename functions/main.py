@@ -13,8 +13,8 @@ import requests
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Any, Optional, cast
 from urllib.parse import quote
-from firebase_functions import https_fn, firestore_fn
-from firebase_functions.options import set_global_options
+from firebase_functions import https_fn, firestore_fn, options
+from firebase_functions.options import set_global_options, MemoryOption
 from firebase_admin import initialize_app, firestore, storage, auth
 from firebase_admin.exceptions import FirebaseError
 from google.cloud.firestore_v1 import FieldFilter
@@ -1637,6 +1637,11 @@ def createAnonymousRegistration(req: https_fn.CallableRequest) -> Dict[str, Any]
         index = next((i for i, ticket in enumerate(tickets) if ticket.get('id') == ticket_id), None)
         if index is None:
             raise https_fn.HttpsError(https_fn.FunctionsErrorCode.NOT_FOUND, 'Ticket type not found')
+        max_attendees = event.get('maxAttendees')
+        current_attendees = int(event.get('currentAttendees') or 0)
+        if isinstance(max_attendees, int) and max_attendees > 0 and current_attendees + 1 > max_attendees:
+            raise https_fn.HttpsError(https_fn.FunctionsErrorCode.RESOURCE_EXHAUSTED, 'Event has reached maximum capacity')
+
         ticket = dict(tickets[index])
         sold = int(ticket.get('currentSold') or 0)
         maximum = ticket.get('maxQuantity')
@@ -1684,6 +1689,12 @@ def createAnonymousRegistration(req: https_fn.CallableRequest) -> Dict[str, Any]
             pricing_map['promoCode'] = applied_promo_code
             if applied_promo_id:
                 pricing_map['promoCodeId'] = applied_promo_id
+
+        if final_price > 0:
+            raise https_fn.HttpsError(
+                https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
+                'Paid registrations must be submitted with payment proof via submitPaidRegistration.'
+            )
 
         registration: Dict[str, Any] = {
             'id': registration_ref.id, 'eventId': event_id, 'userId': '',
@@ -1779,7 +1790,7 @@ def submitAnonymousPaymentProof(req: https_fn.CallableRequest) -> Dict[str, Any]
         image_bytes = base64.b64decode(image, validate=True)
     except (ValueError, TypeError):
         raise https_fn.HttpsError(https_fn.FunctionsErrorCode.INVALID_ARGUMENT, 'Invalid payment image')
-    if len(image_bytes) > 4 * 1024 * 1024:
+    if len(image_bytes) > 5 * 1024 * 1024:
         raise https_fn.HttpsError(https_fn.FunctionsErrorCode.RESOURCE_EXHAUSTED, 'Payment image is too large')
     registration_ref, registration = get_registration(registration_id)
     if registration.get('paymentLinkToken') != token or registration.get('paymentLinkStatus') != 'active':
@@ -1804,6 +1815,293 @@ def submitAnonymousPaymentProof(req: https_fn.CallableRequest) -> Dict[str, Any]
     get_db().collection('paymentProofs').document(proof_id).set({key: value for key, value in proof.items() if value is not None})
     registration_ref.update({'paymentStatus': 'processing', 'paymentProofId': proof_id, 'paymentLinkStatus': 'consumed', 'updatedAt': firestore.SERVER_TIMESTAMP})
     return {'proofId': proof_id}
+
+
+@https_fn.on_call(memory=options.MemoryOption.GB_1, timeout_sec=120)
+def submitPaidRegistration(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Atomically reserve ticket capacity, store payment proof, and create registration
+    and paymentProof records in a single transactional operation.
+    """
+    data = req.data or {}
+    event_id = data.get('eventId')
+    form = data.get('registrationData') or {}
+    details = form.get('userDetails') or {}
+    ticket_id = form.get('ticketTypeId')
+    quantity = form.get('quantity', 1)
+    raw_promo_code = form.get('promoCode')
+    proof = data.get('proof') or {}
+    client_request_id = data.get('clientRequestId')
+
+    if (not isinstance(event_id, str) or not isinstance(form, dict) or
+            not isinstance(details, dict) or not isinstance(ticket_id, str) or
+            not isinstance(quantity, int) or quantity != 1 or
+            not isinstance(details.get('name'), str) or not details['name'].strip() or
+            not isinstance(details.get('email'), str) or '@' not in details['email'] or
+            not isinstance(proof, dict)):
+        raise https_fn.HttpsError(https_fn.FunctionsErrorCode.INVALID_ARGUMENT, 'Invalid registration or payment data.')
+
+    raw_email = unicodedata.normalize('NFKC', details.get('email', '')).strip()
+    normalized_email = raw_email.lower()
+    details['email'] = normalized_email
+
+    db = get_db()
+
+    # Idempotency check: if clientRequestId was already processed, return existing record
+    if isinstance(client_request_id, str) and client_request_id.strip():
+        existing_by_request = db.collection('registrations') \
+            .where('clientRequestId', '==', client_request_id.strip()) \
+            .limit(1) \
+            .get()
+        for doc in existing_by_request:
+            reg_dict = doc.to_dict() or {}
+            return {
+                'registrationId': doc.id,
+                'proofId': reg_dict.get('paymentProofId'),
+                'pricing': reg_dict.get('pricing', {}),
+                'qrCode': reg_dict.get('qrCode', f'registration:{doc.id}'),
+                'paymentStatus': reg_dict.get('paymentStatus', 'processing'),
+                'alreadyProcessed': True,
+            }
+
+    # Validate proof image
+    image = proof.get('imageBase64')
+    content_type = proof.get('contentType', 'image/jpeg')
+    allowed_types = {'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/heic', 'image/heif'}
+    if not isinstance(image, str) or content_type not in allowed_types:
+        raise https_fn.HttpsError(https_fn.FunctionsErrorCode.INVALID_ARGUMENT, 'Invalid payment proof image format. Please upload JPG, PNG, GIF, WebP, or HEIC.')
+
+    try:
+        image_bytes = base64.b64decode(image, validate=True)
+    except (ValueError, TypeError):
+        raise https_fn.HttpsError(https_fn.FunctionsErrorCode.INVALID_ARGUMENT, 'Invalid payment proof image encoding.')
+
+    max_size = 5 * 1024 * 1024
+    if len(image_bytes) > max_size:
+        raise https_fn.HttpsError(https_fn.FunctionsErrorCode.RESOURCE_EXHAUSTED, 'Payment proof image exceeds 5MB size limit.')
+
+    # Prevent duplicate registrations check outside tx
+    query_emails = {raw_email, normalized_email}
+    for q_email in query_emails:
+        existing_regs = db.collection('registrations') \
+            .where('eventId', '==', event_id) \
+            .where('userDetails.email', '==', q_email) \
+            .limit(5) \
+            .get()
+        for doc in existing_regs:
+            reg_data = doc.to_dict() or {}
+            if reg_data.get('attendanceStatus') != 'cancelled' and reg_data.get('paymentStatus') != 'cancelled':
+                raise https_fn.HttpsError(
+                    https_fn.FunctionsErrorCode.ALREADY_EXISTS,
+                    'You are already registered for this event with this email address.'
+                )
+
+    # Pre-read event doc for paymentConfig checks before uploading storage blob
+    event_ref = db.collection('events').document(event_id)
+    event_doc = event_ref.get()
+    if not event_doc.exists:
+        raise https_fn.HttpsError(https_fn.FunctionsErrorCode.NOT_FOUND, 'Event not found')
+    event_pre = event_doc.to_dict() or {}
+    payment_configs = event_pre.get('paymentConfigs') or []
+    payment_method = proof.get('paymentMethod', 'bank_transfer')
+    transaction_id = (proof.get('transactionId') or '').strip()
+    notes = (proof.get('notes') or '').strip()
+
+    # Find matching payment config to enforce server-side rules
+    selected_cfg = None
+    if isinstance(payment_configs, list) and len(payment_configs) > 0:
+        for cfg in payment_configs:
+            if cfg.get('isActive', True) and (cfg.get('id') == payment_method or cfg.get('name') == payment_method):
+                selected_cfg = cfg
+                break
+        if not selected_cfg:
+            for cfg in payment_configs:
+                if cfg.get('isActive', True):
+                    selected_cfg = cfg
+                    break
+
+    if selected_cfg:
+        if selected_cfg.get('requiresProof') and len(image_bytes) == 0:
+            raise https_fn.HttpsError(https_fn.FunctionsErrorCode.INVALID_ARGUMENT, 'Payment proof image is required.')
+        if selected_cfg.get('requiresTransactionId') and not transaction_id:
+            raise https_fn.HttpsError(https_fn.FunctionsErrorCode.INVALID_ARGUMENT, 'Transaction ID / reference number is required.')
+
+    # Upload storage blob first
+    registration_ref = db.collection('registrations').document()
+    reg_id = registration_ref.id
+    proof_id = db.collection('paymentProofs').document().id
+    path = f'payment-proofs/{reg_id}/proof-{proof_id}.jpg'
+    blob = storage.bucket().blob(path)
+    download_token = secrets.token_urlsafe(24)
+    blob.metadata = {'firebaseStorageDownloadTokens': download_token}
+    blob.upload_from_string(image_bytes, content_type=content_type)
+    proof_url = f'https://firebasestorage.googleapis.com/v0/b/{storage.bucket().name}/o/{quote(path, safe="")}?alt=media&token={download_token}'
+
+    transaction = db.transaction()
+
+    @firestore.transactional
+    def reserve(tx):
+        for q_email in query_emails:
+            tx_existing = db.collection('registrations') \
+                .where('eventId', '==', event_id) \
+                .where('userDetails.email', '==', q_email) \
+                .limit(5) \
+                .get(transaction=tx)
+            for doc in tx_existing:
+                reg_data = doc.to_dict() or {}
+                if reg_data.get('attendanceStatus') != 'cancelled' and reg_data.get('paymentStatus') != 'cancelled':
+                    raise https_fn.HttpsError(
+                        https_fn.FunctionsErrorCode.ALREADY_EXISTS,
+                        'You are already registered for this event with this email address.'
+                    )
+        snapshot = event_ref.get(transaction=tx)
+        if not snapshot.exists:
+            raise https_fn.HttpsError(https_fn.FunctionsErrorCode.NOT_FOUND, 'Event not found')
+        event = snapshot.to_dict() or {}
+        if not event.get('isPublished') or event.get('status') not in ['published', 'ongoing']:
+            raise https_fn.HttpsError(https_fn.FunctionsErrorCode.FAILED_PRECONDITION, 'Event is not available')
+        tickets = list(event.get('ticketTypes') or [])
+        index = next((i for i, ticket in enumerate(tickets) if ticket.get('id') == ticket_id), None)
+        if index is None:
+            raise https_fn.HttpsError(https_fn.FunctionsErrorCode.NOT_FOUND, 'Ticket type not found')
+        max_attendees = event.get('maxAttendees')
+        current_attendees = int(event.get('currentAttendees') or 0)
+        if isinstance(max_attendees, int) and max_attendees > 0 and current_attendees + 1 > max_attendees:
+            raise https_fn.HttpsError(https_fn.FunctionsErrorCode.RESOURCE_EXHAUSTED, 'Event has reached maximum capacity')
+
+        ticket = dict(tickets[index])
+        sold = int(ticket.get('currentSold') or 0)
+        maximum = ticket.get('maxQuantity')
+        if isinstance(maximum, int) and sold + 1 > maximum:
+            raise https_fn.HttpsError(https_fn.FunctionsErrorCode.RESOURCE_EXHAUSTED, 'Ticket is sold out')
+
+        price = float(ticket.get('price') or 0)
+        discount_amount = 0.0
+        final_price = price
+        applied_promo_code: Optional[str] = None
+        applied_promo_id: Optional[str] = None
+        updated_promo_codes: Optional[List[Dict[str, Any]]] = None
+        promo_config_ref = None
+        had_legacy_promos = False
+
+        if isinstance(raw_promo_code, str) and raw_promo_code.strip():
+            promo_codes, promo_config_ref, from_config = _load_event_promo_codes(db, event_id, event, tx=tx)
+            had_legacy_promos = not from_config and 'promoCodes' in event
+            eval_res = _evaluate_promo_code(promo_codes, raw_promo_code, ticket)
+            if not eval_res.get('valid'):
+                raise https_fn.HttpsError(
+                    https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
+                    eval_res.get('message', 'Invalid promo code.')
+                )
+            discount_amount = float(eval_res['discountAmount'])
+            final_price = float(eval_res['finalPrice'])
+            applied_promo_code = eval_res['code']
+            applied_promo_id = eval_res.get('promoCodeId')
+            promo_idx = eval_res['index']
+            updated_promo = dict(promo_codes[promo_idx])
+            updated_promo['currentUses'] = int(updated_promo.get('currentUses') or 0) + 1
+            promo_codes[promo_idx] = updated_promo
+            updated_promo_codes = promo_codes
+
+        ticket['currentSold'] = sold + 1
+        tickets[index] = ticket
+        pricing_map: Dict[str, Any] = {
+            'ticketTypeId': ticket_id,
+            'originalPrice': price,
+            'currentPrice': final_price,
+            'discountAmount': discount_amount,
+        }
+        if applied_promo_code:
+            pricing_map['discountType'] = 'promo_code'
+            pricing_map['promoCode'] = applied_promo_code
+            if applied_promo_id:
+                pricing_map['promoCodeId'] = applied_promo_id
+
+        registration: Dict[str, Any] = {
+            'id': reg_id,
+            'eventId': event_id,
+            'userId': '',
+            'userDetails': details,
+            'ticketTypeId': ticket_id,
+            'quantity': 1,
+            'originalAmount': price,
+            'discountAmount': discount_amount,
+            'totalAmount': final_price,
+            'currency': 'PHP',
+            'pricing': pricing_map,
+            'paymentStatus': 'processing',
+            'attendanceStatus': 'pending',
+            'paymentProofId': proof_id,
+            'feedbackSubmitted': False,
+            'certificateIssued': False,
+            'qrCode': f'registration:{reg_id}',
+            'registrationDate': firestore.SERVER_TIMESTAMP,
+            'updatedAt': firestore.SERVER_TIMESTAMP,
+            'paymentLinkStatus': 'consumed',
+        }
+        if client_request_id:
+            registration['clientRequestId'] = client_request_id
+        if applied_promo_code:
+            registration['promoCode'] = applied_promo_code
+        if applied_promo_id:
+            registration['promoCodeId'] = applied_promo_id
+        if isinstance(form.get('customResponses'), dict):
+            registration['customResponses'] = form['customResponses']
+
+        proof_doc = {
+            'id': proof_id,
+            'registrationId': reg_id,
+            'eventId': event_id,
+            'email': normalized_email,
+            'userDetails': {'name': details.get('name', 'Attendee'), 'email': normalized_email},
+            'attendeeName': details.get('name', 'Attendee'),
+            'attendeeEmail': normalized_email,
+            'proofImageUrl': proof_url,
+            'transactionId': transaction_id or None,
+            'verificationStatus': 'pending',
+            'submittedAt': firestore.SERVER_TIMESTAMP,
+            'notes': notes or None,
+            'ticketPrice': final_price,
+            'paymentMethod': selected_cfg.get('name') if selected_cfg else payment_method,
+        }
+
+        tx.set(registration_ref, registration)
+        tx.set(db.collection('paymentProofs').document(proof_id), {k: v for k, v in proof_doc.items() if v is not None})
+
+        if updated_promo_codes is not None and promo_config_ref is not None:
+            tx.set(promo_config_ref, {
+                'promoCodes': updated_promo_codes,
+                'updatedAt': firestore.SERVER_TIMESTAMP,
+            }, merge=True)
+
+        event_update: Dict[str, Any] = {
+            'ticketTypes': tickets,
+            'currentAttendees': int(event.get('currentAttendees') or 0) + 1,
+            'updatedAt': firestore.SERVER_TIMESTAMP,
+        }
+        if had_legacy_promos:
+            event_update['promoCodes'] = firestore.DELETE_FIELD
+            event_update['hasPromoCodes'] = True
+
+        tx.update(event_ref, event_update)
+        return registration
+
+    try:
+        registration = reserve(transaction)
+    except Exception as e:
+        try:
+            blob.delete()
+        except Exception:
+            pass
+        raise e
+
+    return {
+        'registrationId': registration['id'],
+        'proofId': proof_id,
+        'pricing': registration['pricing'],
+        'qrCode': registration['qrCode'],
+        'paymentStatus': 'processing',
+    }
 
 
 @https_fn.on_call()
