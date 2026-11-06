@@ -147,13 +147,21 @@
 }
 
 .animate-kiosk-ticker {
-  animation: kiosk-ticker-scroll 16s linear infinite;
+  animation: kiosk-ticker-scroll var(--kiosk-ticker-duration, 40s) linear infinite;
   will-change: transform;
 }
 
 .animate-kiosk-ticker:hover,
 .animate-kiosk-ticker:focus-within {
   animation-play-state: paused;
+}
+
+/* Crisp alpha-contour shadow so white-ink and light-colored logo marks remain legible on light/neutral surfaces */
+.sponsor-logo-contrast {
+  -webkit-filter: drop-shadow(0 1px 2px rgba(15, 23, 42, 0.45))
+    drop-shadow(0 0 1px rgba(15, 23, 42, 0.55));
+  filter: drop-shadow(0 1px 2px rgba(15, 23, 42, 0.45))
+    drop-shadow(0 0 1px rgba(15, 23, 42, 0.55));
 }
 
 @keyframes kiosk-google-mesh-drift {

@@ -805,6 +805,7 @@ export const EventKioskPage: React.FC = () => {
     tickerRepeatCount > 0
       ? Array.from({ length: tickerRepeatCount }, () => sponsors).flat()
       : [];
+  const tickerDurationSeconds = Math.max(40, tickerTrackItems.length * 5);
 
   return (
     <div className="min-h-page kiosk-google-dark-bg text-inverse-on-surface flex flex-col justify-between select-none overflow-hidden relative">
@@ -1030,7 +1031,10 @@ export const EventKioskPage: React.FC = () => {
           </div>
 
           <div className="relative w-full overflow-hidden">
-            <div className="flex w-max animate-kiosk-ticker">
+            <div
+              className="flex w-max animate-kiosk-ticker"
+              style={{ '--kiosk-ticker-duration': `${tickerDurationSeconds}s` } as React.CSSProperties}
+            >
               {[0, 1].map((groupIndex) => (
                 <div
                   key={groupIndex}

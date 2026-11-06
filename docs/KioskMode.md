@@ -51,7 +51,7 @@ flowchart LR
 ### 2.4 Sponsors & Partners Bottom Ticker
 - Rendered only when `event.sponsors && event.sponsors.length > 0`.
 - Sits transparently over the animated dark Google-color background (no background fill or border box).
-- Displays **logo images only** (no text labels or card boxes) conforming to each image's natural aspect ratio (`h-auto max-h-12 sm:max-h-14 w-auto object-contain`), scrolling seamlessly via `.animate-kiosk-ticker` (`translate3d(-50%, 0, 0)`).
+- Displays **logo images only** (no text labels or card boxes) conforming to each image's natural aspect ratio (`h-auto max-h-12 sm:max-h-14 w-auto object-contain`), scrolling seamlessly via `.animate-kiosk-ticker` (`translate3d(-50%, 0, 0)`) at a calm, natural pace (`--kiosk-ticker-duration` set to `Math.max(40, tickerTrackItems.length * 5)` seconds).
 
 ---
 

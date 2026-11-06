@@ -598,13 +598,13 @@ export const SponsorsTab: React.FC<SponsorsTabProps> = ({ eventId }) => {
               >
                 <div className="space-y-4">
                   {/* Natural-aspect logo showcase container */}
-                  <div className="min-h-[96px] rounded-xl bg-surface-container-low border border-outline-variant p-4 flex items-center justify-center overflow-hidden">
+                  <div className="min-h-[96px] rounded-xl bg-surface-container-high border border-outline-variant p-4 flex items-center justify-center overflow-hidden">
                     <img
                       src={sponsor.logoUrl}
                       alt={sponsor.name}
                       loading="lazy"
                       decoding="async"
-                      className="h-auto max-h-24 w-auto max-w-full object-contain"
+                      className="h-auto max-h-24 w-auto max-w-full object-contain sponsor-logo-contrast"
                     />
                   </div>
 
