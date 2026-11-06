@@ -117,13 +117,18 @@ describe('Kiosk Mode Redesign & Sponsors Integration', () => {
     expect(kioskSrc).not.toContain('animate-scanline');
   });
 
-  it('renders logo-only scrolling sponsors & partners ticker conforming to image aspect ratio', () => {
+  it('renders logo-only scrolling sponsors & partners ticker conforming to image aspect ratio at a natural speed', () => {
+    const registrationSrc = readRepoFile('src/pages/registration/RegistrationPage.tsx');
     expect(kioskSrc).toContain('animate-kiosk-ticker');
+    expect(kioskSrc).toContain('--kiosk-ticker-duration');
+    expect(kioskSrc).toContain('Math.max(40, tickerTrackItems.length * 5)');
     expect(kioskSrc).toContain('Event Sponsors and Partners');
     expect(kioskSrc).not.toContain('{sponsor.name}');
     expect(kioskSrc).toContain('h-auto max-h-12 sm:max-h-14 w-auto object-contain');
     expect(cssSrc).toContain('@keyframes kiosk-ticker-scroll');
-    expect(cssSrc).toContain('.animate-kiosk-ticker');
+    expect(cssSrc).toContain('var(--kiosk-ticker-duration, 40s)');
+    expect(registrationSrc).not.toContain('event-sponsors-heading');
+    expect(registrationSrc).not.toContain('sponsor.logoUrl');
   });
 
   it('displays a QR scan processing loader overlay inside the camera viewfinder and status caption when isCheckingIn is true', () => {
