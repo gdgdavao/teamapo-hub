@@ -70,7 +70,7 @@ export const KioskWelcomeCard: React.FC<KioskWelcomeCardProps> = ({
     <div
       role="alert"
       aria-live="polite"
-      className="w-full max-w-lg bg-surface/90 backdrop-blur-2xl border border-white/50 rounded-3xl p-6 sm:p-8 shadow-[0_20px_50px_rgba(0,0,0,0.2)] animate-success-pop motion-reduce:animate-none flex flex-col items-center text-center relative overflow-hidden ring-1 ring-white/60"
+      className="w-full max-w-xl bg-white border border-outline-variant rounded-3xl p-6 sm:p-8 shadow-elevation-2 animate-success-pop motion-reduce:animate-none flex flex-col items-center text-center relative overflow-hidden"
     >
       {/* Floating Confetti Particle Burst */}
       {CONFETTI_PIECES.map((piece, i) => (

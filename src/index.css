@@ -137,6 +137,89 @@
   animation: confetti-fall 2.8s ease-out forwards;
 }
 
+@keyframes kiosk-ticker-scroll {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+.animate-kiosk-ticker {
+  animation: kiosk-ticker-scroll 16s linear infinite;
+  will-change: transform;
+}
+
+.animate-kiosk-ticker:hover,
+.animate-kiosk-ticker:focus-within {
+  animation-play-state: paused;
+}
+
+@keyframes kiosk-google-mesh-drift {
+  0% {
+    transform: translate3d(-12%, -10%, 0) scale(1) rotate(0deg);
+  }
+  25% {
+    transform: translate3d(14%, -12%, 0) scale(1.18) rotate(90deg);
+  }
+  50% {
+    transform: translate3d(12%, 14%, 0) scale(0.92) rotate(180deg);
+  }
+  75% {
+    transform: translate3d(-14%, 10%, 0) scale(1.14) rotate(270deg);
+  }
+  100% {
+    transform: translate3d(-12%, -10%, 0) scale(1) rotate(360deg);
+  }
+}
+
+@keyframes kiosk-google-mesh-counter {
+  0% {
+    transform: translate3d(14%, 10%, 0) scale(1.1) rotate(360deg);
+  }
+  33% {
+    transform: translate3d(-16%, 12%, 0) scale(0.9) rotate(240deg);
+  }
+  66% {
+    transform: translate3d(10%, -15%, 0) scale(1.22) rotate(120deg);
+  }
+  100% {
+    transform: translate3d(14%, 10%, 0) scale(1.1) rotate(0deg);
+  }
+}
+
+.kiosk-google-dark-bg {
+  background-color: #090d16;
+  background-image:
+    radial-gradient(circle at 12% 18%, rgba(66, 133, 244, 0.38) 0%, transparent 52%),
+    radial-gradient(circle at 88% 18%, rgba(234, 67, 53, 0.34) 0%, transparent 50%),
+    radial-gradient(circle at 84% 85%, rgba(251, 188, 4, 0.30) 0%, transparent 52%),
+    radial-gradient(circle at 16% 84%, rgba(52, 168, 83, 0.34) 0%, transparent 52%);
+}
+
+.kiosk-google-mesh-layer {
+  background-image:
+    radial-gradient(circle at 25% 25%, rgba(66, 133, 244, 0.62) 0%, transparent 45%),
+    radial-gradient(circle at 75% 25%, rgba(234, 67, 53, 0.55) 0%, transparent 45%),
+    radial-gradient(circle at 75% 75%, rgba(251, 188, 4, 0.48) 0%, transparent 45%),
+    radial-gradient(circle at 25% 75%, rgba(52, 168, 83, 0.55) 0%, transparent 45%);
+  filter: blur(54px);
+  animation: kiosk-google-mesh-drift 7s linear infinite;
+  will-change: transform;
+}
+
+.kiosk-google-mesh-layer-fast {
+  background-image:
+    radial-gradient(circle at 65% 30%, rgba(66, 133, 244, 0.50) 0%, transparent 40%),
+    radial-gradient(circle at 30% 70%, rgba(234, 67, 53, 0.46) 0%, transparent 40%),
+    radial-gradient(circle at 35% 25%, rgba(251, 188, 4, 0.44) 0%, transparent 40%),
+    radial-gradient(circle at 70% 70%, rgba(52, 168, 83, 0.50) 0%, transparent 40%);
+  filter: blur(44px);
+  animation: kiosk-google-mesh-counter 5.5s ease-in-out infinite;
+  will-change: transform;
+}
+
 @layer base {
   /* ---------------------------------------------------------------
      MOTION TOKENS

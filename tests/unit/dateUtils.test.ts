@@ -7,6 +7,8 @@ import {
   formatEventTime,
   formatEventDateTime,
   formatTicketDate,
+  getCalendarDaysDiff,
+  getEventDateStatus,
 } from '../../src/utils/dateUtils';
 
 describe('dateUtils', () => {
@@ -167,6 +169,82 @@ describe('dateUtils', () => {
       expect(formatTicketDate(null)).toBe('Date TBD');
       expect(formatTicketDate(undefined, 'Asia/Manila', 'TBD')).toBe('TBD');
       expect(formatTicketDate('invalid-date')).toBe('Date TBD');
+    });
+  });
+
+  describe('getCalendarDaysDiff and getEventDateStatus', () => {
+    it('returns "This event starts tomorrow" on Nov 6 afternoon when the event starts Nov 7 morning (< 24h apart)', () => {
+      const now = new Date('2026-11-06T13:17:00+08:00');
+      const startDate = new Date('2026-11-07T08:00:00+08:00');
+      const endDate = new Date('2026-11-07T17:00:00+08:00');
+
+      expect(getCalendarDaysDiff(now, startDate, 'Asia/Manila')).toBe(1);
+
+      const status = getEventDateStatus(
+        { startDate, endDate, timezone: 'Asia/Manila' },
+        now
+      );
+      expect(status).toEqual({
+        type: 'future',
+        severity: 'low',
+        message: 'This event starts tomorrow',
+        daysUntil: 1,
+        canCheckIn: true,
+      });
+    });
+
+    it('returns "This event starts today" when the event starts later on the same calendar day', () => {
+      const now = new Date('2026-11-07T06:30:00+08:00');
+      const startDate = new Date('2026-11-07T08:00:00+08:00');
+      const endDate = new Date('2026-11-07T17:00:00+08:00');
+
+      const status = getEventDateStatus(
+        { startDate, endDate, timezone: 'Asia/Manila' },
+        now
+      );
+      expect(status).toEqual({
+        type: 'future',
+        severity: 'low',
+        message: 'This event starts today',
+        daysUntil: 0,
+        canCheckIn: true,
+      });
+    });
+
+    it('returns "This event ended today" when the event ended earlier on the same calendar day', () => {
+      const startDate = new Date('2026-11-07T08:00:00+08:00');
+      const endDate = new Date('2026-11-07T17:00:00+08:00');
+      const now = new Date('2026-11-07T18:30:00+08:00');
+
+      const status = getEventDateStatus(
+        { startDate, endDate, timezone: 'Asia/Manila' },
+        now
+      );
+      expect(status).toEqual({
+        type: 'past',
+        severity: 'low',
+        message: 'This event ended today',
+        daysAgo: 0,
+        canCheckIn: true,
+      });
+    });
+
+    it('returns "This event starts in X days" and disables automatic check-in when > 1 calendar day away', () => {
+      const now = new Date('2026-11-05T20:00:00+08:00');
+      const startDate = new Date('2026-11-07T08:00:00+08:00');
+      const endDate = new Date('2026-11-07T17:00:00+08:00');
+
+      const status = getEventDateStatus(
+        { startDate, endDate, timezone: 'Asia/Manila' },
+        now
+      );
+      expect(status).toEqual({
+        type: 'future',
+        severity: 'medium',
+        message: 'This event starts in 2 days',
+        daysUntil: 2,
+        canCheckIn: false,
+      });
     });
   });
 });

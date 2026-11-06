@@ -5,22 +5,30 @@ import { Button } from '../../../components/UI';
 interface PhotoUploadProps {
   currentPhotoUrl?: string;
   onPhotoChange: (file: File | null, previewUrl?: string) => void;
+  onMultiPhotoChange?: (files: File[]) => void;
   onPhotoRemove?: () => void;
   accept?: string;
   maxSize?: number; // in MB
   className?: string;
   placeholder?: string;
+  helperText?: string;
+  fit?: 'cover' | 'contain';
+  multiple?: boolean;
   disabled?: boolean;
 }
 
 const PhotoUpload: React.FC<PhotoUploadProps> = ({
   currentPhotoUrl,
   onPhotoChange,
+  onMultiPhotoChange,
   onPhotoRemove,
   accept = "image/*",
   maxSize = 5, // 5MB default
   className = "",
   placeholder = "Upload Photo",
+  helperText,
+  fit = 'cover',
+  multiple = false,
   disabled = false
 }) => {
   const [dragActive, setDragActive] = useState(false);
@@ -54,11 +62,22 @@ const PhotoUpload: React.FC<PhotoUploadProps> = ({
     reader.readAsDataURL(file);
   };
 
-  const handleFileInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      handleFileSelect(file);
+  const handleFilesList = (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return;
+    const files = Array.from(fileList);
+    if (multiple && onMultiPhotoChange && files.length > 1) {
+      const validFiles = files.filter((file) => validateFile(file));
+      if (validFiles.length > 0) {
+        onMultiPhotoChange(validFiles);
+      }
+      return;
     }
+    handleFileSelect(files[0]);
+  };
+
+  const handleFileInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    handleFilesList(event.target.files);
+    event.target.value = '';
   };
 
   const handleDrag = (e: React.DragEvent) => {
@@ -78,10 +97,7 @@ const PhotoUpload: React.FC<PhotoUploadProps> = ({
 
     if (disabled) return;
 
-    const files = e.dataTransfer.files;
-    if (files && files[0]) {
-      handleFileSelect(files[0]);
-    }
+    handleFilesList(e.dataTransfer.files);
   };
 
   const handleRemove = () => {
@@ -89,7 +105,7 @@ const PhotoUpload: React.FC<PhotoUploadProps> = ({
     setError(null);
   };
 
-return (
+  return (
     <div className={`space-y-2 ${className}`}>
       <div className="flex flex-wrap items-center gap-md">
         {currentPhotoUrl ? (
@@ -97,7 +113,11 @@ return (
             <img
               src={currentPhotoUrl}
               alt="Preview"
-              className="h-32 w-32 rounded-lg border border-outline-variant object-cover"
+              className={
+                fit === 'contain'
+                  ? 'h-auto max-h-32 w-auto max-w-[240px] rounded-lg border border-outline-variant bg-surface-container-low p-2 object-contain'
+                  : 'h-32 w-32 rounded-lg border border-outline-variant object-cover'
+              }
             />
             {!disabled && (
               // A 24px dismiss target in the corner of a 128px thumbnail. It is
@@ -114,7 +134,7 @@ return (
           </div>
         ) : (
           <label
-            className={`flex h-32 w-32 shrink-0 cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed transition-colors ${
+            className={`flex h-32 min-w-[144px] px-4 shrink-0 cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed transition-colors ${
               dragActive
                 ? 'border-primary bg-primary-container'
                 : 'border-outline-variant bg-surface hover:bg-surface-container-low'
@@ -130,6 +150,7 @@ return (
               type="file"
               className="sr-only"
               accept={accept}
+              multiple={multiple}
               onChange={handleFileInputChange}
               disabled={disabled}
             />
@@ -138,7 +159,7 @@ return (
 
         <div className="min-w-0 flex-1">
           <p className="text-sm text-on-surface-variant">
-            Upload a photo for the speaker. Recommended size: 400x400 pixels (1:1 ratio).
+            {helperText || 'Upload a photo for the speaker. Recommended size: 400x400 pixels (1:1 ratio).'}
           </p>
           <p className="mt-1 text-sm text-on-surface-variant">
             Maximum file size: {maxSize}MB. Supported formats: JPG, PNG, GIF, WebP

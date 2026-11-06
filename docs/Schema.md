@@ -84,6 +84,7 @@ Primary entity representing GDG Davao events, workshops, meetups, and conference
 | `bannerUrl` | `string` | No | - | High-resolution hero image URL. |
 | `organizer` | `map` | No | - | [Deprecated] Legacy creator map. Events are communal with no individual owner. |
 | `speakers` | `array<map>`| Yes | `[]` | Array of `Speaker` objects (see [Embedded Types](#4-embedded-data-structures)). |
+| `sponsors` | `array<map>`| No | `[]` | Array of `EventSponsor` objects representing event sponsors and community partners. |
 | `startDate` | `timestamp` | Yes | - | Event start time (with timezone). |
 | `endDate` | `timestamp` | Yes | - | Event conclusion time (`endDate >= startDate`). |
 | `timezone` | `string` | Yes | `'Asia/Manila'`| IANA timezone string. |
@@ -356,6 +357,27 @@ interface Speaker {
     website?: string;
   };
   topics?: string[];
+}
+```
+
+### `EventSponsor`
+```typescript
+type PresetSponsorCategory =
+  | 'sponsor'
+  | 'partner'
+  | 'community'
+  | 'venue'
+  | 'media';
+
+type SponsorTier = PresetSponsorCategory | (string & {});
+
+interface EventSponsor {
+  id: string;
+  name: string;
+  logoUrl: string;
+  tier?: SponsorTier;
+  websiteUrl?: string;
+  sortOrder?: number;
 }
 ```
 

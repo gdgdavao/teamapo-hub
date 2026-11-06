@@ -247,3 +247,119 @@ export function formatTicketDate(
     return fallback;
   }
 }
+
+/**
+ * Extracts calendar (year, month, day) components for a Date in the specified IANA timezone
+ * (defaulting to 'Asia/Manila') and returns the UTC midnight epoch for that calendar date.
+ */
+function toCalendarDayUtcMs(date: Date, timeZone: string = 'Asia/Manila'): number {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(date);
+
+    const map = Object.fromEntries(parts.map((p) => [p.type, p.value]));
+    const year = Number(map.year);
+    const month = Number(map.month);
+    const day = Number(map.day);
+    if (!isNaN(year) && !isNaN(month) && !isNaN(day)) {
+      return Date.UTC(year, month - 1, day);
+    }
+  } catch {
+    // Fallback to local calendar components if an invalid timezone string was supplied
+  }
+  return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+/**
+ * Computes the signed integer difference in calendar days `(toDate - fromDate)`
+ * in the specified IANA timezone (default: 'Asia/Manila').
+ * Example: Nov 6 1:17 PM -> Nov 7 8:00 AM in Asia/Manila returns `1` (tomorrow).
+ */
+export function getCalendarDaysDiff(
+  fromDate: Date,
+  toDate: Date,
+  timeZone: string = 'Asia/Manila'
+): number {
+  const fromUtcMidnight = toCalendarDayUtcMs(fromDate, timeZone);
+  const toUtcMidnight = toCalendarDayUtcMs(toDate, timeZone);
+  return Math.round((toUtcMidnight - fromUtcMidnight) / (1000 * 3600 * 24));
+}
+
+export interface EventDateStatus {
+  type: 'past' | 'current' | 'future';
+  severity: 'none' | 'low' | 'medium' | 'high';
+  message: string;
+  daysAgo?: number;
+  daysUntil?: number;
+  canCheckIn: boolean;
+}
+
+/**
+ * Computes the check-in date awareness status for an event using calendar-day comparisons
+ * in the event's timezone (defaulting to 'Asia/Manila').
+ */
+export function getEventDateStatus(
+  event: { startDate?: unknown; endDate?: unknown; timezone?: string } | null | undefined,
+  now: Date = new Date()
+): EventDateStatus | null {
+  if (!event || !event.startDate) return null;
+
+  const eventStartDate = toDateSafe(event.startDate);
+  if (!eventStartDate) return null;
+
+  const eventEndDate = toDateSafe(event.endDate) ?? eventStartDate;
+  const timeZone = event.timezone || 'Asia/Manila';
+
+  const timeDiffStart = eventStartDate.getTime() - now.getTime();
+  const timeDiffEnd = eventEndDate.getTime() - now.getTime();
+
+  // Event is in the past
+  if (timeDiffEnd < 0) {
+    const daysAgo = Math.max(0, getCalendarDaysDiff(eventEndDate, now, timeZone));
+    return {
+      type: 'past',
+      severity: daysAgo > 7 ? 'high' : daysAgo > 1 ? 'medium' : 'low',
+      message:
+        daysAgo === 0
+          ? 'This event ended today'
+          : daysAgo === 1
+            ? 'This event ended yesterday'
+            : `This event ended ${daysAgo} days ago`,
+      daysAgo,
+      canCheckIn: daysAgo <= 1, // Allow check-in up to 1 calendar day after event
+    };
+  }
+
+  // Event is happening now
+  if (timeDiffStart <= 0 && timeDiffEnd >= 0) {
+    return {
+      type: 'current',
+      severity: 'none',
+      message: 'Event is happening now',
+      canCheckIn: true,
+    };
+  }
+
+  // Event is in the future
+  if (timeDiffStart > 0) {
+    const daysUntil = Math.max(0, getCalendarDaysDiff(now, eventStartDate, timeZone));
+    return {
+      type: 'future',
+      severity: daysUntil > 7 ? 'high' : daysUntil > 1 ? 'medium' : 'low',
+      message:
+        daysUntil === 0
+          ? 'This event starts today'
+          : daysUntil === 1
+            ? 'This event starts tomorrow'
+            : `This event starts in ${daysUntil} days`,
+      daysUntil,
+      canCheckIn: daysUntil <= 1, // Allow check-in starting 1 calendar day before event
+    };
+  }
+
+  return null;
+}

@@ -162,6 +162,7 @@ export interface Event {
     email?: string;
   };
   speakers: Speaker[];
+  sponsors?: EventSponsor[];
   startDate: Timestamp;
   endDate: Timestamp;
   timezone: string;
@@ -196,6 +197,24 @@ export interface Event {
   feedbackRequestsSentCount?: number;
   createdAt: Timestamp;
   updatedAt: Timestamp;
+}
+
+export type PresetSponsorCategory =
+  | 'sponsor'
+  | 'partner'
+  | 'community'
+  | 'venue'
+  | 'media';
+
+export type SponsorTier = PresetSponsorCategory | (string & {});
+
+export interface EventSponsor {
+  id: string;
+  name: string;
+  logoUrl: string;
+  tier?: SponsorTier;
+  websiteUrl?: string;
+  sortOrder?: number;
 }
 
 export interface Speaker {
