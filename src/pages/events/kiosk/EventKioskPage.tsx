@@ -1,15 +1,12 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAbility } from '@casl/react';
 import {
   LockClosedIcon,
-  ArrowsPointingOutIcon,
-  ArrowsPointingInIcon,
   QrCodeIcon,
   CameraIcon,
   ExclamationCircleIcon,
 } from '@heroicons/react/24/outline';
-import { CheckCircleIcon } from '@heroicons/react/20/solid';
 import { BrowserQRCodeReader, type IScannerControls } from '@zxing/browser';
 import { Result } from '@zxing/library';
 import { EventService } from '../../../services/eventService';
@@ -44,10 +41,6 @@ const log = {
   error: (...args: unknown[]) => logger.error('[EventKioskPage]', ...args),
 };
 
-/** iPhone iOS exposes no element-fullscreen API; iPad and desktop engines do. */
-const CAN_REQUEST_FULLSCREEN =
-  typeof document !== 'undefined' && typeof document.documentElement?.requestFullscreen === 'function';
-
 /** How long to wait for `loadedmetadata` after attaching a stream before playing anyway. */
 const ATTACH_METADATA_TIMEOUT_MS = 350;
 
@@ -80,9 +73,6 @@ export const EventKioskPage: React.FC = () => {
     title: 'Check-In Kiosk',
     contextTitle: event?.title,
   });
-
-  // Fullscreen state
-  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
 
   // Camera state & configuration hook
   const { cameraConfig, setCameraConfig } = useKioskCamera(eventId);
@@ -522,29 +512,6 @@ export const EventKioskPage: React.FC = () => {
     stopCamera,
   ]);
 
-  // Fullscreen change listener
-  useEffect(() => {
-    const handleFullscreenChange = () => {
-      setIsFullscreen(Boolean(document.fullscreenElement));
-    };
-
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
-    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
-  }, []);
-
-  const toggleFullscreen = () => {
-    playClickFeedback();
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen?.().catch(() => {
-        // Fullscreen request might be blocked by browser policy
-      });
-    } else {
-      document.exitFullscreen?.().catch(() => {
-        // Exit request ignore
-      });
-    }
-  };
-
   // Welcome-card transition: the camera stream STAYS LIVE behind the card and
   // only the scanner pauses, so the next attendee resumes scanning instantly
   // instead of paying the camera acquisition delay again.
@@ -563,62 +530,62 @@ export const EventKioskPage: React.FC = () => {
     if (!lookupValue || !currentEvent) return { success: false, message: 'Invalid check-in request.' };
     const clean = lookupValue.trim();
 
-    // Find registration in local cache
-    const reg = registrationsRef.current.find((r) => {
-      if (clean.startsWith('registration:') && r.id === clean.replace('registration:', '')) {
-        return true;
-      }
-      if (r.qrCode && r.qrCode === clean) return true;
-      if (r.id.toLowerCase() === clean.toLowerCase()) return true;
-      if (r.userDetails?.email?.toLowerCase() === clean.toLowerCase()) return true;
-      if (r.paymentDetails?.transactionId?.toLowerCase() === clean.toLowerCase()) return true;
-      return false;
-    });
-
-    if (!reg) {
-      playWarningBuzz();
-      if ('vibrate' in navigator) navigator.vibrate([100, 50, 100]);
-      const message =
-        'Could not find a valid registration for this QR code, email, or reference. Please check with registration staff.';
-      setBannerFeedback({
-        type: 'error',
-        title: 'Registration Not Found',
-        message,
-      });
-      setTimeout(() => setBannerFeedback(null), 4000);
-      return { success: false, message };
-    }
-
-    // Check if already checked in
-    if (reg.attendanceStatus === 'checked-in') {
-      playWarningBuzz();
-      if ('vibrate' in navigator) navigator.vibrate([100, 100, 100]);
-      const message = `${reg.userDetails?.name || 'Attendee'} was already checked in.`;
-      setBannerFeedback({
-        type: 'warning',
-        title: 'Already Checked In',
-        message,
-      });
-      setTimeout(() => setBannerFeedback(null), 4000);
-      return { success: false, message };
-    }
-
-    // Verify payment for paid events
-    if (reg.paymentStatus !== 'paid' && (reg.totalAmount ?? 0) > 0) {
-      playWarningBuzz();
-      if ('vibrate' in navigator) navigator.vibrate([100, 50, 100]);
-      const message = `${reg.userDetails?.name || 'Attendee'} has a pending payment. Please proceed to the payment counter.`;
-      setBannerFeedback({
-        type: 'error',
-        title: 'Payment Pending',
-        message,
-      });
-      setTimeout(() => setBannerFeedback(null), 5000);
-      return { success: false, message };
-    }
-
+    setIsCheckingIn(true);
     try {
-      setIsCheckingIn(true);
+      // Find registration in local cache
+      const reg = registrationsRef.current.find((r) => {
+        if (clean.startsWith('registration:') && r.id === clean.replace('registration:', '')) {
+          return true;
+        }
+        if (r.qrCode && r.qrCode === clean) return true;
+        if (r.id.toLowerCase() === clean.toLowerCase()) return true;
+        if (r.userDetails?.email?.toLowerCase() === clean.toLowerCase()) return true;
+        if (r.paymentDetails?.transactionId?.toLowerCase() === clean.toLowerCase()) return true;
+        return false;
+      });
+
+      if (!reg) {
+        playWarningBuzz();
+        if ('vibrate' in navigator) navigator.vibrate([100, 50, 100]);
+        const message =
+          'Could not find a valid registration for this QR code, email, or reference. Please check with registration staff.';
+        setBannerFeedback({
+          type: 'error',
+          title: 'Registration Not Found',
+          message,
+        });
+        setTimeout(() => setBannerFeedback(null), 4000);
+        return { success: false, message };
+      }
+
+      // Check if already checked in
+      if (reg.attendanceStatus === 'checked-in') {
+        playWarningBuzz();
+        if ('vibrate' in navigator) navigator.vibrate([100, 100, 100]);
+        const message = `${reg.userDetails?.name || 'Attendee'} was already checked in.`;
+        setBannerFeedback({
+          type: 'warning',
+          title: 'Already Checked In',
+          message,
+        });
+        setTimeout(() => setBannerFeedback(null), 4000);
+        return { success: false, message };
+      }
+
+      // Verify payment for paid events
+      if (reg.paymentStatus !== 'paid' && (reg.totalAmount ?? 0) > 0) {
+        playWarningBuzz();
+        if ('vibrate' in navigator) navigator.vibrate([100, 50, 100]);
+        const message = `${reg.userDetails?.name || 'Attendee'} has a pending payment. Please proceed to the payment counter.`;
+        setBannerFeedback({
+          type: 'error',
+          title: 'Payment Pending',
+          message,
+        });
+        setTimeout(() => setBannerFeedback(null), 5000);
+        return { success: false, message };
+      }
+
       await RegistrationService.checkInAttendee(reg.id, 'qr', true);
 
       // Success! Play synthesized chime and trigger haptic
@@ -794,64 +761,65 @@ export const EventKioskPage: React.FC = () => {
     navigate(`/events/${eventId}/check-in`);
   };
 
-  // Stats calculation
-  const totalRegistrations = registrations.length;
-  const checkedInCount = useMemo(
-    () => registrations.filter((r) => r.attendanceStatus === 'checked-in').length,
-    [registrations]
-  );
-
   if (loading) {
     return (
-      <div className="min-h-screen bg-surface-container-low flex flex-col items-center justify-center p-6 text-center">
-        <LoadingSpinner size="lg" />
-        <p className="mt-4 text-sm font-medium text-on-surface-variant animate-pulse">
-          Initializing Self-Check-In Kiosk...
-        </p>
+      <div className="min-h-page kiosk-google-dark-bg text-inverse-on-surface flex flex-col items-center justify-center p-6 text-center relative overflow-hidden">
+        <div
+          className="pointer-events-none absolute -inset-16 kiosk-google-mesh-layer z-0"
+          aria-hidden="true"
+        />
+        <div className="relative z-10 flex flex-col items-center">
+          <LoadingSpinner size="lg" />
+          <p className="mt-4 text-sm font-medium text-inverse-on-surface/80 animate-pulse">
+            Initializing Self-Check-In Kiosk...
+          </p>
+        </div>
       </div>
     );
   }
 
   if (authError || !event) {
     return (
-      <div className="min-h-screen bg-surface-container-low flex flex-col items-center justify-center p-6 text-center">
-        <div className="w-16 h-16 rounded-full bg-error-container text-error flex items-center justify-center mb-4">
-          <ExclamationCircleIcon className="w-10 h-10" />
+      <div className="min-h-page kiosk-google-dark-bg text-inverse-on-surface flex flex-col items-center justify-center p-6 text-center relative overflow-hidden">
+        <div
+          className="pointer-events-none absolute -inset-16 kiosk-google-mesh-layer z-0"
+          aria-hidden="true"
+        />
+        <div className="relative z-10 flex flex-col items-center">
+          <div className="w-16 h-16 rounded-full bg-error-container text-error flex items-center justify-center mb-4">
+            <ExclamationCircleIcon className="w-10 h-10" />
+          </div>
+          <h1 className="text-xl font-bold text-inverse-on-surface mb-2">Access Denied</h1>
+          <p className="text-sm text-inverse-on-surface/80 max-w-md mb-6">{authError}</p>
+          <Button variant="filled" onClick={() => navigate(eventId ? `/events/${eventId}` : '/')}>
+            Return to Workspace
+          </Button>
         </div>
-        <h1 className="text-xl font-bold text-on-surface mb-2">Access Denied</h1>
-        <p className="text-sm text-on-surface-variant max-w-md mb-6">{authError}</p>
-        <Button variant="filled" onClick={() => navigate(eventId ? `/events/${eventId}` : '/')}>
-          Return to Workspace
-        </Button>
       </div>
     );
   }
 
-  const bannerImage = event.bannerUrl || event.imageUrl;
+  const sponsors = event.sponsors ?? [];
+  const tickerRepeatCount = sponsors.length > 0 ? Math.max(2, Math.ceil(8 / sponsors.length)) : 0;
+  const tickerTrackItems =
+    tickerRepeatCount > 0
+      ? Array.from({ length: tickerRepeatCount }, () => sponsors).flat()
+      : [];
 
   return (
-    <div className="min-h-screen bg-surface text-on-surface flex flex-col justify-between select-none overflow-hidden relative">
-      {/* Event Banner Atmospheric Backdrop */}
-      {bannerImage ? (
-        <div
-          className="absolute inset-0 pointer-events-none overflow-hidden z-0"
-          aria-hidden="true"
-        >
-          <div
-            className="absolute inset-0 bg-cover bg-center scale-105 opacity-30 transform transition-opacity duration-700"
-            style={{ backgroundImage: `url(${bannerImage})` }}
-          />
-          <div className="absolute inset-0 bg-gradient-to-b from-surface/30 via-transparent to-surface/40 backdrop-blur-[0.5px]" />
-        </div>
-      ) : (
-        <div
-          className="absolute inset-0 pointer-events-none overflow-hidden z-0 bg-gradient-to-br from-primary/15 via-surface/60 to-secondary/15 backdrop-blur-sm"
-          aria-hidden="true"
-        />
-      )}
+    <div className="min-h-page kiosk-google-dark-bg text-inverse-on-surface flex flex-col justify-between select-none overflow-hidden relative">
+      {/* Animated Dark Mixed Google Colors Ambient Mesh Layers */}
+      <div
+        className="pointer-events-none absolute -inset-24 kiosk-google-mesh-layer z-0"
+        aria-hidden="true"
+      />
+      <div
+        className="pointer-events-none absolute -inset-24 kiosk-google-mesh-layer-fast z-0"
+        aria-hidden="true"
+      />
 
-      {/* Kiosk Header */}
-      <header className="relative px-4 py-3 sm:px-6 sm:py-4 border-b border-outline-variant/60 bg-surface/85 backdrop-blur-xl flex items-center justify-between z-10 shadow-sm">
+      {/* Kiosk Header — Minimal bar with 4-color top accent and Exit Kiosk button */}
+      <header className="relative px-4 py-3 sm:px-8 sm:py-4 flex items-center justify-end z-10">
         {/* Google 4-Color Accent Top Bar */}
         <div className="absolute top-0 left-0 right-0 h-1 flex">
           <div className="h-full w-1/4 bg-[#4285F4]" />
@@ -860,102 +828,88 @@ export const EventKioskPage: React.FC = () => {
           <div className="h-full w-1/4 bg-[#34A853]" />
         </div>
 
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-10 h-10 rounded-xl bg-primary text-white flex items-center justify-center font-bold text-lg shadow-md shrink-0 ring-2 ring-white/50">
-            {event.title.charAt(0)}
-          </div>
-          <div className="min-w-0">
-            <h1 className="text-base sm:text-lg font-bold text-on-surface truncate">
-              {event.title}
-            </h1>
-            <p className="text-xs text-on-surface-variant flex items-center gap-1.5">
-              <span className="inline-block w-2 h-2 rounded-full bg-success animate-pulse" />
-              <span className="font-medium">Self-Check-In Station</span>
-            </p>
-          </div>
-        </div>
-
-        {/* Header Actions */}
-        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-          {/* Checked-in counter badge */}
-          <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-success-container/90 backdrop-blur-sm text-on-success-container border border-success/30 text-xs font-semibold shadow-sm">
-            <CheckCircleIcon className="w-4 h-4 text-success" />
-            <span>
-              {checkedInCount} / {totalRegistrations} Checked In
-            </span>
-          </div>
-
-          {/* Fullscreen Toggle (element-fullscreen is absent on iPhone iOS) */}
-          {CAN_REQUEST_FULLSCREEN && (
-            <button
-              type="button"
-              onClick={toggleFullscreen}
-              className="p-2.5 rounded-xl border border-outline-variant/80 bg-surface/80 backdrop-blur-sm hover:bg-surface-container-low text-on-surface-variant transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center shadow-sm"
-              title={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
-              aria-label={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
-            >
-              {isFullscreen ? (
-                <ArrowsPointingInIcon className="w-5 h-5" />
-              ) : (
-                <ArrowsPointingOutIcon className="w-5 h-5" />
-              )}
-            </button>
-          )}
-
-          {/* Organizer Exit Kiosk Button (PIN Protected) */}
-          <button
-            type="button"
-            onClick={handleExitClick}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-outline-variant/80 bg-surface/80 backdrop-blur-sm hover:bg-surface-container-low text-on-surface-variant hover:text-on-surface transition-colors min-h-[44px] font-medium text-xs sm:text-sm shadow-sm"
-            title="Exit Kiosk Mode"
-          >
-            <LockClosedIcon className="w-4 h-4" />
-            <span className="hidden sm:inline">Exit Kiosk</span>
-          </button>
-        </div>
+        {/* Organizer Exit Kiosk Button (PIN Protected) */}
+        <button
+          type="button"
+          onClick={handleExitClick}
+          className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-white/20 bg-white/10 backdrop-blur-md hover:bg-white/20 text-inverse-on-surface transition-colors min-h-control font-medium text-xs sm:text-sm"
+          title="Exit Kiosk Mode"
+        >
+          <LockClosedIcon className="w-4 h-4" />
+          <span>Exit Kiosk</span>
+        </button>
       </header>
 
-      {/* Main Kiosk Area */}
-      <main className="flex-1 flex flex-col items-center justify-center p-4 sm:p-6 relative">
-        {/* Banner Feedback Alert (Temporary error or warning) */}
-        {bannerFeedback && (
-          <div
-            role="alert"
-            className={`absolute top-4 inset-x-4 max-w-lg mx-auto z-20 rounded-2xl p-4 shadow-xl border animate-pop-in motion-reduce:animate-none ${
-              bannerFeedback.type === 'error'
-                ? 'bg-error-container text-on-error-container border-error/30'
-                : 'bg-warning-container text-on-warning-container border-warning/30'
-            }`}
+      {/* Main Two-Column Kiosk Area */}
+      <main className="flex-1 flex items-center justify-center px-4 py-6 sm:px-8 sm:py-10 relative z-10">
+        <div className="w-full max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center">
+          {/* Left Column: Greetings & Hero Event Title (or Celebratory Welcome Card on Check-In) */}
+          <section
+            aria-label="Event Greeting and Check-In Status"
+            className="lg:col-span-7 flex flex-col items-start text-left space-y-5"
           >
-            <div className="flex items-start gap-3">
-              <ExclamationCircleIcon className="w-6 h-6 shrink-0 mt-0.5" />
-              <div>
-                <h4 className="text-sm font-bold">{bannerFeedback.title}</h4>
-                <p className="text-xs sm:text-sm mt-0.5 opacity-90">{bannerFeedback.message}</p>
-              </div>
-            </div>
-          </div>
-        )}
+            {welcomeData ? (
+              <KioskWelcomeCard
+                attendeeName={welcomeData.attendeeName}
+                organization={welcomeData.organization}
+                ticketTierName={welcomeData.ticketTierName}
+                eventTitle={welcomeData.eventTitle}
+                onDismiss={handleWelcomeDismiss}
+              />
+            ) : (
+              <>
+                <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/10 text-inverse-on-surface ring-1 ring-inset ring-white/20 backdrop-blur-sm text-xs sm:text-sm font-bold uppercase tracking-wider">
+                  <span>Welcome to</span>
+                </div>
 
-        {/* View Mode: Celebratory Card overlay over the active camera viewfinder */}
-        {welcomeData && (
-          <div className="absolute inset-0 z-30 flex items-center justify-center p-4 bg-surface-container/60 backdrop-blur-md animate-pop-in motion-reduce:animate-none">
-            <KioskWelcomeCard
-              attendeeName={welcomeData.attendeeName}
-              organization={welcomeData.organization}
-              ticketTierName={welcomeData.ticketTierName}
-              eventTitle={welcomeData.eventTitle}
-              onDismiss={handleWelcomeDismiss}
-            />
-          </div>
-        )}
+                <h1 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-inverse-on-surface tracking-tight leading-[1.12] break-words max-w-2xl">
+                  {event.title}
+                </h1>
 
-        <div className="w-full max-w-md flex flex-col items-center">
-            {/* Camera Viewfinder Card with Glassmorphic Frame */}
-            <div className="w-full bg-surface/85 backdrop-blur-xl rounded-3xl overflow-hidden border-2 border-outline-variant/80 shadow-2xl relative aspect-[4/3] flex items-center justify-center ring-1 ring-white/40">
-              {/* Feed cross-fades in over the status overlay, so the handoff
-                  from the setup modal preview or a fresh acquire reads as one
-                  continuous viewfinder instead of a hard content swap. */}
+                <p className="text-base sm:text-lg text-inverse-on-surface/80 leading-relaxed max-w-xl">
+                  Hold your attendee QR code up to the camera scanner to check in right away, or use your registration reference code below the camera.
+                </p>
+
+                {/* Google 4-color accent bar */}
+                <div className="flex items-center gap-2 pt-1" aria-hidden="true">
+                  <span className="h-1.5 w-10 rounded-full bg-[#4285F4]" />
+                  <span className="h-1.5 w-6 rounded-full bg-[#EA4335]" />
+                  <span className="h-1.5 w-6 rounded-full bg-[#FBBC04]" />
+                  <span className="h-1.5 w-6 rounded-full bg-[#34A853]" />
+                </div>
+
+                {/* Banner Feedback Alert (Temporary error or warning) */}
+                {bannerFeedback && (
+                  <div
+                    role="alert"
+                    className={`w-full max-w-xl rounded-2xl p-4 border shadow-elevation-2 animate-pop-in motion-reduce:animate-none ${
+                      bannerFeedback.type === 'error'
+                        ? 'bg-error-container text-on-error-container border-error/30'
+                        : 'bg-warning-container text-on-warning-container border-warning/30'
+                    }`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <ExclamationCircleIcon className="w-6 h-6 shrink-0 mt-0.5" />
+                      <div>
+                        <h2 className="text-sm font-bold">{bannerFeedback.title}</h2>
+                        <p className="text-xs sm:text-sm mt-0.5 opacity-90">
+                          {bannerFeedback.message}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </section>
+
+          {/* Right Column: Frameless Camera Scanner & Manual Entry */}
+          <section
+            aria-label="QR Code Camera Scanner"
+            className="lg:col-span-5 flex flex-col items-center w-full max-w-md mx-auto lg:max-w-none"
+          >
+            {/* Frameless Camera Viewfinder Container */}
+            <div className="w-full bg-inverse-surface/80 rounded-3xl overflow-hidden border border-white/20 shadow-[0_24px_60px_rgba(0,0,0,0.45)] relative aspect-[4/3] flex items-center justify-center">
               <video
                 ref={videoRef}
                 className="w-full h-full object-cover"
@@ -964,34 +918,50 @@ export const EventKioskPage: React.FC = () => {
                 muted
               />
 
+              {isCameraActive && isCheckingIn && (
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className="absolute inset-0 z-20 flex flex-col items-center justify-center p-6 text-center bg-inverse-surface/75 backdrop-blur-md animate-fade-in motion-reduce:animate-none"
+                >
+                  <LoadingSpinner size="lg" />
+                  <p className="mt-4 text-base sm:text-lg font-bold text-inverse-on-surface">
+                    Verifying QR Code...
+                  </p>
+                  <p className="mt-1 text-xs sm:text-sm text-inverse-on-surface/80">
+                    Please hold still while we process your check-in
+                  </p>
+                </div>
+              )}
+
               {!isCameraActive && (
                 <div
                   role="status"
                   aria-live="polite"
-                  className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center bg-surface-container/90 backdrop-blur-md"
+                  className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center bg-inverse-surface/95 backdrop-blur-md"
                 >
-                  <CameraIcon className="w-14 h-14 text-outline-variant mb-3 animate-pulse" />
-                  <p className="text-sm font-medium text-on-surface-variant max-w-xs">
+                  <CameraIcon className="w-14 h-14 text-inverse-on-surface/50 mb-3 animate-pulse" />
+                  <p className="text-sm font-medium text-inverse-on-surface max-w-xs">
                     {cameraError || 'Starting Camera...'}
                   </p>
                   {cameraError ? (
                     <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
                       <Button
-                        variant="tonal"
+                        variant="filled"
                         size="sm"
                         onClick={() => void startCamera()}
                       >
                         Retry Camera
                       </Button>
                       <Button
-                        variant="outlined"
+                        variant="tonal"
                         size="sm"
                         onClick={handleUseDefaultCamera}
                       >
                         Use Default Camera
                       </Button>
                       <Button
-                        variant="text"
+                        variant="tonal"
                         size="sm"
                         onClick={() => setIsSetupModalOpen(true)}
                       >
@@ -999,80 +969,94 @@ export const EventKioskPage: React.FC = () => {
                       </Button>
                     </div>
                   ) : (
-                    <p className="text-xs text-on-surface-variant/70 mt-1 max-w-xs">
+                    <p className="text-xs text-inverse-on-surface/70 mt-1 max-w-xs">
                       Connecting camera feed...
                     </p>
                   )}
                 </div>
               )}
+            </div>
 
-              {/* Scanning Target Overlay */}
-              {isCameraActive && (
-                <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-                  <div
-                    className={`w-56 h-56 border-2 rounded-2xl transition-colors duration-200 relative ${
-                      isScanning ? 'border-primary/60' : 'border-success'
+            {/* Scanner Status & Manual Code Fallback */}
+            <div className="mt-4 w-full flex flex-col items-center gap-3">
+              <p className="text-xs sm:text-sm font-medium text-inverse-on-surface/85 flex items-center gap-2">
+                {isCheckingIn ? (
+                  <LoadingSpinner size="sm" />
+                ) : (
+                  <span
+                    className={`inline-block w-2 h-2 rounded-full ${
+                      isCameraActive && isScanning ? 'bg-success' : 'bg-outline'
                     }`}
-                  >
-                    {/* Animated Laser Scanline scrolling within the frame */}
-                    {isScanning && (
-                      <div className="absolute inset-0 overflow-hidden rounded-[14px] pointer-events-none">
-                        <div className="w-full h-full flex flex-col justify-end animate-scanline motion-reduce:hidden">
-                          <div className="relative w-full flex items-center justify-center">
-                            <div className="absolute w-full h-6 bg-gradient-to-r from-transparent via-[#4285F4]/30 to-transparent blur-sm pointer-events-none" />
-                            <div className="w-full h-0.5 bg-gradient-to-r from-transparent via-[#4285F4] to-transparent shadow-[0_0_12px_2px_rgba(66,133,244,0.85)] pointer-events-none" />
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Google 4-Color Corner Reticle Accents */}
-                    <div className="absolute -top-1 -left-1 w-6 h-6 border-t-4 border-l-4 border-[#4285F4] rounded-tl-lg shadow-[0_0_8px_rgba(66,133,244,0.6)]" />
-                    <div className="absolute -top-1 -right-1 w-6 h-6 border-t-4 border-r-4 border-[#EA4335] rounded-tr-lg shadow-[0_0_8px_rgba(234,67,53,0.6)]" />
-                    <div className="absolute -bottom-1 -right-1 w-6 h-6 border-b-4 border-r-4 border-[#FBBC04] rounded-br-lg shadow-[0_0_8px_rgba(251,188,4,0.6)]" />
-                    <div className="absolute -bottom-1 -left-1 w-6 h-6 border-b-4 border-l-4 border-[#34A853] rounded-bl-lg shadow-[0_0_8px_rgba(52,168,83,0.6)]" />
-                  </div>
-                </div>
-              )}
-
-            </div>
-
-            {/* Glassmorphic Instruction Banner */}
-            <div className="mt-5 text-center space-y-1 px-5 py-3 rounded-2xl bg-surface/80 backdrop-blur-md border border-outline-variant/60 shadow-md">
-              <h2 className="text-lg font-bold text-on-surface flex items-center justify-center gap-2">
-                <span>Hold Badge QR to Camera</span>
-              </h2>
-              <p className="text-xs sm:text-sm text-on-surface-variant max-w-xs mx-auto">
-                Align your attendee QR code within the frame to verify check-in instantly.
+                  />
+                )}
+                <span>
+                  {isCheckingIn
+                    ? 'Verifying check-in...'
+                    : isCameraActive
+                      ? isScanning
+                        ? 'Camera ready — show your QR code'
+                        : 'Processing scan...'
+                      : 'Waiting for camera...'}
+                </span>
               </p>
-            </div>
 
-            {/* Manual Code Fallback Button */}
-            <div className="mt-4 w-full max-w-xs">
-              <Button
-                variant="outlined"
-                size="lg"
-                icon={<QrCodeIcon className="w-5 h-5" />}
-                className="w-full min-h-[50px] font-semibold text-sm bg-surface/80 backdrop-blur-md border-outline-variant/80 hover:bg-surface-container-low shadow-sm"
+              <button
+                type="button"
+                disabled={isCheckingIn}
                 onClick={() => {
                   playClickFeedback();
                   setIsManualModalOpen(true);
                 }}
+                className="w-full min-h-control inline-flex items-center justify-center gap-2.5 px-6 py-3.5 rounded-2xl bg-white text-on-surface hover:bg-surface-container-low font-bold text-sm sm:text-base shadow-elevation-2 active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none transition-[background-color,transform,box-shadow] duration-fast ease-quart focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-inverse-surface"
               >
-                Enter Code Manually
-              </Button>
+                <QrCodeIcon className="w-5 h-5 text-primary shrink-0" aria-hidden="true" />
+                <span>Enter Code Manually</span>
+              </button>
             </div>
-          </div>
+          </section>
+        </div>
       </main>
 
-      {/* Kiosk Footer */}
-      <footer className="px-4 py-3 border-t border-outline-variant text-center bg-surface text-xs text-on-surface-variant flex items-center justify-between sm:justify-center relative">
-        <span className="sm:hidden text-xs font-semibold text-success">
-          {checkedInCount} / {totalRegistrations} Checked In
-        </span>
-        <span className="text-center">TeamApo Hub · GDG Davao Event Kiosk</span>
-        <div className="w-8 sm:hidden" />
-      </footer>
+      {/* Bottom Dock: Sponsors & Partners Scrolling Ticker (Transparent, No Background) */}
+      {sponsors.length > 0 && (
+        <section
+          aria-label="Event Sponsors and Partners"
+          className="w-full py-4 overflow-hidden z-10"
+        >
+          <div className="max-w-7xl mx-auto px-4 sm:px-8 mb-2 flex items-center justify-between">
+            <span className="text-[11px] font-bold uppercase tracking-widest text-inverse-on-surface/70">
+              Sponsors &amp; Partners
+            </span>
+          </div>
+
+          <div className="relative w-full overflow-hidden">
+            <div className="flex w-max animate-kiosk-ticker">
+              {[0, 1].map((groupIndex) => (
+                <div
+                  key={groupIndex}
+                  aria-hidden={groupIndex === 1 ? 'true' : undefined}
+                  className="flex shrink-0 items-center gap-12 pr-12"
+                >
+                  {tickerTrackItems.map((sponsor, idx) => (
+                    <div
+                      key={`${groupIndex}-${sponsor.id}-${idx}`}
+                      className="flex items-center justify-center shrink-0"
+                    >
+                      <img
+                        src={sponsor.logoUrl}
+                        alt={groupIndex === 0 ? sponsor.name : ''}
+                        loading="lazy"
+                        decoding="async"
+                        className="h-auto max-h-12 sm:max-h-14 w-auto object-contain"
+                      />
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* Kiosk Setup Onboarding Modal */}
       <KioskSetupModal

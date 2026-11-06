@@ -10,6 +10,7 @@ import {
   AcademicCapIcon,
   ChatBubbleLeftRightIcon,
   Cog6ToothIcon,
+  HeartIcon,
   ArrowLeftIcon,
   CalendarDaysIcon,
   MapPinIcon,
@@ -39,6 +40,7 @@ import AttendeesTab from './tabs/AttendeesTab';
 import ResponsesTab from './tabs/ResponsesTab';
 import CheckInTab from './tabs/CheckInTab';
 import PromoCodesTab from './tabs/PromoCodesTab';
+import SponsorsTab from './tabs/SponsorsTab';
 import CertificatesTab from './tabs/CertificatesTab';
 import FeedbackTab from './tabs/FeedbackTab';
 import SettingsTab from './tabs/SettingsTab';
@@ -49,6 +51,7 @@ export type EventWorkspaceTab =
   | 'responses'
   | 'check-in'
   | 'promo-codes'
+  | 'sponsors'
   | 'certificates'
   | 'feedback'
   | 'settings';
@@ -76,6 +79,7 @@ const TABS: TabConfig[] = [
   { id: 'responses', label: 'Responses', icon: ClipboardDocumentListIcon },
   { id: 'check-in', label: 'Check-In', icon: QrCodeIcon },
   { id: 'promo-codes', label: 'Promo Codes', icon: TagIcon },
+  { id: 'sponsors', label: 'Sponsors & Partners', icon: HeartIcon },
   { id: 'certificates', label: 'Certificates', icon: AcademicCapIcon },
   { id: 'feedback', label: 'Feedback', icon: ChatBubbleLeftRightIcon },
   { id: 'settings', label: 'Settings', icon: Cog6ToothIcon },
@@ -403,6 +407,9 @@ const EventWorkspacePage: React.FC = () => {
           </div>
           <div className={activeTab === 'promo-codes' ? 'block' : 'hidden'}>
             {visitedTabs.has('promo-codes') && <PromoCodesTab eventId={eventId} />}
+          </div>
+          <div className={activeTab === 'sponsors' ? 'block' : 'hidden'}>
+            {visitedTabs.has('sponsors') && <SponsorsTab eventId={eventId} />}
           </div>
           <div className={activeTab === 'certificates' ? 'block' : 'hidden'}>
             {visitedTabs.has('certificates') && <CertificatesTab eventId={eventId} />}

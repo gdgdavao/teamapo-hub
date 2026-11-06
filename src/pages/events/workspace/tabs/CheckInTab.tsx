@@ -27,7 +27,7 @@ import { EventService } from '../../../../services/eventService';
 import type { WalkInRegistrationData } from './WalkInRegistrationModal';
 import toast from 'react-hot-toast';
 import { logger } from '../../../../utils/logger';
-import { toDateSafe } from '../../../../utils/dateUtils';
+import { getEventDateStatus } from '../../../../utils/dateUtils';
 import { BrowserQRCodeReader, type IScannerControls } from '@zxing/browser';
 import { Result } from '@zxing/library';
 import { CameraService } from '../../../../services/cameraService';
@@ -61,87 +61,6 @@ const log = {
   info: (...args: unknown[]) => logger.info('[AdminCheckIn]', ...args),
   warn: (...args: unknown[]) => logger.warn('[AdminCheckIn]', ...args),
   error: (...args: unknown[]) => logger.error('[AdminCheckIn]', ...args),
-};
-
-// Date awareness helper functions
-const getEventDateStatus = (event: Event | null) => {
-  if (!event || !event.startDate) return null;
-  
-  try {
-    // Debug logging
-    log.debug('Processing event dates:', { 
-      startDate: event.startDate, 
-      endDate: event.endDate,
-      startDateType: typeof event.startDate,
-      hasToDate: !!(event.startDate as any)?.toDate
-    });
-    
-    const now = new Date();
-    const eventStartDate = toDateSafe(event.startDate) ?? new Date(0);
-    const eventEndDate = toDateSafe(event.endDate) ?? eventStartDate;
-    
-    // Check if dates are valid
-    if (isNaN(eventStartDate.getTime()) || isNaN(eventEndDate.getTime())) {
-      log.warn('Invalid event dates after parsing:', { 
-        eventStartDate, 
-        eventEndDate,
-        originalStartDate: event.startDate,
-        originalEndDate: event.endDate
-      });
-      return null;
-    }
-    
-    log.debug('Successfully parsed dates:', { eventStartDate, eventEndDate });
-    
-    // Calculate time differences
-    const timeDiffStart = eventStartDate.getTime() - now.getTime();
-    const timeDiffEnd = eventEndDate.getTime() - now.getTime();
-    const daysDiffStart = Math.floor(timeDiffStart / (1000 * 3600 * 24));
-    const daysDiffEnd = Math.floor(timeDiffEnd / (1000 * 3600 * 24));
-    
-    // Event is in the past
-    if (timeDiffEnd < 0) {
-      const daysAgo = Math.abs(daysDiffEnd);
-      return {
-        type: 'past' as const,
-        severity: daysAgo > 7 ? 'high' : daysAgo > 1 ? 'medium' : 'low',
-        message: daysAgo === 0 ? 'This event ended today' :
-                 daysAgo === 1 ? 'This event ended yesterday' :
-                 `This event ended ${daysAgo} days ago`,
-        daysAgo,
-        canCheckIn: daysAgo <= 1 // Allow check-in up to 1 day after event
-      };
-    }
-    
-    // Event is happening now
-    if (timeDiffStart <= 0 && timeDiffEnd >= 0) {
-      return {
-        type: 'current' as const,
-        severity: 'none' as const,
-        message: 'Event is happening now',
-        canCheckIn: true
-      };
-    }
-    
-    // Event is in the future
-    if (timeDiffStart > 0) {
-      return {
-        type: 'future' as const,
-        severity: daysDiffStart > 7 ? 'high' : daysDiffStart > 1 ? 'medium' : 'low',
-        message: daysDiffStart === 0 ? 'This event starts today' :
-                 daysDiffStart === 1 ? 'This event starts tomorrow' :
-                 `This event starts in ${daysDiffStart} days`,
-        daysUntil: daysDiffStart,
-        canCheckIn: daysDiffStart <= 1 // Allow check-in starting 1 day before event
-      };
-    }
-    
-    return null;
-  } catch (error) {
-    log.error('Error in getEventDateStatus:', error, { event });
-    // Return null to gracefully degrade if date parsing fails
-    return null;
-  }
 };
 
 // Alert component for date warnings

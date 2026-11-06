@@ -26,7 +26,7 @@ import { db, storage, functions } from '../config/firebase';
 import { logger } from '../utils/logger';
 import { generateSlug } from '../utils/slugUtils';
 import { toDateSafe } from '../utils/dateUtils';
-import { Event, TicketType, PromoCode, FormField } from '../types';
+import { Event, TicketType, PromoCode, FormField, EventSponsor } from '../types';
 import { AuditLogService } from './auditLogService';
 import { swrCache } from '../utils/swrCache';
 
@@ -303,6 +303,40 @@ export class EventService {
 
       return this.removeUndefinedValues(safe);
     });
+  }
+
+  /**
+   * Sanitize sponsors and partners to ensure Firestore-serializable values only
+   * - Keep whitelisted fields
+   * - Drop preview data URLs (base64) and local blob URLs
+   * - Trim strings and omit empty optional fields
+   */
+  public static sanitizeSponsors(sponsors: EventSponsor[] = []): EventSponsor[] {
+    return (sponsors || [])
+      .map((item, idx) => {
+        const name = typeof item.name === 'string' ? item.name.trim() : '';
+        const rawLogo = typeof item.logoUrl === 'string' ? item.logoUrl.trim() : '';
+        const logoUrl =
+          rawLogo && !rawLogo.startsWith('data:') && !rawLogo.startsWith('blob:')
+            ? rawLogo
+            : '';
+
+        const rawTier = typeof item.tier === 'string' ? item.tier.trim() : '';
+        const safe: Record<string, unknown> = {
+          id: String(item.id ?? `sponsor_${idx}`).trim(),
+          name,
+          logoUrl,
+          tier: rawTier || 'sponsor',
+          sortOrder: typeof item.sortOrder === 'number' ? item.sortOrder : idx,
+        };
+
+        if (item.websiteUrl && typeof item.websiteUrl === 'string' && item.websiteUrl.trim()) {
+          safe.websiteUrl = item.websiteUrl.trim();
+        }
+
+        return this.removeUndefinedValues(safe) as EventSponsor;
+      })
+      .filter((s) => Boolean(s.id && s.name && s.logoUrl));
   }
 
   /**
@@ -822,6 +856,75 @@ export class EventService {
     } catch (error) {
       logger.error('Error updating promo codes:', error);
       throw new Error('Failed to update promo codes');
+    }
+  }
+
+  /**
+   * Update an event's sponsors and partners list on `events/{eventId}`.
+   */
+  static async updateEventSponsors(eventId: string, sponsors: EventSponsor[]): Promise<void> {
+    try {
+      const sanitized = this.sanitizeSponsors(sponsors);
+      await updateDoc(doc(db, this.EVENTS_COLLECTION, eventId), {
+        sponsors: sanitized,
+        updatedAt: serverTimestamp(),
+      });
+
+      this.invalidateCache(eventId);
+      void AuditLogService.recordAuditLog({
+        category: 'event_operations',
+        action: 'event_updated',
+        target: {
+          type: 'event',
+          id: eventId,
+        },
+        details: {
+          updatedFields: ['sponsors'],
+          sponsorsCount: sanitized.length,
+        },
+      });
+    } catch (error) {
+      logger.error('Error updating event sponsors:', error);
+      throw new Error('Failed to update sponsors and partners');
+    }
+  }
+
+  /**
+   * Upload a sponsor or partner logo to `event-images/{eventId}/sponsor-{sponsorId}-{timestamp}.{ext}`.
+   * Matches `/event-images/{eventId}/{fileId}` in storage.rules.
+   */
+  static async uploadSponsorLogo(
+    eventId: string,
+    sponsorId: string,
+    imageFile: File
+  ): Promise<string> {
+    try {
+      if (!imageFile || !(imageFile instanceof File)) {
+        throw new Error('Logo must be a valid image file');
+      }
+      if (!imageFile.type || !imageFile.type.startsWith('image/')) {
+        throw new Error('Logo must be an image file');
+      }
+      if (imageFile.size > 5 * 1024 * 1024) {
+        throw new Error('Logo image must be smaller than 5MB');
+      }
+
+      const timestamp = Date.now();
+      const rawExt = imageFile.name.split('.').pop()?.toLowerCase() || 'png';
+      const safeExt = /^[a-z0-9]+$/.test(rawExt) ? rawExt : 'png';
+      const safeId = sponsorId.replace(/[^a-zA-Z0-9_-]/g, '');
+      const storagePath = `${this.EVENT_IMAGES_PATH}/${eventId}/sponsor-${safeId}-${timestamp}.${safeExt}`;
+      const logoRef = ref(storage, storagePath);
+
+      const snapshot = await uploadBytes(logoRef, imageFile, {
+        contentType: imageFile.type || 'image/png',
+      });
+      return await getDownloadURL(snapshot.ref);
+    } catch (error) {
+      logger.error('Error uploading sponsor logo:', error);
+      throw new Error(
+        `Failed to upload sponsor logo: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
     }
   }
 

@@ -33,6 +33,7 @@ flowchart TD
    - [docs/Schema.md](file:///Users/gab/Developer/apohub/docs/Schema.md): Firestore collections, document structures, and indexes.
    - [docs/Rules.md](file:///Users/gab/Developer/apohub/docs/Rules.md): Security rules architecture and coding style standards.
    - [docs/PRD.md](file:///Users/gab/Developer/apohub/docs/PRD.md): Product requirements and attendee/organizer personas.
+   - [docs/KioskMode.md](file:///Users/gab/Developer/apohub/docs/KioskMode.md): Attendee Self-Check-In Kiosk architecture, camera lifecycle, and UI specification.
 3. **Interconnected Memory Map Protocol**:
    - **Discovery**: Prior to implementing complex features or investigating architectural patterns, consult the `memory-map` MCP server (`get_memory_map`, `search_memories`, `read_memory`) to retrieve existing project memories, historical precedents, and design decisions.
    - **Retention**: When discovering cross-cutting invariants, solving subtle bugs, making significant architectural choices, or establishing new patterns, invoke `create_memory` or `update_memory` to persist the insight in Markdown (`.memory/nodes/<id>.md`).

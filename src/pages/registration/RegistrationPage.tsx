@@ -838,6 +838,68 @@ const EventRegistrationPage: React.FC<EventRegistrationPageProps> = ({ isPreview
             </div>
           </section>
         ) : null}
+
+        {event.sponsors && event.sponsors.length > 0 && (
+          <section className="mt-10 sm:mt-14" aria-labelledby="event-sponsors-heading">
+            <Reveal>
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-primary">Community &amp; Support</p>
+              <h2 id="event-sponsors-heading" className="mt-2 text-2xl sm:text-3xl font-bold tracking-tight text-on-surface">
+                Sponsors &amp; Partners
+              </h2>
+            </Reveal>
+
+            <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+              {event.sponsors.map((sponsor, index) => {
+                const tierLabel =
+                  sponsor.tier === 'community'
+                    ? 'Community Partner'
+                    : sponsor.tier === 'venue'
+                      ? 'Venue Partner'
+                      : sponsor.tier === 'media'
+                        ? 'Media Partner'
+                        : sponsor.tier;
+
+                const cardInner = (
+                  <div className="flex flex-col items-center justify-center text-center gap-3 h-full">
+                    <div className="min-h-[88px] w-full flex items-center justify-center p-2 overflow-hidden">
+                      <img
+                        src={sponsor.logoUrl}
+                        alt={sponsor.name}
+                        loading="lazy"
+                        decoding="async"
+                        className="h-auto max-h-20 w-auto max-w-full object-contain"
+                      />
+                    </div>
+                    {tierLabel && (
+                      <span className="inline-flex items-center rounded-full bg-surface-container px-2.5 py-0.5 text-xs font-medium text-on-surface-variant capitalize">
+                        {tierLabel}
+                      </span>
+                    )}
+                  </div>
+                );
+
+                return (
+                  <Reveal key={sponsor.id || index} delay={index * 60}>
+                    {sponsor.websiteUrl ? (
+                      <a
+                        href={sponsor.websiteUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block h-full rounded-xl border border-outline-variant bg-surface p-4 transition-[border-color,box-shadow] duration-fast ease-quart hover:border-outline hover:shadow-elevation-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      >
+                        {cardInner}
+                      </a>
+                    ) : (
+                      <div className="h-full rounded-xl border border-outline-variant bg-surface p-4">
+                        {cardInner}
+                      </div>
+                    )}
+                  </Reveal>
+                );
+              })}
+            </div>
+          </section>
+        )}
       </main>
 
       {/* Public Page Footer */}
