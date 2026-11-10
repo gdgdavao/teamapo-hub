@@ -431,12 +431,73 @@ export class CertificateGenerationService {
     return results;
   }
 
-  static downloadCertificate(certificateUrl: string, filename: string) {
+  /**
+   * Convert a remote certificate URL (e.g. Firebase Storage) into a local
+   * same-origin blob: URL so the raw Storage link is never exposed in the DOM
+   * and downloads trigger immediately across Chrome, Safari/WebKit, and Firefox.
+   */
+  static async toLocalObjectUrl(certificateUrl: string): Promise<string> {
+    if (!certificateUrl || certificateUrl.startsWith('blob:') || certificateUrl.startsWith('data:')) {
+      return certificateUrl;
+    }
+
+    try {
+      const response = await fetch(certificateUrl);
+      if (response.ok) {
+        const blob = await response.blob();
+        return URL.createObjectURL(blob);
+      }
+    } catch {
+      // Fallback to canvas extraction below if fetch hits CORS
+    }
+
+    try {
+      const img = await this.loadImageWithRetry(certificateUrl, 2);
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth || img.width || HIGH_RES_WIDTH;
+      canvas.height = img.naturalHeight || img.height || HIGH_RES_HEIGHT;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(img, 0, 0);
+        const blob = await new Promise<Blob | null>((resolve) =>
+          canvas.toBlob((b) => resolve(b), 'image/png', 1.0)
+        );
+        if (blob) {
+          return URL.createObjectURL(blob);
+        }
+      }
+    } catch (err) {
+      logger.warn('Could not convert certificate URL to local blob URL:', err);
+    }
+
+    return certificateUrl;
+  }
+
+  /**
+   * Trigger a direct browser file download for a certificate without exposing
+   * or navigating to a cross-origin Firebase Storage URL.
+   */
+  static async downloadCertificate(certificateUrl: string, filename: string): Promise<void> {
+    const safeFilename = filename.endsWith('.png') ? filename : `${filename}.png`;
+    let downloadUrl = certificateUrl;
+    let shouldRevoke = false;
+
+    if (!certificateUrl.startsWith('blob:') && !certificateUrl.startsWith('data:')) {
+      downloadUrl = await this.toLocalObjectUrl(certificateUrl);
+      shouldRevoke = downloadUrl.startsWith('blob:');
+    }
+
     const link = document.createElement('a');
-    link.href = certificateUrl;
-    link.download = filename;
+    link.href = downloadUrl;
+    link.download = safeFilename;
+    link.rel = 'noopener';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+
+    if (shouldRevoke) {
+      // Delay revoking so WebKit/Safari and Firefox complete the download stream
+      setTimeout(() => URL.revokeObjectURL(downloadUrl), 1500);
+    }
   }
 }
