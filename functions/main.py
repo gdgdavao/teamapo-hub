@@ -2663,30 +2663,46 @@ def issueCertificateRecord(req: https_fn.CallableRequest) -> Dict[str, Any]:
     feedback submission have been verified server-side. Idempotent: the document
     id is the registration id, so a retry returns the existing record.
     """
+    import uuid
+
     data = req.data or {}
     event_id = data.get('eventId')
     registration_id = data.get('registrationId')
     verification_code = data.get('verificationCode')
     certificate_url = data.get('certificateUrl')
+    image_data_url = data.get('imageDataUrl')
     recipient_name = data.get('recipientName')
     if not all(isinstance(v, str) and v for v in (
-        event_id, registration_id, verification_code, certificate_url, recipient_name
+        event_id, registration_id, verification_code, recipient_name
     )):
         raise https_fn.HttpsError(
             code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
             message="eventId, registrationId, verificationCode, certificateUrl and recipientName are required"
         )
+    if not (isinstance(certificate_url, str) and certificate_url) and not (isinstance(image_data_url, str) and image_data_url):
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+            message="certificateUrl or imageDataUrl is required"
+        )
+
     allowed_prefixes = ('https://',)
     if os.environ.get('FUNCTIONS_EMULATOR') == 'true':
         allowed_prefixes += ('http://127.0.0.1', 'http://localhost')  # Storage emulator
-    if not certificate_url.startswith(allowed_prefixes):
+
+    has_https_url = isinstance(certificate_url, str) and certificate_url.startswith(allowed_prefixes)
+    raw_data_url = image_data_url if (isinstance(image_data_url, str) and image_data_url.startswith('data:image/png;base64,')) else (
+        certificate_url if (isinstance(certificate_url, str) and certificate_url.startswith('data:image/png;base64,')) else None
+    )
+
+    if not has_https_url and not raw_data_url:
         raise https_fn.HttpsError(
             code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
-            message="certificateUrl must be an https URL"
+            message="certificateUrl must be an https URL or a PNG data URL"
         )
 
     db = get_db()
-    registration = db.collection('registrations').document(registration_id).get()
+    registration_ref = db.collection('registrations').document(registration_id)
+    registration = registration_ref.get()
     if not registration.exists or (registration.to_dict() or {}).get('eventId') != event_id:
         raise https_fn.HttpsError(
             code=https_fn.FunctionsErrorCode.NOT_FOUND, message="Registration not found"
@@ -2713,7 +2729,49 @@ def issueCertificateRecord(req: https_fn.CallableRequest) -> Dict[str, Any]:
     certificate_ref = db.collection('certificates').document(registration_id)
     existing = certificate_ref.get()
     if existing.exists:
-        return {'success': True, 'certificateId': existing.id}
+        existing_data = existing.to_dict() or {}
+        return {
+            'success': True,
+            'certificateId': existing.id,
+            'certificateUrl': existing_data.get('certificateUrl')
+        }
+
+    # If the caller supplied a base64 PNG data URL instead of an already-uploaded
+    # Storage URL (because storage.rules restricts /certificates/{eventId}/{fileName}
+    # writes to admins), upload the PNG server-side via Admin SDK after verification.
+    if not has_https_url and raw_data_url:
+        try:
+            b64_payload = raw_data_url.split(',', 1)[1]
+            png_bytes = base64.b64decode(b64_payload, validate=True)
+        except Exception:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="Invalid base64 PNG image data"
+            )
+        if not png_bytes or len(png_bytes) > 5 * 1024 * 1024:
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                message="Certificate image must be non-empty and under 5 MB"
+            )
+        try:
+            bucket = storage.bucket()
+            blob_path = f"certificates/{event_id}/{verification_code}.png"
+            blob = bucket.blob(blob_path)
+            download_token = str(uuid.uuid4())
+            blob.metadata = {'firebaseStorageDownloadTokens': download_token}
+            blob.upload_from_string(png_bytes, content_type='image/png')
+            encoded_path = quote(blob_path, safe='')
+            emulator_host = os.environ.get('FIREBASE_STORAGE_EMULATOR_HOST')
+            if emulator_host:
+                certificate_url = f"http://{emulator_host}/v0/b/{bucket.name}/o/{encoded_path}?alt=media&token={download_token}"
+            else:
+                certificate_url = f"https://firebasestorage.googleapis.com/v0/b/{bucket.name}/o/{encoded_path}?alt=media&token={download_token}"
+        except Exception as upload_err:
+            logger.error(f"issueCertificateRecord: Storage upload failed for {registration_id}: {upload_err}")
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INTERNAL,
+                message="Failed to upload certificate image"
+            )
 
     # No recipientEmail: /certificates is public-read (DPA 2012).
     certificate_ref.set({
@@ -2732,7 +2790,22 @@ def issueCertificateRecord(req: https_fn.CallableRequest) -> Dict[str, Any]:
         'downloadCount': 0,
         'verificationCount': 0,
     })
-    return {'success': True, 'certificateId': certificate_ref.id}
+
+    try:
+        registration_ref.update({
+            'certificateGenerated': True,
+            'certificateId': certificate_ref.id,
+            'certificateGeneratedAt': firestore.SERVER_TIMESTAMP,
+            'updatedAt': firestore.SERVER_TIMESTAMP
+        })
+    except Exception as reg_update_err:
+        logger.warning(f"issueCertificateRecord: Failed to stamp registration {registration_id}: {reg_update_err}")
+
+    return {
+        'success': True,
+        'certificateId': certificate_ref.id,
+        'certificateUrl': certificate_url
+    }
 
 
 @https_fn.on_call()
@@ -4289,59 +4362,186 @@ def sendFeedbackRequest(req: https_fn.CallableRequest) -> Dict[str, Any]:
         )
 
 
+def _serialize_timestamp_iso(val: Any) -> Optional[str]:
+    """Serialize Firestore Timestamp or datetime to an ISO-8601 string for JSON transport."""
+    if val is None:
+        return None
+    if isinstance(val, datetime):
+        return val.isoformat()
+    if hasattr(val, 'isoformat'):
+        return val.isoformat()
+    if hasattr(val, 'seconds'):
+        return datetime.fromtimestamp(val.seconds, tz=timezone.utc).isoformat()
+    if isinstance(val, dict) and 'seconds' in val:
+        return datetime.fromtimestamp(val['seconds'], tz=timezone.utc).isoformat()
+    if isinstance(val, str):
+        return val
+    return str(val)
+
+
 @https_fn.on_call()
 def resolveFeedbackToken(req: https_fn.CallableRequest) -> Dict[str, Any]:
     """
-    Resolve a feedback token to get the associated registration data.
-    This allows the feedback page to retrieve user info without exposing it in the URL.
+    Resolve a feedback token (or public feedback event context) for /feedback/:eventId.
+    - Keeps /events/{eventId} private in firestore.rules when status == 'completed'
+      while returning minimal public event metadata + feedbackForm fields.
+    - Resolves eventId by document ID or slug.
+    - When token is provided, resolves attendee registration details and feedbackSubmitted status.
     """
     try:
         data: Dict[str, Any] = req.data or {}
         token = data.get('token')
         event_id = data.get('eventId')
 
-        if not token:
+        if not token and not event_id:
             raise https_fn.HttpsError(
                 code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
-                message="token is required"
+                message="token or eventId is required"
             )
 
         db = get_db()
-        token_ref = db.collection('feedbackTokens').document(token)
-        token_doc = token_ref.get()
+        token_data: Optional[Dict[str, Any]] = None
+        canonical_event_id: Optional[str] = None
+        event_doc = None
+        event_data: Dict[str, Any] = {}
 
-        if not token_doc.exists:
-            raise https_fn.HttpsError(
-                code=https_fn.FunctionsErrorCode.NOT_FOUND,
-                message="Invalid or expired feedback token"
-            )
+        if token:
+            if not isinstance(token, str) or not (1 <= len(token.strip()) <= 256):
+                raise https_fn.HttpsError(
+                    code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                    message="Invalid feedback token"
+                )
+            token_ref = db.collection('feedbackTokens').document(token.strip())
+            token_doc = token_ref.get()
 
-        token_data = token_doc.to_dict()
+            if not token_doc.exists:
+                raise https_fn.HttpsError(
+                    code=https_fn.FunctionsErrorCode.NOT_FOUND,
+                    message="Invalid or expired feedback token"
+                )
 
-        # Verify event ID matches if provided
-        if event_id and token_data.get('eventId') != event_id:
-            raise https_fn.HttpsError(
-                code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
-                message="Token does not match this event"
-            )
+            token_data = token_doc.to_dict() or {}
 
-        # Check if token has expired (if expiry is set)
-        expires_at = token_data.get('expiresAt')
-        if expires_at:
-            from datetime import datetime, timezone
-            if isinstance(expires_at, datetime):
+            # Check if token has expired (if expiry is set)
+            expires_at = token_data.get('expiresAt')
+            if expires_at and isinstance(expires_at, datetime):
                 if expires_at < datetime.now(timezone.utc):
                     raise https_fn.HttpsError(
                         code=https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
                         message="Feedback token has expired"
                     )
 
+            canonical_event_id = token_data.get('eventId')
+            if canonical_event_id:
+                event_doc = db.collection('events').document(canonical_event_id).get()
+                if event_doc.exists:
+                    event_data = event_doc.to_dict() or {}
+
+            # Verify event ID or slug matches if provided
+            if event_id:
+                clean_event_arg = str(event_id).strip()
+                event_slug = str(event_data.get('slug') or '').strip()
+                if clean_event_arg != canonical_event_id and (not event_slug or clean_event_arg != event_slug):
+                    raise https_fn.HttpsError(
+                        code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                        message="Token does not match this event"
+                    )
+        else:
+            clean_event_arg = str(event_id).strip()
+            if not (1 <= len(clean_event_arg) <= 128):
+                raise https_fn.HttpsError(
+                    code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+                    message="Invalid eventId"
+                )
+            direct_doc = db.collection('events').document(clean_event_arg).get()
+            if direct_doc.exists:
+                event_doc = direct_doc
+                canonical_event_id = direct_doc.id
+                event_data = direct_doc.to_dict() or {}
+            else:
+                slug_docs = list(db.collection('events').where(
+                    filter=FieldFilter('slug', '==', clean_event_arg)
+                ).limit(1).stream())
+                if slug_docs:
+                    event_doc = slug_docs[0]
+                    canonical_event_id = event_doc.id
+                    event_data = event_doc.to_dict() or {}
+
+            if not event_doc or not canonical_event_id:
+                raise https_fn.HttpsError(
+                    code=https_fn.FunctionsErrorCode.NOT_FOUND,
+                    message="Event not found"
+                )
+
+            is_feedback_open = (
+                event_data.get('isPublished') is True or
+                event_data.get('status') in ('published', 'ongoing', 'completed')
+            )
+            if not is_feedback_open:
+                raise https_fn.HttpsError(
+                    code=https_fn.FunctionsErrorCode.NOT_FOUND,
+                    message="Event is not open for feedback"
+                )
+
+        # Check if feedback has already been submitted for this registration
+        registration_id = token_data.get('registrationId') if token_data else None
+        feedback_submitted = False
+        if registration_id and canonical_event_id:
+            try:
+                reg_doc = db.collection('registrations').document(registration_id).get()
+                if reg_doc.exists and (reg_doc.to_dict() or {}).get('feedbackSubmitted') is True:
+                    feedback_submitted = True
+                else:
+                    fb_docs = list(db.collection('feedback').where(
+                        filter=FieldFilter('eventId', '==', canonical_event_id)
+                    ).where(
+                        filter=FieldFilter('registrationId', '==', registration_id)
+                    ).limit(1).stream())
+                    if fb_docs:
+                        feedback_submitted = True
+            except Exception as fb_check_err:
+                logger.warning(f"resolveFeedbackToken: Failed checking feedbackSubmitted for {registration_id}: {fb_check_err}")
+
+        # Build minimal public event metadata and fetch custom feedbackForm fields
+        sanitized_event = None
+        feedback_form = None
+        if canonical_event_id and event_data:
+            sanitized_event = {
+                'id': canonical_event_id,
+                'slug': event_data.get('slug') or canonical_event_id,
+                'title': event_data.get('title', 'Event'),
+                'description': event_data.get('description', ''),
+                'startDate': _serialize_timestamp_iso(event_data.get('startDate')),
+                'endDate': _serialize_timestamp_iso(event_data.get('endDate')),
+                'timezone': event_data.get('timezone', 'Asia/Manila'),
+                'venue': event_data.get('venue') or {'type': 'offline'},
+                'locationTba': bool(event_data.get('locationTba', False)),
+                'status': event_data.get('status', 'completed'),
+                'isPublished': bool(event_data.get('isPublished', False)),
+                'imageUrl': event_data.get('imageUrl'),
+                'bannerUrl': event_data.get('bannerUrl'),
+            }
+            try:
+                form_doc = db.collection('events').document(canonical_event_id).collection('forms').document('feedback').get()
+                if form_doc.exists:
+                    form_data = form_doc.to_dict() or {}
+                    feedback_form = {
+                        'id': 'feedback',
+                        'type': 'feedback',
+                        'fields': form_data.get('fields', []),
+                    }
+            except Exception as form_err:
+                logger.warning(f"resolveFeedbackToken: Failed reading feedback form for {canonical_event_id}: {form_err}")
+
         return {
             'success': True,
-            'registrationId': token_data.get('registrationId'),
-            'email': token_data.get('email'),
-            'name': token_data.get('name'),
-            'eventId': token_data.get('eventId')
+            'registrationId': registration_id,
+            'email': token_data.get('email') if token_data else None,
+            'name': token_data.get('name') if token_data else None,
+            'eventId': canonical_event_id,
+            'feedbackSubmitted': feedback_submitted,
+            'event': sanitized_event,
+            'feedbackForm': feedback_form,
         }
 
     except https_fn.HttpsError:

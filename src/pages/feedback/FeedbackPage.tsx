@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, useSearchParams, Link } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import {
   CheckCircleIcon,
   ExclamationTriangleIcon,
@@ -10,8 +10,7 @@ import {
   CheckIcon,
   AcademicCapIcon,
   ShieldCheckIcon,
-  ArrowTopRightOnSquareIcon,
-  SparklesIcon
+  ArrowTopRightOnSquareIcon
 } from '@heroicons/react/24/outline';
 import { InformationCircleIcon } from '@heroicons/react/20/solid';
 import usePageTitle from '../../hooks/usePageTitle';
@@ -113,7 +112,7 @@ const FeedbackPage: React.FC = () => {
   const [registrationId, setRegistrationId] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [userName, setUserName] = useState<string | null>(null);
-  const [tokenResolved, setTokenResolved] = useState(!token); // If no token, already resolved as anonymous
+  const [resolvedEventId, setResolvedEventId] = useState<string | null>(eventId ?? null);
 
   const [event, setEvent] = useState<Event | null>(null);
   const [feedbackForm, setFeedbackForm] = useState<FormField[]>([]);
@@ -160,11 +159,11 @@ const FeedbackPage: React.FC = () => {
 
   // LinkedIn Certification URL generator
   const getLinkedInCertificationUrl = () => {
-    if (!event || !verificationCode) return '';
+    if (!verificationCode) return '';
     const baseUrl = 'https://www.linkedin.com/profile/add';
     const params = new URLSearchParams({
       startTask: 'CERTIFICATION_NAME',
-      name: `Certificate of Participation - ${event.title}`,
+      name: `Certificate of Participation - ${event?.title || 'GDG Davao Event'}`,
       organizationName: 'Google Developer Groups Davao',
       issueYear: String(new Date().getFullYear()),
       issueMonth: String(new Date().getMonth() + 1),
@@ -177,12 +176,14 @@ const FeedbackPage: React.FC = () => {
   // Generate or retrieve certificate for user (extracted for reuse)
   const generateCertificateForUser = useCallback(async (
     certTemplate: CertificateTemplate,
-    eventData: Event,
+    eventData: Event | null,
     regId: string,
     email: string,
-    name: string
+    name: string,
+    canonicalId?: string
   ) => {
-    if (!eventId) return;
+    const targetEventId = canonicalId || eventData?.id || resolvedEventId || eventId;
+    if (!targetEventId) return;
 
     setGeneratingCertificate(true);
     setCertificateError(null);
@@ -200,44 +201,55 @@ const FeedbackPage: React.FC = () => {
 
       // Get consistent verification code for this attendee (deterministic based on eventId + email + name)
       const consistentVerificationCode = await CertificateService.getConsistentVerificationCode(
-        eventId,
+        targetEventId,
         regId,
         email,
         name
       );
+
+      const eventTitle = eventData?.title || 'GDG Davao Event';
+      const eventDateIso = toDate(eventData?.startDate).toISOString();
 
       // Generate certificate client-side with consistent verification code
       const result = await CertificateGenerationService.generateCertificate(certTemplate, {
         templateId: certTemplate.id,
         recipientName: name,
         recipientEmail: email,
-        eventTitle: eventData.title,
-        eventDate: toDate(eventData.startDate).toISOString(),
-        eventId,
+        eventTitle,
+        eventDate: eventDateIso,
+        eventId: targetEventId,
         verificationCode: consistentVerificationCode
       });
 
-      // Upload certificate to Firebase Storage
-      const storageUrl = await CertificateService.saveCertificateToStorage(
-        result.blob,
-        eventId,
-        result.verificationCode
-      );
+      // Attempt client-side Storage upload first (succeeds for admins); for anonymous
+      // attendees where storage.rules restricts /certificates writes, fall back to
+      // server-side upload inside issueCertificateRecord via imageDataUrl.
+      let storageUrl = '';
+      try {
+        storageUrl = await CertificateService.saveCertificateToStorage(
+          result.blob,
+          targetEventId,
+          result.verificationCode
+        );
+      } catch {
+        // Handled server-side by issueCertificateRecord via imageDataUrl
+      }
 
-      // Save certificate record to Firestore
+      // Save certificate record to Firestore (and Storage if not already uploaded)
       await CertificateService.createCertificateRecord({
         recipientName: name,
         recipientEmail: email,
-        eventId,
-        eventTitle: eventData.title,
-        eventDate: toDate(eventData.startDate).toISOString(),
+        eventId: targetEventId,
+        eventTitle,
+        eventDate: eventDateIso,
         registrationId: regId,
-        certificateUrl: storageUrl,
+        certificateUrl: storageUrl || result.certificateUrl,
+        imageDataUrl: storageUrl ? undefined : result.certificateUrl,
         verificationCode: result.verificationCode,
         templateId: certTemplate.id
       });
 
-      setCertificateUrl(result.certificateUrl);
+      setCertificateUrl(storageUrl || result.certificateUrl);
       setVerificationCode(result.verificationCode);
     } catch (err) {
       logger.error('Error generating certificate:', err);
@@ -245,7 +257,7 @@ const FeedbackPage: React.FC = () => {
     } finally {
       setGeneratingCertificate(false);
     }
-  }, [eventId]);
+  }, [eventId, resolvedEventId]);
 
   // Set page title and SEO
   usePageTitle({
@@ -258,119 +270,156 @@ const FeedbackPage: React.FC = () => {
     keywords: 'event feedback, survey, gdg davao'
   });
 
-  // Resolve feedback token if present
   useEffect(() => {
-    const resolveToken = async () => {
-      if (!token || !eventId) {
-        setTokenResolved(true);
-        return;
-      }
+    let isMounted = true;
 
-      try {
-        const tokenData = await FeedbackService.resolveFeedbackToken(token, eventId);
-        setRegistrationId(tokenData.registrationId);
-        setUserEmail(tokenData.email);
-        setUserName(tokenData.name);
-        setTokenResolved(true);
-      } catch (err) {
-        logger.error('Error resolving feedback token:', err);
-        setError('Invalid or expired feedback link. Please contact the organizer for a new link.');
-        setTokenResolved(true);
-        setLoading(false);
-      }
-    };
-
-    resolveToken();
-  }, [token, eventId]);
-
-  useEffect(() => {
     const loadEventAndForm = async () => {
       if (!eventId) {
-        setError('Event ID is required');
-        setLoading(false);
-        return;
-      }
-
-      // Wait for token resolution before loading
-      if (!tokenResolved) {
+        if (isMounted) {
+          setError('Event ID is required');
+          setLoading(false);
+        }
         return;
       }
 
       try {
-        // Load event details
-        const eventData = await EventService.getEvent(eventId);
-        setEvent(eventData);
+        let canonicalEventId = eventId;
+        let resolvedEvent: Event | null = null;
+        let resolvedFields: FormField[] | null = null;
+        let resolvedRegId: string | null = null;
+        let resolvedEmail: string | null = null;
+        let resolvedName: string | null = null;
+        let tokenFeedbackSubmitted = false;
+
+        if (token) {
+          const tokenData = await FeedbackService.resolveFeedbackToken(token, eventId);
+          if (!isMounted) return;
+          canonicalEventId = tokenData.eventId || eventId;
+          resolvedRegId = tokenData.registrationId;
+          resolvedEmail = tokenData.email;
+          resolvedName = tokenData.name;
+          tokenFeedbackSubmitted = Boolean(tokenData.feedbackSubmitted);
+          resolvedEvent = tokenData.event ?? null;
+          resolvedFields = tokenData.feedbackForm?.fields ?? null;
+
+          setRegistrationId(resolvedRegId);
+          setUserEmail(resolvedEmail);
+          setUserName(resolvedName);
+        } else if (typeof FeedbackService.getPublicFeedbackContext === 'function') {
+          const context = await FeedbackService.getPublicFeedbackContext(eventId);
+          if (!isMounted) return;
+          canonicalEventId = context.eventId || eventId;
+          resolvedEvent = context.event;
+          resolvedFields = context.feedbackForm?.fields ?? null;
+        }
+
+        if (!resolvedEvent) {
+          resolvedEvent = await EventService.getEvent(canonicalEventId);
+          if (!resolvedEvent && canonicalEventId === eventId && typeof EventService.getEventBySlug === 'function') {
+            resolvedEvent = await EventService.getEventBySlug(eventId);
+          }
+          if (resolvedEvent?.id) {
+            canonicalEventId = resolvedEvent.id;
+          }
+        }
+
+        if (!isMounted) return;
+        setResolvedEventId(canonicalEventId);
+        setEvent(resolvedEvent);
 
         // Check if feedback was already submitted for this registration
-        if (registrationId && userEmail) {
-          // First try to get registration (returns null for anonymous users due to permissions)
-          const registration = await RegistrationService.getRegistrationById(registrationId);
-          
-          // Extract full name from registration customResponses if available
-          // This fixes the issue where token only has first name
-          const fullName = getFullNameFromRegistration(registration) || userName;
-          if (fullName && fullName !== userName) {
-            setUserName(fullName);
+        if (resolvedRegId && resolvedEmail) {
+          const registration = await RegistrationService.getRegistrationById(resolvedRegId);
+          const fullName = getFullNameFromRegistration(registration) || resolvedName;
+          if (fullName && fullName !== resolvedName) {
+            resolvedName = fullName;
+            if (isMounted) setUserName(fullName);
           }
-          const nameForCertificate = fullName || userName || 'Attendee';
-          
-          if (registration?.feedbackSubmitted) {
-            // Feedback already submitted - skip to certificate generation/display
-            setSubmitted(true);
-            
-            // Check for certificate template and generate/retrieve certificate
-            const certTemplate = await CertificateService.getTemplateForEvent(eventId);
-            if (certTemplate) {
+          const nameForCertificate = resolvedName || 'Attendee';
+
+          if (tokenFeedbackSubmitted || registration?.feedbackSubmitted) {
+            if (isMounted) setSubmitted(true);
+            const certTemplate = await CertificateService.getTemplateForEvent(canonicalEventId);
+            if (certTemplate && isMounted) {
               setTemplate(certTemplate);
-              // This will either retrieve existing certificate or generate new one
-              await generateCertificateForUser(certTemplate, eventData, registrationId, userEmail, nameForCertificate);
+              await generateCertificateForUser(
+                certTemplate,
+                resolvedEvent,
+                resolvedRegId,
+                resolvedEmail,
+                nameForCertificate,
+                canonicalEventId
+              );
             }
-            setLoading(false);
+            if (isMounted) setLoading(false);
             return;
           }
-          
-          // If registration is null (permission denied for anonymous users), check certificate instead
+
           if (!registration) {
-            const existingCert = await CertificateService.getCertificateByRegistrationId(registrationId);
+            const existingCert = await CertificateService.getCertificateByRegistrationId(resolvedRegId);
             if (existingCert?.certificateUrl && existingCert?.credentialId) {
-              // Certificate exists means feedback was already submitted
-              setSubmitted(true);
-              setCertificateUrl(existingCert.certificateUrl);
-              setVerificationCode(existingCert.credentialId);
-              
-              // Try to load template for retry functionality
-              const certTemplate = await CertificateService.getTemplateForEvent(eventId);
-              if (certTemplate) {
+              if (isMounted) {
+                setSubmitted(true);
+                setCertificateUrl(existingCert.certificateUrl);
+                setVerificationCode(existingCert.credentialId);
+              }
+              const certTemplate = await CertificateService.getTemplateForEvent(canonicalEventId);
+              if (certTemplate && isMounted) {
                 setTemplate(certTemplate);
               }
-              setLoading(false);
+              if (isMounted) setLoading(false);
               return;
             }
           }
         }
 
-        // Load feedback form (only if feedback not yet submitted)
-        const formData = await EventService.getFeedbackForm(eventId);
-        setFeedbackForm(formData.fields);
+        // Load feedback form fields if not already provided by callable
+        if (!resolvedFields) {
+          const formData = await EventService.getFeedbackForm(canonicalEventId);
+          resolvedFields = formData.fields;
+        }
+        if (isMounted) {
+          setFeedbackForm(resolvedFields || []);
+        }
       } catch (err) {
         logger.error('Error loading event or feedback form:', err);
-        setError('Failed to load feedback form. Please try again.');
+        if (isMounted) {
+          setError(
+            token
+              ? 'Invalid or expired feedback link. Please contact the organizer for a new link.'
+              : 'Failed to load feedback form. Please try again.'
+          );
+        }
       } finally {
-        setLoading(false);
+        if (isMounted) {
+          setLoading(false);
+        }
       }
     };
 
     loadEventAndForm();
-  }, [eventId, tokenResolved, registrationId, userEmail, userName, generateCertificateForUser]);
+
+    return () => {
+      isMounted = false;
+    };
+  }, [eventId, token, generateCertificateForUser]);
 
   // Generate certificate after feedback submission
   const generateCertificate = async (certTemplate: CertificateTemplate) => {
-    if (!event || !registrationId || !userEmail || !userName) return;
-    await generateCertificateForUser(certTemplate, event, registrationId, userEmail, userName);
+    if (!registrationId || !userEmail || !userName) return;
+    await generateCertificateForUser(
+      certTemplate,
+      event,
+      registrationId,
+      userEmail,
+      userName,
+      resolvedEventId || event?.id || eventId
+    );
   };
 
   const handleFeedbackSubmit = async (formData: Record<string, any>) => {
-    if (!eventId || !event) return;
+    const targetEventId = resolvedEventId || event?.id || eventId;
+    if (!targetEventId) return;
 
     setSubmitting(true);
     setError(null);
@@ -381,7 +430,7 @@ const FeedbackPage: React.FC = () => {
       
       // Prepare feedback data
       const feedbackData = {
-        eventId,
+        eventId: targetEventId,
         registrationId: registrationId || undefined,
         userEmail: userEmail || formData.email || 'anonymous@example.com',
         userName: userName || formData.name || 'Anonymous',
@@ -401,7 +450,7 @@ const FeedbackPage: React.FC = () => {
 
       // Generate certificate if template exists for this event
       if (registrationId && userEmail && userName) {
-        const certTemplate = await CertificateService.getTemplateForEvent(eventId);
+        const certTemplate = await CertificateService.getTemplateForEvent(targetEventId);
         if (certTemplate) {
           setTemplate(certTemplate);
           await generateCertificate(certTemplate);
@@ -417,10 +466,11 @@ const FeedbackPage: React.FC = () => {
 
   // Handle certificate download
   const handleDownloadCertificate = () => {
-    if (certificateUrl && userName && event) {
+    if (certificateUrl && userName) {
+      const eventTitle = (event?.title || 'Event').replace(/\s+/g, '_');
       CertificateGenerationService.downloadCertificate(
         certificateUrl,
-        `${userName.replace(/\s+/g, '_')}_${event.title.replace(/\s+/g, '_')}_Certificate.png`
+        `${userName.replace(/\s+/g, '_')}_${eventTitle}_Certificate.png`
       );
     }
   };
@@ -758,7 +808,13 @@ const FeedbackPage: React.FC = () => {
           <FormRenderer
             fields={feedbackForm}
             onSubmit={handleFeedbackSubmit}
-            submitButtonText={submitting ? "Submitting..." : "Submit Feedback & Unlock Certificate"}
+            submitButtonText={
+              submitting
+                ? 'Sending your feedback...'
+                : token
+                  ? 'Share Feedback & Claim Your Certificate'
+                  : 'Share My Feedback'
+            }
             disabled={submitting}
             className="space-y-6"
           />

@@ -3,8 +3,12 @@ import { StarIcon } from '@heroicons/react/24/solid';
 import { StarIcon as StarOutlineIcon } from '@heroicons/react/24/outline';
 import { FormField } from '../../../types';
 import FormattedLabelText, { stripFormattedLabelSyntax } from '../../../components/FormattedLabelText';
-import { Button, Badge, Field, Input, Select, Textarea } from '../../../components/UI';
+import { Button, Badge, Input, Select, Textarea } from '../../../components/UI';
 import { isOtherOption, formatOtherResponse, parseOtherResponse } from '../../../utils/formResponses';
+
+const isMultiCheckboxField = (field: FormField): boolean =>
+  field.type === 'multiselect' ||
+  (field.type === 'checkbox' && Array.isArray(field.options) && field.options.length > 0);
 
 const RATING_FEEDBACK: Record<number, { text: string; tone: 'danger' | 'warning' | 'info' | 'success' }> = {
   1: { text: 'Needs Improvement', tone: 'danger' },
@@ -58,11 +62,24 @@ const FormRenderer: React.FC<FormRendererProps> = ({
       if (field.type === 'spacer') return;
 
       const value = formData[field.id];
+      const cleanLabel = stripFormattedLabelSyntax(field.label);
 
       // Required field validation
-      if (field.required && (!value || value.toString().trim() === '')) {
-        newErrors[field.id] = `${stripFormattedLabelSyntax(field.label)} is required`;
-        return;
+      if (field.required) {
+        if (isMultiCheckboxField(field)) {
+          if (!Array.isArray(value) || value.length === 0) {
+            newErrors[field.id] = `${cleanLabel} is required`;
+            return;
+          }
+        } else if (field.type === 'checkbox') {
+          if (value !== true) {
+            newErrors[field.id] = `${cleanLabel} is required`;
+            return;
+          }
+        } else if (!value || value.toString().trim() === '') {
+          newErrors[field.id] = `${cleanLabel} is required`;
+          return;
+        }
       }
 
       // Check required "Other" text
@@ -77,14 +94,21 @@ const FormRenderer: React.FC<FormRendererProps> = ({
         if (selectedOtherVal) {
           const { customText } = parseOtherResponse(selectedOtherVal);
           if (field.required && !customText.trim()) {
-            newErrors[field.id] = `Please specify your answer for ${stripFormattedLabelSyntax(field.label)}`;
+            newErrors[field.id] = `Please specify your answer for ${cleanLabel}`;
             return;
           }
         }
       }
 
       // Skip validation if field is empty and not required
-      if (!value || value.toString().trim() === '') return;
+      if (
+        value === undefined ||
+        value === null ||
+        (Array.isArray(value) && value.length === 0) ||
+        (!Array.isArray(value) && value.toString().trim() === '')
+      ) {
+        return;
+      }
 
       // Type-specific validation
       if (field.type === 'email') {
@@ -152,13 +176,17 @@ const FormRenderer: React.FC<FormRendererProps> = ({
    * cannot come out 42px tall in one file and 56px in the next.
    */
   const renderField = (field: FormField) => {
-    const value = formData[field.id] || '';
+    const value = formData[field.id] ?? (isMultiCheckboxField(field) ? [] : '');
     const label = stripFormattedLabelSyntax(field.label);
     // The primitives' disabled treatment is the control's own; the container
     // tint only applies to the grouped controls below, which have no primitive.
     const disabledControl = disabled ? 'bg-surface-container-low' : '';
+    const effectiveType = isMultiCheckboxField(field) ? 'multiselect' : field.type;
+    const errorId = errors[field.id] ? `field-${field.id}-error` : undefined;
+    const hintId = !errors[field.id] && field.description ? `field-${field.id}-hint` : undefined;
+    const groupDescribedBy = [errorId, hintId].filter(Boolean).join(' ') || undefined;
 
-    switch (field.type) {
+    switch (effectiveType) {
       case 'spacer':
         return (
           <div className="py-2">
@@ -252,156 +280,166 @@ const FormRenderer: React.FC<FormRendererProps> = ({
       case 'multiselect': {
         const currentValues: string[] = Array.isArray(value) ? value : [];
         return (
-          <Field
-            label={label}
-            required={field.required}
-            error={errors[field.id]}
-            hint={field.description}
-          >
-            {({ describedBy }) => (
-              <div
-                className={`space-y-2xs ${disabled ? 'opacity-50' : ''}`}
-                role="group"
-                aria-describedby={describedBy}
-              >
-                {field.options?.map((option, index) => {
-                  const isOther = isOtherOption(option);
-                  const isChecked = isOther
-                    ? currentValues.some((v: string) => isOtherOption(v))
-                    : currentValues.includes(option);
-                  const optionInputId = `field-${field.id}-opt-${index}`;
+          <fieldset className="space-y-2xs" aria-describedby={groupDescribedBy}>
+            <legend className="mb-2xs block text-sm font-medium text-on-surface">
+              {label}
+              {field.required && <span className="ml-3xs text-error" aria-hidden="true">*</span>}
+            </legend>
+            <div className={`space-y-2xs ${disabled ? 'opacity-50' : ''}`}>
+              {field.options?.map((option, index) => {
+                const isOther = isOtherOption(option);
+                const isChecked = isOther
+                  ? currentValues.some((v: string) => isOtherOption(v))
+                  : currentValues.includes(option);
+                const optionInputId = `field-${field.id}-opt-${index}`;
 
-                  return (
-                    <div key={index} className="space-y-2xs">
-                      <label
-                        htmlFor={optionInputId}
-                        className={`flex min-h-control cursor-pointer items-center gap-3 rounded-md border bg-surface px-md py-2xs transition-[border-color,background-color] duration-fast ease-quart hover:border-outline hover:bg-surface-container-low ${
-                          isChecked ? 'border-primary bg-primary/5' : 'border-outline-variant'
-                        }`}
-                      >
-                        <input
-                          id={optionInputId}
-                          type="checkbox"
-                          checked={isChecked}
+                return (
+                  <div key={index} className="space-y-2xs">
+                    <label
+                      htmlFor={optionInputId}
+                      className={`flex min-h-control cursor-pointer items-center gap-3 rounded-md border bg-surface px-md py-2xs transition-[border-color,background-color] duration-fast ease-quart hover:border-outline hover:bg-surface-container-low ${
+                        isChecked ? 'border-primary bg-primary/5' : 'border-outline-variant'
+                      }`}
+                    >
+                      <input
+                        id={optionInputId}
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            const otherVal = formatOtherResponse(option, otherTexts[field.id]);
+                            const next = isOther
+                              ? [...currentValues.filter((v: string) => !isOtherOption(v)), otherVal]
+                              : [...currentValues, option];
+                            handleInputChange(field.id, next);
+                          } else {
+                            const next = isOther
+                              ? currentValues.filter((v: string) => !isOtherOption(v))
+                              : currentValues.filter((v: string) => v !== option);
+                            handleInputChange(field.id, next);
+                          }
+                        }}
+                        disabled={disabled}
+                        className="h-4 w-4 shrink-0 rounded accent-primary"
+                      />
+                      <span className="min-w-0 text-base text-on-surface">
+                        {isOther ? 'Other:' : option}
+                      </span>
+                    </label>
+                    {isOther && isChecked && (
+                      <div className="pl-7 pt-1 animate-fadeIn">
+                        <Input
+                          type="text"
+                          placeholder="Please specify"
+                          value={otherTexts[field.id] ?? (currentValues.find(isOtherOption) ? parseOtherResponse(currentValues.find(isOtherOption)).customText : '')}
                           onChange={(e) => {
-                            if (e.target.checked) {
-                              const otherVal = formatOtherResponse(option, otherTexts[field.id]);
-                              const next = isOther
-                                ? [...currentValues.filter((v: string) => !isOtherOption(v)), otherVal]
-                                : [...currentValues, option];
-                              handleInputChange(field.id, next);
-                            } else {
-                              const next = isOther
-                                ? currentValues.filter((v: string) => !isOtherOption(v))
-                                : currentValues.filter((v: string) => v !== option);
-                              handleInputChange(field.id, next);
-                            }
+                            const nextText = e.target.value;
+                            setOtherTexts(prev => ({ ...prev, [field.id]: nextText }));
+                            const updated = currentValues.map((item: string) =>
+                              isOtherOption(item) ? formatOtherResponse(option, nextText) : item
+                            );
+                            handleInputChange(field.id, updated);
                           }}
                           disabled={disabled}
-                          className="h-4 w-4 shrink-0 rounded accent-primary"
+                          aria-label={`Please specify for ${option}`}
+                          className={disabledControl}
                         />
-                        <span className="min-w-0 text-base text-on-surface">
-                          {isOther ? 'Other:' : option}
-                        </span>
-                      </label>
-                      {isOther && isChecked && (
-                        <div className="pl-7 pt-1 animate-fadeIn">
-                          <Input
-                            type="text"
-                            placeholder="Please specify"
-                            value={otherTexts[field.id] ?? (currentValues.find(isOtherOption) ? parseOtherResponse(currentValues.find(isOtherOption)).customText : '')}
-                            onChange={(e) => {
-                              const nextText = e.target.value;
-                              setOtherTexts(prev => ({ ...prev, [field.id]: nextText }));
-                              const updated = currentValues.map((item: string) =>
-                                isOtherOption(item) ? formatOtherResponse(option, nextText) : item
-                              );
-                              handleInputChange(field.id, updated);
-                            }}
-                            disabled={disabled}
-                            aria-label={`Please specify for ${option}`}
-                            className={disabledControl}
-                          />
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {errors[field.id] && (
+              <p id={errorId} role="alert" className="mt-2xs text-sm text-error">
+                {errors[field.id]}
+              </p>
             )}
-          </Field>
+            {field.description && !errors[field.id] && (
+              <p id={hintId} className="mt-2xs text-sm text-on-surface-variant">
+                {field.description}
+              </p>
+            )}
+          </fieldset>
         );
       }
 
       case 'radio':
         return (
-          <Field
-            label={label}
-            required={field.required}
-            error={errors[field.id]}
-            hint={field.description}
-          >
-            {({ describedBy }) => (
-              <div
-                className={`space-y-2xs ${disabled ? 'opacity-50' : ''}`}
-                role="radiogroup"
-                aria-describedby={describedBy}
-              >
-                {field.options?.map((option, index) => {
-                  const isOther = isOtherOption(option);
-                  const isChecked = isOther
-                    ? isOtherOption(value)
-                    : value === option;
-                  const radioInputId = `field-${field.id}-radio-${index}`;
+          <fieldset className="space-y-2xs" aria-describedby={groupDescribedBy}>
+            <legend className="mb-2xs block text-sm font-medium text-on-surface">
+              {label}
+              {field.required && <span className="ml-3xs text-error" aria-hidden="true">*</span>}
+            </legend>
+            <div
+              className={`space-y-2xs ${disabled ? 'opacity-50' : ''}`}
+              role="radiogroup"
+              aria-describedby={groupDescribedBy}
+            >
+              {field.options?.map((option, index) => {
+                const isOther = isOtherOption(option);
+                const isChecked = isOther
+                  ? isOtherOption(value)
+                  : value === option;
+                const radioInputId = `field-${field.id}-radio-${index}`;
 
-                  return (
-                    <div key={index} className="space-y-2xs">
-                      <label
-                        htmlFor={radioInputId}
-                        className={`flex min-h-control cursor-pointer items-center gap-3 rounded-md border bg-surface px-md py-2xs transition-[border-color,background-color] duration-fast ease-quart hover:border-outline hover:bg-surface-container-low ${
-                          isChecked ? 'border-primary bg-primary/5' : 'border-outline-variant'
-                        }`}
-                      >
-                        <input
-                          id={radioInputId}
-                          type="radio"
-                          name={field.id}
-                          value={option}
-                          checked={isChecked}
-                          onChange={() => {
-                            const otherVal = formatOtherResponse(option, otherTexts[field.id]);
-                            handleInputChange(field.id, isOther ? otherVal : option);
+                return (
+                  <div key={index} className="space-y-2xs">
+                    <label
+                      htmlFor={radioInputId}
+                      className={`flex min-h-control cursor-pointer items-center gap-3 rounded-md border bg-surface px-md py-2xs transition-[border-color,background-color] duration-fast ease-quart hover:border-outline hover:bg-surface-container-low ${
+                        isChecked ? 'border-primary bg-primary/5' : 'border-outline-variant'
+                      }`}
+                    >
+                      <input
+                        id={radioInputId}
+                        type="radio"
+                        name={field.id}
+                        value={option}
+                        checked={isChecked}
+                        onChange={() => {
+                          const otherVal = formatOtherResponse(option, otherTexts[field.id]);
+                          handleInputChange(field.id, isOther ? otherVal : option);
+                        }}
+                        disabled={disabled}
+                        className="h-4 w-4 shrink-0 accent-primary"
+                      />
+                      <span className="min-w-0 text-base text-on-surface">
+                        {isOther ? 'Other:' : option}
+                      </span>
+                    </label>
+                    {isOther && isChecked && (
+                      <div className="pl-7 pt-1 animate-fadeIn">
+                        <Input
+                          type="text"
+                          placeholder="Please specify"
+                          value={otherTexts[field.id] ?? (typeof value === 'string' ? parseOtherResponse(value).customText : '')}
+                          onChange={(e) => {
+                            const nextText = e.target.value;
+                            setOtherTexts(prev => ({ ...prev, [field.id]: nextText }));
+                            handleInputChange(field.id, formatOtherResponse(option, nextText));
                           }}
                           disabled={disabled}
-                          className="h-4 w-4 shrink-0 accent-primary"
+                          aria-label={`Please specify for ${option}`}
+                          className={disabledControl}
                         />
-                        <span className="min-w-0 text-base text-on-surface">
-                          {isOther ? 'Other:' : option}
-                        </span>
-                      </label>
-                      {isOther && isChecked && (
-                        <div className="pl-7 pt-1 animate-fadeIn">
-                          <Input
-                            type="text"
-                            placeholder="Please specify"
-                            value={otherTexts[field.id] ?? (typeof value === 'string' ? parseOtherResponse(value).customText : '')}
-                            onChange={(e) => {
-                              const nextText = e.target.value;
-                              setOtherTexts(prev => ({ ...prev, [field.id]: nextText }));
-                              handleInputChange(field.id, formatOtherResponse(option, nextText));
-                            }}
-                            disabled={disabled}
-                            aria-label={`Please specify for ${option}`}
-                            className={disabledControl}
-                          />
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {errors[field.id] && (
+              <p id={errorId} role="alert" className="mt-2xs text-sm text-error">
+                {errors[field.id]}
+              </p>
             )}
-          </Field>
+            {field.description && !errors[field.id] && (
+              <p id={hintId} className="mt-2xs text-sm text-on-surface-variant">
+                {field.description}
+              </p>
+            )}
+          </fieldset>
         );
 
       case 'checkbox': {
@@ -573,7 +611,7 @@ const FormRenderer: React.FC<FormRendererProps> = ({
   };
 
   return (
-    <form onSubmit={handleSubmit} className={className}>
+    <form onSubmit={handleSubmit} noValidate className={className}>
       <div className="grid grid-cols-1 gap-x-md gap-y-8 md:grid-cols-2">
         {fields.map((field) => (
           <div

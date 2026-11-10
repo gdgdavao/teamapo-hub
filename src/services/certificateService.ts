@@ -640,7 +640,9 @@ export class CertificateService {
   }
 
   /**
-   * Create a certificate record in Firestore (for anonymous users after feedback)
+   * Create a certificate record in Firestore (for anonymous users after feedback).
+   * When imageDataUrl is provided, the callable uploads the PNG to Firebase Storage
+   * server-side via Admin SDK so storage.rules can remain locked to admins.
    */
   static async createCertificateRecord(data: {
     recipientName: string;
@@ -650,6 +652,7 @@ export class CertificateService {
     eventDate: string;
     registrationId: string;
     certificateUrl: string;
+    imageDataUrl?: string;
     verificationCode: string;
     templateId: string;
   }): Promise<string> {
@@ -658,11 +661,14 @@ export class CertificateService {
 
       // Client create on /certificates is denied by firestore.rules; the callable
       // verifies the registration + feedback and writes the record server-side.
-      const issue = httpsCallable<Record<string, string>, { success: boolean; certificateId: string }>(
+      const issue = httpsCallable<
+        Record<string, string>,
+        { success: boolean; certificateId: string; certificateUrl?: string }
+      >(
         functions,
         'issueCertificateRecord'
       );
-      const { data: result } = await issue({
+      const payload: Record<string, string> = {
         recipientName: data.recipientName,
         eventId: data.eventId,
         eventDate: data.eventDate,
@@ -671,7 +677,11 @@ export class CertificateService {
         verificationUrl,
         verificationCode: data.verificationCode,
         templateId: data.templateId,
-      });
+      };
+      if (data.imageDataUrl) {
+        payload.imageDataUrl = data.imageDataUrl;
+      }
+      const { data: result } = await issue(payload);
       return result.certificateId;
     } catch (error) {
       logger.error('Error creating certificate record:', error);

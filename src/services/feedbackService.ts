@@ -16,8 +16,9 @@ import {
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '../config/firebase';
 import { logger } from '../utils/logger';
-import { Feedback, FormField } from '../types';
+import { Event, Feedback, FormField } from '../types';
 import { EmailService } from './emailService';
+import { EventService } from './eventService';
 
 export interface FeedbackSubmission {
   eventId: string;
@@ -42,17 +43,87 @@ export interface FeedbackAnalytics {
   topComplaints: string[];
 }
 
+export interface FeedbackFormPayload {
+  id: string;
+  type: string;
+  fields: FormField[];
+}
+
 export interface FeedbackTokenData {
   registrationId: string | null;
   email: string | null;
   name: string | null;
   eventId: string;
+  feedbackSubmitted?: boolean;
+  event?: Event | null;
+  feedbackForm?: FeedbackFormPayload | null;
+}
+
+export interface PublicFeedbackContext {
+  eventId: string;
+  event: Event | null;
+  feedbackForm: FeedbackFormPayload | null;
+  tokenData: FeedbackTokenData | null;
+}
+
+interface RawServerEventPayload {
+  id: string;
+  slug?: string;
+  title?: string;
+  description?: string;
+  startDate?: string | null;
+  endDate?: string | null;
+  timezone?: string;
+  venue?: Event['venue'];
+  locationTba?: boolean;
+  status?: Event['status'];
+  isPublished?: boolean;
+  imageUrl?: string;
+  bannerUrl?: string;
 }
 
 export class FeedbackService {
   private static readonly FEEDBACK_COLLECTION = 'feedback';
   private static readonly EVENTS_COLLECTION = 'events';
   private static readonly REGISTRATIONS_COLLECTION = 'registrations';
+
+  private static normalizeServerEvent(raw: RawServerEventPayload): Event {
+    const toTimestampOrUndefined = (iso?: string | null): Timestamp | undefined => {
+      if (!iso) return undefined;
+      const d = new Date(iso);
+      return Number.isNaN(d.getTime()) ? undefined : Timestamp.fromDate(d);
+    };
+
+    const startTs = toTimestampOrUndefined(raw.startDate) ?? Timestamp.fromDate(new Date());
+    const endTs = toTimestampOrUndefined(raw.endDate) ?? startTs;
+
+    return {
+      id: raw.id,
+      slug: raw.slug || raw.id,
+      title: raw.title || 'Event',
+      description: raw.description || '',
+      shortDescription: raw.description || '',
+      startDate: startTs,
+      endDate: endTs,
+      timezone: raw.timezone || 'Asia/Manila',
+      venue: raw.venue || { type: 'offline', city: 'Davao City' },
+      locationTba: Boolean(raw.locationTba),
+      organizer: { uid: '', name: 'GDG Davao', email: '' },
+      speakers: [],
+      category: 'conference',
+      status: raw.status || 'completed',
+      registrationStatus: 'closed',
+      isPublished: Boolean(raw.isPublished),
+      maxAttendees: 0,
+      currentAttendees: 0,
+      ticketTypes: [],
+      tags: [],
+      imageUrl: raw.imageUrl,
+      bannerUrl: raw.bannerUrl,
+      createdAt: startTs,
+      updatedAt: endTs
+    };
+  }
 
   /**
    * Resolve a feedback token to get registration data
@@ -69,6 +140,9 @@ export class FeedbackService {
         email?: string; 
         name?: string;
         eventId: string;
+        feedbackSubmitted?: boolean;
+        event?: RawServerEventPayload | null;
+        feedbackForm?: { id?: string; type?: string; fields?: FormField[] } | null;
       };
       
       if (!data.success) {
@@ -79,12 +153,126 @@ export class FeedbackService {
         registrationId: data.registrationId || null,
         email: data.email || null,
         name: data.name || null,
-        eventId: data.eventId
+        eventId: data.eventId,
+        feedbackSubmitted: Boolean(data.feedbackSubmitted),
+        event: data.event ? this.normalizeServerEvent(data.event) : null,
+        feedbackForm: data.feedbackForm?.fields
+          ? { id: 'feedback', type: 'feedback', fields: data.feedbackForm.fields }
+          : null
       };
     } catch (error) {
       logger.error('Error resolving feedback token:', error);
       throw error;
     }
+  }
+
+  /**
+   * Resolve the complete public feedback page context (event metadata, custom feedbackForm,
+   * and optional token attendee identity). Uses the resolveFeedbackToken callable so
+   * completed events (where /events/{eventId} has isPublished == false in firestore.rules)
+   * still return their public title/date/venue and custom form fields, with a resilient
+   * direct-Firestore fallback for local/offline or pre-deploy environments.
+   */
+  static async getPublicFeedbackContext(
+    eventIdOrSlug: string,
+    token?: string | null
+  ): Promise<PublicFeedbackContext> {
+    let resolvedEventId = eventIdOrSlug;
+    let event: Event | null = null;
+    let feedbackForm: FeedbackFormPayload | null = null;
+    let tokenData: FeedbackTokenData | null = null;
+
+    // 1. Try the Cloud Function first (handles tokens, slug resolution, and completed event metadata)
+    try {
+      const resolveCallable = httpsCallable(functions, 'resolveFeedbackToken');
+      const payload: Record<string, string> = { eventId: eventIdOrSlug };
+      if (token) payload.token = token;
+      const result = await resolveCallable(payload);
+      const data = result.data as {
+        success: boolean;
+        registrationId?: string;
+        email?: string;
+        name?: string;
+        eventId?: string;
+        feedbackSubmitted?: boolean;
+        event?: RawServerEventPayload | null;
+        feedbackForm?: { id?: string; type?: string; fields?: FormField[] } | null;
+      };
+
+      if (data?.success) {
+        if (data.eventId) {
+          resolvedEventId = data.eventId;
+        }
+        if (data.event) {
+          event = this.normalizeServerEvent(data.event);
+          resolvedEventId = event.id;
+        }
+        if (data.feedbackForm?.fields) {
+          feedbackForm = {
+            id: 'feedback',
+            type: 'feedback',
+            fields: data.feedbackForm.fields
+          };
+        }
+        if (token) {
+          tokenData = {
+            registrationId: data.registrationId || null,
+            email: data.email || null,
+            name: data.name || null,
+            eventId: resolvedEventId,
+            feedbackSubmitted: Boolean(data.feedbackSubmitted),
+            event,
+            feedbackForm
+          };
+        }
+      }
+    } catch (callableErr) {
+      // If a token was explicitly provided and rejected (expired/invalid/mismatch), rethrow so caller can alert user
+      if (token) {
+        throw callableErr;
+      }
+      logger.warn('resolveFeedbackToken public context fallback to direct Firestore:', callableErr);
+    }
+
+    // 2. Fallback / supplement via direct Firestore reads if event or feedbackForm was not returned by callable
+    if (!event) {
+      event = await EventService.getEvent(resolvedEventId);
+      if (!event && resolvedEventId === eventIdOrSlug) {
+        event = await EventService.getEventBySlug(eventIdOrSlug);
+      }
+      if (event) {
+        resolvedEventId = event.id;
+      }
+    }
+
+    if (!feedbackForm) {
+      const formResult = await EventService.getFeedbackForm(resolvedEventId);
+      feedbackForm = {
+        id: 'feedback',
+        type: 'feedback',
+        fields: formResult.fields || []
+      };
+    }
+
+    // 3. If the event document is private (status == 'completed', isPublished == false) and callable
+    // did not return event metadata yet, synthesize a minimal Event shell so FeedbackPage can render
+    // and submit feedback against the canonical eventId.
+    if (!event && feedbackForm) {
+      event = this.normalizeServerEvent({
+        id: resolvedEventId,
+        slug: resolvedEventId,
+        title: 'Event Feedback',
+        status: 'completed',
+        isPublished: false
+      });
+    }
+
+    return {
+      eventId: resolvedEventId,
+      event,
+      feedbackForm,
+      tokenData
+    };
   }
 
   /**
