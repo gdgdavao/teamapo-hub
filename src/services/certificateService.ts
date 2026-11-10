@@ -59,6 +59,15 @@ export class CertificateService {
    */
   static async getCertificateByRegistrationId(registrationId: string): Promise<Certificate | null> {
     try {
+      // Fast O(1) direct document lookup first (issueCertificateRecord uses registrationId as doc ID)
+      const directSnap = await getDoc(doc(db, this.CERTIFICATES_COLLECTION, registrationId));
+      if (directSnap.exists()) {
+        return {
+          id: directSnap.id,
+          ...directSnap.data()
+        } as Certificate;
+      }
+
       const certificatesQuery = query(
         collection(db, this.CERTIFICATES_COLLECTION),
         where('registrationId', '==', registrationId),
@@ -637,6 +646,35 @@ export class CertificateService {
       logger.error('Error saving certificate to storage:', error);
       throw new Error('Failed to save certificate to storage');
     }
+  }
+
+  /**
+   * Convert a generated certificate PNG Blob into a base64 data URL
+   * for server-side Storage upload via issueCertificateRecord.
+   */
+  static async blobToDataUrl(blob: Blob): Promise<string> {
+    if (typeof FileReader !== 'undefined') {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          if (typeof reader.result === 'string') {
+            resolve(reader.result);
+          } else {
+            reject(new Error('Failed to convert certificate blob to data URL'));
+          }
+        };
+        reader.onerror = () => reject(reader.error || new Error('FileReader error'));
+        reader.readAsDataURL(blob);
+      });
+    }
+    const buffer = await blob.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    for (let i = 0; i < bytes.byteLength; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    const mimeType = blob.type || 'image/png';
+    return `data:${mimeType};base64,${btoa(binary)}`;
   }
 
   /**

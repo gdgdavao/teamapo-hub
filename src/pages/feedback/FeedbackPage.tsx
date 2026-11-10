@@ -199,10 +199,9 @@ const FeedbackPage: React.FC = () => {
         return;
       }
 
-      // Get consistent verification code for this attendee (deterministic based on eventId + email + name)
-      const consistentVerificationCode = await CertificateService.getConsistentVerificationCode(
+      // Generate deterministic verification code locally (existingCert was already checked above)
+      const consistentVerificationCode = await CertificateGenerationService.generateConsistentVerificationCode(
         targetEventId,
-        regId,
         email,
         name
       );
@@ -221,36 +220,31 @@ const FeedbackPage: React.FC = () => {
         verificationCode: consistentVerificationCode
       });
 
-      // Attempt client-side Storage upload first (succeeds for admins); for anonymous
-      // attendees where storage.rules restricts /certificates writes, fall back to
-      // server-side upload inside issueCertificateRecord via imageDataUrl.
-      let storageUrl = '';
-      try {
-        storageUrl = await CertificateService.saveCertificateToStorage(
-          result.blob,
-          targetEventId,
-          result.verificationCode
-        );
-      } catch {
-        // Handled server-side by issueCertificateRecord via imageDataUrl
-      }
-
-      // Save certificate record to Firestore (and Storage if not already uploaded)
-      await CertificateService.createCertificateRecord({
-        recipientName: name,
-        recipientEmail: email,
-        eventId: targetEventId,
-        eventTitle,
-        eventDate: eventDateIso,
-        registrationId: regId,
-        certificateUrl: storageUrl || result.certificateUrl,
-        imageDataUrl: storageUrl ? undefined : result.certificateUrl,
-        verificationCode: result.verificationCode,
-        templateId: certTemplate.id
-      });
-
-      setCertificateUrl(storageUrl || result.certificateUrl);
+      // Immediately reveal the generated certificate UI and download button
+      // so the attendee never waits on the background Cloud Function upload.
+      setCertificateUrl(result.certificateUrl);
       setVerificationCode(result.verificationCode);
+      setGeneratingCertificate(false);
+
+      // Persist certificate record to Firestore and upload PNG to Storage in the background
+      void CertificateService.blobToDataUrl(result.blob)
+        .then((imageDataUrl) =>
+          CertificateService.createCertificateRecord({
+            recipientName: name,
+            recipientEmail: email,
+            eventId: targetEventId,
+            eventTitle,
+            eventDate: eventDateIso,
+            registrationId: regId,
+            certificateUrl: imageDataUrl,
+            imageDataUrl,
+            verificationCode: result.verificationCode,
+            templateId: certTemplate.id
+          })
+        )
+        .catch((persistErr) => {
+          logger.warn('Background certificate persistence failed:', persistErr);
+        });
     } catch (err) {
       logger.error('Error generating certificate:', err);
       setCertificateError('Failed to generate certificate. You can try again or contact support.');
@@ -381,6 +375,20 @@ const FeedbackPage: React.FC = () => {
         if (isMounted) {
           setFeedbackForm(resolvedFields || []);
         }
+
+        // Preload certificate template and its background image in the background
+        // while the attendee fills out the feedback form so certificate rendering is instant.
+        if (resolvedRegId && resolvedEmail) {
+          void CertificateService.getTemplateForEvent(canonicalEventId)
+            .then((certTemplate) => {
+              if (!certTemplate || !isMounted) return;
+              setTemplate(certTemplate);
+              if (certTemplate.templateImageUrl) {
+                void CertificateGenerationService.preloadImage(certTemplate.templateImageUrl);
+              }
+            })
+            .catch(() => undefined);
+        }
       } catch (err) {
         logger.error('Error loading event or feedback form:', err);
         if (isMounted) {
@@ -447,10 +455,11 @@ const FeedbackPage: React.FC = () => {
 
       await FeedbackService.submitFeedback(feedbackData);
       setSubmitted(true);
+      setSubmitting(false);
 
       // Generate certificate if template exists for this event
       if (registrationId && userEmail && userName) {
-        const certTemplate = await CertificateService.getTemplateForEvent(targetEventId);
+        const certTemplate = template || (await CertificateService.getTemplateForEvent(targetEventId));
         if (certTemplate) {
           setTemplate(certTemplate);
           await generateCertificate(certTemplate);

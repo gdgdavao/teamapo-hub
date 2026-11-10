@@ -2690,9 +2690,11 @@ def issueCertificateRecord(req: https_fn.CallableRequest) -> Dict[str, Any]:
         allowed_prefixes += ('http://127.0.0.1', 'http://localhost')  # Storage emulator
 
     has_https_url = isinstance(certificate_url, str) and certificate_url.startswith(allowed_prefixes)
-    raw_data_url = image_data_url if (isinstance(image_data_url, str) and image_data_url.startswith('data:image/png;base64,')) else (
-        certificate_url if (isinstance(certificate_url, str) and certificate_url.startswith('data:image/png;base64,')) else None
-    )
+    raw_data_url = None
+    for candidate in (image_data_url, certificate_url):
+        if isinstance(candidate, str) and candidate.startswith('data:image/') and ';base64,' in candidate:
+            raw_data_url = candidate
+            break
 
     if not has_https_url and not raw_data_url:
         raise https_fn.HttpsError(
@@ -2748,10 +2750,10 @@ def issueCertificateRecord(req: https_fn.CallableRequest) -> Dict[str, Any]:
                 code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
                 message="Invalid base64 PNG image data"
             )
-        if not png_bytes or len(png_bytes) > 5 * 1024 * 1024:
+        if not png_bytes or len(png_bytes) > 15 * 1024 * 1024:
             raise https_fn.HttpsError(
                 code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
-                message="Certificate image must be non-empty and under 5 MB"
+                message="Certificate image must be non-empty and under 15 MB"
             )
         try:
             bucket = storage.bucket()
@@ -2793,6 +2795,7 @@ def issueCertificateRecord(req: https_fn.CallableRequest) -> Dict[str, Any]:
 
     try:
         registration_ref.update({
+            'feedbackSubmitted': True,
             'certificateGenerated': True,
             'certificateId': certificate_ref.id,
             'certificateGeneratedAt': firestore.SERVER_TIMESTAMP,
