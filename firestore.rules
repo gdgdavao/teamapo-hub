@@ -97,7 +97,11 @@ service cloud.firestore {
       )) && hasNoPublicPromoCodes(request.resource.data);
       allow delete: if isAdmin();
       match /forms/{formId} {
-        allow read: if get(/databases/$(database)/documents/events/$(eventId)).data.isPublished == true || canManageEvent(eventId);
+        // The feedback form stays public once the event is completed (completion unpublishes the event),
+        // so attendees opening their post-event feedback link see the organizer-built questions.
+        allow read: if get(/databases/$(database)/documents/events/$(eventId)).data.isPublished == true
+          || (formId == 'feedback' && get(/databases/$(database)/documents/events/$(eventId)).data.status == 'completed')
+          || canManageEvent(eventId);
         allow write: if isAdmin() || (isOrganizer() && hasPerm('events', 'canUpdate') && !(get(/databases/$(database)/documents/events/$(eventId)).data.status in ['completed', 'cancelled']));
       }
       match /config/{configId} {
