@@ -1621,27 +1621,10 @@ export class EventService {
         ]
       };
     } catch (error) {
+      // Never substitute a default form on failure: attendees would answer questions
+      // the organizer never configured. Let the caller surface the error instead.
       logger.error('Error getting feedback form:', error);
-      // Return default form on error
-      return {
-        fields: [
-          {
-            id: 'overall_rating',
-            type: 'rating',
-            label: 'Overall Event Rating',
-            required: true,
-            gridSize: 'full'
-          },
-          {
-            id: 'comments',
-            type: 'textarea',
-            label: 'Comments',
-            required: false,
-            gridSize: 'full',
-            placeholder: 'Share your feedback...'
-          }
-        ]
-      };
+      throw error;
     }
   }
 

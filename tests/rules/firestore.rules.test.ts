@@ -37,6 +37,15 @@ const seedData = async () => {
         isPublished: false,
         organizer: { uid: 'organizer-1' },
       }),
+      setDoc(doc(db, 'events/completed-event'), {
+        title: 'Completed event',
+        status: 'completed',
+        isPublished: false,
+        organizer: { uid: 'organizer-1' },
+      }),
+      setDoc(doc(db, 'events/completed-event/forms/feedback'), { type: 'feedback', fields: [] }),
+      setDoc(doc(db, 'events/completed-event/forms/registration'), { type: 'registration', fields: [] }),
+      setDoc(doc(db, 'events/draft-event/forms/feedback'), { type: 'feedback', fields: [] }),
       setDoc(doc(db, 'paymentProofs/proof-1'), {
         eventId: 'published-event',
         registrationId: 'registration-1',
@@ -124,6 +133,14 @@ describe('Firestore authorization rules', () => {
       where('isPublished', '==', true),
       where('status', 'in', ['published', 'ongoing'])
     )));
+  });
+
+  it('lets anonymous attendees read the feedback form of a completed event only', async () => {
+    const db = testEnv.unauthenticatedContext().firestore();
+
+    await assertSucceeds(getDoc(doc(db, 'events/completed-event/forms/feedback')));
+    await assertFails(getDoc(doc(db, 'events/completed-event/forms/registration')));
+    await assertFails(getDoc(doc(db, 'events/draft-event/forms/feedback')));
   });
 
   it('allows an active organizer to query events', async () => {
