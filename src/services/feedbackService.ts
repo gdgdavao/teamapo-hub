@@ -156,6 +156,23 @@ export class FeedbackService {
     futureTopics?: string[];
   }): Promise<string> {
     try {
+      // Ratings may arrive as strings from select/radio fields; rules compare numerically
+      const toRating = (v: unknown): number | undefined => {
+        const n = Number(v);
+        return Number.isFinite(n) && n >= 1 && n <= 5 ? n : undefined;
+      };
+      const overall = toRating(feedbackData.overallRating) ?? 5;
+      feedbackData = {
+        ...feedbackData,
+        overallRating: overall,
+        contentRating: toRating(feedbackData.contentRating),
+        organizationRating: toRating(feedbackData.organizationRating),
+        venueRating: toRating(feedbackData.venueRating),
+        wouldRecommend: feedbackData.wouldRecommend === true,
+        comments: typeof feedbackData.comments === 'string' ? feedbackData.comments : '',
+        suggestions: typeof feedbackData.suggestions === 'string' ? feedbackData.suggestions : '',
+      };
+
       // Generate feedback ID
       const feedbackRef = doc(collection(db, this.FEEDBACK_COLLECTION));
       const feedbackId = feedbackRef.id;
@@ -178,12 +195,12 @@ export class FeedbackService {
       };
 
       // Add custom responses to the feedback
-      const feedbackWithResponses = {
+      const feedbackWithResponses = this.removeUndefinedValues({
         ...feedback,
-        customResponses: feedbackData.responses,
+        customResponses: feedbackData.responses || {},
         userEmail: feedbackData.userEmail,
         userName: feedbackData.userName
-      };
+      });
 
       await setDoc(feedbackRef, feedbackWithResponses);
 
@@ -328,14 +345,54 @@ export class FeedbackService {
   }
 
   /**
+   * Recursively remove undefined values from an object/array to prevent Firestore write rejection
+   */
+  private static removeUndefinedValues<T>(obj: T): T {
+    if (obj === null || obj === undefined) {
+      return null as any;
+    }
+
+    if (typeof obj === 'function') {
+      return undefined as any;
+    }
+
+    // Preserve Firestore Timestamp and FieldValue sentinels (serverTimestamp, deleteField, etc.)
+    if (obj instanceof Timestamp || typeof (obj as any)?._methodName === 'string') {
+      return obj;
+    }
+
+    if (Array.isArray(obj)) {
+      return obj
+        .map(item => this.removeUndefinedValues(item))
+        .filter(item => item !== undefined) as any;
+    }
+
+    if (typeof obj === 'object') {
+      const cleaned: any = {};
+      for (const [key, value] of Object.entries(obj)) {
+        if (value !== undefined && typeof value !== 'function') {
+          const cleanedValue = this.removeUndefinedValues(value);
+          if (cleanedValue !== undefined) {
+            cleaned[key] = cleanedValue;
+          }
+        }
+      }
+      return cleaned;
+    }
+
+    return obj;
+  }
+
+  /**
    * Update feedback form for an event
    */
   static async updateFeedbackForm(eventId: string, fields: FormField[]): Promise<void> {
     try {
       const formRef = doc(db, `${this.EVENTS_COLLECTION}/${eventId}/forms/feedback`);
+      const sanitizedFields = this.removeUndefinedValues(fields);
       await setDoc(formRef, {
         type: 'feedback',
-        fields,
+        fields: sanitizedFields,
         updatedAt: serverTimestamp()
       }, { merge: true });
     } catch (error) {

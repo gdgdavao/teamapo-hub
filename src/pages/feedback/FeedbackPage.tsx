@@ -1,13 +1,17 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { useParams, useSearchParams, Link } from 'react-router-dom';
 import {
   CheckCircleIcon,
   ExclamationTriangleIcon,
   ArrowDownTrayIcon,
   ArrowPathIcon,
   ClipboardDocumentIcon,
-  AcademicCapIcon
+  CheckIcon,
+  AcademicCapIcon,
+  ShieldCheckIcon,
+  ArrowTopRightOnSquareIcon,
+  SparklesIcon
 } from '@heroicons/react/24/outline';
 import { InformationCircleIcon } from '@heroicons/react/20/solid';
 import usePageTitle from '../../hooks/usePageTitle';
@@ -16,8 +20,10 @@ import FormRenderer from './components/FormRenderer';
 import {
   Button,
   Card,
+  Badge,
   EmptyState,
-  LoadingSpinner
+  LoadingSpinner,
+  toast
 } from '../../components/UI';
 import { EventService } from '../../services/eventService';
 import { FeedbackService } from '../../services/feedbackService';
@@ -28,6 +34,18 @@ import { Event, FormField, CertificateTemplate, Registration } from '../../types
 import { toDateSafe } from '../../utils/dateUtils';
 import { formatEventLocation } from '../../utils/venueUtils';
 import { logger } from '../../utils/logger';
+
+// 28 pure-CSS celebratory confetti pieces in GDG brand colors
+const CONFETTI_COLORS = ['#4285F4', '#EA4335', '#FBBC04', '#34A853', '#0b57d0', '#186a3b'];
+const CONFETTI_PIECES = Array.from({ length: 28 }, (_, i) => ({
+  left: `${(i * 3.5 + (i % 5) * 1.6) % 96}%`,
+  top: `${-10 - (i % 6) * 10}px`,
+  size: 6 + (i % 4) * 2.5,
+  color: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
+  delay: `${(i * 0.08).toFixed(2)}s`,
+  duration: `${(2.2 + (i % 5) * 0.25).toFixed(2)}s`,
+  rotation: (i * 47) % 360,
+}));
 
 /**
  * Extract full name from registration customResponses
@@ -110,10 +128,50 @@ const FeedbackPage: React.FC = () => {
   const [verificationCode, setVerificationCode] = useState<string | null>(null);
   const [certificateError, setCertificateError] = useState<string | null>(null);
   const [template, setTemplate] = useState<CertificateTemplate | null>(null);
+  const [copiedCode, setCopiedCode] = useState(false);
 
   // Helper function to safely convert Firestore Timestamp or Date to Date object
   const toDate = (dateValue: any): Date => {
     return toDateSafe(dateValue) ?? new Date();
+  };
+
+  // Copy code with cross-browser clipboard fallback
+  const copyVerificationCode = async (codeToCopy: string) => {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(codeToCopy);
+      } else {
+        const textArea = document.createElement('textarea');
+        textArea.value = codeToCopy;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+      }
+      setCopiedCode(true);
+      setTimeout(() => setCopiedCode(false), 2000);
+      toast.success('Verification code copied to clipboard!');
+    } catch {
+      toast.error('Failed to copy verification code');
+    }
+  };
+
+  // LinkedIn Certification URL generator
+  const getLinkedInCertificationUrl = () => {
+    if (!event || !verificationCode) return '';
+    const baseUrl = 'https://www.linkedin.com/profile/add';
+    const params = new URLSearchParams({
+      startTask: 'CERTIFICATION_NAME',
+      name: `Certificate of Participation - ${event.title}`,
+      organizationName: 'Google Developer Groups Davao',
+      issueYear: String(new Date().getFullYear()),
+      issueMonth: String(new Date().getMonth() + 1),
+      certUrl: `${window.location.origin}/verify/${verificationCode}`,
+      certId: verificationCode,
+    });
+    return `${baseUrl}?${params.toString()}`;
   };
 
   // Generate or retrieve certificate for user (extracted for reuse)
@@ -402,96 +460,101 @@ const FeedbackPage: React.FC = () => {
 
   if (submitted) {
     // Check if this is a returning user (certificate already exists)
-    const isReturningUser = certificateUrl && !generatingCertificate;
-    
-return (
-      <div className="min-h-page bg-surface-container-low flex items-center justify-center py-12 px-4">
-        <Card className="w-full max-w-lg" padding="lg">
-          <EmptyState
-            icon={<CheckCircleIcon className="h-12 w-12" />}
-            title={isReturningUser ? 'Welcome Back!' : 'Thank You!'}
-            description={
-              isReturningUser
-                ? 'Your feedback was already submitted. Here is your certificate of participation!'
-                : 'Your feedback has been submitted successfully. We truly appreciate your time and input!'
-            }
+    const isReturningUser = Boolean(certificateUrl && !generatingCertificate);
+
+    return (
+      <div className="min-h-page bg-surface-container-low flex items-center justify-center py-12 px-4 relative overflow-hidden">
+        {/* Google 4-Color Signature Accent Strip */}
+        <div className="absolute top-0 left-0 right-0 h-1.5 flex z-10" aria-hidden="true">
+          <div className="h-full w-1/4 bg-[#4285F4]" />
+          <div className="h-full w-1/4 bg-[#EA4335]" />
+          <div className="h-full w-1/4 bg-[#FBBC04]" />
+          <div className="h-full w-1/4 bg-[#34A853]" />
+        </div>
+
+        {/* Floating Confetti Particle Burst */}
+        {CONFETTI_PIECES.map((piece, i) => (
+          <div
+            key={i}
+            className="absolute rounded-sm pointer-events-none motion-reduce:hidden animate-confetti-fall"
+            style={{
+              left: piece.left,
+              top: piece.top,
+              backgroundColor: piece.color,
+              width: `${piece.size}px`,
+              height: `${piece.size * 1.5}px`,
+              animationDelay: piece.delay,
+              animationDuration: piece.duration,
+              transform: `rotate(${piece.rotation}deg)`,
+              zIndex: 20,
+            }}
+            aria-hidden="true"
           />
-          
+        ))}
+
+        <Card className="w-full max-w-xl relative z-10 shadow-elevation-2" padding="lg">
+          <div className="text-center mb-6">
+            <div className="mb-3 inline-flex rounded-full bg-success-container p-3 animate-success-pop motion-reduce:animate-none">
+              <CheckCircleIcon className="h-10 w-10 text-success" aria-hidden="true" />
+            </div>
+            <div className="flex justify-center mb-2">
+              <Badge tone={isReturningUser ? 'info' : 'success'} pulse={!isReturningUser}>
+                {isReturningUser ? 'Welcome Back!' : 'Feedback Recorded! 🎉'}
+              </Badge>
+            </div>
+            <h1 className="text-2xl sm:text-3xl font-bold text-on-surface tracking-tight">
+              {isReturningUser ? 'Your Certificate of Participation' : 'Thank You for Your Feedback!'}
+            </h1>
+            <p className="mt-2 text-sm sm:text-base text-on-surface-variant max-w-md mx-auto">
+              {isReturningUser
+                ? 'Your feedback was already submitted. Here is your official verifiable credential.'
+                : 'Your input directly helps GDG Davao make future community events even better!'}
+            </p>
+          </div>
+
           {/* Certificate Section */}
           {registrationId && (
-            <div className="mb-6 rounded-lg border border-primary-container bg-primary-container p-8">
-              <div className="mb-4 flex items-center justify-center">
-                <AcademicCapIcon className="h-10 w-10 text-primary" aria-hidden="true" />
+            <div className="mb-6 rounded-2xl border border-outline-variant bg-surface-container-low p-4 sm:p-6 shadow-elevation-1 relative overflow-hidden">
+              <div className="flex items-center justify-between mb-4 pb-3 border-b border-outline-variant">
+                <div className="flex items-center gap-2">
+                  <AcademicCapIcon className="h-6 w-6 text-primary shrink-0" aria-hidden="true" />
+                  <h2 className="text-base font-semibold text-on-surface">Certificate of Participation</h2>
+                </div>
+                <Badge tone="success">
+                  Authentic Credential
+                </Badge>
               </div>
-              <p className="mb-4 text-center text-lg font-semibold text-on-primary-container">
-                Certificate of Participation
-              </p>
 
-              {/* Loading State with Skeleton */}
+              {/* Loading State with Shimmer Skeleton */}
               {generatingCertificate && (
                 <div className="space-y-4" role="status" aria-live="polite">
                   <span className="sr-only">Creating your certificate</span>
-                  {/* Certificate Skeleton */}
-                  <div className="relative overflow-hidden rounded-lg border border-outline-variant bg-surface-container aspect-[11/8.5]">
-                    {/* `animate-shimmer-sweep` is the real keyframe. The previous
-                        `animate-shimmer` class resolved to nothing and the inline
-                        `animation: shimmer` pointed at an undefined @keyframes, so
-                        the sheen never moved. */}
+                  <div className="relative overflow-hidden rounded-xl border border-outline-variant bg-surface-container aspect-[11/8.5]">
                     <div className="absolute inset-0 bg-gradient-to-r from-transparent via-surface/60 to-transparent animate-shimmer-sweep motion-reduce:animate-none" />
-                    <div className="absolute inset-0 flex flex-col items-center justify-center p-6">
-                      {/* Decorative border skeleton */}
-                      <div className="absolute inset-4 rounded-lg border-2 border-surface-dim opacity-50" />
-
-                      {/* Logo placeholder */}
-                      <div className="mb-4 h-16 w-16 rounded-full bg-surface-dim" />
-
-                      {/* Title skeleton */}
-                      <div className="mb-2 h-6 w-48 rounded bg-surface-dim" />
-
-                      {/* Subtitle skeleton */}
-                      <div className="mb-6 h-4 w-32 rounded bg-surface-dim" />
-
-                      {/* Name skeleton */}
-                      <div className="mb-4 h-8 w-56 rounded bg-surface-dim" />
-
-                      {/* Description skeleton */}
-                      <div className="mb-2 h-3 w-64 rounded bg-surface-dim" />
-                      <div className="mb-6 h-3 w-48 rounded bg-surface-dim" />
-
-                      {/* QR code placeholder */}
-                      <div className="h-16 w-16 rounded bg-surface-dim" />
+                    <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center">
+                      <div className="mx-auto mb-3 h-10 w-10 rounded-full border-b-2 border-primary motion-essential animate-spin" />
+                      <p className="text-sm font-medium text-on-surface">Generating your certificate...</p>
+                      <p className="mt-1 text-xs text-on-surface-variant">Signing verifiable credential</p>
                     </div>
-                  </div>
-
-                  {/* Verification code skeleton */}
-                  <div className="rounded-lg bg-surface/70 px-4 py-3">
-                    <div className="mx-auto mb-2 h-3 w-24 rounded bg-surface-dim" />
-                    <div className="mx-auto h-6 w-40 rounded bg-surface-dim" />
-                  </div>
-
-                  {/* Button skeleton */}
-                  <div className="h-control w-full rounded-lg bg-surface-dim" />
-
-                  <div className="text-center">
-                    <p className="text-sm font-medium text-on-surface-variant">Creating your certificate...</p>
-                    <p className="mt-1 text-sm text-on-surface-variant">This may take a few seconds</p>
                   </div>
                 </div>
               )}
 
               {/* Error State */}
               {certificateError && !generatingCertificate && (
-                <div className="py-4 text-center">
+                <div className="py-6 text-center">
                   <ExclamationTriangleIcon className="mx-auto mb-3 h-10 w-10 text-warning" aria-hidden="true" />
-                  <p className="mb-2 text-sm font-medium text-on-surface">Certificate Generation Failed</p>
-                  <p className="mb-4 text-sm text-on-surface-variant">Don't worry, your feedback was saved. You can try generating again.</p>
+                  <p className="mb-1 text-base font-medium text-on-surface">Certificate Generation Paused</p>
+                  <p className="mb-4 text-sm text-on-surface-variant">
+                    Your feedback was saved safely. You can retry generating your certificate below.
+                  </p>
                   {template && (
                     <Button
                       size="sm"
                       icon={<ArrowPathIcon />}
                       onClick={handleRetryCertificate}
                     >
-                      Try Again
+                      Retry Generation
                     </Button>
                   )}
                 </div>
@@ -500,63 +563,93 @@ return (
               {/* Certificate Preview & Download */}
               {certificateUrl && !generatingCertificate && (
                 <div className="space-y-4">
-                  {/* Preview Image */}
-                  <div className="overflow-hidden rounded-lg border border-outline-variant">
+                  {/* Preview Image with 3D hover depth and shine */}
+                  <div className="group relative overflow-hidden rounded-xl border border-outline-variant bg-surface certificate-card-tilt shadow-elevation-1">
+                    <div
+                      className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/30 to-transparent animate-card-shine motion-reduce:hidden"
+                      aria-hidden="true"
+                    />
                     <img
                       src={certificateUrl}
-                      alt="Your Certificate of Participation"
-                      className="h-auto w-full"
+                      alt={`Certificate of Participation for ${userName || 'Attendee'}`}
+                      className="h-auto w-full object-contain"
                     />
                   </div>
 
-                  {/* Verification Code */}
+                  {/* Verification Code Box with 1-Click Copy */}
                   {verificationCode && (
-                    <div className="rounded-lg bg-surface/70 px-4 py-3">
-                      <p className="mb-1 text-sm text-on-surface-variant">Certificate Verification Code</p>
-                      <div className="flex items-center justify-center gap-2">
-                        <code className="min-w-0 truncate rounded bg-surface-container px-3 py-1.5 font-mono text-sm font-semibold text-on-surface">
+                    <div className="rounded-xl border border-outline-variant bg-surface p-3 sm:p-4">
+                      <div className="flex items-center justify-between gap-2 mb-1.5">
+                        <span className="text-xs font-semibold text-on-surface-variant uppercase tracking-wider">
+                          Verification Code
+                        </span>
+                        <span className="text-xs text-on-surface-variant">
+                          Cryptographically signed
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 rounded-lg bg-surface-container px-3 py-2">
+                        <code className="min-w-0 font-mono text-sm sm:text-base font-semibold text-primary select-all truncate">
                           {verificationCode}
                         </code>
-                        {/* Was a 28px icon button wedged next to the code. A thumb
-                            reaching for it misses, so it now carries the same 48px
-                            floor as every other control. */}
                         <Button
-                          variant="text"
-                          onClick={() => navigator.clipboard.writeText(verificationCode)}
-                          title="Copy to clipboard"
+                          variant={copiedCode ? 'tonal' : 'text'}
+                          size="sm"
+                          onClick={() => copyVerificationCode(verificationCode)}
+                          title="Copy verification code"
                           aria-label="Copy verification code"
-                          className="min-h-control min-w-[48px] shrink-0 px-2xs"
-                          icon={<ClipboardDocumentIcon />}
-                        />
+                          icon={copiedCode ? <CheckIcon className="text-success" /> : <ClipboardDocumentIcon />}
+                          className="min-h-control shrink-0 px-3"
+                        >
+                          {copiedCode ? 'Copied!' : 'Copy'}
+                        </Button>
                       </div>
-                      <p className="mt-2 text-sm text-on-surface-variant">
-                        Use this code to verify your certificate authenticity
-                      </p>
                     </div>
                   )}
 
-                  {/* Download Button */}
-                  <Button
-                    fullWidth
-                    icon={<ArrowDownTrayIcon />}
-                    onClick={() => {
-                      const filename = `Certificate_${event?.title?.replace(/[^a-zA-Z0-9]/g, '_') || 'Event'}_${userName?.replace(/[^a-zA-Z0-9]/g, '_') || 'Participant'}.png`;
-                      CertificateGenerationService.downloadCertificate(certificateUrl, filename);
-                    }}
-                  >
-                    Download Certificate
-                  </Button>
+                  {/* Action Cluster */}
+                  <div className="space-y-2 pt-2">
+                    <Button
+                      fullWidth
+                      size="lg"
+                      icon={<ArrowDownTrayIcon />}
+                      onClick={handleDownloadCertificate}
+                    >
+                      Download Certificate
+                    </Button>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {verificationCode && (
+                        <Button
+                          variant="tonal"
+                          fullWidth
+                          href={`/verify/${verificationCode}`}
+                          icon={<ShieldCheckIcon />}
+                        >
+                          Verify Online
+                        </Button>
+                      )}
+
+                      {verificationCode && (
+                        <a
+                          href={getLinkedInCertificationUrl()}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex min-h-control items-center justify-center gap-2 rounded border border-outline px-control-x font-medium text-on-surface hover:bg-surface-container transition-colors duration-short2 text-sm sm:text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                        >
+                          <ArrowTopRightOnSquareIcon className="h-4 w-4 shrink-0 text-on-surface-variant" aria-hidden="true" />
+                          <span>Add to LinkedIn</span>
+                        </a>
+                      )}
+                    </div>
+                  </div>
                 </div>
               )}
 
-              {/* Fallback: No certificate available - contact support */}
+              {/* Fallback support contact */}
               {!generatingCertificate && !certificateUrl && !certificateError && (
                 <div className="py-4 text-center">
-                  <p className="mb-2 text-sm text-on-surface-variant">
-                    Having trouble with your certificate?
-                  </p>
                   <p className="text-sm text-on-surface-variant">
-                    Please contact us at{' '}
+                    Need help claiming your certificate? Contact us at{' '}
                     <a
                       href="mailto:support@gdgdavao.org"
                       className="font-medium text-primary underline hover:text-primary-hover"
@@ -569,12 +662,16 @@ return (
             </div>
           )}
 
+          {/* Event Details Card */}
           {event && (
-            <div className="rounded-lg bg-surface-container-low p-4 text-left">
-              <p className="min-w-0 truncate text-sm font-medium text-on-surface">
+            <div className="rounded-xl border border-outline-variant bg-surface-container-low p-4 text-left">
+              <p className="text-xs font-semibold uppercase tracking-wider text-on-surface-variant mb-1">
+                Event
+              </p>
+              <p className="min-w-0 truncate text-sm font-semibold text-on-surface">
                 {event.title}
               </p>
-              <p className="text-sm text-on-surface-variant">
+              <p className="text-xs sm:text-sm text-on-surface-variant mt-0.5">
                 {toDate(event.startDate).toLocaleDateString('en-US', {
                   weekday: 'long',
                   year: 'numeric',
@@ -585,8 +682,8 @@ return (
             </div>
           )}
 
-          <p className="mt-6 text-center text-sm text-on-surface-variant">
-            Thank you for being part of our community!
+          <p className="mt-6 text-center text-xs text-on-surface-variant">
+            Powered by TeamApo Hub • Google Developer Groups Davao
           </p>
         </Card>
       </div>
@@ -594,39 +691,62 @@ return (
   }
 
   return (
-    <div className="min-h-page bg-surface-container-low">
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+    <div className="min-h-page bg-surface-container-low relative">
+      {/* Google 4-Color Signature Accent Strip */}
+      <div className="absolute top-0 left-0 right-0 h-1.5 flex z-10" aria-hidden="true">
+        <div className="h-full w-1/4 bg-[#4285F4]" />
+        <div className="h-full w-1/4 bg-[#EA4335]" />
+        <div className="h-full w-1/4 bg-[#FBBC04]" />
+        <div className="h-full w-1/4 bg-[#34A853]" />
+      </div>
+
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12 pt-16">
         {/* Header */}
-        <div className="text-center mb-12">
-          <h1 className="text-3xl font-bold text-on-surface mb-2">Share Your Feedback</h1>
-          <p className="text-on-surface-variant mb-6">We'd love to hear about your experience!</p>
-          {event && (
-            <Card padding="lg" className="mb-8 text-left">
-              <h2 className="mb-2 text-xl font-semibold text-on-surface break-words">{event.title}</h2>
-              <p className="text-on-surface-variant break-words">
-                {toDate(event.startDate).toLocaleDateString('en-US', {
-                  weekday: 'long',
-                  year: 'numeric',
-                  month: 'long',
-                  day: 'numeric'
-                })} • {formatEventLocation(event.venue)}
+        <div className="text-center mb-10">
+          <h1 className="text-3xl sm:text-4xl font-bold text-on-surface mb-2 tracking-tight">
+            Share Your Feedback
+          </h1>
+          <p className="text-on-surface-variant max-w-xl mx-auto text-base sm:text-lg">
+            Your feedback directly guides GDG Davao in organizing better developer conferences, hands-on workshops, and community events.
+          </p>
+        </div>
+
+        {event && (
+          <Card padding="lg" className="mb-8 relative overflow-hidden">
+            <div className="canvas-dots absolute inset-0 opacity-40 pointer-events-none" aria-hidden="true" />
+            <div className="relative z-10">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                <Badge tone="neutral">
+                  {toDate(event.startDate).toLocaleDateString('en-US', {
+                    weekday: 'short',
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric'
+                  })}
+                </Badge>
+              </div>
+              <h2 className="text-xl sm:text-2xl font-bold text-on-surface break-words tracking-tight">
+                {event.title}
+              </h2>
+              <p className="mt-1 text-sm text-on-surface-variant break-words">
+                📍 {formatEventLocation(event.venue)}
               </p>
               {userName && (
                 <p className="mt-3 text-sm font-medium text-primary break-words">
                   Hi {userName.split(' ')[0]}! Thanks for attending.
                 </p>
               )}
-            </Card>
-          )}
-        </div>
+            </div>
+          </Card>
+        )}
 
         {/* Anonymous Feedback Notice when accessing without email token */}
         {!token && (
-          <div className="mb-6 flex items-start gap-3 rounded-lg border border-outline-variant bg-surface-container-low p-4 text-left">
+          <div className="mb-6 flex items-start gap-3 rounded-xl border border-outline-variant bg-surface p-4 text-left shadow-elevation-0">
             <InformationCircleIcon className="h-5 w-5 shrink-0 text-primary mt-0.5" aria-hidden="true" />
             <div className="text-sm">
-              <p className="font-medium text-on-surface">Submitting General Feedback</p>
-              <p className="text-on-surface-variant">
+              <p className="font-semibold text-on-surface">Submitting General Feedback</p>
+              <p className="text-on-surface-variant mt-0.5">
                 You are submitting feedback anonymously. If you are an attendee seeking your Certificate of Participation, please open this form from the personalized feedback link emailed to your registered address.
               </p>
             </div>
@@ -634,20 +754,20 @@ return (
         )}
 
         {/* Feedback Form */}
-        <Card padding="lg">
+        <Card padding="lg" className="shadow-elevation-1">
           <FormRenderer
             fields={feedbackForm}
             onSubmit={handleFeedbackSubmit}
-            submitButtonText={submitting ? "Submitting..." : "Submit Feedback"}
+            submitButtonText={submitting ? "Submitting..." : "Submit Feedback & Unlock Certificate"}
             disabled={submitting}
             className="space-y-6"
           />
         </Card>
 
         {/* Footer */}
-        <div className="text-center mt-8">
-          <p className="text-sm text-on-surface-variant">
-            Powered by TeamApo Hub • GDG Davao
+        <div className="text-center mt-10">
+          <p className="text-xs text-on-surface-variant">
+            Powered by TeamApo Hub • Google Developer Groups Davao
           </p>
         </div>
       </div>

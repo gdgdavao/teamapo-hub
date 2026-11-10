@@ -137,6 +137,45 @@
   animation: confetti-fall 2.8s ease-out forwards;
 }
 
+@keyframes seal-ripple {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(24, 106, 59, 0.45);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 12px rgba(24, 106, 59, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(24, 106, 59, 0);
+  }
+}
+
+@keyframes star-bounce {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.32) rotate(-8deg); }
+  70% { transform: scale(0.92) rotate(4deg); }
+  100% { transform: scale(1) rotate(0deg); }
+}
+
+@keyframes card-shine-glide {
+  0% {
+    transform: translateX(-100%) rotate(25deg);
+    opacity: 0;
+  }
+  20% {
+    opacity: 0.35;
+  }
+  60% {
+    opacity: 0.35;
+  }
+  100% {
+    transform: translateX(250%) rotate(25deg);
+    opacity: 0;
+  }
+}
+
 @keyframes kiosk-ticker-scroll {
   0% {
     transform: translate3d(0, 0, 0);
@@ -806,6 +845,35 @@
   /* Reticle scanline for QR viewfinder. */
   .animate-scanline {
     animation: scanline-pulse 2.4s ease-in-out infinite;
+  }
+
+  /* Credential verification animated seal ripple */
+  .animate-seal-ripple {
+    animation: seal-ripple 2.4s ease-in-out infinite;
+  }
+
+  /* Star micro-bounce on feedback rating selection */
+  .animate-star-bounce {
+    animation: star-bounce 350ms cubic-bezier(0.2, 0, 0, 1);
+  }
+
+  /* Certificate card decorative sheen glide */
+  .animate-card-shine {
+    animation: card-shine-glide 1.6s ease-out forwards;
+  }
+
+  /* Certificate 3D hover depth for desktop viewports */
+  @media (hover: hover) and (pointer: fine) {
+    .certificate-card-tilt {
+      transition: transform var(--motion-duration-base) var(--motion-ease-quart),
+                  box-shadow var(--motion-duration-base) var(--motion-ease-quart);
+      transform: perspective(1000px) rotateX(0deg) rotateY(0deg);
+      will-change: transform, box-shadow;
+    }
+    .certificate-card-tilt:hover {
+      transform: perspective(1000px) rotateX(1deg) translateY(-2px);
+      box-shadow: 0 8px 16px -4px rgb(0 0 0 / 0.08);
+    }
   }
 }
 

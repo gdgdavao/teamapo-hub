@@ -654,30 +654,25 @@ export class CertificateService {
     templateId: string;
   }): Promise<string> {
     try {
-      const certificateRef = doc(collection(db, this.CERTIFICATES_COLLECTION));
-      const certificateId = certificateRef.id;
-      
       const verificationUrl = `${APP_URL}/verify/${data.verificationCode}`;
-      
-      await setDoc(certificateRef, {
-        credentialId: data.verificationCode,
-        verificationCode: data.verificationCode, // Required by Firestore rules for anonymous create
+
+      // Client create on /certificates is denied by firestore.rules; the callable
+      // verifies the registration + feedback and writes the record server-side.
+      const issue = httpsCallable<Record<string, string>, { success: boolean; certificateId: string }>(
+        functions,
+        'issueCertificateRecord'
+      );
+      const { data: result } = await issue({
         recipientName: data.recipientName,
-        recipientEmail: data.recipientEmail,
         eventId: data.eventId,
-        eventTitle: data.eventTitle,
         eventDate: data.eventDate,
         registrationId: data.registrationId,
         certificateUrl: data.certificateUrl,
         verificationUrl,
+        verificationCode: data.verificationCode,
         templateId: data.templateId,
-        isVerified: true,
-        issuedAt: serverTimestamp(),
-        downloadCount: 0,
-        verificationCount: 0
       });
-      
-      return certificateId;
+      return result.certificateId;
     } catch (error) {
       logger.error('Error creating certificate record:', error);
       throw new Error('Failed to create certificate record');

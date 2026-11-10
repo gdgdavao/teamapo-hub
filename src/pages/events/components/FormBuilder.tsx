@@ -28,6 +28,7 @@ import { StarIcon } from '@heroicons/react/24/solid';
 import FormattedLabelText from '../../../components/FormattedLabelText';
 import type { FormField } from '../../../types';
 import { Select, SegmentedControl } from '../../../components/UI';
+import { isOtherOption, formatOtherResponse, parseOtherResponse } from '../../../utils/formResponses';
 
 interface FormBuilderProps {
   fields: FormField[];
@@ -68,6 +69,7 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
 
   // Interactive local state for live preview testing
   const [previewAnswers, setPreviewAnswers] = useState<Record<string, any>>({});
+  const [previewOtherTexts, setPreviewOtherTexts] = useState<Record<string, string>>({});
 
   const labelTextareaRefs = useRef<Record<string, HTMLTextAreaElement | null>>({});
 
@@ -228,39 +230,97 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
           />
         );
 
-      case 'select':
+      case 'select': {
+        const isSelectedOther = isOtherOption(value);
         return (
-          <Select
-            value={value || ''}
-            onChange={(e) => setPreviewAnswers(prev => ({ ...prev, [field.id]: e.target.value }))}
-          >
-            <option value="">{field.placeholder || 'Choose an option'}</option>
-            {field.options?.map((option, idx) => (
-              <option key={idx} value={option}>{option}</option>
-            ))}
-          </Select>
+          <div className="space-y-2">
+            <Select
+              value={isSelectedOther ? (field.options?.find(opt => isOtherOption(opt)) || 'Other...') : (value || '')}
+              onChange={(e) => {
+                const selectedVal = e.target.value;
+                if (isOtherOption(selectedVal)) {
+                  setPreviewAnswers(prev => ({
+                    ...prev,
+                    [field.id]: formatOtherResponse(selectedVal, previewOtherTexts[field.id])
+                  }));
+                } else {
+                  setPreviewAnswers(prev => ({ ...prev, [field.id]: selectedVal }));
+                }
+              }}
+            >
+              <option value="">{field.placeholder || 'Choose an option'}</option>
+              {field.options?.map((option, idx) => (
+                <option key={idx} value={option}>{option}</option>
+              ))}
+            </Select>
+            {isSelectedOther && (
+              <div className="pt-1">
+                <input
+                  type="text"
+                  placeholder="Please specify your answer"
+                  value={previewOtherTexts[field.id] || (typeof value === 'string' ? parseOtherResponse(value).customText : '')}
+                  onChange={(e) => {
+                    const custom = e.target.value;
+                    setPreviewOtherTexts(prev => ({ ...prev, [field.id]: custom }));
+                    setPreviewAnswers(prev => ({
+                      ...prev,
+                      [field.id]: formatOtherResponse('Other...', custom)
+                    }));
+                  }}
+                  className="w-full rounded-lg border border-outline-variant bg-white px-3.5 py-2.5 text-base text-on-surface shadow-xs transition-colors placeholder:text-on-surface-variant/60 focus:border-primary focus:outline-hidden focus:ring-2 focus:ring-primary/20"
+                />
+              </div>
+            )}
+          </div>
         );
+      }
 
       case 'radio':
         return (
           <div className="space-y-2.5 pt-1">
-            {(field.options || ['Option 1', 'Option 2']).map((option, idx) => (
-              <label 
-                key={idx} 
-                className="flex items-center gap-3 cursor-pointer group min-h-control"
-              >
-                <input
-                  type="radio"
-                  name={`preview_${field.id}`}
-                  checked={value === option}
-                  onChange={() => setPreviewAnswers(prev => ({ ...prev, [field.id]: option }))}
-                  className="h-5 w-5 text-primary border-outline-variant focus:ring-primary"
-                />
-                <span className="text-base text-on-surface group-hover:text-primary transition-colors">
-                  {option}
-                </span>
-              </label>
-            ))}
+            {(field.options || ['Option 1', 'Option 2']).map((option, idx) => {
+              const isOther = isOtherOption(option);
+              const isChecked = isOther
+                ? isOtherOption(value)
+                : value === option;
+
+              return (
+                <div key={idx} className="space-y-2">
+                  <label 
+                    className="flex items-center gap-3 cursor-pointer group min-h-control"
+                  >
+                    <input
+                      type="radio"
+                      name={`preview_${field.id}`}
+                      checked={isChecked}
+                      onChange={() => {
+                        const otherVal = formatOtherResponse(option, previewOtherTexts[field.id]);
+                        setPreviewAnswers(prev => ({ ...prev, [field.id]: isOther ? otherVal : option }));
+                      }}
+                      className="h-5 w-5 text-primary border-outline-variant focus:ring-primary"
+                    />
+                    <span className="text-base text-on-surface group-hover:text-primary transition-colors">
+                      {isOther ? 'Other:' : option}
+                    </span>
+                  </label>
+                  {isOther && isChecked && (
+                    <div className="pl-8 pt-0.5">
+                      <input
+                        type="text"
+                        placeholder="Please specify"
+                        value={previewOtherTexts[field.id] || (typeof value === 'string' ? parseOtherResponse(value).customText : '')}
+                        onChange={(e) => {
+                          const custom = e.target.value;
+                          setPreviewOtherTexts(prev => ({ ...prev, [field.id]: custom }));
+                          setPreviewAnswers(prev => ({ ...prev, [field.id]: formatOtherResponse(option, custom) }));
+                        }}
+                        className="w-full rounded-lg border border-outline-variant bg-white px-3.5 py-2 text-base text-on-surface shadow-xs transition-colors placeholder:text-on-surface-variant/60 focus:border-primary focus:outline-hidden focus:ring-2 focus:ring-primary/20"
+                      />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         );
 
@@ -270,28 +330,58 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
           <div className="space-y-2.5 pt-1">
             {(field.options || ['Option 1', 'Option 2']).map((option, idx) => {
               const currentList = Array.isArray(value) ? value : [];
-              const isChecked = currentList.includes(option);
+              const isOther = isOtherOption(option);
+              const isChecked = isOther
+                ? currentList.some((item) => isOtherOption(item))
+                : currentList.includes(option);
 
               return (
-                <label 
-                  key={idx} 
-                  className="flex items-center gap-3 cursor-pointer group min-h-control"
-                >
-                  <input
-                    type="checkbox"
-                    checked={isChecked}
-                    onChange={(e) => {
-                      const next = e.target.checked
-                        ? [...currentList, option]
-                        : currentList.filter(item => item !== option);
-                      setPreviewAnswers(prev => ({ ...prev, [field.id]: next }));
-                    }}
-                    className="h-5 w-5 rounded border-outline-variant text-primary focus:ring-primary"
-                  />
-                  <span className="text-base text-on-surface group-hover:text-primary transition-colors">
-                    {option}
-                  </span>
-                </label>
+                <div key={idx} className="space-y-2">
+                  <label 
+                    className="flex items-center gap-3 cursor-pointer group min-h-control"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          const otherVal = formatOtherResponse(option, previewOtherTexts[field.id]);
+                          const next = isOther
+                            ? [...currentList.filter(item => !isOtherOption(item)), otherVal]
+                            : [...currentList, option];
+                          setPreviewAnswers(prev => ({ ...prev, [field.id]: next }));
+                        } else {
+                          const next = isOther
+                            ? currentList.filter(item => !isOtherOption(item))
+                            : currentList.filter(item => item !== option);
+                          setPreviewAnswers(prev => ({ ...prev, [field.id]: next }));
+                        }
+                      }}
+                      className="h-5 w-5 rounded border-outline-variant text-primary focus:ring-primary"
+                    />
+                    <span className="text-base text-on-surface group-hover:text-primary transition-colors">
+                      {isOther ? 'Other:' : option}
+                    </span>
+                  </label>
+                  {isOther && isChecked && (
+                    <div className="pl-8 pt-0.5">
+                      <input
+                        type="text"
+                        placeholder="Please specify"
+                        value={previewOtherTexts[field.id] || ''}
+                        onChange={(e) => {
+                          const custom = e.target.value;
+                          setPreviewOtherTexts(prev => ({ ...prev, [field.id]: custom }));
+                          const updated = currentList.map(item =>
+                            isOtherOption(item) ? formatOtherResponse(option, custom) : item
+                          );
+                          setPreviewAnswers(prev => ({ ...prev, [field.id]: updated }));
+                        }}
+                        className="w-full rounded-lg border border-outline-variant bg-white px-3.5 py-2 text-base text-on-surface shadow-xs transition-colors placeholder:text-on-surface-variant/60 focus:border-primary focus:outline-hidden focus:ring-2 focus:ring-primary/20"
+                      />
+                    </div>
+                  )}
+                </div>
               );
             })}
           </div>
@@ -746,35 +836,47 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
                             </div>
 
                             <div className="space-y-2">
-                              {(field.options || []).map((option, optIdx) => (
-                                <div key={optIdx} className="flex items-center gap-2">
-                                  <span className="text-on-surface-variant text-xs font-bold w-5 text-center">
-                                    {field.type === 'radio' ? '○' : '□'}
-                                  </span>
-                                  <input
-                                    type="text"
-                                    value={option}
-                                    onChange={(e) => {
-                                      const nextOptions = [...(field.options || [])];
-                                      nextOptions[optIdx] = e.target.value;
-                                      updateField(field.id, { options: nextOptions });
-                                    }}
-                                    className="flex-1 rounded-lg border border-outline-variant bg-white px-3 py-1.5 text-sm text-on-surface focus:border-primary focus:ring-2 focus:ring-primary/20 focus:outline-hidden"
-                                    placeholder={`Option ${optIdx + 1}`}
-                                  />
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      const nextOptions = (field.options || []).filter((_, i) => i !== optIdx);
-                                      updateField(field.id, { options: nextOptions });
-                                    }}
-                                    className="p-1.5 text-error hover:bg-error-container/40 rounded-md min-h-control"
-                                    title="Remove option"
-                                  >
-                                    <XCircleIcon className="h-5 w-5" aria-hidden="true" />
-                                  </button>
-                                </div>
-                              ))}
+                              {(field.options || []).map((option, optIdx) => {
+                                const isOther = isOtherOption(option);
+                                return (
+                                  <div key={optIdx} className="flex items-center gap-2">
+                                    <span className="text-on-surface-variant text-xs font-bold w-5 text-center">
+                                      {field.type === 'radio' ? '○' : '□'}
+                                    </span>
+                                    {isOther ? (
+                                      <div className="flex-1 flex items-center gap-2 rounded-lg border border-dashed border-outline-variant/80 bg-surface-container-low/50 px-3 py-1.5 text-sm">
+                                        <span className="font-medium text-on-surface">Other...</span>
+                                        <span className="text-xs text-on-surface-variant/70 italic border-b border-outline-variant/60 flex-1 select-none">
+                                          Short answer text
+                                        </span>
+                                      </div>
+                                    ) : (
+                                      <input
+                                        type="text"
+                                        value={option}
+                                        onChange={(e) => {
+                                          const nextOptions = [...(field.options || [])];
+                                          nextOptions[optIdx] = e.target.value;
+                                          updateField(field.id, { options: nextOptions });
+                                        }}
+                                        className="flex-1 rounded-lg border border-outline-variant bg-white px-3 py-1.5 text-sm text-on-surface focus:border-primary focus:ring-2 focus:ring-primary/20 focus:outline-hidden"
+                                        placeholder={`Option ${optIdx + 1}`}
+                                      />
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const nextOptions = (field.options || []).filter((_, i) => i !== optIdx);
+                                        updateField(field.id, { options: nextOptions });
+                                      }}
+                                      className="p-1.5 text-error hover:bg-error-container/40 rounded-md min-h-control"
+                                      title="Remove option"
+                                    >
+                                      <XCircleIcon className="h-5 w-5" aria-hidden="true" />
+                                    </button>
+                                  </div>
+                                );
+                              })}
                             </div>
 
                             <div className="flex items-center gap-3 pt-1">
@@ -790,16 +892,18 @@ const FormBuilder: React.FC<FormBuilderProps> = ({
                                 <span>Add Option</span>
                               </button>
 
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const nextOptions = [...(field.options || []), 'Other (please specify)'];
-                                  updateField(field.id, { options: nextOptions });
-                                }}
-                                className="inline-flex items-center gap-1.5 text-xs font-medium text-on-surface-variant hover:text-on-surface min-h-control"
-                              >
-                                <span>Add "Other"</span>
-                              </button>
+                              {!(field.options || []).some(isOtherOption) && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const nextOptions = [...(field.options || []), 'Other...'];
+                                    updateField(field.id, { options: nextOptions });
+                                  }}
+                                  className="inline-flex items-center gap-1.5 text-xs font-medium text-on-surface-variant hover:text-on-surface min-h-control"
+                                >
+                                  <span>Add "Other"</span>
+                                </button>
+                              )}
                             </div>
                           </div>
                         )}

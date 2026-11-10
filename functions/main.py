@@ -2654,6 +2654,88 @@ def generateCertificate(req: https_fn.CallableRequest) -> Dict[str, Any]:
 
 
 @https_fn.on_call()
+def issueCertificateRecord(req: https_fn.CallableRequest) -> Dict[str, Any]:
+    """
+    Persist the certificate record for an anonymous attendee after feedback.
+
+    /certificates is publicly readable and client-create is denied by
+    firestore.rules, so the record is written here once the registration and its
+    feedback submission have been verified server-side. Idempotent: the document
+    id is the registration id, so a retry returns the existing record.
+    """
+    data = req.data or {}
+    event_id = data.get('eventId')
+    registration_id = data.get('registrationId')
+    verification_code = data.get('verificationCode')
+    certificate_url = data.get('certificateUrl')
+    recipient_name = data.get('recipientName')
+    if not all(isinstance(v, str) and v for v in (
+        event_id, registration_id, verification_code, certificate_url, recipient_name
+    )):
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+            message="eventId, registrationId, verificationCode, certificateUrl and recipientName are required"
+        )
+    allowed_prefixes = ('https://',)
+    if os.environ.get('FUNCTIONS_EMULATOR') == 'true':
+        allowed_prefixes += ('http://127.0.0.1', 'http://localhost')  # Storage emulator
+    if not certificate_url.startswith(allowed_prefixes):
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+            message="certificateUrl must be an https URL"
+        )
+
+    db = get_db()
+    registration = db.collection('registrations').document(registration_id).get()
+    if not registration.exists or (registration.to_dict() or {}).get('eventId') != event_id:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.NOT_FOUND, message="Registration not found"
+        )
+
+    feedback = list(db.collection('feedback').where(
+        filter=FieldFilter('eventId', '==', event_id)
+    ).where(
+        filter=FieldFilter('registrationId', '==', registration_id)
+    ).limit(1).stream())
+    if not feedback:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
+            message="Certificate can only be issued after feedback submission"
+        )
+
+    event = db.collection('events').document(event_id).get()
+    if not event.exists:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.NOT_FOUND, message="Event not found"
+        )
+    event_data = event.to_dict() or {}
+
+    certificate_ref = db.collection('certificates').document(registration_id)
+    existing = certificate_ref.get()
+    if existing.exists:
+        return {'success': True, 'certificateId': existing.id}
+
+    # No recipientEmail: /certificates is public-read (DPA 2012).
+    certificate_ref.set({
+        'credentialId': verification_code,
+        'verificationCode': verification_code,
+        'recipientName': recipient_name,
+        'eventId': event_id,
+        'eventTitle': event_data.get('title', 'Event'),
+        'eventDate': data.get('eventDate') or '',
+        'registrationId': registration_id,
+        'certificateUrl': certificate_url,
+        'verificationUrl': data.get('verificationUrl') or '',
+        'templateId': data.get('templateId') or '',
+        'isVerified': True,
+        'issuedAt': firestore.SERVER_TIMESTAMP,
+        'downloadCount': 0,
+        'verificationCount': 0,
+    })
+    return {'success': True, 'certificateId': certificate_ref.id}
+
+
+@https_fn.on_call()
 def checkInAttendee(req: https_fn.CallableRequest) -> Dict[str, Any]:
     """
     Check in an attendee for an event
