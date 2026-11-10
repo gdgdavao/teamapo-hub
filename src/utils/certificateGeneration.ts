@@ -1,5 +1,6 @@
+import QRCode from 'qrcode';
 import { APP_URL } from '../config/app';
-import { CertificateTemplate, Certificate } from '../types';
+import { CertificateTemplate } from '../types';
 import { logger } from './logger';
 
 export interface CertificateGenerationRequest {
@@ -12,14 +13,15 @@ export interface CertificateGenerationRequest {
   verificationCode?: string;
 }
 
-// High resolution settings for 300 PPI certificate generation
-const CERTIFICATE_DPI = 300;
+// High resolution settings for fast 200 PPI (2.2K retina/print) certificate generation
+const CERTIFICATE_DPI = 200;
 const DEFAULT_WIDTH_INCHES = 11; // Letter landscape width
 const DEFAULT_HEIGHT_INCHES = 8.5; // Letter landscape height
-const HIGH_RES_WIDTH = Math.round(DEFAULT_WIDTH_INCHES * CERTIFICATE_DPI); // 3300px
-const HIGH_RES_HEIGHT = Math.round(DEFAULT_HEIGHT_INCHES * CERTIFICATE_DPI); // 2550px
+const HIGH_RES_WIDTH = Math.round(DEFAULT_WIDTH_INCHES * CERTIFICATE_DPI); // 2200px
+const HIGH_RES_HEIGHT = Math.round(DEFAULT_HEIGHT_INCHES * CERTIFICATE_DPI); // 1700px
 
 export class CertificateGenerationService {
+  private static imageCache = new Map<string, Promise<HTMLImageElement>>();
   /**
    * Generate a SHA-256 hash using Web Crypto API (browser-native)
    * Returns first 12 characters of the hex hash
@@ -63,44 +65,83 @@ export class CertificateGenerationService {
     return `CERT-${timestamp}-${random}`.toUpperCase();
   }
 
-  private static generateQRCode(verificationUrl: string, size: number = 300): Promise<string> {
-    // Generate high resolution QR code for better quality at 300 DPI
-    const qrSize = Math.max(size, 300); // Minimum 300px for good quality
-    return Promise.resolve(`https://api.qrserver.com/v1/create-qr-code/?size=${qrSize}x${qrSize}&data=${encodeURIComponent(verificationUrl)}`);
+  private static async generateQRCode(verificationUrl: string, size: number = 300): Promise<string> {
+    const qrSize = Math.max(size, 300);
+    try {
+      return await QRCode.toDataURL(verificationUrl, {
+        width: qrSize,
+        margin: 1,
+        errorCorrectionLevel: 'M'
+      });
+    } catch {
+      return `https://api.qrserver.com/v1/create-qr-code/?size=${qrSize}x${qrSize}&data=${encodeURIComponent(verificationUrl)}`;
+    }
   }
 
   /**
-   * Load an image with retry logic and exponential backoff
+   * Preload and cache a template image in the background so certificate canvas
+   * rendering is instantaneous when the attendee submits feedback.
+   */
+  static preloadImage(url: string): Promise<HTMLImageElement | null> {
+    if (!url) return Promise.resolve(null);
+    return this.loadImageWithRetry(url, 2).catch(() => null);
+  }
+
+  /**
+   * Load an image with in-memory caching, retry logic, and exponential backoff
    */
   private static async loadImageWithRetry(url: string, maxRetries = 3): Promise<HTMLImageElement> {
-    let lastError: Error | null = null;
-    
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const cached = this.imageCache.get(url);
+    if (cached) {
       try {
-        const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-          const image = new Image();
-          image.crossOrigin = 'anonymous';
-          
-          image.onload = () => resolve(image);
-          image.onerror = () => reject(new Error(`Failed to load image: ${url}`));
-          
-          image.src = url;
-        });
-        
-        return img;
-      } catch (error) {
-        lastError = error as Error;
-        
-        if (attempt < maxRetries - 1) {
-          // Exponential backoff: 1s, 2s, 4s
-          const delay = Math.pow(2, attempt) * 1000;
-          logger.warn(`Image load attempt ${attempt + 1} failed, retrying in ${delay}ms...`);
-          await new Promise(resolve => setTimeout(resolve, delay));
-        }
+        return await cached;
+      } catch {
+        this.imageCache.delete(url);
       }
     }
-    
-    throw lastError || new Error('Failed to load image after retries');
+
+    const loadPromise = (async () => {
+      let lastError: Error | null = null;
+
+      for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+          const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+            const image = new Image();
+            if (!url.startsWith('data:') && !url.startsWith('blob:')) {
+              image.crossOrigin = 'anonymous';
+            }
+
+            image.onload = () => resolve(image);
+            image.onerror = () => reject(new Error(`Failed to load image: ${url}`));
+
+            image.src = url;
+          });
+
+          return img;
+        } catch (error) {
+          lastError = error as Error;
+
+          if (attempt < maxRetries - 1) {
+            const delay = Math.pow(2, attempt) * 500;
+            logger.warn(`Image load attempt ${attempt + 1} failed, retrying in ${delay}ms...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+          }
+        }
+      }
+
+      throw lastError || new Error('Failed to load image after retries');
+    })();
+
+    if (!url.startsWith('data:')) {
+      this.imageCache.set(url, loadPromise);
+    }
+
+    try {
+      return await loadPromise;
+    } catch (err) {
+      this.imageCache.delete(url);
+      throw err;
+    }
   }
 
   /**

@@ -392,18 +392,18 @@ export class FeedbackService {
 
       await setDoc(feedbackRef, feedbackWithResponses);
 
-      // Update registration to mark feedback as submitted
+      // Update registration to mark feedback as submitted (non-blocking; only succeeds
+      // when signed in as organizer/admin, whereas anonymous submissions are stamped
+      // server-side by issueCertificateRecord).
       if (feedbackData.registrationId) {
-        try {
-          const registrationRef = doc(db, this.REGISTRATIONS_COLLECTION, feedbackData.registrationId);
-          await updateDoc(registrationRef, {
-            feedbackSubmitted: true,
-            feedbackId: feedbackId,
-            updatedAt: serverTimestamp()
-          });
-        } catch (error) {
+        const registrationRef = doc(db, this.REGISTRATIONS_COLLECTION, feedbackData.registrationId);
+        void updateDoc(registrationRef, {
+          feedbackSubmitted: true,
+          feedbackId: feedbackId,
+          updatedAt: serverTimestamp()
+        }).catch((error) => {
           logger.warn('Could not update registration with feedback status:', error);
-        }
+        });
       }
 
       // Note: Analytics update is handled by Firestore triggers on the backend

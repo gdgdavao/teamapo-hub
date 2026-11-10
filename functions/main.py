@@ -2795,6 +2795,7 @@ def issueCertificateRecord(req: https_fn.CallableRequest) -> Dict[str, Any]:
 
     try:
         registration_ref.update({
+            'feedbackSubmitted': True,
             'certificateGenerated': True,
             'certificateId': certificate_ref.id,
             'certificateGeneratedAt': firestore.SERVER_TIMESTAMP,

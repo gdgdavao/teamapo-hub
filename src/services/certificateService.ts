@@ -59,6 +59,15 @@ export class CertificateService {
    */
   static async getCertificateByRegistrationId(registrationId: string): Promise<Certificate | null> {
     try {
+      // Fast O(1) direct document lookup first (issueCertificateRecord uses registrationId as doc ID)
+      const directSnap = await getDoc(doc(db, this.CERTIFICATES_COLLECTION, registrationId));
+      if (directSnap.exists()) {
+        return {
+          id: directSnap.id,
+          ...directSnap.data()
+        } as Certificate;
+      }
+
       const certificatesQuery = query(
         collection(db, this.CERTIFICATES_COLLECTION),
         where('registrationId', '==', registrationId),
