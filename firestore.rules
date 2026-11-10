@@ -39,6 +39,31 @@ service cloud.firestore {
       return !('promoCodes' in data) || (data.promoCodes is list && data.promoCodes.size() == 0);
     }
 
+    // Validates public/anonymous post-event feedback submissions
+    function validAnonymousFeedback() {
+      return request.resource.data.keys().hasOnly([
+        'eventId', 'userId', 'registrationId', 'overallRating', 'contentRating',
+        'organizationRating', 'venueRating', 'speakerRatings', 'comments',
+        'suggestions', 'wouldRecommend', 'futureTopics', 'submittedAt',
+        'customResponses', 'userEmail', 'userName', 'organizerUid', 'feedbackData'
+      ]) &&
+      ('eventId' in request.resource.data) && request.resource.data.eventId is string &&
+      exists(/databases/$(database)/documents/events/$(request.resource.data.eventId)) &&
+      ('overallRating' in request.resource.data) && request.resource.data.overallRating is number &&
+      request.resource.data.overallRating >= 1 && request.resource.data.overallRating <= 5 &&
+      ('submittedAt' in request.resource.data) && request.resource.data.submittedAt is timestamp &&
+      (!('userEmail' in request.resource.data) || request.resource.data.userEmail == '' || isValidEmail(request.resource.data.userEmail)) &&
+      (!('contentRating' in request.resource.data) || request.resource.data.contentRating is number) &&
+      (!('organizationRating' in request.resource.data) || request.resource.data.organizationRating is number) &&
+      (!('venueRating' in request.resource.data) || request.resource.data.venueRating is number) &&
+      (!('wouldRecommend' in request.resource.data) || request.resource.data.wouldRecommend is bool) &&
+      (!('comments' in request.resource.data) || request.resource.data.comments is string) &&
+      (!('suggestions' in request.resource.data) || request.resource.data.suggestions is string) &&
+      (!('userName' in request.resource.data) || request.resource.data.userName is string) &&
+      (!('registrationId' in request.resource.data) || request.resource.data.registrationId is string) &&
+      (!('userId' in request.resource.data) || request.resource.data.userId is string);
+    }
+
     match /users/{userId} {
       allow read: if isAuthenticated() && (isAdmin() || isOwner(userId));
       allow list: if isAdmin();
@@ -123,7 +148,12 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
     match /feedbackTokens/{tokenId} { allow read, write: if false; }
-    match /feedback/{feedbackId} { allow read: if canManageDocByEventId(resource.data) && (isAdmin() || hasPerm('feedback', 'canRead')); allow create, update, delete: if false; }
+    match /feedback/{feedbackId} {
+      allow read: if canManageDocByEventId(resource.data) && (isAdmin() || hasPerm('feedback', 'canRead'));
+      allow create: if validAnonymousFeedback();
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
     match /activity_logs/{logId} { allow read: if canManageDocByEventId(resource.data); allow create, update, delete: if false; }
     match /audit_logs/{logId} { allow read, write: if false; }
     match /event_analytics/{analyticsId} {

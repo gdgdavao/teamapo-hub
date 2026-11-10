@@ -107,10 +107,11 @@ class EmailService:
         # Check if Mailpit mode is requested or configured
         self.use_mailpit = (
             os.getenv('USE_MAILPIT', '').lower() in ('true', '1') or
-            os.getenv('MAILPIT_ENABLED', '').lower() in ('true', '1')
+            os.getenv('MAILPIT_ENABLED', '').lower() in ('true', '1') or
+            os.getenv('EMAIL_TRANSPORT', '').lower() == 'mailpit'
         )
-        self.mailpit_host = os.getenv('MAILPIT_SMTP_HOST', 'localhost')
-        self.mailpit_port = int(os.getenv('MAILPIT_SMTP_PORT', '1025'))
+        self.mailpit_host = os.getenv('MAILPIT_SMTP_HOST') or os.getenv('MAILPIT_HOST', 'localhost')
+        self.mailpit_port = int(os.getenv('MAILPIT_SMTP_PORT') or os.getenv('MAILPIT_PORT', '1025'))
         self.app_url = os.getenv('APP_URL', 'https://apohub.gdgdavao.org').rstrip('/')
         
         if self.use_mailpit:

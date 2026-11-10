@@ -36,6 +36,21 @@ export function validateFormResponses(
     const result = validateDynamicField(field, value);
     if (!result.isValid && result.error) {
       errors[field.id] = result.error;
+    } else if (field.required && value !== undefined && value !== null) {
+      // Check required "Other" custom text
+      let otherVal: string | undefined;
+      if (typeof value === 'string' && isOtherOption(value)) {
+        otherVal = value;
+      } else if (Array.isArray(value)) {
+        otherVal = value.find((v) => typeof v === 'string' && isOtherOption(v));
+      }
+
+      if (otherVal) {
+        const { customText } = parseOtherResponse(otherVal);
+        if (!customText.trim()) {
+          errors[field.id] = `Please specify your answer for ${field.label}.`;
+        }
+      }
     }
   }
 
@@ -262,3 +277,47 @@ export function resolveResendTargetEmail(
   if (candidate) return candidate;
   return logUserEmail;
 }
+
+/**
+ * Determines whether a choice option string represents an "Other" write-in option.
+ * Matches "Other", "other", "Other...", "Other (please specify)", etc.
+ * Avoids false positives on words like "Mother", "Brother", "Another", "Otherwise".
+ */
+export function isOtherOption(option?: string | null): boolean {
+  if (!option || typeof option !== 'string') return false;
+  const trimmed = option.trim();
+  return /^other\b(?:\s*(?:[.…:\-(]|option\b|please\b)|$)/i.test(trimmed);
+}
+
+/**
+ * Formats a chosen "Other" option with the attendee's custom text.
+ * If custom text is present, returns "Other: <trimmed custom text>".
+ * If custom text is blank, returns the base option (or "Other").
+ */
+export function formatOtherResponse(baseOption: string, customText?: string | null): string {
+  const trimmedText = (customText ?? '').trim();
+  if (!trimmedText) {
+    return isOtherOption(baseOption) ? baseOption : 'Other';
+  }
+  return `Other: ${trimmedText}`;
+}
+
+/**
+ * Deconstructs an answer to determine whether it originated from an "Other" option,
+ * and extracts any user-specified custom text.
+ */
+export function parseOtherResponse(value: unknown): { isOther: boolean; customText: string } {
+  if (typeof value !== 'string') {
+    return { isOther: false, customText: '' };
+  }
+  const trimmed = value.trim();
+  if (!isOtherOption(trimmed)) {
+    return { isOther: false, customText: '' };
+  }
+  const prefixMatch = /^other\s*:\s*(.*)$/i.exec(trimmed);
+  if (prefixMatch) {
+    return { isOther: true, customText: prefixMatch[1].trim() };
+  }
+  return { isOther: true, customText: '' };
+}
+

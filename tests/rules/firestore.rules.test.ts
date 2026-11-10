@@ -7,7 +7,7 @@ import {
   initializeTestEnvironment,
   type RulesTestEnvironment,
 } from '@firebase/rules-unit-testing';
-import { doc, getDoc, setDoc, updateDoc, deleteDoc, collection, getDocs, query, where } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, deleteDoc, collection, getDocs, query, where, serverTimestamp } from 'firebase/firestore';
 
 const rules = readFileSync(
   fileURLToPath(new URL('../../firestore.rules', import.meta.url)),
@@ -271,6 +271,74 @@ describe('Firestore authorization rules', () => {
     await assertSucceeds(getDoc(doc(org2, 'feedback/fb-1')));
     await assertSucceeds(getDoc(doc(org2, 'activity_logs/log-1')));
     await assertSucceeds(getDoc(doc(org1, 'activity_logs/log-1')));
+  });
+
+  it('allows anonymous submission of valid event feedback while keeping records immutable', async () => {
+    const anon = testEnv.unauthenticatedContext().firestore();
+    const org1 = testEnv.authenticatedContext('organizer-1').firestore();
+    const admin = testEnv.authenticatedContext('admin-1').firestore();
+
+    // Valid anonymous feedback succeeds
+    await assertSucceeds(setDoc(doc(anon, 'feedback/anon-fb-1'), {
+      eventId: 'published-event',
+      overallRating: 5,
+      submittedAt: new Date(),
+      wouldRecommend: true,
+      comments: 'Awesome event!',
+      userEmail: 'attendee@example.com',
+      userName: 'Happy Attendee',
+      customResponses: { question_1: 'Networking' },
+    }));
+
+    // Real payload from FeedbackService.submitFeedback
+    await assertSucceeds(setDoc(doc(anon, 'feedback/anon-fb-real'), {
+      eventId: 'published-event',
+      userId: '',
+      registrationId: '',
+      overallRating: 5,
+      contentRating: 5,
+      organizationRating: 5,
+      venueRating: 5,
+      speakerRatings: [],
+      comments: '',
+      suggestions: '',
+      wouldRecommend: false,
+      futureTopics: [],
+      submittedAt: serverTimestamp(),
+      customResponses: { overall_rating: 5 },
+      userEmail: 'anonymous@example.com',
+      userName: 'Anonymous',
+    }));
+
+    // Feedback for non-existent event fails
+    await assertFails(setDoc(doc(anon, 'feedback/invalid-event-fb'), {
+      eventId: 'does-not-exist',
+      overallRating: 5,
+      submittedAt: new Date(),
+    }));
+
+    // Out-of-range rating fails
+    await assertFails(setDoc(doc(anon, 'feedback/invalid-rating-fb'), {
+      eventId: 'published-event',
+      overallRating: 10,
+      submittedAt: new Date(),
+    }));
+
+    // Unauthorized field injection fails
+    await assertFails(setDoc(doc(anon, 'feedback/injected-fb'), {
+      eventId: 'published-event',
+      overallRating: 5,
+      submittedAt: new Date(),
+      maliciousField: 'exploit',
+    }));
+
+    // Feedback is immutable: updates fail for both anonymous and organizers
+    await assertFails(updateDoc(doc(anon, 'feedback/fb-1'), { overallRating: 1 }));
+    await assertFails(updateDoc(doc(org1, 'feedback/fb-1'), { overallRating: 1 }));
+
+    // Organizer cannot delete feedback, but admin can
+    await assertFails(deleteDoc(doc(org1, 'feedback/fb-1')));
+    await assertSucceeds(deleteDoc(doc(admin, 'feedback/fb-1')));
   });
 
   it('lets organizers manage certificate templates with certificates permission', async () => {

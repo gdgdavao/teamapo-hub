@@ -96,6 +96,10 @@ async function runDevelopment() {
     VITE_USE_EMULATOR: 'true',
     FIRESTORE_EMULATOR_HOST: '127.0.0.1:8080',
     FIREBASE_AUTH_EMULATOR_HOST: '127.0.0.1:9099',
+    USE_MAILPIT: 'true',
+    EMAIL_TRANSPORT: 'mailpit',
+    MAILPIT_HOST: '127.0.0.1',
+    MAILPIT_PORT: '1025',
   };
 
   const emulator = start('bun', ['run', 'emulator:start'], env);
