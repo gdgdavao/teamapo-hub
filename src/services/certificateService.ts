@@ -640,6 +640,35 @@ export class CertificateService {
   }
 
   /**
+   * Convert a generated certificate PNG Blob into a base64 data URL
+   * for server-side Storage upload via issueCertificateRecord.
+   */
+  static async blobToDataUrl(blob: Blob): Promise<string> {
+    if (typeof FileReader !== 'undefined') {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          if (typeof reader.result === 'string') {
+            resolve(reader.result);
+          } else {
+            reject(new Error('Failed to convert certificate blob to data URL'));
+          }
+        };
+        reader.onerror = () => reject(reader.error || new Error('FileReader error'));
+        reader.readAsDataURL(blob);
+      });
+    }
+    const buffer = await blob.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    for (let i = 0; i < bytes.byteLength; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    const mimeType = blob.type || 'image/png';
+    return `data:${mimeType};base64,${btoa(binary)}`;
+  }
+
+  /**
    * Create a certificate record in Firestore (for anonymous users after feedback).
    * When imageDataUrl is provided, the callable uploads the PNG to Firebase Storage
    * server-side via Admin SDK so storage.rules can remain locked to admins.

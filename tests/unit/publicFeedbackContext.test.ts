@@ -187,6 +187,12 @@ describe('CertificateService.createCertificateRecord server-side imageDataUrl su
       })
     );
   });
+
+  it('converts a PNG Blob into a base64 data:image/png;base64 URL via blobToDataUrl', async () => {
+    const pngBlob = new Blob([new Uint8Array([137, 80, 78, 71])], { type: 'image/png' });
+    const dataUrl = await CertificateService.blobToDataUrl(pngBlob);
+    expect(dataUrl.startsWith('data:image/png;base64,')).toBe(true);
+  });
 });
 
 describe('functions/main.py feedback & certificate callable invariants', () => {

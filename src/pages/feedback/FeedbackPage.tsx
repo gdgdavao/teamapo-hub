@@ -221,21 +221,12 @@ const FeedbackPage: React.FC = () => {
         verificationCode: consistentVerificationCode
       });
 
-      // Attempt client-side Storage upload first (succeeds for admins); for anonymous
-      // attendees where storage.rules restricts /certificates writes, fall back to
-      // server-side upload inside issueCertificateRecord via imageDataUrl.
-      let storageUrl = '';
-      try {
-        storageUrl = await CertificateService.saveCertificateToStorage(
-          result.blob,
-          targetEventId,
-          result.verificationCode
-        );
-      } catch {
-        // Handled server-side by issueCertificateRecord via imageDataUrl
-      }
+      // Convert the generated PNG blob to a base64 data URL so issueCertificateRecord
+      // uploads it server-side via Admin SDK (avoiding a 403 client Storage write failure
+      // under storage.rules where /certificates writes require admin()).
+      const imageDataUrl = await CertificateService.blobToDataUrl(result.blob);
 
-      // Save certificate record to Firestore (and Storage if not already uploaded)
+      // Save certificate record to Firestore and upload PNG to Storage server-side
       await CertificateService.createCertificateRecord({
         recipientName: name,
         recipientEmail: email,
@@ -243,13 +234,13 @@ const FeedbackPage: React.FC = () => {
         eventTitle,
         eventDate: eventDateIso,
         registrationId: regId,
-        certificateUrl: storageUrl || result.certificateUrl,
-        imageDataUrl: storageUrl ? undefined : result.certificateUrl,
+        certificateUrl: imageDataUrl,
+        imageDataUrl,
         verificationCode: result.verificationCode,
         templateId: certTemplate.id
       });
 
-      setCertificateUrl(storageUrl || result.certificateUrl);
+      setCertificateUrl(result.certificateUrl);
       setVerificationCode(result.verificationCode);
     } catch (err) {
       logger.error('Error generating certificate:', err);
