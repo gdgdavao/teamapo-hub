@@ -1042,16 +1042,13 @@ const CertificatesTab: React.FC<CertificatesTabProps> = ({ eventId }) => {
         return;
       }
 
-      // For single certificate, just download directly
+      // For single certificate, trigger a direct blob download without opening the raw Storage link
       if (certsWithUrls.length === 1) {
         const cert = certsWithUrls[0];
-        const link = document.createElement('a');
-        link.href = cert.certificateUrl;
-        link.download = `certificate-${cert.recipientName.replace(/\s+/g, '_')}-${cert.verificationCode}.png`;
-        link.target = '_blank';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+        await CertificateGenerationService.downloadCertificate(
+          cert.certificateUrl,
+          `certificate-${cert.recipientName.replace(/\s+/g, '_')}-${cert.verificationCode}.png`
+        );
         toast.success('Certificate downloaded successfully.', { id: 'bulk-export' });
         setSelectedCertificates(new Set());
         return;
@@ -1061,16 +1058,10 @@ const CertificatesTab: React.FC<CertificatesTabProps> = ({ eventId }) => {
       let downloadedCount = 0;
       for (const cert of certsWithUrls) {
         try {
-          const response = await fetch(cert.certificateUrl);
-          const blob = await response.blob();
-          const url = window.URL.createObjectURL(blob);
-          const link = document.createElement('a');
-          link.href = url;
-          link.download = `certificate-${cert.recipientName.replace(/\s+/g, '_')}-${cert.verificationCode}.png`;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-          window.URL.revokeObjectURL(url);
+          await CertificateGenerationService.downloadCertificate(
+            cert.certificateUrl,
+            `certificate-${cert.recipientName.replace(/\s+/g, '_')}-${cert.verificationCode}.png`
+          );
           downloadedCount++;
           
           // Small delay between downloads to prevent browser blocking
@@ -1847,8 +1838,8 @@ const CertificatesTab: React.FC<CertificatesTabProps> = ({ eventId }) => {
                     <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-sm font-medium">
                       <div className="flex items-center gap-1">
                         <button 
-                          onClick={() => certificate.certificateUrl && window.open(certificate.certificateUrl, '_blank')}
-                          disabled={!certificate.certificateUrl}
+                          onClick={() => certificate.verificationCode && window.open(`/verify/${certificate.verificationCode}`, '_blank', 'noopener,noreferrer')}
+                          disabled={!certificate.verificationCode}
                           className="text-primary hover:text-on-secondary-container hover:bg-surface-container disabled:text-outline-variant disabled:cursor-not-allowed p-2 rounded-lg min-h-[44px] min-w-[44px] flex items-center justify-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                           title="View certificate"
                           aria-label={`View certificate for ${certificate.recipientName}`}
@@ -1862,16 +1853,10 @@ const CertificatesTab: React.FC<CertificatesTabProps> = ({ eventId }) => {
                               return;
                             }
                             try {
-                              const response = await fetch(certificate.certificateUrl);
-                              const blob = await response.blob();
-                              const url = window.URL.createObjectURL(blob);
-                              const link = document.createElement('a');
-                              link.href = url;
-                              link.download = `certificate-${certificate.recipientName.replace(/\s+/g, '_')}-${certificate.verificationCode}.png`;
-                              document.body.appendChild(link);
-                              link.click();
-                              document.body.removeChild(link);
-                              window.URL.revokeObjectURL(url);
+                              await CertificateGenerationService.downloadCertificate(
+                                certificate.certificateUrl,
+                                `certificate-${certificate.recipientName.replace(/\s+/g, '_')}-${certificate.verificationCode}.png`
+                              );
                               toast.success('Certificate downloaded.');
                             } catch (err) {
                               logger.error('Failed to download certificate:', err);

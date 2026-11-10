@@ -26,6 +26,7 @@ import {
   InformationCircleIcon
 } from '@heroicons/react/24/outline';
 import { CertificateService } from '../../services/certificateService';
+import { CertificateGenerationService } from '../../utils/certificateGeneration';
 import { Button, Card, Input, Badge, SegmentedControl, type SegmentedControlOption, toast } from '../../components/UI';
 import { logger } from '../../utils/logger';
 import usePageTitle from '../../hooks/usePageTitle';
@@ -179,6 +180,9 @@ const CertificateVerificationPage: React.FC = () => {
 
     try {
       const result = await CertificateService.verifyCertificate(sanitized);
+      const localCertificateUrl = result.certificateUrl
+        ? await CertificateGenerationService.toLocalObjectUrl(result.certificateUrl)
+        : undefined;
       
       setVerificationData({
         isValid: result.isValid,
@@ -188,7 +192,7 @@ const CertificateVerificationPage: React.FC = () => {
         eventDate: result.eventDate,
         issuedDate: result.issuedDate,
         verificationCode: sanitized,
-        certificateUrl: result.certificateUrl,
+        certificateUrl: localCertificateUrl,
         verificationCount: result.verificationCount
       });
     } catch (error) {
@@ -342,16 +346,10 @@ const CertificateVerificationPage: React.FC = () => {
   const handleDownloadCertificate = async () => {
     if (!verificationData?.certificateUrl) return;
     try {
-      const response = await fetch(verificationData.certificateUrl);
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `certificate-${verificationData.recipientName?.replace(/\s+/g, '_') || 'download'}-${verificationData.verificationCode}.png`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
+      await CertificateGenerationService.downloadCertificate(
+        verificationData.certificateUrl,
+        `certificate-${verificationData.recipientName?.replace(/\s+/g, '_') || 'download'}-${verificationData.verificationCode}.png`
+      );
       toast.success('Certificate downloaded successfully!');
     } catch (err) {
       logger.error('Failed to download certificate:', err);

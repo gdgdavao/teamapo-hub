@@ -193,8 +193,10 @@ const FeedbackPage: React.FC = () => {
       const existingCert = await CertificateService.getCertificateByRegistrationId(regId);
       
       if (existingCert?.certificateUrl && existingCert?.credentialId) {
-        // Certificate already exists, use existing data
-        setCertificateUrl(existingCert.certificateUrl);
+        // Certificate already exists, convert remote Storage URL into a local blob: URL
+        // so the raw Firebase link is not exposed and downloads trigger directly.
+        const localCertUrl = await CertificateGenerationService.toLocalObjectUrl(existingCert.certificateUrl);
+        setCertificateUrl(localCertUrl);
         setVerificationCode(existingCert.credentialId);
         return;
       }
@@ -352,9 +354,10 @@ const FeedbackPage: React.FC = () => {
           if (!registration) {
             const existingCert = await CertificateService.getCertificateByRegistrationId(resolvedRegId);
             if (existingCert?.certificateUrl && existingCert?.credentialId) {
+              const localCertUrl = await CertificateGenerationService.toLocalObjectUrl(existingCert.certificateUrl);
               if (isMounted) {
                 setSubmitted(true);
-                setCertificateUrl(existingCert.certificateUrl);
+                setCertificateUrl(localCertUrl);
                 setVerificationCode(existingCert.credentialId);
               }
               const certTemplate = await CertificateService.getTemplateForEvent(canonicalEventId);
@@ -474,13 +477,14 @@ const FeedbackPage: React.FC = () => {
   };
 
   // Handle certificate download
-  const handleDownloadCertificate = () => {
+  const handleDownloadCertificate = async () => {
     if (certificateUrl && userName) {
       const eventTitle = (event?.title || 'Event').replace(/\s+/g, '_');
-      CertificateGenerationService.downloadCertificate(
+      await CertificateGenerationService.downloadCertificate(
         certificateUrl,
         `${userName.replace(/\s+/g, '_')}_${eventTitle}_Certificate.png`
       );
+      toast.success('Certificate downloaded!');
     }
   };
 
