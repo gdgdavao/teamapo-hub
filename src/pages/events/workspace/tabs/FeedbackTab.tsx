@@ -1,15 +1,12 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { 
-  StarIcon,
   ChartBarIcon,
   UsersIcon,
   ChatBubbleLeftRightIcon,
   DocumentArrowDownIcon,
   EyeIcon,
   ClockIcon,
-  CheckIcon,
-  XMarkIcon,
   PencilSquareIcon,
   LockClosedIcon,
   SparklesIcon,
@@ -19,6 +16,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { StarIcon as StarIconSolid } from '@heroicons/react/20/solid';
 import { ProgressBar, Button, Badge, Card, EmptyState } from '../../../../components/UI';
+import { stripFormattedLabelSyntax } from '../../../../components/FormattedLabelText';
 import { FeedbackService } from '../../../../services/feedbackService';
 import { EventService } from '../../../../services/eventService';
 import { Feedback, Event, FormField } from '../../../../types';
@@ -27,6 +25,7 @@ import toast from 'react-hot-toast';
 import FormBuilder from '../../components/FormBuilder';
 import { toDateSafe } from '../../../../utils/dateUtils';
 import { escapeCSVCell, downloadCSV } from '../../../../utils/csvExport';
+import { isOtherOption } from '../../../../utils/formResponses';
 
 const STARTER_FEEDBACK_FIELDS: FormField[] = [
   { id: '1', type: 'rating', label: 'Overall Event Rating', required: true, gridSize: 'full' },
@@ -255,33 +254,44 @@ const FeedbackTab: React.FC<FeedbackTabProps> = ({ eventId }) => {
       return { type: 'rating', distribution, total, average };
     }
 
-    // For select, radio - count each option
+    // For select, radio - count each option (mapping custom "Other: ..." write-ins to the "Other..." bucket)
     if (field.type === 'select' || field.type === 'radio') {
       const counts: Record<string, number> = {};
-      (field.options || []).forEach((opt: string) => { counts[opt] = 0; });
+      const options = field.options || [];
+      const otherBucketKey = options.find((opt) => isOtherOption(opt));
+      options.forEach((opt: string) => { counts[opt] = 0; });
       responses.forEach((val) => {
         const optionValue = String(val);
-        counts[optionValue] = (counts[optionValue] || 0) + 1;
+        const bucketKey =
+          otherBucketKey && isOtherOption(optionValue) && !(optionValue in counts)
+            ? otherBucketKey
+            : optionValue;
+        counts[bucketKey] = (counts[bucketKey] || 0) + 1;
       });
-      return { type: 'select', counts, total: responses.length, options: field.options || [] };
+      return { type: 'select', counts, total: responses.length, options };
     }
 
-    // For multiselect, checkbox arrays - count each option selection
-    if (field.type === 'multiselect') {
+    // For multiselect, or checkbox fields with options[] - count each option selection
+    if (field.type === 'multiselect' || (field.type === 'checkbox' && field.options && field.options.length > 0)) {
       const counts: Record<string, number> = {};
-      (field.options || []).forEach((opt: string) => { counts[opt] = 0; });
+      const options = field.options || [];
+      const otherBucketKey = options.find((opt) => isOtherOption(opt));
+      options.forEach((opt: string) => { counts[opt] = 0; });
       responses.forEach((val) => {
-        if (Array.isArray(val)) {
-          val.forEach((item) => {
-            const optionValue = String(item);
-            counts[optionValue] = (counts[optionValue] || 0) + 1;
-          });
-        }
+        const items = Array.isArray(val) ? val : [val];
+        items.forEach((item) => {
+          const optionValue = String(item);
+          const bucketKey =
+            otherBucketKey && isOtherOption(optionValue) && !(optionValue in counts)
+              ? otherBucketKey
+              : optionValue;
+          counts[bucketKey] = (counts[bucketKey] || 0) + 1;
+        });
       });
-      return { type: 'multiselect', counts, total: responses.length, options: field.options || [] };
+      return { type: 'multiselect', counts, total: responses.length, options };
     }
 
-    // For checkbox (boolean)
+    // For standalone boolean checkbox
     if (field.type === 'checkbox') {
       const yesCount = responses.filter(v => v === true || v === 'true' || v === 'yes').length;
       const noCount = responses.length - yesCount;
@@ -307,6 +317,16 @@ const FeedbackTab: React.FC<FeedbackTabProps> = ({ eventId }) => {
     return { type: 'other', responses: responses as Array<string | number | boolean | string[]>, total: responses.length };
   };
 
+  const questionFields = useMemo(
+    () => feedbackFormFields.filter((field) => field.type !== 'spacer'),
+    [feedbackFormFields]
+  );
+
+  const draftQuestionCount = useMemo(
+    () => formFields.filter((field) => field.type !== 'spacer').length,
+    [formFields]
+  );
+
   const formatDate = (timestamp: any) => {
     const date = toDate(timestamp);
     if (!date) return 'N/A';
@@ -326,27 +346,66 @@ const FeedbackTab: React.FC<FeedbackTabProps> = ({ eventId }) => {
       return;
     }
 
-    const headers = [
-      'Response ID',
-      'Submitted At',
-      'User Name',
-      'Overall Rating',
-      'Would Recommend',
-      'Comments',
-      'Suggestions'
-    ];
+    const customQuestionColumns = questionFields.map((field) => ({
+      id: field.id,
+      type: field.type,
+      header: stripFormattedLabelSyntax(field.label) || field.id
+    }));
+
+    const headers = customQuestionColumns.length > 0
+      ? [
+          'Response ID',
+          'Submitted At',
+          'User Name',
+          'Overall Rating',
+          ...customQuestionColumns.map((col) => col.header)
+        ]
+      : [
+          'Response ID',
+          'Submitted At',
+          'User Name',
+          'Overall Rating',
+          'Would Recommend',
+          'Comments',
+          'Suggestions'
+        ];
 
     const csvContent = [
       headers.map((h) => escapeCSVCell(h)).join(','),
-      ...feedbackList.map((feedback, index) => [
-        escapeCSVCell(index + 1),
-        escapeCSVCell(formatDate(feedback.submittedAt)),
-        escapeCSVCell((feedback as any).userName || 'Anonymous'),
-        escapeCSVCell(feedback.overallRating),
-        escapeCSVCell(feedback.wouldRecommend ? 'Yes' : 'No'),
-        escapeCSVCell(feedback.comments || ''),
-        escapeCSVCell(feedback.suggestions || '')
-      ].join(','))
+      ...feedbackList.map((feedback, index) => {
+        const responses = (feedback as any).customResponses || (feedback as any).responses || {};
+        const baseCells = [
+          escapeCSVCell(index + 1),
+          escapeCSVCell(formatDate(feedback.submittedAt)),
+          escapeCSVCell((feedback as any).userName || 'Anonymous'),
+          escapeCSVCell(getActualRating(feedback))
+        ];
+
+        if (customQuestionColumns.length === 0) {
+          return [
+            ...baseCells,
+            escapeCSVCell(feedback.wouldRecommend ? 'Yes' : 'No'),
+            escapeCSVCell(feedback.comments || ''),
+            escapeCSVCell(feedback.suggestions || '')
+          ].join(',');
+        }
+
+        const customCells = customQuestionColumns.map((col) => {
+          let val = responses[col.id];
+          if (val === undefined && col.type === 'rating') {
+            val = getActualRating(feedback);
+          }
+          if (Array.isArray(val)) {
+            return escapeCSVCell(val.join('; '));
+          }
+          if (typeof val === 'boolean') {
+            return escapeCSVCell(val ? 'Yes' : 'No');
+          }
+          return escapeCSVCell(val ?? '');
+        });
+
+        return [...baseCells, ...customCells].join(',');
+      })
     ].join('\n');
 
     downloadCSV(csvContent, `${event?.title || 'event'}_feedback_responses.csv`);
@@ -400,7 +459,7 @@ const FeedbackTab: React.FC<FeedbackTabProps> = ({ eventId }) => {
             <div className="flex items-center gap-2">
               <h3 className="text-lg font-bold text-on-surface">Form Questions</h3>
               <Badge tone={isFormLocked ? 'neutral' : 'info'}>
-                {isFormLocked ? 'Locked' : `${formFields.length} Question${formFields.length !== 1 ? 's' : ''}`}
+                {isFormLocked ? 'Locked' : `${draftQuestionCount} Question${draftQuestionCount !== 1 ? 's' : ''}`}
               </Badge>
             </div>
           </div>
@@ -445,11 +504,11 @@ const FeedbackTab: React.FC<FeedbackTabProps> = ({ eventId }) => {
                 <Badge tone="neutral">Read Only</Badge>
               </div>
 
-              {feedbackFormFields.length === 0 ? (
+              {questionFields.length === 0 ? (
                 <p className="text-sm text-on-surface-variant italic py-4">No questions were configured for this form.</p>
               ) : (
                 <div className="space-y-3">
-                  {feedbackFormFields.map((field, index) => (
+                  {questionFields.map((field, index) => (
                     <div
                       key={field.id}
                       className="flex items-start justify-between rounded-lg border border-outline-variant bg-surface-container-low p-3.5 sm:p-4"
@@ -460,7 +519,7 @@ const FeedbackTab: React.FC<FeedbackTabProps> = ({ eventId }) => {
                         </span>
                         <div>
                           <div className="flex items-center gap-2">
-                            <p className="font-medium text-sm text-on-surface">{field.label}</p>
+                            <p className="font-medium text-sm text-on-surface">{stripFormattedLabelSyntax(field.label)}</p>
                             {field.required && (
                               <span className="text-xs text-error font-semibold">*Required</span>
                             )}
@@ -656,9 +715,9 @@ const FeedbackTab: React.FC<FeedbackTabProps> = ({ eventId }) => {
                 </div>
 
                 {/* Google Forms Style - Field by Field Summary */}
-                {feedbackFormFields.length > 0 ? (
+                {questionFields.length > 0 ? (
                   <div className="space-y-5 sm:space-y-6">
-                    {feedbackFormFields.map((field: any) => {
+                    {questionFields.map((field: any) => {
                       const aggregation = getFieldAggregation(field);
                       if (aggregation.total === 0) return null;
 
@@ -667,7 +726,7 @@ const FeedbackTab: React.FC<FeedbackTabProps> = ({ eventId }) => {
                           {/* Field Header */}
                           <div className="px-4 py-3.5 sm:px-5 sm:py-4 border-b border-outline-variant bg-surface-container-low">
                             <h3 className="text-base font-semibold text-on-surface">
-                              {field.label}
+                              {stripFormattedLabelSyntax(field.label)}
                               {field.required && <span className="text-error ml-1">*</span>}
                             </h3>
                             <p className="text-sm text-on-surface-variant mt-0.5">
@@ -977,9 +1036,9 @@ const FeedbackTab: React.FC<FeedbackTabProps> = ({ eventId }) => {
                         {/* Expanded Details */}
                         {isExpanded && (
                           <div className="px-4 pb-4 pt-2 sm:px-5 sm:pb-5 border-t border-outline-variant/60">
-                            {feedbackFormFields.length > 0 ? (
+                            {questionFields.length > 0 ? (
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-3.5 pt-3">
-                                {feedbackFormFields.map((field: any) => {
+                                {questionFields.map((field: any) => {
                                   let value = responses[field.id];
                                   if (value === undefined && field.type === 'rating') {
                                     value = rating;
@@ -992,7 +1051,7 @@ const FeedbackTab: React.FC<FeedbackTabProps> = ({ eventId }) => {
                                       className="p-3 sm:p-3.5 rounded-lg border border-outline-variant/60 bg-surface-container-low space-y-1.5"
                                     >
                                       <p className="text-xs font-semibold text-on-surface-variant uppercase tracking-wider">
-                                        {field.label}
+                                        {stripFormattedLabelSyntax(field.label)}
                                         {field.required && <span className="text-error ml-1">*</span>}
                                       </p>
                                       <div className="text-sm text-on-surface">
@@ -1009,12 +1068,12 @@ const FeedbackTab: React.FC<FeedbackTabProps> = ({ eventId }) => {
                                             <span className="ml-2 text-xs font-semibold text-on-surface-variant">({value}/5)</span>
                                           </div>
                                         )}
-                                        {field.type === 'checkbox' && (
+                                        {field.type === 'checkbox' && !Array.isArray(value) && (
                                           <Badge tone={value ? 'success' : 'neutral'}>
                                             {value ? 'Yes' : 'No'}
                                           </Badge>
                                         )}
-                                        {field.type === 'multiselect' && Array.isArray(value) && (
+                                        {(field.type === 'multiselect' || (field.type === 'checkbox' && Array.isArray(value))) && Array.isArray(value) && (
                                           <div className="flex flex-wrap gap-1.5">
                                             {value.map((item: string, idx: number) => (
                                               <Badge key={idx} tone="info">
